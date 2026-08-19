@@ -1,0 +1,28 @@
+{
+  "name": "dsh-telegram-channel",
+  "version": "1.0.0",
+  "description": "Telegram channel for DeepSeek Harness — talk to your agent from a messenger. One shared module, per-agent config.",
+  "type": "module",
+  "main": "src/index.js",
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "telegram",
+    "agent",
+    "channel"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iia-arg/dsh-plugins.git",
+    "directory": "packages/telegram-channel"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
