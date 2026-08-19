@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# transcribe-archive-wrap — обёртка над transcribe-local-shared для voice-archive.
+#
+# КОНТРАКТ (вызывает claudeclaw как WHISPER_TRANSCRIBER):
+#   args:   $1 = wavPath, $2 = language
+#   stdout: расшифровка (claudeclaw читает r.stdout) — БАЙТ-В-БАЙТ как настоящий
+#   exit:   код настоящего транскрайбера
+# Любой сбой нашей доп-логики НЕ должен влиять на stdout/exit (критический путь!).
+#
+# SIDE-EFFECT: если первое слово расшифровки ∈ KEYWORDS — оригинал аудио
+#   (audio.<ext> в той же temp-папке, ещё НЕ удалён claudeclaw'ом) копируется
+#   в PENDING_DIR + .txt-сайдкар. Делается СИНХРОННО (до exit), пока claudeclaw
+#   ждёт нас и ещё не выполнил rmSync(tmpdir).
+
+set -uo pipefail
+
+CONF="${VOICE_ARCHIVE_CONF:-/etc/voice-archive.conf}"
+KEYWORDS="паблик public паблік"
+PENDING_DIR="${VOICE_ARCHIVE_DIR:-}"
+# 🔴 УМОЛЧАНИЕ ИСПРАВЛЕНО 2026-08-15. Раньше здесь стоял путь к ЭТОМУ ЖЕ файлу
+# (/usr/local/bin/transcribe-local-shared) — то есть скрипт по умолчанию вызывал
+# САМ СЕБЯ. На this-host это годами не проявлялось, потому что /etc/voice-archive.conf
+# переопределял переменную на настоящий движок. На bclaude такого конфига нет —
+# и распознавание уходило в бесконечную рекурсию: процессы плодились, вызов висел,
+# в журнале служб при этом было пусто. Отказ выглядел как «просто долго».
+REAL_TRANSCRIBER="/usr/local/bin/transcribe-local-core"
+# shellcheck disable=SC1090
+[ -f "$CONF" ] && . "$CONF" 2>/dev/null || true
+
+WAV="${1:-}"
+# Язык по умолчанию — машинно-настраиваемый через DEFAULT_LANG в /etc/voice-archive.conf.
+# Раньше здесь был жёстко прибит "ru", и он ПЕРЕБИВАЛ настройку сервера: на bclaude
+# сервер распознавания подняли с --language auto, а обёртка всё равно передавала ru,
+# из-за чего английская речь возвращалась русским ПЕРЕВОДОМ, а не расшифровкой.
+LANG="${2:-${DEFAULT_LANG:-ru}}"
+# 🔴 ЗАЩИТА ОТ САМОВЫЗОВА. Если конфиг или правка снова направят нас на самих себя —
+# падаем с внятной ошибкой, а не уходим в рекурсию. Молчаливое зависание дороже отказа.
+_self="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+_real="$(readlink -f "$REAL_TRANSCRIBER" 2>/dev/null || echo "$REAL_TRANSCRIBER")"
+if [ "$_self" = "$_real" ]; then
+  echo "transcribe: САМОВЫЗОВ — REAL_TRANSCRIBER указывает на этот же файл ($_self)." >&2
+  echo "transcribe: поправь REAL_TRANSCRIBER (обычно /usr/local/bin/transcribe-local-core)" >&2
+  echo "transcribe: либо в /etc/voice-archive.conf, либо в самом скрипте." >&2
+  exit 3
+fi
+
+# 1) Настоящий транскрайбер — захватываем stdout и rc, не давая нашей логике сломать путь.
+OUT="$("$REAL_TRANSCRIBER" "$WAV" "$LANG")"; RC=$?
+
+# 2) Контракт stdout — отдаём расшифровку ровно как есть.
+printf '%s' "$OUT"
+
+# 3) Best-effort захват аудио. Полностью изолировано: ошибки глушатся, rc не трогаем.
+archive_capture() {
+  [ -n "$OUT" ] || return 0
+  local first
+  first="$(printf '%s' "$OUT" | python3 -c 'import sys,re
+t=sys.stdin.read()
+m=re.findall(r"[^\W\d_]+", t, re.UNICODE)
+print(m[0].lower() if m else "")' 2>/dev/null)" || return 0
+  [ -n "$first" ] || return 0
+  local match=0 k
+  for k in $KEYWORDS; do [ "$first" = "$k" ] && match=1; done
+  [ "$match" = "1" ] || return 0
+
+  mkdir -p "$PENDING_DIR" 2>/dev/null || return 0
+  local src_dir orig ext base ts
+  src_dir="$(dirname "$WAV")"
+  # оригинал = audio.* кроме .wav (это исходный opus/ogg от Telegram)
+  orig="$(ls "$src_dir"/audio.* 2>/dev/null | grep -v '\.wav$' | head -1)"
+  [ -n "$orig" ] || orig="$WAV"
+  ext=".${orig##*.}"
+  ts="$(date +%Y%m%d-%H%M%S 2>/dev/null)"
+  base="$PENDING_DIR/${ts}-$$-${RANDOM}"
+  cp -f "$orig" "${base}${ext}" 2>/dev/null || true
+  printf '%s\n' "$OUT" > "${base}.txt" 2>/dev/null || true
+}
+archive_capture 2>/dev/null || true
+
+exit "$RC"

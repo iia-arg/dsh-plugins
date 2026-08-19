@@ -1,0 +1,28 @@
+# Warm punctuation/orthography corrector for Russian ASR transcripts, listening
+# on a unix socket. Optional: skip it if you do not need Russian post-editing.
+#
+# Everything the service needs — code, model, glossary — lives in the service's
+# own directory. A unit that runs a script out of a person's home directory
+# breaks the moment you move the service to its own account, and it breaks
+# silently.
+[Unit]
+Description=Warm ASR-transcript corrector (unix socket)
+After=network-online.target
+
+[Service]
+Type=simple
+User=voicesvc
+Group=voicesvc
+RuntimeDirectory=sage-corrector
+RuntimeDirectoryMode=0755
+Environment=HF_HUB_OFFLINE=1
+Environment=SAGE_SOCK=/run/sage-corrector/sage.sock
+Environment=SAGE_MODEL_DIR=/opt/sage-corrector/model
+Environment=SAGE_GLOSSARY=/opt/sage-corrector/glossary.txt
+Environment=SAGE_THREADS=4
+ExecStart=/opt/sage-corrector/venv/bin/python3 /opt/sage-corrector/sage_warm_server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

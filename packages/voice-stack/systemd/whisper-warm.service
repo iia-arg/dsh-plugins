@@ -1,0 +1,29 @@
+# Warm speech-recognition server: the model stays resident in memory, so a short
+# phrase is transcribed in fractions of a second instead of seconds.
+#
+# Runs under a DEDICATED service account, not a human account. This is the only
+# component that processes untrusted input: a voice note from a stranger reaches
+# it BEFORE any allow-list in the channel gets a say.
+[Unit]
+Description=Warm Whisper server (whisper.cpp, GPU)
+After=network-online.target
+
+[Service]
+Type=simple
+User=voicesvc
+Group=voicesvc
+# Device access must be an explicit line. Supplementary groups are fixed when the
+# process is created: adding the user to a group later does NOT reach a running
+# service.
+SupplementaryGroups=video render
+WorkingDirectory=/var/lib/voicesvc
+ExecStart=/opt/whisper.cpp/build-vulkan/bin/whisper-server \
+  --model /opt/whisper.cpp/models/ggml-large-v3.bin \
+  --host 127.0.0.1 --port 18790 --language auto --threads 4 --convert
+# Do not report "started" until the port actually answers.
+ExecStartPost=/bin/sh -c 'for i in $(seq 1 90); do curl -sf -m 2 http://127.0.0.1:18790/ >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

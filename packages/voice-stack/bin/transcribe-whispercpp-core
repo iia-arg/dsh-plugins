@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# transcribe-whispercpp-core — ядро распознавания для bclaude.
+#
+# ЧЕМ ОТЛИЧАЕТСЯ ОТ ЯДРА НА ACLAUDE: там faster-whisper (Python) на CPU через unix-сокет,
+# здесь whisper.cpp large-v3 на GPU (Vulkan, AMD Radeon 780M) через HTTP на 127.0.0.1:18790.
+# Причина различия — железо: на this-host счётного GPU нет вообще (VMware SVGA), поэтому там
+# пришлось уйти с large-v3 на medium. Здесь GPU есть, поэтому держим самую большую модель.
+#
+# Вход:  $1 = путь к аудиофайлу, $2 = язык (по умолчанию auto)
+# Выход: распознанный текст в stdout
+set -uo pipefail
+
+WAV="${1:-}"; LANG="${2:-auto}"
+PORT="${WHISPERCPP_PORT:-18790}"
+URL="http://127.0.0.1:${PORT}/inference"
+BIN="${WHISPER_HOME:-/opt/whisper.cpp}/build-vulkan/bin/whisper-cli"
+MODEL="${WHISPER_HOME:-/opt/whisper.cpp}/models/ggml-large-v3.bin"
+
+[ -n "$WAV" ] && [ -f "$WAV" ] || { echo "usage: $0 <audio> [lang]" >&2; exit 2; }
+
+# --- шумоподавление перед распознаванием (2026-08-14, решение Александра) ---
+# Заменили DeepFilterNet3 на DPDFNet-2: на наших голосовых старый УБИВАЛ пунктуацию и
+# заглавные («имя бота» -> «ими бота», «Opus 4.8, да» -> «опус 48 до»), новый их сохраняет
+# и вдобавок снимает зацикливание whisper на длинных записях (проверено на 171-секундном
+# файле: в оригинале 14 повторяющихся блоков и потерянная концовка, после чистки — ноль).
+# RTF ~0.07-0.10 (в 10-14 раз быстрее реального времени), torch не нужен, веса 9.7 МБ.
+# ЛЮБАЯ ошибка чистки => работаем по исходному файлу. Отказ шумодава не должен ронять
+# расшифровку целиком — это правило важнее самой чистки.
+# Выключить без правки кода: DENOISE=0 в окружении вызывающего.
+DENOISE="${DENOISE:-1}"
+DFN_PY=${DENOISE_HOME:-/opt/dfn}/venv/bin/python
+if [ "$DENOISE" = "1" ] && [ -x "$DFN_PY" ]; then
+  DN_OUT="$(mktemp -t denoised-XXXXXX.wav)"
+  if DPDFNET_CACHE_DIR=${DENOISE_HOME:-/opt/dfn}/models "$DFN_PY" - "$WAV" "$DN_OUT" <<'PYDN' 2>/dev/null
+import sys, soundfile as sf, dpdfnet
+src, dst = sys.argv[1], sys.argv[2]
+audio, sr = sf.read(src, dtype="float32")
+if audio.ndim > 1:
+    audio = audio.mean(axis=1)
+sf.write(dst, dpdfnet.enhance(audio, sample_rate=sr, model="dpdfnet2", attn_limit_db=12), sr)
+PYDN
+  then
+    if [ -s "$DN_OUT" ]; then
+      WAV="$DN_OUT"
+      trap 'rm -f "$DN_OUT"' EXIT
+    else
+      echo "denoise: пустой выход, работаю по оригиналу" >&2; rm -f "$DN_OUT"
+    fi
+  else
+    echo "denoise: ошибка, работаю по оригиналу" >&2; rm -f "$DN_OUT"
+  fi
+fi
+
+# --- основной путь: горячий сервер (модель уже в памяти GPU) ---
+if curl -sf -m 3 "http://127.0.0.1:${PORT}/" >/dev/null 2>&1; then
+  OUT=$(curl -s -m 300 "$URL" -F "file=@${WAV}" -F "response_format=text" \
+        ${LANG:+-F "language=${LANG}"} 2>/dev/null)
+  # Пустой ответ или json-ошибка = сервер жив, но запрос не удался → идём в запасной путь.
+  case "$OUT" in
+    ''|'{"error"'*) echo "warm server returned no text, falling back to cold run" >&2 ;;
+    *) printf '%s' "$OUT" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; exit 0 ;;
+  esac
+else
+  echo "warm server on :${PORT} unreachable, falling back to cold run" >&2
+fi
+
+# --- запасной путь: холодный запуск (модель грузится заново, ~3-4 с накладных) ---
+[ -x "$BIN" ] || { echo "cold fallback impossible: $BIN missing" >&2; exit 3; }
+LARG=""; [ "$LANG" != "auto" ] && LARG="-l $LANG"
+"$BIN" -m "$MODEL" -f "$WAV" $LARG -nt 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'

@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# transcribe-correct-wrap — Phase-1 POC врезка sage-95m корректора БЕЗ правки shared-цепочки.
+# Цепочка: существующий transcribe → sage_correct.py → исправленный текст.
+# FAIL-SAFE: RC цепочки сохраняется; при любой проблеме корректора отдаём сырой текст.
+# Включается ТОЛЬКО у нужного инстанса через WHISPER_TRANSCRIBER=этот-файл.
+set -uo pipefail
+WAV="${1:-}"; LANG="${2:-ru}"
+
+INNER="${SAGE_INNER_TRANSCRIBER:-/usr/local/bin/transcribe-denoise-wrap}"
+CLIENT_PY="${SAGE_CLIENT_PY:-/usr/bin/python3}"          # только stdlib — быстрый старт
+CLIENT="${SAGE_CLIENT:-${SAGE_HOME:-/opt/sage-corrector}/sage_client.py}"
+LOG="${SAGE_HOME:-/opt/sage-corrector}/corrector.log"
+export SAGE_SOCK="${SAGE_SOCK:-/run/sage-corrector/sage.sock}"
+
+
+# 🔴 ФИЛЬТР ГАЛЛЮЦИНАЦИЙ (2026-08-04). Whisper на тишине выдаёт дежурные фразы
+# из обучающих субтитров — они грамматически безупречны, поэтому корректор их
+# НЕ ловит, и агент получает выдуманную «речь» вместо признания «пусто».
+# Опасность не в мусоре, а в том, что однажды галлюцинация совпадёт с
+# правдоподобной инструкцией и будет исполнена. Поэтому подменяем явным маркером.
+halluc_check() {
+  local txt="$1" pat
+  local F="${SAGE_HOME:-/opt/sage-corrector}/hallucination-filter.txt"
+  [ -f "$F" ] || return 1
+  # длинную настоящую речь не трогаем: галлюцинации всегда короткие
+  [ "${#txt}" -gt 120 ] && return 1
+  while IFS= read -r pat; do
+    case "$pat" in ''|'#'*) continue;; esac
+    printf '%s' "$txt" | grep -qiE "$pat" && return 0
+  done < "$F"
+  return 1
+}
+
+
+# 🔴 УСИЛЕНИЕ ТИХИХ ЗАПИСЕЙ (2026-08-04). Александр: «они тихие, и Whisper их не
+# воспринимает» — подтверждено: за день 4 галлюцинации + 1 полный отказ из 12
+# голосовых. Тихий вход = модель галлюцинирует дежурные фразы или молчит.
+# Меряем среднюю громкость; если ниже порога — нормализуем во ВРЕМЕННЫЙ файл и
+# отдаём цепочке его. Оригинал НЕ трогаем (его забирает архив голосовых).
+# FAIL-SAFE: любая ошибка ffmpeg → работаем с исходным файлом, как раньше.
+GAIN_THRESHOLD_DB="${GAIN_THRESHOLD_DB:--26}"   # тише этого — усиливаем
+WAV_FOR_ASR="$WAV"
+TMP_NORM=""
+if [ -f "$WAV" ] && command -v ffmpeg >/dev/null 2>&1; then
+  MEAN=$(ffmpeg -hide_banner -i "$WAV" -af volumedetect -f null - 2>&1 \
+         | grep -oE 'mean_volume: -?[0-9.]+' | grep -oE '\-?[0-9.]+' | head -1)
+  if [ -n "$MEAN" ] && awk "BEGIN{exit !($MEAN < $GAIN_THRESHOLD_DB)}" 2>/dev/null; then
+    TMP_NORM="$(mktemp -t asrnorm-XXXXXX.wav 2>/dev/null)"
+    if [ -n "$TMP_NORM" ] && ffmpeg -hide_banner -loglevel error -y -i "$WAV" \
+         -af "loudnorm=I=-16:TP=-1.5:LRA=11" -ar 16000 -ac 1 "$TMP_NORM" 2>/dev/null \
+         && [ -s "$TMP_NORM" ]; then
+      WAV_FOR_ASR="$TMP_NORM"
+      echo "$(date -Is) gain: ${MEAN}dB -> normalized" >> "$LOG" 2>/dev/null
+    else
+      rm -f "$TMP_NORM" 2>/dev/null; TMP_NORM=""
+    fi
+  fi
+fi
+
+RAW="$("$INNER" "$WAV_FOR_ASR" "$LANG")"; RC=$?
+[ -n "$TMP_NORM" ] && rm -f "$TMP_NORM" 2>/dev/null
+
+if halluc_check "$RAW"; then
+  printf '[речь не распознана — на записи тишина или шум, текст не получен]'
+  exit "$RC"
+fi
+
+if [ "$RC" = "0" ] && [ -n "${RAW//[[:space:]]/}" ] && [ -x "$CLIENT_PY" ] && [ -f "$CLIENT" ] && [ -S "$SAGE_SOCK" ]; then
+  # тёплый демон через сокет; клиент сам делает passthrough сырого при сбое
+  # 🔴 СКЛЕЙКА СЕГМЕНТОВ ПЕРЕД КОРРЕКЦИЕЙ (2026-08-15).
+  # Распознаватель отдаёт текст ПОСТРОЧНО — по одной строке на сегмент звука.
+  # Корректор обрабатывает КАЖДУЮ СТРОКУ как отдельное предложение: ставит точку
+  # в конце и заглавную в начале следующей. Из-за этого слово, разрезанное на
+  # границе сегментов, превращалось в «распозн. Далась», а фраза — в «what your
+  # country can. Do for you.» Сырой текст при этом ПРАВИЛЬНЫЙ (запятые на месте,
+  # продолжение со строчной) — портила именно построчная подача.
+  # Переносы здесь — артефакт нарезки звука, а не смысл, поэтому склеиваем.
+  RAW_ONE="$(printf '%s' "$RAW" | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//')"
+  COR="$(printf '%s' "$RAW_ONE" | timeout 25 "$CLIENT_PY" "$CLIENT" 2>>"$LOG")" || COR=""
+  # опциональный demo-лог RAW→COR только если явно включён SAGE_DEMO_LOG (по умолчанию OFF — privacy)
+  [ -n "${SAGE_DEMO_LOG:-}" ] && { printf '=== %s ===\nRAW: %s\nCOR: %s\n' "$(date -Is 2>/dev/null)" "$RAW" "$COR" >> "$SAGE_DEMO_LOG"; } 2>/dev/null
+  if [ -n "${COR//[[:space:]]/}" ]; then
+    printf '%s' "$COR"
+  else
+    printf '%s' "$RAW"
+  fi
+else
+  printf '%s' "$RAW"     # цепочка не 0 / пусто / демон не поднят → сырой текст как есть
+fi
+exit "$RC"
