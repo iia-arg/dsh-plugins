@@ -1,0 +1,27 @@
+# Long-term memory server for agents, reachable over MCP on the loopback.
+#
+# Runs under a DEDICATED service account. Memory on a machine is shared by every
+# agent: start it under one agent's account and the database lands in that
+# agent's home with 700, where nobody else can reach it — formally a system
+# service, in practice one agent's private property.
+[Unit]
+Description=OMEGA memory server (core)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=omega
+Group=omega
+WorkingDirectory=/var/lib/omega
+Environment=HOME=/var/lib/omega
+Environment=OMEGA_TRANSPORT=http
+# Without this the server may fall asleep and the first request after a quiet
+# period pays the wake-up cost.
+Environment=OMEGA_IDLE_TIMEOUT=0
+ExecStart=/opt/omega/venv/bin/python3 -m omega.server.mcp_server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
