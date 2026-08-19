@@ -1,4 +1,4 @@
-# dsh-telegram-channel
+# dsh-telegram-multiagent
 
 A Telegram channel for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): message
 your agent from a phone, get answers back, keep one conversation per chat.
@@ -17,7 +17,7 @@ One chat = one session = one agent. Sessions live independently, the way the cor
 
 ```bash
 # inside your profile directory ($DSH_HOME/profiles/<name>)
-pnpm add dsh-telegram-channel
+pnpm add dsh-telegram-multiagent
 ```
 
 Then add one row to your **agent preset** (`agent.cordis.yml`), not to the profile patch layer —
@@ -25,7 +25,7 @@ see "Where to put the row" below:
 
 ```yaml
 - insert:
-    - name: dsh-telegram-channel
+    - name: dsh-telegram-multiagent
       config:
         agentName: my-agent            # log label only
         tokenFile: /etc/dsh/bot.token  # preferred: a file readable by this agent

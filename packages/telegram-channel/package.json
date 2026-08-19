@@ -1,11 +1,12 @@
 {
-  "name": "dsh-telegram-channel",
+  "name": "dsh-telegram-multiagent",
   "version": "1.0.0",
-  "description": "Telegram channel for DeepSeek Harness — talk to your agent from a messenger. One shared module, per-agent config.",
+  "description": "Telegram channel for DeepSeek Harness — one shared module serving several agents on a machine, each with its own bot, token file and allow-list.",
   "type": "module",
   "main": "src/index.js",
   "files": [
     "src",
+    "cordis.patch.yml",
     "README.md"
   ],
   "keywords": [
@@ -24,5 +25,10 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   }
 }

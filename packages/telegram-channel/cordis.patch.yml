@@ -1,0 +1,19 @@
+# Bundle patch: what `dsh plugin add` composes into the profile.
+#
+# 🔴 Note for anyone copying this: in the `web` profile the common-plane tools
+# are disabled on purpose and the agent's toolset comes from its preset. If your
+# agent must use tools, the channel row belongs in the AGENT PRESET, not here —
+# a row in the profile layer composes cleanly, reports as mounted, and never
+# reaches the agent. This file exists so the plugin is installable in one
+# command; see the README for the preset placement.
+- insert:
+    - name: dsh-telegram-multiagent
+      config:
+        # Path to a file holding the bot token. Preferred over a literal token.
+        tokenFile: /etc/dsh/bot.token
+        # Where THIS agent's harness is installed — platform packages resolve
+        # from here, so one shared module can serve several agents.
+        appDir: /opt/agent/app
+        # Empty means everyone can talk to an agent that usually has shell
+        # access. Set it.
+        allowedUsers: []
