@@ -1,0 +1,229 @@
+#!/usr/bin/python3
+"""oom-watch — сторож за МОЛЧАЛИВЫМИ убийствами по памяти (cgroup memory.max).
+
+Сигнал — ЯДЕРНЫЙ лог: он переживает пересоздание cgroup. Счётчик
+memory.events.oom_kill НЕ годится — он обнуляется, когда systemd пересоздаёт
+cgroup после рестарта, и убийство проходило бы молча (поймано намеренным
+испытанием).
+
+🔴 Ядро печатает ОДНО убийство НЕСКОЛЬКИМИ строками: служба (oom_memcg) в одной,
+числа (anon-rss) — в другой, «Memory cgroup out of memory: Killed process».
+Склейка «последняя увиденная строка» при двух событиях подряд даёт ЛОЖНУЮ пару:
+имя одной службы с числами другой. Поэтому строки связываются ПО НОМЕРУ ПРОЦЕССА
+— он есть в обеих. Не связалось — «служба не определена», ближайшая НЕ
+подставляется: молчание честнее уверенного вранья.
+
+Настройка — только через окружение, чтобы файл был одинаков на всех машинах:
+  OOM_WATCH_UNITS  — список юнитов через пробел; ПУСТО (умолчание) = тревожить на любой;
+  OOM_WATCH_ALERT  — команда внешней тревоги, получает текст на stdin; пусто = только журнал;
+  OOM_WATCH_STATE  — каталог состояния (умолчание /var/lib/oom-watch).
+"""
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+from datetime import datetime
+
+STATE_DIR = os.environ.get("OOM_WATCH_STATE", "/var/lib/oom-watch")
+CURSOR = os.path.join(STATE_DIR, "cursor")
+ALERT_CMD = os.environ.get("OOM_WATCH_ALERT", "")
+# Пустой список = тревожим на ЛЮБОЙ memory-cgroup OOM. Так безопаснее по умолчанию:
+# забытый в списке юнит — это молчание ровно там, где сторож и нужен.
+UNITS = os.environ.get("OOM_WATCH_UNITS", "").split()
+HOST = socket.gethostname()
+
+
+def notify(text):
+    # Громко в журнал — ВСЕГДА (главный канал, не зависящий от сети).
+    print(text, file=sys.stderr, end="")
+    if not ALERT_CMD:
+        return
+    # Тревога наружу — если канал есть. Нет канала / не сработал — НЕ падаем и НЕ молчим.
+    if os.access(ALERT_CMD, os.X_OK):
+        r = subprocess.run([ALERT_CMD], input=text, capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"🔴 OOM-KILL: канал тревоги {ALERT_CMD} не сработал — остаётся только журнал",
+                  file=sys.stderr)
+    else:
+        print(f"🔴 OOM-KILL: канал тревоги {ALERT_CMD} недоступен — остаётся только журнал",
+              file=sys.stderr)
+
+
+def current_cursor():
+    out = subprocess.run(["journalctl", "-k", "--no-pager", "-n", "1", "--show-cursor"],
+                         capture_output=True, text=True)
+    m = re.search(r"^-- cursor: (.*)$", out.stdout, re.M)
+    return m.group(1).strip() if m else ""
+
+
+def unit_of(msg):
+    """Имя юнита из строки ядра.
+
+    🔴 Берём ПОСЛЕДНИЙ сегмент пути cgroup, а не «то, что сразу после /system.slice/».
+    Юнит может лежать во вложенном slice — шаблонные юниты и всё, что systemd
+    группирует: /system.slice/system-foo.slice/foo@bar.service. Привязка к первому
+    сегменту давала бы для них неузнанное имя, фильтр по списку глушил бы тревогу,
+    и сторож молчал бы ровно на тех службах, ради которых заведён.
+    """
+    m = re.search(r"oom_memcg=(\S+?)(?:,|$)", msg or "")
+    if not m:
+        return None
+    seg = m.group(1).rstrip("/").split("/")[-1]
+    return seg if seg.endswith(".service") else None
+
+
+def prop(unit, name):
+    """Прочитать свойство юнита; любая неудача — None, НЕ роняем тревогу."""
+    try:
+        r = subprocess.run(["systemctl", "show", unit, "-p", name, "--value"],
+                           capture_output=True, text=True, timeout=3)
+        v = r.stdout.strip()
+        return v if v else None
+    except Exception:
+        return None
+
+
+def fmt_bytes(b):
+    if b >= 1024 ** 3:
+        return f"{b / 1024 ** 3:.1f} ГБ"
+    if b >= 1024 ** 2:
+        return f"{b / 1024 ** 2:.1f} МБ"
+    if b >= 1024:
+        return f"{b / 1024:.0f} КБ"
+    return f"{b} Б"
+
+
+NO_LIMIT = ("", None, "infinity", "max", "18446744073709551615")
+
+
+def fmt_kb(kb_str):
+    try:
+        return fmt_bytes(int(kb_str) * 1024)
+    except Exception:
+        return "не определено"
+
+
+def fmt_memmax(val):
+    if val in NO_LIMIT:
+        return "не задан"
+    try:
+        return fmt_bytes(int(val))
+    except Exception:
+        return "не определено"
+
+
+def fmt_restart(val):
+    if val in ("", None, "no"):
+        return f"не перезапустится сама (Restart={val or 'no'})"
+    if val == "always":
+        return "перезапустится сама (Restart=always)"
+    if val == "on-failure":
+        return "перезапустится сама при сбое (Restart=on-failure)"
+    return f"Restart={val}"
+
+
+def fmt_time(ts_us):
+    try:
+        return datetime.fromtimestamp(int(ts_us) / 1e6).strftime("%d.%m.%Y %H:%M:%S")
+    except Exception:
+        return "не определено"
+
+
+def build_alert(unit, task, pid, anon_kb, ts_us):
+    """Текст тревоги. Отвечает на вопрос «ну и что?», а не только «кого убили»."""
+    lines = [f"🔴 Убийство по памяти на {HOST}"]
+    if unit:
+        lines.append(f"Служба: {unit} — «{prop(unit, 'Description') or 'не определено'}»"
+                     f" (от имени {prop(unit, 'User') or 'root'})")
+    else:
+        # Пара строк не сошлась по номеру процесса. Ближайшую службу НЕ подставляем.
+        lines.append("Служба: не определена (строки ядра не сошлись по номеру процесса)")
+    lines.append(f"Убит процесс: {task} (номер {pid}), занимал "
+                 f"{fmt_kb(anon_kb) if anon_kb else 'не определено'}")
+    if unit:
+        mm = prop(unit, "MemoryMax")
+        pct = None
+        if anon_kb and mm not in NO_LIMIT:
+            try:
+                pct = int(anon_kb) * 1024 / int(mm) * 100
+            except Exception:
+                pct = None
+        lines.append(f"Предел службы: {fmt_memmax(mm)}"
+                     + (f" — выбран на {pct:.0f}%" if pct is not None else ""))
+        lines.append(f"Дальше: {fmt_restart(prop(unit, 'Restart'))}")
+    lines.append(f"Время: {fmt_time(ts_us)}")
+    return "\n".join(lines) + "\n"
+
+
+os.makedirs(STATE_DIR, exist_ok=True)
+
+# ПЕРВЫЙ запуск: зафиксировать позицию журнала и НЕ трубить о прошлом.
+if not os.path.exists(CURSOR):
+    c = current_cursor()
+    if c:
+        with open(CURSOR, "w") as f:
+            f.write(c)
+        print("🔴 OOM-KILL: сторож поднят, слежу за ядерным логом с этой позиции", file=sys.stderr)
+    sys.exit(0)
+
+with open(CURSOR) as f:
+    cur = f.read().strip()
+
+out = subprocess.run(["journalctl", "-k", "--no-pager", "--output=json", "--after-cursor=" + cur],
+                     capture_output=True, text=True)
+if out.returncode != 0:
+    print(f"🔴 OOM-KILL: не удалось прочитать ядерный лог (rc={out.returncode})", file=sys.stderr)
+    sys.exit(0)
+
+entries = []
+for line in out.stdout.splitlines():
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        entries.append(json.loads(line))
+    except Exception:
+        continue
+
+# Карта «номер процесса -> служба» из строк «oom-kill:…»: в них есть и oom_memcg, и pid.
+kill_map = {}
+for e in entries:
+    msg = e.get("MESSAGE", "")
+    if "oom-kill:constraint=CONSTRAINT_MEMCG" not in msg:
+        continue
+    p = re.search(r"\bpid=(\d+)", msg)
+    if not p:
+        continue
+    t = re.search(r"\btask=([^,]+)", msg)
+    kill_map[p.group(1)] = {
+        "unit": unit_of(msg),
+        "task": t.group(1) if t else None,
+        "ts": e.get("__REALTIME_TIMESTAMP"),
+    }
+
+# Строки «Memory cgroup out of memory: Killed process …» — в них числа. Связь ПО PID.
+for e in entries:
+    msg = e.get("MESSAGE", "")
+    if "Memory cgroup out of memory: Killed process" not in msg:
+        continue
+    m = re.search(r"Killed process (\d+) \((\S+?)\)", msg)
+    if not m:
+        continue
+    pid, name = m.group(1), m.group(2)
+    a = re.search(r"anon-rss:(\d+)kB", msg)
+    anon_kb = a.group(1) if a else None
+    info = kill_map.get(pid) or {}
+    unit = info.get("unit")
+    # Фильтр по списку — только для УЗНАННОЙ службы. Неузнанная тревожит ВСЕГДА:
+    # иначе дефект разбора превращается в молчание, а это худший исход для сторожа.
+    if unit and UNITS and unit not in UNITS:
+        continue
+    notify(build_alert(unit, info.get("task") or name, pid, anon_kb,
+                       info.get("ts") or e.get("__REALTIME_TIMESTAMP")))
+
+c = current_cursor()
+if c:
+    with open(CURSOR, "w") as f:
+        f.write(c)
