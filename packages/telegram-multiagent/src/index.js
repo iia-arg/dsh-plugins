@@ -99,6 +99,7 @@ export function apply(ctx, config = {}) {
   // Имя агента — только для журнала: при нескольких ботах на машине нужно
   // видеть, чья строка. К логике отношения не имеет.
   const who = config.agentName || 'telegram';
+  const who_ = config.agentName || 'агент';   // для текстов, видимых собеседнику
   const log = (m) => console.error(`[${who}] ${m}`);
 
   const token = readTokenFrom(config, log);
@@ -114,6 +115,92 @@ export function apply(ctx, config = {}) {
 
   const tg = new TelegramClient(token, log);
   const chats = new Map();          // chatId → { handle, sessionId }
+  // 🔴 ОТКУДА ПРИШЁЛ ПОСЛЕДНИЙ ВОПРОС (20.08.2026). Владелец захотел общаться с
+  // ОДНИМ экземпляром агента, а не с двумя копиями: раньше чат в мессенджере и
+  // межагентский канал были РАЗНЫМИ сессиями, то есть буквально двумя агентами
+  // с разной памятью разговора. Теперь их можно свести в одну сессию — но тогда
+  // ответ надо возвращать туда, откуда пришёл вопрос, иначе ответ координатору
+  // улетит в чат владельца. Ключ — сессия, значение — 'a2a' или 'tg'.
+  const lastOrigin = new Map();
+
+  // 🔴 СЛИЯНИЕ КАНАЛОВ В ОДНУ ПАМЯТЬ (20.08.2026, решение Александра).
+  // mergeChatIntoA2A: <идентификатор чата> — сообщения этого чата попадают НЕ в
+  // свою сессию `telegram-<чат>`, а в служебную. Тогда владелец и координатор
+  // говорят с ОДНИМ агентом и одной памятью разговора, а различает он их по
+  // пометке канала (её ставит код доставки, подделать нельзя).
+  // Побочно это лечит столкновение: второй экземпляр набора не монтируется
+  // вовсе, а значит имя инструмента памяти не может оказаться занятым.
+  const MERGE_CHAT = config.mergeChatIntoA2A ? String(config.mergeChatIntoA2A) : null;
+  // Куда отвечать в мессенджер, если сессия общая: sessionId → числовой чат.
+  const tgChatFor = new Map();
+
+  // 🔴 КОМУ АДРЕСОВАН ОТВЕТ (21.08.2026, задача Александра).
+  // Пометка на ВХОДЕ решает «кто спросил», но не решает «кому отвечено»: когда в
+  // одной памяти сидят двое, ответ без адреса читается обоими как свой. И хуже:
+  // маршрут «отвечаем последнему спросившему» ломается, если второй вопрос
+  // пришёл, пока первый ещё считается, — ответ уедет не тому.
+  // Поэтому происхождение привязано к ХОДУ, а не к последнему сообщению: на
+  // входе кладём в очередь, на turn/start снимаем, ответ метим тем, что сняли.
+  // ── НАСТРОЙКА ДОСТАВКИ, ОТДЕЛЬНЫМ ФАЙЛОМ (21.08.2026, задача Александра)
+  //
+  // Файл живёт ВНЕ модуля и переживает его обновление: код можно переписать,
+  // перевыпустить, поставить заново — настройка останется. Читается на лету,
+  // по времени изменения: поправил файл — следующий ответ уже по-новому,
+  // перезапуск не нужен.
+  //
+  //   { "deliveryMode": "personal" | "broadcast" | "owner-all" }
+  //     personal   — каждый видит только свои ответы (по умолчанию);
+  //     broadcast  — оба видят всё, с пометкой кому адресовано;
+  //     owner-all  — владелец видит всё, координатор только своё.
+  //
+  // 🔴 Умолчание выбрано самым тихим: сломанный или пустой файл НЕ должен
+  // внезапно раскрывать переписку в чужой канал. Ошибка чтения = personal,
+  // и о ней говорим в журнал ГРОМКО, а не молча.
+  const SETTINGS_FILE = config.settingsFile
+    || (config.tokenFile ? String(config.tokenFile).replace(/\.token$/, '.json') : null);
+  let _setCache = { mtime: 0, data: {} };
+  function settings() {
+    if (!SETTINGS_FILE) return {};
+    try {
+      const st = fs.statSync(SETTINGS_FILE);
+      if (st.mtimeMs !== _setCache.mtime) {
+        _setCache = { mtime: st.mtimeMs, data: JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
+        log(`настройки перечитаны из ${SETTINGS_FILE}: режим доставки = ${_setCache.data.deliveryMode ?? 'personal (умолчание)'}`);
+      }
+      return _setCache.data ?? {};
+    } catch (e) {
+      if (_setCache.mtime !== -1) { log(`🔴 настройки не прочитаны (${SETTINGS_FILE}): ${e?.message ?? e} — работаю в режиме personal`); _setCache = { mtime: -1, data: {} }; }
+      return {};
+    }
+  }
+  const deliveryMode = () => {
+    const m = settings().deliveryMode;
+    return (m === 'broadcast' || m === 'owner-all') ? m : 'personal';
+  };
+  /** Нужна ли копия во ВТОРОЙ канал при ответе, адресованном origin. */
+  const copyTo = (origin) => {
+    const m = deliveryMode();
+    if (m === 'broadcast') return origin === 'a2a' ? 'tg' : 'a2a';
+    if (m === 'owner-all') return origin === 'a2a' ? 'tg' : null;  // владельцу копию чужого
+    return null;
+  };
+
+  const pendingAsk = new Map();   // sessionId → очередь {origin, who, q}
+  const turnAsk = new Map();      // sessionId → чей ход считается сейчас
+  const pushAsk = (sid, ask) => { const q = pendingAsk.get(sid) ?? []; q.push(ask); pendingAsk.set(sid, q); };
+  const quote = (s) => { const one = String(s ?? '').replace(/\s+/g, ' ').trim();
+    return one.length > 60 ? one.slice(0, 60) + '…' : one; };
+  const replyHeader = (sid) => { const a = turnAsk.get(sid);
+    return a ? `[ответ: ${a.who}] на «${quote(a.q)}»\n\n` : ''; };
+
+  // 🔴 ЧТОБЫ ПОМЕТКЕ МОЖНО БЫЛО ВЕРИТЬ, ЕЁ НАДО СНАЧАЛА ВЫРЕЗАТЬ (20.08.2026).
+  // Пометку ставит код доставки — но если во входящем тексте УЖЕ есть строка
+  // такого вида, в сообщении окажется две пометки, и вторая (чужая, напечатанная
+  // руками) будет выглядеть так же убедительно. Поэтому: сперва удаляем из текста
+  // всё похожее на пометку, потом ставим свою. Тогда единственный, кто может её
+  // написать, — этот модуль, и подделать её, напечатав, нельзя.
+  const ORIGIN_MARK = /^\[\s*(?:служебный канал|личный чат)[^\]]*\]\s*$/gim;
+  const stripMark = (s) => String(s).replace(ORIGIN_MARK, '').trimStart();
   const sessionToChat = new Map();  // sessionId → chatId
 
   /** Один чат — один агент. Создаём лениво, при первом сообщении. */
@@ -256,17 +343,59 @@ export function apply(ctx, config = {}) {
     return entry;
   }
 
+  /** Копия ВОПРОСА во второй канал (21.08.2026: владелец хочет видеть и входящие,
+   *  а не только ответы — иначе видна половина разговора и она непонятна). */
+  function copyAsk(origin, who, q) {
+    const target = copyTo(origin);
+    if (!target) return;
+    const text = `📨 вопрос от: ${who}\n\n${q}`;
+    log(`[копия] вопрос от ${who} → ${target} (режим ${deliveryMode()})`);
+    if (target === 'tg') {
+      const chat = MERGE_CHAT ?? [...tgChatFor.values()][0];
+      if (chat) tg.send(chat, text)
+        .then(() => log(`[копия] вопрос доставлен в Telegram чат ${chat}`))
+        .catch((e) => log(`🔴 копия вопроса в Telegram не ушла: ${e?.message ?? e}`));
+      else log('копию вопроса в Telegram отправить некуда: чат владельца неизвестен');
+    } else if (A2A_OUT) {
+      try { fs.mkdirSync(A2A_OUT, { recursive: true }); fs.writeFileSync(path.join(A2A_OUT, `${Date.now()}-ask.txt`), text); }
+      catch (e) { log(`🔴 копия вопроса в служебный канал не ушла: ${e?.message ?? e}`); }
+    }
+  }
+
+  /** Копия ответа во второй канал — с пометкой, что это не тебе. */
+  function sendCopy(target, sid, body) {
+    const head = replyHeader(sid).trim();
+    const text = `📄 копия (адресовано не вам)\n${head}\n\n${body}`;
+    log(`[копия] ответ → ${target} (режим ${deliveryMode()})`);
+    if (target === 'tg') {
+      const chat = MERGE_CHAT ?? [...tgChatFor.values()][0];
+      if (chat) tg.send(chat, text)
+        .then(() => log(`[копия] ответ доставлен в Telegram чат ${chat}`))
+        .catch((e) => log(`🔴 копия в Telegram не ушла: ${e?.message ?? e}`));
+      else log('копию в Telegram отправить некуда: чат владельца неизвестен');
+    } else if (A2A_OUT) {
+      try { fs.mkdirSync(A2A_OUT, { recursive: true }); fs.writeFileSync(path.join(A2A_OUT, `${Date.now()}-copy.txt`), text); }
+      catch (e) { log(`🔴 копия в служебный канал не ушла: ${e?.message ?? e}`); }
+    }
+  }
+
   // ── ВЫХОД: события сессии → сообщения в Telegram
   ctx.on('session/event', (session, event) => {
     // 🔴 DEBUG 2026-08-18: все типы событий
     log(`[event] type=${event.type} session.id=${session?.id} knownSessions=${[...sessionToChat.keys()].join('|')}`);
-    const chatId = sessionToChat.get(String(session?.id ?? ''));
+    const sid = String(session?.id ?? '');
+    // 🔴 При слиянии sessionToChat указывает на КЛЮЧ служебной сессии, а не на
+    // числовой чат — отправка по нему молча не дойдёт. Настоящий чат берём из
+    // карты, заполняемой на входе из мессенджера.
+    const chatId = tgChatFor.get(sid) ?? sessionToChat.get(sid);
     if (chatId === undefined) {
       if (event.type === 'assistant/message') log(`[event] chatId undefined для session ${session?.id} — игнорирую`);
       return;
     }
     try {
       if (event.type === 'turn/start') {
+        const q = pendingAsk.get(sid) ?? [];
+        if (q.length) turnAsk.set(sid, q.shift());
         void tg.typing(chatId);
       } else if (event.type === 'turn/end' && event.data?.reason?.kind === 'error') {
         // 🔴 18.08.2026: ход может оборваться с внятной ошибкой, и она приходит
@@ -285,14 +414,16 @@ export function apply(ctx, config = {}) {
         } else {
           void tg.send(chatId, `Не смог выполнить ход: ${why}`);
         }
-      } else if (event.type === 'assistant/message' && chatId === A2A_CHAT) {
-        // ответ для координатора — в файл, Telegram тут ни при чём
+      } else if (event.type === 'assistant/message'
+                 && (turnAsk.get(sid)?.origin ?? lastOrigin.get(sid) ?? (chatId === A2A_CHAT ? 'a2a' : 'tg')) === 'a2a') {
+        // ответ координатору — в файл, Telegram тут ни при чём
         const blocks = event.data?.message?.content ?? [];
         const text = blocks.filter((b) => b?.type === 'text').map((b) => b.text).join('\n').trim();
         if (text) {
           try {
             fs.mkdirSync(A2A_OUT, { recursive: true });
-            fs.writeFileSync(path.join(A2A_OUT, `${Date.now()}.txt`), text);
+            fs.writeFileSync(path.join(A2A_OUT, `${Date.now()}.txt`), replyHeader(sid) + text);
+            { const c = copyTo('a2a'); if (c) sendCopy(c, sid, text); }
             log(`[a2a] ответ координатору записан (${text.length} знаков)`);
           } catch (e) { log(`[a2a] не смог записать ответ: ${e?.message ?? e}`); }
         }
@@ -306,7 +437,8 @@ export function apply(ctx, config = {}) {
           .trim();
         if (text) {
           log(`[event] отправляю в Telegram chatId=${chatId} (${text.length} знаков)`);
-          tg.send(chatId, text).catch((e) => log(`🔴 send к chatId=${chatId} не удался: ${e?.message ?? e}`));
+          { const c = copyTo('tg'); if (c) sendCopy(c, sid, text); }
+          tg.send(chatId, replyHeader(sid) + text).catch((e) => log(`🔴 send к chatId=${chatId} не удался: ${e?.message ?? e}`));
         }
       }
     } catch (e) {
@@ -332,7 +464,10 @@ export function apply(ctx, config = {}) {
     let tmpAudio = null;
     try {
       tmpAudio = await downloadTelegramFile(fileId);
-      // внешняя команда расшифровки, задаётся настройкой transcribeCommand
+      // transcribe-local-shared — наша цепочка: sage-corrector → transcribe-whispercpp-core → whisper-warm.service
+      // 🔴 Внешняя команда расшифровки — НАСТРОЙКА, а не зашитый путь: у каждого
+      // своя цепочка. Не задана — голосовые просто не расшифровываются, и об этом
+      // говорится в журнал, а не молча игнорируется.
       if (!config.transcribeCommand) {
         log('голосовые не расшифровываются: не задан config.transcribeCommand');
         return null;
@@ -376,7 +511,7 @@ export function apply(ctx, config = {}) {
       // Отказываем И поднимаем тревогу владельцу — молча отказывать нельзя:
       // сам факт попытки это событие безопасности, а не бытовая мелочь.
       const who = msg.from ?? {};
-      const alert = `🔴 Чужой написал агенту\n` +
+      const alert = `🔴 Чужой написал агенту ${who_}\n` +
         `id: ${userId}\n` +
         `имя: ${who.first_name ?? '?'} ${who.last_name ?? ''}`.trim() + `\n` +
         `ник: ${who.username ? '@' + who.username : 'нет'}\n` +
@@ -392,7 +527,7 @@ export function apply(ctx, config = {}) {
 
     // Команды обрабатываем сами, до агента.
     if (text === '/start' || text === '/help') {
-      await tg.send(chatId, 'агент на связи. Пишите задачу обычным сообщением.\n' +
+      await tg.send(chatId, `${who_} на связи. Пишите задачу обычным сообщением.\n` +
         '/new — начать разговор заново.');
       return;
     }
@@ -407,13 +542,23 @@ export function apply(ctx, config = {}) {
       return;
     }
 
-    const { handle } = await agentFor(chatId);
+    // При включённом слиянии владелец попадает в ту же сессию, что и служебный
+    // канал: одна память на двоих. Ответ при этом обязан вернуться в мессенджер,
+    // поэтому запоминаем настоящий чат отдельно.
+    const routeKey = (MERGE_CHAT && String(chatId) === MERGE_CHAT) ? A2A_CHAT : chatId;
+    const { handle, sessionId } = await agentFor(routeKey);
+    tgChatFor.set(sessionId, chatId);
     // 🔴 ТОЛЬКО send(), НЕ followup(). Проверено на установленной версии 0.1.0-rc.7:
     // followup объявлен в описании типов, но В КОДЕ ЕГО НЕТ — вызов молча не делает
     // ничего, и снаружи это выглядит как «бот принял сообщение и замолчал».
     // Правильный вызов подсмотрен в самом продукте: this.send(input, "next-turn", true).
     //   next-turn — обычный следующий ход;
     //   true      — разбудить исполнителя, иначе сообщение будет ждать вечно.
+    lastOrigin.set(sessionId, 'tg');
+    pushAsk(sessionId, { origin: 'tg', who: msg.from?.first_name ?? 'владелец', q: text });
+    copyAsk('tg', msg.from?.first_name ?? 'владелец', text);
+    // Симметрично: сообщение из мессенджера помечается как пришедшее из чата.
+    text = `[личный чат, от ${msg.from?.first_name ?? 'владельца'}]\n${stripMark(text)}`;
     const userMsg = platform.createUserMessage({
       content: [{ type: 'text', text }],
       source: { kind: 'user' },
@@ -476,7 +621,17 @@ export function apply(ctx, config = {}) {
       }
       if (!text) continue;
       try {
-        const { handle } = await agentFor(A2A_CHAT);
+        const { handle, sessionId: a2aSessionId } = await agentFor(A2A_CHAT);
+        lastOrigin.set(a2aSessionId, 'a2a');
+        pushAsk(a2aSessionId, { origin: 'a2a', who: 'координатор', q: text });
+        copyAsk('a2a', 'координатор', text);
+        // 🔴 ПОМЕТКУ СТАВИТ КАНАЛ, А НЕ ОТПРАВИТЕЛЬ (20.08.2026). Когда личный
+        // чат владельца и служебный канал сведены в ОДНУ сессию, агент не может
+        // отличить, кто говорит: подпись в тексте подделывается тривиально.
+        // Наш агент на этом верно упёрся — отказался выполнять просьбу,
+        // подписанную чужим именем, пришедшую не из своего канала. Значит
+        // происхождение обязан сообщать код доставки, которому подделать нечем.
+        text = `[служебный канал, от координатора]\n${stripMark(text)}`;
         handle.agent.send(platform.createUserMessage({
           content: [{ type: 'text', text }],
           source: { kind: 'user' },
