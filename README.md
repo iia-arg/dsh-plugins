@@ -15,7 +15,6 @@ existed.
 | [`telegram-multiagent`](packages/telegram-multiagent) | Talk to your agent from Telegram. One shared module, per-agent config. Text and voice, whitelist, per-chat sessions, optional file-based agent-to-agent channel. |
 | [`voice-stack`](packages/voice-stack) | Local speech recognition on the machine's GPU — the agent hears voice messages without sending audio to anyone's cloud. Not a plugin: a service with a one-line command contract. |
 | [`omega-memory`](packages/omega-memory) | Long-term memory for agents, on your machine: service account model, systemd unit, and the wiring that actually reaches the agent. |
-| [`oom-watch`](packages/oom-watch) | Learn when the memory limit killed your agent. Reads the kernel journal, not the cgroup counter that resets on restart. Not a plugin: a systemd timer. |
 
 More will land here as we build them. One repository, several packages — a separate repo per plugin
 is not worth the overhead.
