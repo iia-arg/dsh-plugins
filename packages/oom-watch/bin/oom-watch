@@ -1,0 +1,112 @@
+#!/usr/bin/python3
+"""oom-watch — сторож за МОЛЧАЛИВЫМИ убийствами по памяти (cgroup memory.max).
+
+Сигнал — ЯДЕРНЫЙ лог «Memory cgroup out of memory»: он переживает пересоздание cgroup.
+Счётчик memory.events.oom_kill НЕ годится — он обнуляется, когда systemd пересоздаёт
+cgroup после рестарта, и убийство проходило бы молча (поймано намеренным испытанием).
+
+Настройка — только через окружение, чтобы файл был одинаков на всех машинах:
+  OOM_WATCH_UNITS  — список юнитов через пробел; ПУСТО (умолчание) = тревожить на любой;
+  OOM_WATCH_ALERT  — команда внешней тревоги, получает текст одним доводом; пусто = только журнал;
+  OOM_WATCH_STATE  — каталог состояния (умолчание /var/lib/oom-watch).
+"""
+import os
+import re
+import subprocess
+import sys
+
+STATE_DIR = os.environ.get("OOM_WATCH_STATE", "/var/lib/oom-watch")
+CURSOR = os.path.join(STATE_DIR, "cursor")
+ALERT_CMD = os.environ.get("OOM_WATCH_ALERT", "")
+# Пустой список = тревожим на ЛЮБОЙ memory-cgroup OOM. Так безопаснее по умолчанию:
+# забытый в списке юнит — это молчание ровно там, где сторож и нужен.
+UNITS = os.environ.get("OOM_WATCH_UNITS", "").split()
+
+
+def notify(msg):
+    # Громко в журнал — ВСЕГДА (главный канал, не зависящий от сети).
+    print(f"🔴 OOM-KILL: {msg}", file=sys.stderr)
+    if not ALERT_CMD:
+        return
+    # Тревога наружу — если канал есть. Нет канала / не сработал — НЕ падаем и НЕ молчим.
+    if os.access(ALERT_CMD, os.X_OK):
+        r = subprocess.run([ALERT_CMD, f"OOM-kill: {msg}"], capture_output=True)
+        if r.returncode != 0:
+            print(f"🔴 OOM-KILL: канал тревоги {ALERT_CMD} не сработал — остаётся только журнал", file=sys.stderr)
+    else:
+        print(f"🔴 OOM-KILL: канал тревоги {ALERT_CMD} недоступен — остаётся только журнал", file=sys.stderr)
+
+
+def current_cursor():
+    out = subprocess.run(["journalctl", "-k", "--no-pager", "-n", "1", "--show-cursor"],
+                         capture_output=True, text=True)
+    m = re.search(r"^-- cursor: (.*)$", out.stdout, re.M)
+    return m.group(1).strip() if m else ""
+
+
+def unit_of(pending):
+    """Имя юнита из строки ядра.
+
+    🔴 Берём ПОСЛЕДНИЙ сегмент пути cgroup, а не «то, что сразу после /system.slice/».
+    Юнит может лежать во вложенном slice — шаблонные юниты и всё, что systemd
+    группирует: /system.slice/system-foo.slice/foo@bar.service. Привязка к первому
+    сегменту давала бы для них неузнанное имя, фильтр по списку глушил бы тревогу,
+    и сторож молчал бы ровно на тех службах, ради которых заведён.
+    """
+    m = re.search(r"oom_memcg=(\S+?)(?:,|$)", pending or "")
+    if not m:
+        return ""
+    return m.group(1).rstrip("/").split("/")[-1]
+
+
+os.makedirs(STATE_DIR, exist_ok=True)
+
+# ПЕРВЫЙ запуск: зафиксировать позицию журнала и НЕ трубить о прошлом.
+if not os.path.exists(CURSOR):
+    c = current_cursor()
+    if c:
+        with open(CURSOR, "w") as f:
+            f.write(c)
+        print("🔴 OOM-KILL: сторож поднят, слежу за ядерным логом с этой позиции", file=sys.stderr)
+    else:
+        # Без курсора состояние не создаётся, и КАЖДЫЙ запуск будет «первым» — то есть
+        # сторож не следит вообще. Обычная причина: нет прав на ядерный журнал.
+        print("🔴 OOM-KILL: не удалось получить позицию ядерного лога — сторож НЕ СЛЕДИТ "
+              "(нужны права на journalctl -k)", file=sys.stderr)
+    sys.exit(0)
+
+with open(CURSOR) as f:
+    cur = f.read().strip()
+
+out = subprocess.run(["journalctl", "-k", "--after-cursor=" + cur, "--no-pager"],
+                     capture_output=True, text=True)
+if out.returncode != 0:
+    # не можем читать журнал — это само по себе тревога, но не падаем
+    print(f"🔴 OOM-KILL: не удалось прочитать ядерный лог (journalctl rc={out.returncode})", file=sys.stderr)
+    sys.exit(0)
+
+new_cursor = ""
+pending = None  # строка «oom-kill:…MEMCG…» в ожидании парной «Memory cgroup out of memory»
+for line in out.stdout.splitlines():
+    if line.startswith("-- cursor: "):
+        new_cursor = line[len("-- cursor: "):]
+        continue
+    if "oom-kill:constraint=CONSTRAINT_MEMCG" in line:
+        pending = line
+        continue
+    if "Memory cgroup out of memory: Killed process" in line:
+        unit = unit_of(pending) or "?"
+        # Неузнанный юнит тревожит ВСЕГДА: лишнее сообщение дешевле пропущенной смерти.
+        if UNITS and unit != "?" and unit not in UNITS:
+            pending = None
+            continue
+        t = re.search(r"task=([^,]+)", pending or "")
+        how = re.search(r"Killed process \d+ \(\S+\) (.*)", line)
+        notify(f"{unit}: ядро убило процесс {t.group(1) if t else '?'} — {how.group(1) if how else line}")
+        pending = None
+
+if not new_cursor:
+    new_cursor = current_cursor()
+if new_cursor:
+    with open(CURSOR, "w") as f:
+        f.write(new_cursor)

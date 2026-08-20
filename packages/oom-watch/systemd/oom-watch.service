@@ -1,0 +1,15 @@
+[Unit]
+Description=OOM watchdog: catch silent kills by the memory limit
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/oom-watch
+# Runs as root on purpose: the kernel journal (journalctl -k) is not readable
+# otherwise, and a watchdog that cannot read its own signal fails silently.
+
+# Optional. Empty list = alert on ANY memory-cgroup OOM, which is the safe default:
+# a unit forgotten in the list is silence exactly where the watchdog was needed.
+#Environment=OOM_WATCH_UNITS=my-agent.service other.service
+# Optional external alert channel. Gets the message as a single argument.
+# Without it the watchdog still shouts into the journal.
+#Environment=OOM_WATCH_ALERT=/usr/local/bin/my-alert
