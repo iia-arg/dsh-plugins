@@ -15,22 +15,50 @@ export class TelegramClient {
     this.offset = 0;
   }
 
-  async call(method, payload, timeoutMs = 15000) {
-    const ctl = new AbortController();
-    const t = setTimeout(() => ctl.abort(), timeoutMs);
-    try {
-      const res = await fetch(`${API}${this.token}/${method}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload ?? {}),
-        signal: ctl.signal,
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(`${method}: ${data.description ?? 'неизвестная ошибка'}`);
-      return data.result;
-    } finally {
-      clearTimeout(t);
+  /**
+   * 🔴 ПОВТОРЫ ОБЯЗАТЕЛЬНЫ (21.08.2026). Сеть до Telegram бывает дёрганой:
+   * у нас `fetch failed` случается 6-10 раз в час. Отправка без повтора теряет
+   * сообщение НАВСЕГДА с одной неудачной попытки, и снаружи это выглядит как
+   * «агент не ответил» — мы потратили вечер, ища причину в коде и в чужих ботах,
+   * а терялись именно отправки. Поймано на копии вопроса, которая не дошла,
+   * когда соседняя отправка четырьмя секундами позже прошла.
+   *
+   * Повторяем только СЕТЕВЫЕ сбои и 5xx. Отказ самого Telegram (ok:false —
+   * нет прав, чат не найден, текст пуст) повторять бессмысленно: он воспроизведётся.
+   * Длинный опрос НЕ повторяем: он и так вызывается в цикле, повтор лишь
+   * задержит следующий заход.
+   */
+  async call(method, payload, timeoutMs = 15000, attempts = 3) {
+    let lastErr;
+    for (let n = 1; n <= attempts; n++) {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), timeoutMs);
+      try {
+        const res = await fetch(`${API}${this.token}/${method}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload ?? {}),
+          signal: ctl.signal,
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          const err = new Error(`${method}: ${data.description ?? 'неизвестная ошибка'}`);
+          err.fromTelegram = true;           // отказ по существу — не повторяем
+          throw err;
+        }
+        if (n > 1) this.log(`${method}: удалось с попытки ${n}`);
+        return data.result;
+      } catch (e) {
+        lastErr = e;
+        if (e?.fromTelegram || n === attempts) break;
+        const wait = 400 * n;                // 0.4с, 0.8с — растущая пауза
+        this.log(`${method}: попытка ${n} не удалась (${e?.message ?? e}), повтор через ${wait} мс`);
+        await new Promise((r) => setTimeout(r, wait));
+      } finally {
+        clearTimeout(t);
+      }
     }
+    throw lastErr;
   }
 
   /** Длинный опрос. Возвращает пришедшие обновления и двигает смещение. */
@@ -38,7 +66,7 @@ export class TelegramClient {
     // timeout запроса больше, чем у сервера, иначе рвём его же длинный опрос
     const updates = await this.call('getUpdates',
       { offset: this.offset, timeout: timeoutSec, allowed_updates: ['message'] },
-      (timeoutSec + 10) * 1000);
+      (timeoutSec + 10) * 1000, 1);
     for (const u of updates) {
       if (u.update_id >= this.offset) this.offset = u.update_id + 1;
     }
