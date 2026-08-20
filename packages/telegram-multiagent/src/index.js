@@ -68,7 +68,7 @@ function platformOf(config, log) {
  */
 const ACTIVE_POLLERS = new Map();
 
-export const name = 'dsh-telegram-channel';
+export const name = 'dsh-telegram-multiagent';
 export const inject = ['agents'];
 
 /**
@@ -564,5 +564,5 @@ export function apply(ctx, config = {}) {
       }
       log('снят последний монтаж — опрос остановлен');
     };
-  }, 'dsh-telegram-channel.poll');
+  }, 'dsh-telegram-multiagent.poll');
 }

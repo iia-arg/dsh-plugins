@@ -10,7 +10,7 @@ This is **not a harness plugin**. It is a machine service with a one-line contra
 <command> <audio-file> <language|auto>   →   transcript on stdout
 ```
 
-Anything that can run a command can use it. Our [`telegram-channel`](../telegram-channel) plugin
+Anything that can run a command can use it. Our [`telegram-multiagent`](../telegram-multiagent) plugin
 calls it through its `transcribeCommand` setting; a different channel, a cron job or a shell script
 works exactly the same way.
 

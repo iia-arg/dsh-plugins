@@ -12,7 +12,7 @@ existed.
 
 | Package | What it does |
 |---|---|
-| [`telegram-channel`](packages/telegram-channel) | Talk to your agent from Telegram. One shared module, per-agent config. Text and voice, whitelist, per-chat sessions, optional file-based agent-to-agent channel. |
+| [`telegram-multiagent`](packages/telegram-multiagent) | Talk to your agent from Telegram. One shared module, per-agent config. Text and voice, whitelist, per-chat sessions, optional file-based agent-to-agent channel. |
 | [`voice-stack`](packages/voice-stack) | Local speech recognition on the machine's GPU — the agent hears voice messages without sending audio to anyone's cloud. Not a plugin: a service with a one-line command contract. |
 | [`omega-memory`](packages/omega-memory) | Long-term memory for agents, on your machine: service account model, systemd unit, and the wiring that actually reaches the agent. |
 
@@ -25,7 +25,7 @@ Each package is independent:
 
 ```bash
 # inside your profile directory ($DSH_HOME/profiles/<name>)
-pnpm add dsh-telegram-channel
+pnpm add dsh-telegram-multiagent
 ```
 
 Then add the plugin row to your **agent preset** — each package README says exactly where and why.

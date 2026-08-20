@@ -21,7 +21,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/iia-arg/dsh-plugins.git",
-    "directory": "packages/telegram-channel"
+    "directory": "packages/telegram-multiagent"
   },
   "engines": {
     "node": ">=20"
