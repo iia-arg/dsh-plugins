@@ -453,8 +453,12 @@ export function apply(ctx, config = {}) {
     const url = `https://api.telegram.org/file/bot${token}/${filePath}`;
     const ext = path.extname(filePath) || '.oga';
     const tmp = path.join(os.tmpdir(), `dsh-voice-${Date.now()}${ext}`);
-    // curl доступен на хосте; fetch тоже можно, но curl проще для бинарника.
-    execFileSync('curl', ['-s', '-o', tmp, url]);
+    // 🔴 Скачиваем ВСТРОЕННЫМ fetch, а не curl: адрес содержит токен бота, а
+    // строка запуска процесса (/proc/<pid>/cmdline) читается ЛЮБЫМ пользователем
+    // машины. Через curl токен утекал бы при КАЖДОМ голосовом сообщении.
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`telegram file download: HTTP ${res.status}`);
+    fs.writeFileSync(tmp, Buffer.from(await res.arrayBuffer()));
     return tmp;
   }
 
