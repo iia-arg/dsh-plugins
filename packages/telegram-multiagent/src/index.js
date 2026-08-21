@@ -602,14 +602,43 @@ export function apply(ctx, config = {}) {
   const A2A_OUT = A2A_DIR ? path.join(A2A_DIR, 'out') : null;
   const A2A_CHAT = config.a2aSession || 'a2a';  // отдельная сессия, не смешивается с Telegram
 
+  // Берём простые текстовые форматы. Всё остальное НЕ берём — но и не
+  // проглатываем: имя отвергнутого файла называем в журнале. Поймано
+  // 21.08.2026: письмо с расширением .md пролежало во входящих 26 минут,
+  // и снаружи это выглядело как «агент не отвечает».
+  const A2A_EXT = ['.txt', '.md'];
+  // ГРАНИЦА СТОРОЖА: о каждом имени сообщаем ОДИН раз — опрос идёт
+  // каждые ~25 секунд, и повтор превратил бы защиту в шум. Файл убрали —
+  // имя забываем, положат снова — сообщим снова.
+  const a2aReported = new Set();
+
   async function pollA2A() {
     if (!A2A_DIR) return;
-    let files = [];
+    let all = [];
     try {
       fs.mkdirSync(A2A_IN, { recursive: true });
       fs.mkdirSync(A2A_OUT, { recursive: true });
-      files = fs.readdirSync(A2A_IN).filter((f) => f.endsWith('.txt')).sort();
-    } catch { return; }
+      all = fs.readdirSync(A2A_IN).sort();
+    } catch (e) {
+      // Раньше здесь стояло `catch { return; }`: каталог мог быть недоступен,
+      // а канал молча не работал вовсе. Одна строка на каждую причину.
+      const key = `DIR:${e?.code ?? 'ERR'}`;
+      if (!a2aReported.has(key)) {
+        a2aReported.add(key);
+        log(`[a2a] \u{1F534} каталог входящих недоступен (${A2A_IN}): ${e?.message ?? e}`);
+      }
+      return;
+    }
+    const files = all.filter((f) => A2A_EXT.some((x) => f.endsWith(x)));
+    for (const f of all) {
+      if (files.includes(f) || a2aReported.has(f)) continue;
+      a2aReported.add(f);
+      log(`[a2a] \u{1F534} НЕ ВЗЯТ файл ${f}: беру только ${A2A_EXT.join(', ')}. `
+        + `Он так и будет лежать во входящих — переименуй отправителю`);
+    }
+    for (const name of [...a2aReported]) {
+      if (!name.startsWith('DIR:') && !all.includes(name)) a2aReported.delete(name);
+    }
     for (const f of files) {
       const full = path.join(A2A_IN, f);
       let text = '';
