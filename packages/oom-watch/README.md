@@ -147,6 +147,25 @@ Two consequences worth knowing:
   `/system.slice/system-foo.slice/foo@bar.service` — and matching the first segment silently
   dropped them.
 
+## The third trap: a watchdog that goes blind and only tells itself
+
+`oom-watch` remembers where it stopped reading, as a journal cursor in its state directory. If
+that cursor becomes unreadable — the journal was vacuumed, the machine was reinstalled, the state
+file was truncated — `journalctl --after-cursor` fails, and the obvious handler is to complain and
+exit.
+
+That handler is a permanent blackout. The cursor never moves, so every run afterwards fails at the
+same place, forever, and the watchdog never sees another kill. Worse, the complaint went to
+`stderr` only, which is the journal of `oom-watch` itself — the one place nobody reads, because
+the whole point of this tool is that you should not have to read journals to learn about a kill.
+Measured: three runs in a row, three identical complaints, the cursor unchanged, kills in the
+meantime unnoticed.
+
+So a failed read now **alerts outward once** and moves the cursor to the current position. The
+watchdog can see again, and the alert states the price plainly: the window before this moment was
+never checked. The boundary matters — the cursor is reset **only** on a read error. An empty
+answer from the journal means "no kills", not a fault, and never touches the cursor.
+
 ## Install
 
 ```bash
@@ -247,3 +266,11 @@ proves nothing, and you may notice the swap before you notice the test.
   a visible failure into an invisible one, which is the failure this package exists to prevent.
 
 MIT.
+
+## Version
+
+`oom-watch --version` — the number lives in the script itself, because that is the only thing that
+gets copied to the machine. A version kept in a separate metadata file simply does not travel with
+`install -m 755`, and then nothing on the machine tells you which release is running.
+
+Current: **1.1.0**.

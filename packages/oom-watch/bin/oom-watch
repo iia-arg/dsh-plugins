@@ -39,6 +39,12 @@ import subprocess
 import sys
 from datetime import datetime
 
+# Номер версии живёт В САМОМ файле и спрашивается у него: «oom-watch --version».
+# Причина: скрипт ставится копированием, и на машине не остаётся НИЧЕГО, по чему можно
+# отличить установленную версию от выпущенной. Номер в отдельном файле метаданных для
+# такого способа установки не доезжает вовсе.
+__version__ = "1.1.0"
+
 STATE_DIR = os.environ.get("OOM_WATCH_STATE", "/var/lib/oom-watch")
 CURSOR = os.path.join(STATE_DIR, "cursor")
 ALERT_CMD = os.environ.get("OOM_WATCH_ALERT", "")
@@ -46,6 +52,11 @@ ALERT_CMD = os.environ.get("OOM_WATCH_ALERT", "")
 # забытый в списке юнит — это молчание ровно там, где сторож и нужен.
 UNITS = os.environ.get("OOM_WATCH_UNITS", "").split()
 HOST = socket.gethostname()
+
+
+if "--version" in sys.argv[1:]:
+    print(f"oom-watch {__version__}")
+    sys.exit(0)
 
 
 def notify(text):
@@ -224,7 +235,21 @@ with open(CURSOR) as f:
 out = subprocess.run(["journalctl", "-k", "--no-pager", "--output=json", "--after-cursor=" + cur],
                      capture_output=True, text=True)
 if out.returncode != 0:
-    print(f"🔴 OOM-KILL: не удалось прочитать ядерный лог (rc={out.returncode})", file=sys.stderr)
+    # 🔴 Курсор нечитаем (журнал вычищен, позиция устарела, битый файл состояния).
+    # Оставить его как есть — значит ослепнуть НАВСЕГДА: каждый запуск будет падать
+    # на том же месте, жаловаться только в журнал службы, которого никто не читает,
+    # и сам себя не починит. Поэтому: тревога НАРУЖУ один раз и сдвиг курсора на
+    # текущую позицию — сторож снова видит. Цена названа прямо: окно между старой
+    # позицией и текущей не проверено. Граница: сдвигаем ТОЛЬКО при ошибке чтения,
+    # пустой ответ журнала — это не ошибка и курсор не трогает.
+    c = current_cursor()
+    notify(f"🔴 OOM-KILL: не удалось прочитать ядерный лог (rc={out.returncode}).\n"
+           f"Позиция сброшена на текущую — сторож снова видит, но окно до этого момента\n"
+           f"НЕ проверено: убийства в нём, если были, пропущены.\n"
+           + ("" if c else "Текущую позицию тоже получить не удалось — сторож слеп, разберитесь руками.\n"))
+    if c:
+        with open(CURSOR, "w") as f:
+            f.write(c)
     sys.exit(0)
 
 entries = []
