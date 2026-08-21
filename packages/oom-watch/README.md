@@ -41,18 +41,70 @@ oom-kill:constraint=CONSTRAINT_MEMCG,...,oom_memcg=/system.slice/my-agent.servic
 Memory cgroup out of memory: Killed process 1357889 (python3) total-vm:84592kB, anon-rss:65280kB
 ```
 
+## Two kinds of kill, and the dangerous one is the second
+
+A **cgroup** kill means one unit went over *its own* limit. Local, survivable, and the culprit is
+obvious — it is the unit named in the alert.
+
+A **global** kill means the machine ran out of memory and the kernel picked a victim by size. The
+victim can be anything, including something with no limit configured at all: your database, your
+gateway, the platform itself. The unit named in the alert is **not** the cause; it is the casualty.
+
+They are different lines in the kernel journal:
+
+```
+oom-kill:constraint=CONSTRAINT_MEMCG,...,oom_memcg=/system.slice/alpha.service,...,pid=1001
+Memory cgroup out of memory: Killed process 1001 (python3) ... anon-rss:16128kB ...
+
+oom-kill:constraint=CONSTRAINT_NONE,...,global_oom,task_memcg=/system.slice/beta.service,...,pid=2002
+Out of memory: Killed process 2002 (python3) ... anon-rss:310912kB ...
+```
+
+Note what a global kill does *not* have: `oom_memcg`. There is no "limit that was exceeded", so
+`oom-watch` prints no limit and no percentage for it. Filling that field with the unit's
+`MemoryMax` would be a fabricated number pointing at an innocent unit — and a reader who trusts it
+spends the outage tuning the victim instead of finding what ate the machine.
+
+Three details that cost us a rewrite, all verified against the kernel image (6.8), not from memory:
+
+- the kill line is `%s: Killed process`, and the kernel substitutes **three** different texts:
+  `Memory cgroup out of memory`, `Out of memory`, and `Out of memory (oom_kill_allocating_task)`.
+  Matching a fixed prefix drops the third one;
+- `constraint` has **four** values: `CONSTRAINT_MEMCG` is the cgroup case, while `CONSTRAINT_NONE`,
+  `CONSTRAINT_CPUSET` and `CONSTRAINT_MEMORY_POLICY` are all global;
+- for a global kill the victim's unit comes from `task_memcg` (whose cgroup it lived in), for a
+  cgroup kill from `oom_memcg` (whose limit was blown). Using one field for both misnames one case.
+
+A global kill **always** alerts, even when `OOM_WATCH_UNITS` is set. That list answers "whose
+limits do we watch"; a machine-wide shortage is not about anyone's limits.
+
 ## What it says
 
 ```
-🔴 Убийство по памяти на host01
+🔴 Убийство по памяти на host01: служба вышла за свой предел
 Служба: my-agent.service — «Agent runtime» (от имени agent)
-Убит процесс: python3 (номер 1460083), занимал 23.8 МБ
-Предел службы: 24.0 МБ — выбран на 99%
+Убит процесс: python3 (номер 1460083), занимал 23.6 МБ
+Предел службы: 24.0 МБ — выбран на 98%
 Дальше: перезапустится сама (Restart=always)
-Время: 20.08.2026 23:00:09
+Время: 21.08.2026 07:16:16
 ```
 
-*(Real output from the acceptance run, with the host and unit names replaced.)*
+```
+🔴 ПАМЯТЬ КОНЧИЛАСЬ НА ВСЕЙ МАШИНЕ host01 — ядро выбрало жертву само
+Служба жертвы: my-agent.service — «Agent runtime» (от имени agent)
+Убит процесс: python3 (номер 1605006), занимал 303.6 МБ
+Предела нет — убито при общей нехватке памяти (CONSTRAINT_NONE)
+Память машины: свободно 22.6 ГБ из 29.2 ГБ (сейчас, не на момент убийства)
+Причина НЕ в этой службе: ищите, кто съел память машины
+Дальше: не перезапустится сама (Restart=no)
+Время: 21.08.2026 07:17:01
+```
+
+*(Real output from the acceptance runs, with the host and unit names replaced.)*
+
+The free-memory figure is labelled "now, not at the time of the kill" on purpose. The kill lines
+carry no such number, and the kernel's `Mem-Info:` dump nearby cannot be attached to a specific
+kill without reintroducing the by-order pairing bug described below.
 
 The alert answers "so what?", not just "who died": which service that unit is in human terms, who
 it ran as, **how close to the ceiling** it was, and whether it comes back by itself. "Killed
@@ -154,6 +206,27 @@ sleep 6 && sudo /usr/local/bin/oom-watch
 # each alert must carry ITS OWN unit and ITS OWN numbers: 16M unit ~15.8 MB, 24M unit ~23.8 MB
 ```
 
+A **global** kill looks unreproducible — you are not going to exhaust a production machine to test
+a watchdog. You do not have to. `sysrq` can invoke the OOM killer directly, and it kills exactly
+one process: the one with the highest `oom_score`. Give your probe `OOMScoreAdjust=1000` and it
+wins by a wide margin, so the blast radius is your own disposable unit:
+
+```bash
+sudo systemctl start oom-glob.service     # OOMScoreAdjust=1000, holds ~300 MB, no MemoryMax
+# check the probe really is first — do NOT skip this
+for p in /proc/[0-9]*; do s=$(cat $p/oom_score 2>/dev/null) || continue;
+  echo "$s ${p#/proc/} $(tr -d '\0' < $p/comm)"; done | sort -rn | head -5
+# ours: 1338 for the probe vs 733 for the runner-up
+
+M=$(cat /proc/sys/kernel/sysrq)
+sudo sh -c "echo $((M|64)) > /proc/sys/kernel/sysrq"   # bit 64 = allow signalling, off by default
+sudo sh -c 'echo f > /proc/sysrq-trigger'
+sudo sh -c "echo $M > /proc/sys/kernel/sysrq"          # put the mask back
+sudo /usr/local/bin/oom-watch   # must print ПАМЯТЬ КОНЧИЛАСЬ, and no limit/percentage
+```
+
+🔴 Check `/proc/sys/vm/panic_on_oom` is `0` first. If it is not, this reboots the machine.
+
 🔴 `MemorySwapMax=0` is not decoration. `MemoryMax` alone does **not** cap swap: a probe with a
 64 MB limit and swap available pushed 4.7 GB into the host's swap, hit its limit 19,585 times and
 was **never killed** — `oom_kill` stayed 0 while the machine suffered. Without that line the probe
@@ -164,8 +237,10 @@ proves nothing, and you may notice the swap before you notice the test.
 - **It reports kills, not suffocation.** The case above — a unit permanently at its ceiling,
   reclaiming and stalling but never killed — produces no kernel line and no alert here. Watch the
   `max` counter in `memory.events` for that; it is a different problem with a different signal.
-- **Memory-cgroup kills only.** A global out-of-memory event (`CONSTRAINT_NONE`) and the userspace
-  `systemd-oomd` are deliberately not matched: different cause, different fix, different message.
+- **Kernel kills only.** The userspace `systemd-oomd` kills on pressure *before* the kernel does and
+  writes its own journal lines; it is not matched here.
+- **A global kill names the victim, not the cause.** Finding who exhausted the machine is a
+  different job — this only guarantees you learn that it happened at all.
 - **One minute of blindness by design.** The timer is not a supervisor. If you need the unit back
   up, that is `Restart=` in the unit — this only makes sure you learn why it went down.
 - **It never restarts, throttles or repairs anything.** A watchdog that fixes things quietly turns

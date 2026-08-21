@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""oom-watch — сторож за МОЛЧАЛИВЫМИ убийствами по памяти (cgroup memory.max).
+"""oom-watch — сторож за МОЛЧАЛИВЫМИ убийствами по памяти.
 
 Сигнал — ЯДЕРНЫЙ лог: он переживает пересоздание cgroup. Счётчик
 memory.events.oom_kill НЕ годится — он обнуляется, когда systemd пересоздаёт
@@ -12,6 +12,19 @@ cgroup после рестарта, и убийство проходило бы 
 имя одной службы с числами другой. Поэтому строки связываются ПО НОМЕРУ ПРОЦЕССА
 — он есть в обеих. Не связалось — «служба не определена», ближайшая НЕ
 подставляется: молчание честнее уверенного вранья.
+
+🔴 Убийств ДВА ВИДА, и опаснее — второй:
+  ГРУППОВОЙ  (constraint=CONSTRAINT_MEMCG): служба вышла за СВОЙ предел. Локально,
+             почти всегда переживаемо, виновник очевиден.
+  ГЛОБАЛЬНЫЙ (CONSTRAINT_NONE / CPUSET / MEMORY_POLICY): память кончилась на ВСЕЙ
+             машине, ядро выбрало жертву само. Жертвой становится что угодно —
+             в том числе то, у чего пределов нет вовсе. У жертвы НЕТ «своего
+             предела»: подставлять туда MemoryMax и считать процент — врать.
+Различаются по полю constraint и по префиксу строки убийства (шаблон ядра
+«%s: Killed process», где %s = «Memory cgroup out of memory» / «Out of memory» /
+«Out of memory (oom_kill_allocating_task)» — проверено по образу ядра 6.8).
+Имя службы: у группового — из oom_memcg (чей предел пробит), у глобального —
+из task_memcg (в чьей cgroup жила жертва).
 
 Настройка — только через окружение, чтобы файл был одинаков на всех машинах:
   OOM_WATCH_UNITS  — список юнитов через пробел; ПУСТО (умолчание) = тревожить на любой;
@@ -58,8 +71,8 @@ def current_cursor():
     return m.group(1).strip() if m else ""
 
 
-def unit_of(msg):
-    """Имя юнита из строки ядра.
+def unit_of(msg, key):
+    """Имя юнита из строки ядра по полю key (oom_memcg | task_memcg).
 
     🔴 Берём ПОСЛЕДНИЙ сегмент пути cgroup, а не «то, что сразу после /system.slice/».
     Юнит может лежать во вложенном slice — шаблонные юниты и всё, что systemd
@@ -67,11 +80,29 @@ def unit_of(msg):
     сегменту давала бы для них неузнанное имя, фильтр по списку глушил бы тревогу,
     и сторож молчал бы ровно на тех службах, ради которых заведён.
     """
-    m = re.search(r"oom_memcg=(\S+?)(?:,|$)", msg or "")
+    m = re.search(r"\b" + key + r"=(\S+?)(?:,|$)", msg or "")
     if not m:
         return None
     seg = m.group(1).rstrip("/").split("/")[-1]
     return seg if seg.endswith(".service") else None
+
+
+def host_mem():
+    """Сколько памяти на машине СЕЙЧАС. Помечается как «сейчас», а не «на момент
+    убийства»: в строках убийства этих чисел нет, а склеивать их с соседним
+    Mem-Info — та же ошибка «последней увиденной строки», от которой мы ушли."""
+    try:
+        vals = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                k, _, v = line.partition(":")
+                if k in ("MemTotal", "MemAvailable"):
+                    vals[k] = int(v.split()[0]) * 1024
+        if "MemTotal" in vals and "MemAvailable" in vals:
+            return f"свободно {fmt_bytes(vals['MemAvailable'])} из {fmt_bytes(vals['MemTotal'])}"
+    except Exception:
+        pass
+    return None
 
 
 def prop(unit, name):
@@ -131,18 +162,36 @@ def fmt_time(ts_us):
         return "не определено"
 
 
-def build_alert(unit, task, pid, anon_kb, ts_us):
-    """Текст тревоги. Отвечает на вопрос «ну и что?», а не только «кого убили»."""
-    lines = [f"🔴 Убийство по памяти на {HOST}"]
+def build_alert(kind, unit, task, pid, anon_kb, ts_us, constraint):
+    """Текст тревоги. Отвечает на вопрос «ну и что?», а не только «кого убили».
+
+    Два вида говорят РАЗНЫМИ словами: у группового виноват предел службы, у
+    глобального предела нет вовсе и виновата машина целиком."""
+    if kind == "global":
+        lines = [f"🔴 ПАМЯТЬ КОНЧИЛАСЬ НА ВСЕЙ МАШИНЕ {HOST} — ядро выбрало жертву само"]
+    else:
+        lines = [f"🔴 Убийство по памяти на {HOST}: служба вышла за свой предел"]
+
     if unit:
-        lines.append(f"Служба: {unit} — «{prop(unit, 'Description') or 'не определено'}»"
+        role = "Служба жертвы" if kind == "global" else "Служба"
+        lines.append(f"{role}: {unit} — «{prop(unit, 'Description') or 'не определено'}»"
                      f" (от имени {prop(unit, 'User') or 'root'})")
     else:
         # Пара строк не сошлась по номеру процесса. Ближайшую службу НЕ подставляем.
         lines.append("Служба: не определена (строки ядра не сошлись по номеру процесса)")
     lines.append(f"Убит процесс: {task} (номер {pid}), занимал "
                  f"{fmt_kb(anon_kb) if anon_kb else 'не определено'}")
-    if unit:
+
+    if kind == "global":
+        # 🔴 Никакого «предела службы» и никакого процента: жертва СВОЙ предел не
+        # превышала, её выбрали за размер. Придуманный процент увёл бы разбор в
+        # настройку невиновной службы.
+        lines.append(f"Предела нет — убито при общей нехватке памяти ({constraint})")
+        mem = host_mem()
+        if mem:
+            lines.append(f"Память машины: {mem} (сейчас, не на момент убийства)")
+        lines.append("Причина НЕ в этой службе: ищите, кто съел память машины")
+    elif unit:
         mm = prop(unit, "MemoryMax")
         pct = None
         if anon_kb and mm not in NO_LIMIT:
@@ -152,6 +201,7 @@ def build_alert(unit, task, pid, anon_kb, ts_us):
                 pct = None
         lines.append(f"Предел службы: {fmt_memmax(mm)}"
                      + (f" — выбран на {pct:.0f}%" if pct is not None else ""))
+    if unit:
         lines.append(f"Дальше: {fmt_restart(prop(unit, 'Restart'))}")
     lines.append(f"Время: {fmt_time(ts_us)}")
     return "\n".join(lines) + "\n"
@@ -187,41 +237,55 @@ for line in out.stdout.splitlines():
     except Exception:
         continue
 
-# Карта «номер процесса -> служба» из строк «oom-kill:…»: в них есть и oom_memcg, и pid.
+# Карта «номер процесса -> событие» из строк «oom-kill:constraint=…»: в них есть и
+# путь cgroup, и pid. Берём ВСЕ виды constraint, а не только MEMCG.
 kill_map = {}
 for e in entries:
     msg = e.get("MESSAGE", "")
-    if "oom-kill:constraint=CONSTRAINT_MEMCG" not in msg:
+    c = re.search(r"oom-kill:constraint=(\S+?),", msg)
+    if not c:
         continue
     p = re.search(r"\bpid=(\d+)", msg)
     if not p:
         continue
+    constraint = c.group(1)
+    memcg = constraint == "CONSTRAINT_MEMCG"
     t = re.search(r"\btask=([^,]+)", msg)
     kill_map[p.group(1)] = {
-        "unit": unit_of(msg),
+        # У группового виноват тот, чей предел пробит (oom_memcg); у глобального
+        # такого поля нет вовсе (ядро печатает global_oom), и единственное, что
+        # известно про жертву, — её собственная cgroup (task_memcg).
+        "unit": unit_of(msg, "oom_memcg" if memcg else "task_memcg"),
+        "kind": "memcg" if memcg else "global",
+        "constraint": constraint,
         "task": t.group(1) if t else None,
         "ts": e.get("__REALTIME_TIMESTAMP"),
     }
 
-# Строки «Memory cgroup out of memory: Killed process …» — в них числа. Связь ПО PID.
+# Строки «…: Killed process …» — в них числа. Связь ПО PID.
+# 🔴 Ловим по «: Killed process», а не по конкретному префиксу: ядро подставляет
+# туда три разных текста, и «Out of memory (oom_kill_allocating_task)» пропал бы.
 for e in entries:
     msg = e.get("MESSAGE", "")
-    if "Memory cgroup out of memory: Killed process" not in msg:
-        continue
-    m = re.search(r"Killed process (\d+) \((\S+?)\)", msg)
+    m = re.search(r"^(.*?): Killed process (\d+) \((\S+?)\)", msg)
     if not m:
         continue
-    pid, name = m.group(1), m.group(2)
+    prefix, pid, name = m.group(1), m.group(2), m.group(3)
     a = re.search(r"anon-rss:(\d+)kB", msg)
     anon_kb = a.group(1) if a else None
     info = kill_map.get(pid) or {}
     unit = info.get("unit")
-    # Фильтр по списку — только для УЗНАННОЙ службы. Неузнанная тревожит ВСЕГДА:
-    # иначе дефект разбора превращается в молчание, а это худший исход для сторожа.
-    if unit and UNITS and unit not in UNITS:
+    # Вид берём из строки constraint, а если её потеряли — из префикса.
+    kind = info.get("kind") or ("memcg" if prefix.startswith("Memory cgroup") else "global")
+    # Фильтр по списку — только для УЗНАННОЙ службы и только для ГРУППОВОГО убийства.
+    # Неузнанная тревожит ВСЕГДА: иначе дефект разбора превращается в молчание.
+    # Глобальное тревожит ВСЕГДА: жертвой стало что попало, а список составлялся
+    # под «чьи пределы мы стережём» — к общей нехватке памяти он отношения не имеет.
+    if kind == "memcg" and unit and UNITS and unit not in UNITS:
         continue
-    notify(build_alert(unit, info.get("task") or name, pid, anon_kb,
-                       info.get("ts") or e.get("__REALTIME_TIMESTAMP")))
+    notify(build_alert(kind, unit, info.get("task") or name, pid, anon_kb,
+                       info.get("ts") or e.get("__REALTIME_TIMESTAMP"),
+                       info.get("constraint") or "constraint не определён"))
 
 c = current_cursor()
 if c:
