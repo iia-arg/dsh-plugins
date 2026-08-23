@@ -1,6 +1,6 @@
 {
   "name": "dsh-telegram-multiagent",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Telegram channel for DeepSeek Harness — one shared module serving several agents, with unforgeable sender marks, merged owner+coordinator memory, and a delivery mode you switch in a file outside the code.",
   "type": "module",
   "main": "src/index.js",

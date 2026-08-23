@@ -50,7 +50,7 @@ see "Where to put the row" below:
 | `a2aSession` | no | Session id used for that channel. Default `a2a`. |
 | `transcribeCommand` | no | External command for voice messages: `<cmd> <audio-file> auto` → transcript on stdout. Omit and voice is politely refused. |
 
-## Four things that cost us a day
+## Five things that cost us a day
 
 Each of these fails **while looking like success**. They are commented inline in the source; this is
 the short version.
@@ -73,6 +73,17 @@ of assuming it is ready.
 session id makes the persistence layer abort *every* turn with an id-collision error. Externally:
 "accepted the message and went quiet" — the turn honestly starts and dies in milliseconds. It works
 until the first restart, which is what makes it nasty. Use `resume()` when the session exists.
+
+**5. `ctx.get()` returns nothing *quietly* while a service is still starting.** cordis hands back
+`undefined` without throwing until the provider's fiber is active, so "this service is not in the
+build" and "this service is thirty milliseconds away" arrive as the same value. Code written as
+`const x = ctx.get('x'); if (x) {...}` then takes the "feature absent" branch and says nothing — the
+agent is assembled, answers, and never mentions what it lost. This bit us three times in three days:
+the agent factory (3), session persistence (4, the whole resume block was skipped), and the agent
+preset — where a neighbouring agent's toolset dropped from 33 tools to 3 with no error and no log
+line. Wait for the service with a stated deadline, and when the deadline passes, say so *and name
+the consequence*. One helper for all of them: a fix applied to the instance instead of the class
+guarantees a relapse, and the relapse looks like a new illness.
 
 ## Where to put the row
 
