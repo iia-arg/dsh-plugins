@@ -1,0 +1,11 @@
+# Bundle patch: what `dsh plugin add` composes into the profile.
+# Requires @deepseek-ai/dsh-schedule to be mounted in the same profile (it ships
+# with the platform but is not enabled by default). See the README.
+- insert:
+    - name: dsh-schedule-guard
+      config:
+        maxConsecutiveWakeups: 6
+        maxPerDay: 48
+        minRepeatingIntervalSeconds: 1800
+        dayBoundaryOffsetMinutes: 0
+        # notifyCmd: /path/to/your/notify-owner-command   # optional; omit -> log only
