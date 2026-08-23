@@ -1,0 +1,35 @@
+{
+  "name": "subscription-gateway",
+  "version": "0.1.0",
+  "description": "Subscription gateway for DeepSeek Harness — runs the model loop through the vendor's official agent SDK, so the platform works on a subscription seat instead of a metered API key, with the token kept in one place on the machine.",
+  "type": "module",
+  "main": "gateway.mjs",
+  "files": [
+    "gateway.mjs",
+    "jsonschema-to-zod.mjs",
+    "schedule.json",
+    "test-schema-adapter.mjs",
+    "systemd",
+    "README.md"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "subscription",
+    "gateway",
+    "agent-sdk",
+    "mcp"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iia-arg/dsh-plugins.git",
+    "directory": "packages/subscription-gateway"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.238",
+    "zod": "^4.0.0"
+  }
+}

@@ -1,0 +1,34 @@
+# Subscription gateway — ONE INSTANCE PER AGENT.
+#
+# 🔴 %i is the agent's USER name, and that is not cosmetic: the SDK is agentic,
+# it runs the shell and files itself, so the agent's "hands" are the process of
+# THIS unit. Any right that must be given to the agent's hands is given here, and
+# NOT in the platform's unit. Verify by the live process only:
+# /proc/<MainPID>/status.
+#
+# The paths below follow the package name. If you change them, change them in
+# three places: EnvironmentFile, GATEWAY_TOKEN_FILE and ExecStart.
+[Unit]
+Description=Subscription gateway — agent instance %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The engine executes the tools ITSELF, so the agent's "hands" are THIS user.
+User=%i
+Group=%i
+# Access to the shared token file and the engine directory is by group, not by a
+# copy of the secret.
+SupplementaryGroups=gateway-token
+EnvironmentFile=/etc/subscription-gateway/instance-%i.env
+Environment=GATEWAY_TOKEN_FILE=/etc/subscription-gateway/token
+ExecStart=/usr/local/bin/node /opt/subscription-gateway/gateway.mjs
+Restart=on-failure
+RestartSec=5
+# The sandbox here is DELIBERATELY not tightened: the agent needs its own files
+# and home, and for an agent with sudo the unit's restrictions are no boundary
+# anyway. The real boundary is the rights of the instance user.
+
+[Install]
+WantedBy=multi-user.target
