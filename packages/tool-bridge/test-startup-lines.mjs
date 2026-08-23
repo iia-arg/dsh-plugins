@@ -2,10 +2,33 @@
 // actually prints. The text of the line is taken FROM THE PACKAGE FILE, the
 // reference FROM THE README. Neither is retyped by hand: otherwise two copies of
 // mine would be compared with each other instead of code with documentation.
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 const D = dirname(fileURLToPath(import.meta.url))
+let ok = 0, bad = 0
+
+// ── Check zero: everything package.json promises must exist on disk ──────────
+// `files` and `dsh.bundle.patch` are promises about the published tarball, and
+// npm keeps neither: `npm pack` drops a `files` entry that does not exist
+// without a word, so a package can ship one file short and still look clean.
+// The platform, by contrast, fails loud on the missing patch — it refuses to
+// load the profile at all (`failed to read overlay <path>: ENOENT`), which
+// means an incomplete tarball is not a cosmetic defect but a boot stopper for
+// whoever installs it. Silent at build time, fatal at run time: check it here,
+// where it is still cheap.
+const manifest = JSON.parse(readFileSync(`${D}/package.json`, 'utf8'))
+const promised = [
+  ...(manifest.files ?? []),
+  manifest.main,
+  manifest.dsh?.bundle?.patch,
+].filter(Boolean)
+for (const entry of promised) {
+  // Entries may be files or directories; both must resolve to something.
+  if (existsSync(`${D}/${entry}`)) { ok++; console.log(`  ok   package.json promises ${entry}: present`) }
+  else { bad++; console.log(`  FAIL package.json promises ${entry}, but it is not on disk`) }
+}
+
 const lines = readFileSync(`${D}/src/index.js`, 'utf8').split('\n')
 // 🔴 By marker, not by line numbers: numbers shift on any edit higher up.
 const i = lines.findIndex((l) => l.includes('log(`self-wake limit: no more often than'))
@@ -26,7 +49,6 @@ await import('data:text/javascript;charset=utf-8,' + encodeURIComponent(
   `export default (log, limits, src) => {\n${body}\n}`)).then((m) => m.default(log, limits, src))
 
 const readme = readFileSync(`${D}/README.md`, 'utf8')
-let ok = 0, bad = 0
 for (const line of out) {
   // The README prints the numbers as configured (in our own setup they are set),
   // the code here runs on defaults — so we compare the invariant part, up to the
@@ -70,9 +92,14 @@ const readmeKeys = new Set()
 for (const m of readme.matchAll(/^\| `([^`]+)`(?: \/ `([^`]+)`)? \|/gm)) {
   readmeKeys.add(m[1]); if (m[2]) readmeKeys.add(m[2])
 }
-const patchKeys = new Set([...readFileSync(`${D}/cordis.patch.yml`, 'utf8').matchAll(/^ {8}([A-Za-z]\w*):/gm)].map((m) => m[1]))
+// If the patch file is missing, check zero has already said so by name; read an
+// empty string rather than crashing, so the bench ends with a verdict instead of
+// a stack trace that reads like the bench itself is broken.
+const patchText = existsSync(`${D}/cordis.patch.yml`) ? readFileSync(`${D}/cordis.patch.yml`, 'utf8') : ''
+const patchKeys = new Set([...patchText.matchAll(/^ {8}([A-Za-z]\w*):/gm)].map((m) => m[1]))
 if (!schemaKeys.size || !readmeKeys.size || !patchKeys.size) {
-  bad++; console.log(`  FAIL empty list: schema ${schemaKeys.size}, README ${readmeKeys.size}, patch ${patchKeys.size} — the bench is parsing the wrong place`)
+  bad++; console.log(`  FAIL empty list: schema ${schemaKeys.size}, README ${readmeKeys.size}, patch ${patchKeys.size}`
+    + (patchText === '' ? ' — the patch file is missing, see above' : ' — the bench is parsing the wrong place'))
 }
 for (const [key, hasDefault] of schemaKeys) {
   if (hasDefault) { ok++; console.log(`  ok   ${key}: has a schema default, may be omitted from YAML`); continue }

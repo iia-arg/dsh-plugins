@@ -1,6 +1,6 @@
 {
   "name": "dsh-tool-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Tool bridge for DeepSeek Harness — carries platform plugin tools onto a subscription route, where the host drives the model loop and the platform's own tool plane never reaches it.",
   "type": "module",
   "main": "src/index.js",

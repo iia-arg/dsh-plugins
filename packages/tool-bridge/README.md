@@ -322,11 +322,20 @@ plugin set loses a settings field. None of that crashes.
 ```bash
 node test-heartbeat.mjs      # counters and the interval guard, taken from src/index.js
 node test-startup-lines.mjs  # reference lines in this README against what the code prints,
-                             # plus the settings list across schema / README / patch
+                             # plus the settings list across schema / README / patch,
+                             # plus every file package.json promises (`files`,
+                             # `main`, `dsh.bundle.patch`) against the disk
 ```
 
 Both take the text under test **from the shipped file**, not from a retelling of
 it, and both cut by name rather than by line number.
+
+Run `node test-startup-lines.mjs` on an unpacked tarball too, not only on a
+checkout: `npm pack` drops a `files` entry that does not exist without a word, so
+a package can ship one file short and still build clean. The platform is less
+forgiving — a bundle whose `dsh.bundle.patch` target is missing stops the profile
+from loading at all (`failed to read overlay <path>: ENOENT`). Silent where it is
+made, fatal where it is used.
 
 ---
 
