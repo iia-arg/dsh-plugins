@@ -17,3 +17,13 @@
         # Empty means everyone can talk to an agent that usually has shell
         # access. Set it.
         allowedUsers: []
+        # Goal control from the channel (1.3.0). BOTH lists are empty by
+        # default, which means the /goal command is refused for everyone —
+        # deliberately: starting an autonomous goal loop costs money, so the
+        # right is granted by name, never inherited from allowedUsers.
+        # Telegram user ids allowed to run /goal:
+        goalUsers: []
+        # Names allowed to run /goal from the agent-to-agent channel. The
+        # sender names itself in the first line of the file: "From: <name>".
+        # This is bookkeeping, not authentication — see README.
+        goalA2ASenders: []

@@ -304,6 +304,38 @@ export function apply(ctx, config = {}) {
     return undefined;
   }
 
+  /**
+   * 🔴 РЕШЕНИЕ ПО КАЖДОМУ ctx.get() В ЭТОМ ФАЙЛЕ. Проверять надо КАЖДЫЙ, а не
+   * тот, на котором обожглись, — иначе рецидив, и рецидив будет выглядеть новой
+   * болезнью, потому что рядом лежит доказательство «мы это уже лечили».
+   *
+   * ПРИЗНАК, по которому решается, а не «кажется безопасным»: ожидание нужно
+   * там, где место может сработать ДО подъёма сервиса И отказ при этом
+   * МОЛЧАЛИВ ИЛИ ЛОЖЕН. Одного условия мало.
+   *
+   * Отдельно замечено на живом: порядок готовности волокон МЕНЯЕТСЯ от подъёма
+   * к подъёму. В одном подъёме ждала фабрика агентов, в другом — набор пресета,
+   * причём гонка была в обоих. Значит судить о гонке по соседнему сервису
+   * нельзя: соседний в этот раз мог успеть. Ожидание ставится по устройству
+   * места, а не по тому, где однажды видели примету.
+   *
+   *   1) agentFor → agentPresets, agentDefaultModel, sessionPersistence.
+   *      ОЖИДАНИЕ ЕСТЬ, предел 30 с: заведение агента идёт вплотную к подъёму
+   *      платформы, а отказ здесь молчалив и разрушителен.
+   *   2) goalCommand → goals, goalMarker, mcpBridge. ОЖИДАНИЕ ЕСТЬ, предел
+   *      короткий (GOAL_WAIT_TRIES): по undefined невозможно отличить «сервиса
+   *      нет в сборке» от «ещё поднимается», а ответ «не подключён» — это
+   *      диагноз, которого код поставить не может. Ждём мало, потому что на том
+   *      конце живой собеседник.
+   *   3) stripGoalMarker → goalMarker. ОЖИДАНИЯ НЕТ намеренно: место
+   *      СИНХРОННОЕ (обработчик события сессии не async), а отказ не молчалив —
+   *      маркер уезжает в чат видимым текстом.
+   *   4) обработчик goal/change → goals. ОЖИДАНИЯ НЕТ намеренно: сюда попадают
+   *      только те сессии, где цель уже поставлена через goalCommand, а тот без
+   *      сервиса целей не проходит вовсе. Значит пустота здесь означает не «ещё
+   *      не поднялся», а «сервис ПРОПАЛ», и это надо не переждать, а сказать.
+   */
+
   async function agentFor(chatId) {
     const key = String(chatId);
     const found = chats.get(key);
@@ -327,6 +359,9 @@ export function apply(ctx, config = {}) {
     const setupFn = async (agentCtx) => {
       platform.installModelSelection(agentCtx, { current: selection, assembled: undefined });
       if (presets && presetId) await presets.mount(agentCtx, presetId);
+      // Молча остаться без инструментов нельзя: снаружи это выглядит как
+      // «агент отупел», а причина — несмонтированный пресет.
+      else log(`[${key}] 🔴 пресет НЕ смонтирован (presets=${!!presets}, presetId=${presetId})`);
     };
 
     // 🔴 СЕССИЮ, КОТОРАЯ УЖЕ ЛЕЖИТ НА ДИСКЕ, НАДО ПРОДОЛЖАТЬ, А НЕ СОЗДАВАТЬ ЗАНОВО.
@@ -367,7 +402,7 @@ export function apply(ctx, config = {}) {
           // Кричать 🔴 на законном событии — это защита, которая приучает
           // не читать журнал.
           const spisok = known.slice(0, 12).join(', ') + (known.length > 12 ? `, …и ещё ${known.length - 12}` : '');
-          log(`⚠️ [${key}] на диске ${known.length} сохранённых сессий, ${sessionId} среди них НЕТ: либо это первый разговор в чате, либо история потеряна. Продолжать нечего, создаю заново. Найдено: ${spisok}`);
+          log(`⚠️ [${key}] на диске ${known.length} сохранённых сессий, ${sessionId} среди них НЕТ: либо это первый разговор в чате, либо история потеряна — по одному списку не отличить. Продолжать нечего, создаю заново. Найдено: ${spisok}`);
         }
       }
       if (known !== undefined && known.includes(sessionId)) {
@@ -441,11 +476,240 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  // ── ПОСТАНОВКА ЦЕЛИ ИЗ КАНАЛА (21.08.2026, задача владельца).
+  //
+  // ЗАЧЕМ. Когда цикл ведёт внешний движок (агент работает через подписку, а не
+  // через родной цикл платформы), инструменты платформы до модели НЕ ДОХОДЯТ
+  // вовсе — доходит только то, что имеет форму СООБЩЕНИЯ. Значит поставить цель
+  // изнутри разговора нельзя, а руками в веб-интерфейсе — можно. Здесь мы даём
+  // постановку из любого канала: сервис целей доступен КОДУ модуля как
+  // ctx.get('goals'), инструмент модели для этого не нужен.
+  //
+  // КТО ВПРАВЕ. Отдельные настройки, обе по умолчанию ВЫКЛЮЧЕНЫ:
+  //   goalUsers: [<числовые id>]     — кто ставит цель из Telegram
+  //   goalA2ASenders: ["<имя>", …]   — кто вправе из служебного канала
+  // Право НЕ наследуется от allowedUsers сознательно: allowedUsers — это
+  // «с кем я вообще разговариваю», и завтра туда добавят гостя. Право завести
+  // дорогой автономный цикл шире права поговорить.
+  //
+  // 🔴 ЧЕМ ЗА ЭТО ПЛАТИМ, назвать обязательно: проверки платформы
+  // (currentInitiator, hasDirectHumanInput, roots) живут в её инструменте целей
+  // и на ЭТОМ пути не участвуют. Мы не обходим политику — мы пишем её заново,
+  // и две строки ниже есть вся политика целиком. Пустые списки = постановка
+  // отключена; это умолчание выбрано нарочно.
+  const goalUsers = new Set((config.goalUsers ?? []).map(Number));
+  // 🔴 ПРАВО ИЗ СЛУЖЕБНОГО КАНАЛА — ПОИМЁННО, А НЕ «КАНАЛУ ЦЕЛИКОМ». Признак
+  // источника получает ЛЮБОЕ сообщение служебного канала, а каталог обмена
+  // бывает общим на несколько машин: правом «всем, кто пишет в канал» мы
+  // раздали бы возможность заводить дорогие циклы кому попало.
+  // Отправитель называет себя первой строкой файла:  From: <имя>
+  // Нет заголовка или имени нет в списке — отказ, и он произносится вслух.
+  const goalA2ASenders = new Set(config.goalA2ASenders ?? []);
+  // sessionId → { channel, agent } — куда сообщить об исходе цели.
+  const goalOrigin = new Map();
+  // канал → метки времени постановок, для счётчика ниже.
+  const goalStarts = new Map();
+
+  // 🔴 СЧЁТЧИК ПОСТАНОВОК: не более трёх за скользящий час на канал.
+  //
+  // ОТ ЧЕГО ЗАЩИЩАЕТ: от СЛУЧАЙНОСТИ и РАЗГОНА — от петли, в которую механизм
+  // вошёл сам, от ошибки в коде, от лавины повторов. Предел раундов у платформы
+  // стоит на ЦЕЛЬ, а не на агента: новая цель — новый счётчик, и поток целей
+  // ничем не ограничен. Каталог входящих принадлежит самому агенту, то есть в
+  // автономном раунде он способен положить себе файл «/goal …» и продлить цикл.
+  //
+  // 🔴 ГДЕ НЕ ПРИМЕНЯЕТСЯ: счётчик НЕ защищает от намеренного действия агента,
+  // у которого есть права администратора на этой машине, — такой агент снимет
+  // и его, и предел раундов одной командой. Технической границы против самого
+  // агента здесь не существует, изоляция ПОВЕДЕНЧЕСКАЯ. Настоящий сторож —
+  // снаружи, на другой машине, вне досягаемости этого процесса.
+  //
+  // ГРАНИЦЫ САМОГО СЧЁТЧИКА: снятию цели (/goal stop) он не мешает никогда —
+  // механизм, включаемый снаружи и невыключаемый, хуже отсутствия механизма;
+  // обнуляется перезапуском процесса; ничего не чинит сам, только отказывает.
+  const GOAL_MAX_PER_HOUR = 3;
+
+  // Сколько секунд ждать сервис на пути КОМАНДЫ (не на заведении агента).
+  // Пять, а не тридцать: см. пояснение в goalCommand ниже.
+  const GOAL_WAIT_TRIES = 5;
+
+  function goalRateOk(channel) {
+    const now = Date.now();
+    const marks = (goalStarts.get(channel) ?? []).filter((t) => now - t < 3600000);
+    goalStarts.set(channel, marks);
+    return marks.length < GOAL_MAX_PER_HOUR;
+  }
+
+  // 🔴 ПРИЗНАК СОБСТВЕННОЙ ИСПРАВНОСТИ. Права на постановку цели заголовком
+  // запроса к модели НЕ проверяются в принципе: плагин не даёт модели ни одного
+  // инструмента и в заголовке невидим. Печатаем ЧИСЛА, а не «загрузился»: длина
+  // списка прав отличает верную настройку от пустого умолчания, при котором
+  // постановка отказывает молча и выглядит поломкой. Сами идентификаторы не
+  // печатаем — в журнал уходит устройство, а не список людей.
+  log(`[goal] смонтирован: goalUsers=${goalUsers.size} goalA2ASenders=${goalA2ASenders.size} `
+    + `предел постановок=${GOAL_MAX_PER_HOUR}/час`);
+
+  async function sayTo(channel, chatId, text) {
+    if (channel === 'a2a') {
+      if (!A2A_OUT) { log('[goal] 🔴 ответ в служебный канал не ушёл: каталог обмена не задан'); return; }
+      try {
+        fs.mkdirSync(A2A_OUT, { recursive: true });
+        fs.writeFileSync(path.join(A2A_OUT, `${Date.now()}-goal.txt`), text);
+      } catch (e) { log(`[goal] 🔴 ответ в служебный канал не ушёл: ${e?.message ?? e}`); }
+    } else {
+      try { await tg.send(chatId, text); } catch (e) { log(`[goal] 🔴 ответ в чат не ушёл: ${e?.message ?? e}`); }
+    }
+  }
+
+  /**
+   * Отделить заголовок отправителя от текста служебного сообщения.
+   *
+   * 🔴 ЧЕСТНАЯ ГРАНИЦА, назвать её обязательно: это УЧЁТ, А НЕ ЗАЩИТА.
+   * Отправитель называет себя сам, и подделать имя может любой, кто способен
+   * положить файл в каталог входящих. Настоящая граница здесь — права ОС на
+   * этот каталог: писать в него должны только сам агент и доставка. Нужна
+   * проверка сильнее самоназвания — это общий секрет в файле с правами, и
+   * заводить его нужно отдельным решением, а не походя.
+   */
+  function splitSender(raw) {
+    const nl = raw.indexOf('\n');
+    const head = (nl === -1 ? raw : raw.slice(0, nl)).trim();
+    const m = /^From:\s*(\S+)$/.exec(head);
+    if (!m) return { sender: undefined, text: raw };
+    return { sender: m[1], text: nl === -1 ? '' : raw.slice(nl + 1).trimStart() };
+  }
+
+  /**
+   * Убрать маркер цели из текста, уходящего наружу.
+   *
+   * 🔴 ЗДЕСЬ ОЖИДАНИЯ СЕРВИСА НЕТ, И ЭТО РЕШЕНИЕ, А НЕ ПРОПУСК. Место
+   * СИНХРОННОЕ (зовётся из обработчика session/event, который не async), и
+   * отказ здесь НЕ молчалив: маркер уезжает в чат видимым текстом, читатель
+   * увидит его сам. Ждать по 30 с на каждом исходящем сообщении было бы
+   * лечением хуже болезни — см. общее решение по ctx.get() выше.
+   */
+  function stripGoalMarker(raw) {
+    const marker = ctx.get('goalMarker');
+    return marker ? marker.strip(raw) : raw;
+  }
+
+  // Разбор команды. Возвращает текст ответа; отправку делает вызывающий.
+  // Отказы называем вслух: молчаливый отказ здесь неотличим от «агент не понял».
+  async function goalCommand(text, channel, agent) {
+    const rest = text.slice('/goal'.length).trim();
+    // 🔴 ЖДЁМ СЕРВИС, А НЕ ОТКАЗЫВАЕМ СРАЗУ — и ждём КОРОТКО. Без ожидания
+    // ответ «сервис не подключён» был бы диагнозом, которого код поставить не
+    // может: undefined одинаково означает и «нет в сборке», и «ещё поднимается».
+    // Предел короткий (а не 30 с, как при заведении агента) потому, что на том
+    // конце ждёт живой собеседник: полминуты молчания в чате читаются как
+    // «бот умер», и лечение снова оказалось бы хуже болезни.
+    const goals = await waitService('goals', '[goal]', 'команда постановки цели невыполнима', GOAL_WAIT_TRIES);
+    if (!goals) return 'Сервис целей на этом агенте не подключён.';
+    let current;
+    try { current = goals.get(agent); }
+    catch (e) { log(`[goal] 🔴 состояние цели не прочитано: ${e?.message ?? e}`); return `Не смог прочитать состояние цели: ${e?.message ?? e}`; }
+
+    if (rest === '') {
+      if (!current) return 'Цели нет.';
+      return `Цель ${current.id}: ${current.phase}, раунд ${current.roundsStarted} из ${current.maxGoalRounds}.`
+        + (current.blockedReason ? `\nПричина остановки: ${current.blockedReason}` : '')
+        + `\nЗамысел: ${String(current.objective).slice(0, 200)}`;
+    }
+
+    if (rest === 'stop') {
+      // Снятие счётчиком НЕ ограничено — см. границы выше.
+      if (!current) return 'Цели нет, снимать нечего.';
+      try {
+        goals.clear(agent, { id: current.id, revision: current.revision });
+        goalOrigin.delete(String(agent.session?.id ?? ''));
+        log(`[goal] снята ${current.id} из ${channel}`);
+        return `Цель ${current.id} снята.`;
+      } catch (e) {
+        log(`[goal] 🔴 снятие не удалось: ${e?.message ?? e}`);
+        return `Не смог снять цель: ${e?.message ?? e}`;
+      }
+    }
+
+    // Постановка. Предел раундов командой НЕ задаётся: он живёт в настройке
+    // платформы и не должен подниматься тем же путём, каким запускается
+    // дорогой цикл.
+    if (!goalRateOk(channel)) {
+      log(`[goal] ОТКАЗ ${channel}: исчерпан предел ${GOAL_MAX_PER_HOUR} постановок за час`);
+      return `Предел ${GOAL_MAX_PER_HOUR} постановок цели за час исчерпан. Зовите человека.`;
+    }
+    try {
+      let view = goals.create(agent, { objective: rest });
+      // 🔴 НАСТАВЛЕНИЕ ПРО МАРКЕР КЛАДЁМ В САМ ЗАМЫСЕЛ. Промпт автоматического
+      // раунда несёт только замысел и номер раунда — ни идентификатора цели, ни
+      // ревизии в нём нет, а без них модель не сложит маркер. Идентификатор
+      // известен только после create, поэтому edit вторым шагом; edit поднимает
+      // ревизию на единицу, её и называем в наставлении.
+      const marker = await waitService('goalMarker', '[goal]',
+        'цель будет поставлена без наставления о маркере', GOAL_WAIT_TRIES);
+      if (marker) {
+        // 🔴 ИМЕНА ИНСТРУМЕНТОВ БЕРЁМ У МОСТА, А НЕ ПИШЕМ ПО ПАМЯТИ. Протокол
+        // MCP добавляет к базовому имени приставку mcp__<сервер>__; наставление,
+        // называющее инструмент БЕЗ неё, отсылает модель к несуществующему
+        // имени, и выглядит это как «мост не работает». Нет моста — нет и имён:
+        // тогда наставление честно говорит, что инструментов нет, и остаётся
+        // только пометка.
+        const bridge = await waitService('mcpBridge', '[goal]',
+          'в наставлении останется только пометка, без имён инструментов', GOAL_WAIT_TRIES);
+        const goalTools = bridge?.modelToolName
+          ? { update: bridge.modelToolName('update_goal'), get: bridge.modelToolName('get_goal') }
+          : undefined;
+        log(`[goal] наставление: ${goalTools ? `инструмент ${goalTools.update}, пометка запасной линией` : 'моста нет, только пометка'}`);
+        view = goals.edit(agent, { id: view.id, revision: view.revision },
+          { objective: `${rest}\n\n${marker.guidance(view.id, view.revision + 1, goalTools)}` });
+      } else {
+        log('[goal] ⚠️ сервис goalMarker не смонтирован: цель поставлена, но закрыть её сама модель не сможет — цикл дойдёт до предела раундов');
+      }
+      goalStarts.get(channel).push(Date.now());
+      goalOrigin.set(String(agent.session?.id ?? ''), { channel, agent });
+      log(`[goal] поставлена ${view.id} из ${channel}, предел ${view.maxGoalRounds} раундов: ${rest.slice(0, 60)}`);
+      return `Цель ${view.id} поставлена, предел ${view.maxGoalRounds} раундов.`;
+    } catch (e) {
+      const code = e?.code ?? '';
+      log(`[goal] 🔴 постановка не удалась (${code}): ${e?.message ?? e}`);
+      if (code === 'GOAL_ALREADY_EXISTS') return 'Цель уже поставлена. Сначала /goal stop.';
+      return `Не смог поставить цель: ${e?.message ?? e}`;
+    }
+  }
+
   // ── ВЫХОД: события сессии → сообщения в Telegram
   ctx.on('session/event', (session, event) => {
     // 🔴 DEBUG 2026-08-18: все типы событий
     log(`[event] type=${event.type} session.id=${session?.id} knownSessions=${[...sessionToChat.keys()].join('|')}`);
     const sid = String(session?.id ?? '');
+    // 🔴 ИСХОД ЦЕЛИ СООБЩАЕМ САМИ. Доводчик при упоре в предел раундов переводит
+    // цель в blocked — и делает это молча: снаружи автономный цикл просто
+    // перестаёт просыпаться. Молчаливый останов неотличим от поломки, поэтому
+    // говорим в тот канал, из которого цель ставили, и ровно один раз.
+    // Блок стоит ДО проверки chatId нарочно: у служебного канала числового чата
+    // нет вовсе, и ранний выход съел бы событие.
+    if (event.type === 'goal/change') {
+      const origin = goalOrigin.get(sid);
+      if (origin) {
+        try {
+          // Ожидания сервиса здесь нет намеренно — см. решение по ctx.get выше:
+          // сюда попадают только сессии, где цель уже поставлена, значит пустота
+          // означает не «ещё не поднялся», а «пропал», и это стоит строки.
+          const goalsSvc = ctx.get('goals');
+          if (!goalsSvc) {
+            log(`[goal] 🔴 сервис целей исчез — исход цели по сессии ${sid} не сообщён`);
+            return;
+          }
+          const view = goalsSvc.get(origin.agent);
+          if (view && view.phase !== 'active') {
+            goalOrigin.delete(sid);
+            void sayTo(origin.channel, tgChatFor.get(sid) ?? sessionToChat.get(sid),
+              `Цель ${view.id}: ${view.phase}`
+              + (view.blockedReason ? `, причина: ${view.blockedReason}` : '')
+              + `. Раундов пройдено ${view.roundsStarted} из ${view.maxGoalRounds}.`);
+          }
+        } catch (e) { log(`[goal] исход цели не прочитан: ${e?.message ?? e}`); }
+      }
+    }
     // 🔴 При слиянии sessionToChat указывает на КЛЮЧ служебной сессии, а не на
     // числовой чат — отправка по нему молча не дойдёт. Настоящий чат берём из
     // карты, заполняемой на входе из мессенджера.
@@ -480,7 +744,12 @@ export function apply(ctx, config = {}) {
                  && (turnAsk.get(sid)?.origin ?? lastOrigin.get(sid) ?? (chatId === A2A_CHAT ? 'a2a' : 'tg')) === 'a2a') {
         // ответ координатору — в файл, Telegram тут ни при чём
         const blocks = event.data?.message?.content ?? [];
-        const text = blocks.filter((b) => b?.type === 'text').map((b) => b.text).join('\n').trim();
+        // 🔴 МАРКЕР ВЫРЕЗАЕМ ИЗ ВСЕГО, ЧТО УХОДИТ НАРУЖУ — из доставляемого
+        // текста и из копий. Он служебный: его дело остановить цикл, а не
+        // попасть человеку в чат. Вырезается только маркер последней строки;
+        // маркер в середине оставляем видимым нарочно — он и так отвергнут,
+        // и пусть будет заметен читателю.
+        const text = stripGoalMarker(blocks.filter((b) => b?.type === 'text').map((b) => b.text).join('\n')).trim();
         if (text) {
           try {
             fs.mkdirSync(A2A_OUT, { recursive: true });
@@ -492,11 +761,11 @@ export function apply(ctx, config = {}) {
       } else if (event.type === 'assistant/message') {
         // Берём только видимый текст: рассуждения модели наружу не отдаём.
         const blocks = event.data?.message?.content ?? [];
-        const text = blocks
+        // Маркер цели наружу не отдаём — см. пояснение веткой выше.
+        const text = stripGoalMarker(blocks
           .filter((b) => b?.type === 'text')
           .map((b) => b.text)
-          .join('\n')
-          .trim();
+          .join('\n')).trim();
         if (text) {
           log(`[event] отправляю в Telegram chatId=${chatId} (${text.length} знаков)`);
           { const c = copyTo('tg'); if (c) sendCopy(c, sid, text); }
@@ -524,13 +793,12 @@ export function apply(ctx, config = {}) {
     return tmp;
   }
 
-  // Транскрибирует голосовое сообщение через нашу локальную цепочку.
+  // Расшифровывает голосовое сообщение внешней командой из настройки.
   // Возвращает строку с текстом или null при ошибке.
   async function transcribeVoice(fileId) {
     let tmpAudio = null;
     try {
       tmpAudio = await downloadTelegramFile(fileId);
-      // transcribe-local-shared — наша цепочка: sage-corrector → transcribe-whispercpp-core → whisper-warm.service
       // 🔴 Внешняя команда расшифровки — НАСТРОЙКА, а не зашитый путь: у каждого
       // своя цепочка. Не задана — голосовые просто не расшифровываются, и об этом
       // говорится в журнал, а не молча игнорируется.
@@ -605,6 +873,25 @@ export function apply(ctx, config = {}) {
         sessionToChat.delete(old.sessionId);
       }
       await tg.send(chatId, 'Начал заново.');
+      return;
+    }
+
+    // Постановка цели — тоже команда канала, разбираем до передачи агенту.
+    if (text === '/goal' || text.startsWith('/goal ')) {
+      // Право проверяем ДО создания агента: отказ не должен заводить сессию.
+      if (!goalUsers.has(Number(userId))) {
+        log(`[goal] ОТКАЗ ${userId}: не в списке goalUsers`);
+        await tg.send(chatId, 'Постановка цели из этого канала вам не разрешена.');
+        return;
+      }
+      const key = (MERGE_CHAT && String(chatId) === MERGE_CHAT) ? A2A_CHAT : chatId;
+      try {
+        const { handle: gh } = await agentFor(key);
+        await sayTo('tg', chatId, await goalCommand(text, 'tg', gh.agent));
+      } catch (e) {
+        log(`[goal] 🔴 команда не выполнена: ${e?.message ?? e}`);
+        await tg.send(chatId, `Не смог выполнить команду: ${e?.message ?? e}`);
+      }
       return;
     }
 
@@ -711,10 +998,32 @@ export function apply(ctx, config = {}) {
         // который нам не по правам (например 600 root:root), молча оставался
         // лежать во входящих. Снаружи это «агент не отвечает», а на деле
         // мы даже не смогли прочитать вопрос. Поймано 18.08.2026.
-        log(`[a2a] 🔴 не смогла прочитать ${f}: ${e?.message ?? e} (права: попробуй chown dsh:dsh + chmod 644)`);
+        log(`[a2a] 🔴 не смог прочитать ${f}: ${e?.message ?? e} (права: файл должен принадлежать владельцу агента и быть читаемым, chmod 644)`);
         continue;
       }
       if (!text) continue;
+      // Заголовок отправителя отделяем ВСЕГДА: он служебный и в разговоре лишний.
+      const { sender, text: body } = splitSender(text);
+      if (sender !== undefined) text = body;
+      if (!text) continue;
+      if (text === '/goal' || text.startsWith('/goal ')) {
+        if (!goalA2ASenders.has(sender)) {
+          log(`[goal] ОТКАЗ служебному каналу: отправитель ${sender ?? '(не назвался)'} не в списке goalA2ASenders`);
+          await sayTo('a2a', null, sender === undefined
+            ? 'Постановка цели из служебного канала требует заголовка первой строкой: "From: <имя>".'
+            : `Отправитель ${sender} не вправе ставить цель.`);
+        } else {
+          try {
+            const { handle: gh } = await agentFor(A2A_CHAT);
+            await sayTo('a2a', null, await goalCommand(text, 'a2a', gh.agent));
+          } catch (e) {
+            log(`[goal] 🔴 команда не выполнена: ${e?.message ?? e}`);
+            await sayTo('a2a', null, `Не смог выполнить команду: ${e?.message ?? e}`);
+          }
+        }
+        try { fs.unlinkSync(full); } catch { /* уже убрали */ }
+        continue;
+      }
       try {
         const { handle, sessionId: a2aSessionId } = await agentFor(A2A_CHAT);
         lastOrigin.set(a2aSessionId, 'a2a');
@@ -726,7 +1035,7 @@ export function apply(ctx, config = {}) {
         // Наш агент на этом верно упёрся — отказался выполнять просьбу,
         // подписанную чужим именем, пришедшую не из своего канала. Значит
         // происхождение обязан сообщать код доставки, которому подделать нечем.
-        text = `[служебный канал, от координатора]\n${stripMark(text)}`;
+        text = `[служебный канал, от координатора${sender ? ` ${sender}` : ''}]\n${stripMark(text)}`;
         handle.agent.send(platform.createUserMessage({
           content: [{ type: 'text', text }],
           source: { kind: 'user' },
