@@ -38,7 +38,7 @@ try {
 }
 
 export const name = 'dsh-schedule-guard'
-export const inject = ['agents', 'sessions']
+export const inject = ['agents', 'sessions', 'tools']
 
 // No .default(): a missing field stays undefined, so the startup line honestly
 // distinguishes "configured" from "defaulted". Behavior that looks identical for
@@ -122,6 +122,33 @@ export function apply(ctx, rawConfig) {
 
   log('startup', `limits: ${srcParts.join(', ')}`)
   log('startup', 'not applied to: wakeups by a human message (not a dispatch); an already-running turn (the cycle is stopped, not the turn); goal rounds and background jobs (not schedule dispatchers)')
+
+  // Refuse before the fact, so the MODEL learns the floor; the idle reaper
+  // below stays as the backstop. TWO ROUTES, TWO PLACES — deleting either
+  // silently disarms one:
+  //  - this hook sees only calls that enter the platform tool registry (the
+  //    native loop); a bridge that invokes the tool body directly never reaches
+  //    this waterfall, and only the reaper catches those;
+  //  - the reaper sees only what was already created, and is invisible to the
+  //    model; only this hook tells the model "no, the floor is X" so it can
+  //    re-schedule correctly on the spot.
+  // They read like duplication and are not.
+  ctx.on('tools/execute', async (exec, next) => {
+    if (exec.name !== 'schedule_create') return next()
+    const every = exec.arguments?.every_seconds
+    if (typeof every !== 'number' || every >= config.minRepeatingIntervalSeconds) return next()
+    const message =
+      `repeating reminder no more often than every ${config.minRepeatingIntervalSeconds}s ` +
+      `(asked ${every}s) — this is a host limit, not an error: re-schedule at or above the floor`
+    return {
+      content: [{ type: 'text', text: `Error: ${message}` }],
+      isError: true,
+      // `error` is mandatory: without it the registry answers "tool result must
+      // be losslessly JSON-serializable" and the model is told the plumbing broke
+      // instead of why it was refused.
+      error: { message, info: { name: 'ScheduleGuardError', code: 'SCHEDULE_TOO_FREQUENT' } },
+    }
+  })
 
   const watched = new Set()
   const notified = new WeakSet()

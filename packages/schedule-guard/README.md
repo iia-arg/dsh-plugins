@@ -19,6 +19,23 @@ streak). At a limit it deletes the runaway **repeating** reminders, writes the o
 and stops. One-shot reminders are left alone — they expire on their own — but they still count
 toward the limits, because the counter counts *wakeups*, not rule types.
 
+It also refuses a too-frequent repeat **up front**: a `schedule_create` with an `every_seconds`
+below the floor is rejected at the tool call, so the model hears "no, the floor is 1800s" and
+re-schedules correctly on the spot. The reaper stays as the backstop.
+
+## Two mechanisms, two routes — keep both
+
+The floor is enforced in two different places, and they are NOT redundant:
+
+- **Preemptive refusal** (a `tools/execute` hook): rejects `schedule_create` below the floor at the
+  tool call. The model hears "no" and can re-schedule. This hook sees only calls that enter the
+  platform's tool registry — the native loop.
+- **Reaper** (on `agent/status` idle → delete): removes repeating reminders that were already
+  created. It tells the journal and the owner, but not the model. It catches reminders created by
+  any route that bypasses the registry — for example a bridge that invokes the tool body directly.
+
+Delete either one and you silently disarm one route. They read like duplication and are not.
+
 ## When you do NOT need it
 
 - You never enable `dsh-schedule`. No self-wakeup, nothing to guard.
@@ -79,8 +96,9 @@ config (or, without config, the entry is present and the startup line will say `
 schedule_create(every_seconds: 600)   # 10 minutes, below the default 1800 s floor
 ```
 
-🔴 **Success:** on the next agent idle the guard deletes it and logs the stop line; `schedule_list`
-afterwards no longer contains that reminder id.
+🔴 **Success:** the tool call itself is refused with `Error: repeating reminder no more often
+than every 1800s …` (native route); on a route that bypasses the registry, the reaper deletes it
+on the next agent idle and logs the stop line.
 
 ## Configuration
 
@@ -139,10 +157,15 @@ not a one-time ritual):
 2. Restart, then read the startup log → the `limits:` line is present and each value is marked
    `(configured)` or `(default)`.
 3. `schedule_list` → returns (possibly empty), i.e. the schedule tool itself is alive.
-4. Create a repeating reminder below the floor (`every_seconds: 600`) → on next idle the guard
-   deletes it; `schedule_list` no longer contains it; the journal has a `schedule/change delete`
-   event; the stop line is in the log; the owner got the message (or, without `notifyCmd`, the log
-   alone carries it).
+4. Create a repeating reminder below the floor (`every_seconds: 600`) → the tool call is refused
+   immediately with `Error: repeating reminder no more often than every 1800s …`; `schedule_list`
+   shows nothing new.
+5. Run the shipped bench: `node test-preemptive-refusal.mjs` → `3 ok, 0 failed` (it checks the
+   refusal, the pass-through at the floor, and a control without the guard, against the real
+   `@deepseek-ai/dsh-tools`).
+6. Prove the backstop still holds: create a too-frequent repeat through a route that bypasses the
+   registry, and on the next agent idle the reaper deletes it (`schedule/change delete` in the
+   journal, stop line in the log, owner notified).
 
 ## Things that cost us a day
 
@@ -168,6 +191,18 @@ its hook is `agent/status idle`, which is *not* a session event, so the lock nev
 sibling case where the lock *did* bite was a hook on a session event, proven by a separate harness.
 Same code change, different grounds — do not merge the two.
 
+**4. A refusal without an `error` field degrades into gibberish.** Returning
+`{content, isError: true}` from a `tools/execute` hook makes the registry answer `tool result must
+be losslessly JSON-serializable` — the model is told the plumbing broke, not why it was refused.
+The error branch reads `result.error`, so a refusal MUST carry `error: { message, info: { name,
+code } }`. A guard whose refusal is unreadable is worse than none.
+
+**5. The registry service is silent about its own dependency.** `ToolRuntime` declares
+`static inject = ["systemPrompt"]`; mounted alone, `ctx.tools` stays `undefined` — no throw, no log.
+A bench that mounts one plugin and reads the service concludes "not reproducible" when the truth is
+"one dependency short". The shipped bench mounts both — that is the difference between a bench and
+a wrong conclusion.
+
 **3. Count wakeups, not rule types.** "One-shot reminders are exempt" is the obvious reading and a
 one-line bypass: each wakeup sets a fresh one-shot, and the loop is eternal. The counter counts
 every dispatch regardless of rule type; one-shots are merely not *deleted* (they expire on their
@@ -175,7 +210,8 @@ own).
 
 ## Measurements
 
-Own, live, not a stand: reminder delivery deviation **54 ms on 300 s**; guard shutdown latency
-**47 s and 12 s** (time from reminder creation to guard deletion on the next agent idle, two live
-runs). If you cite a sibling deployment's 3 ms / 1 ms figures, mark their origin — they are a
-different route, not this one.
+Own, live, not a stand: reminder delivery deviation **54 ms on 300 s**. The preemptive refusal is
+immediate — the hook returns before the tool runs. The **47 s and 12 s** figures are the REAPER's
+latency (time from reminder creation to deletion on the next agent idle, two live runs on the route
+that bypasses the registry). If you cite a sibling deployment's 3 ms / 1 ms figures, mark their
+origin — they are a different route, not this one.
