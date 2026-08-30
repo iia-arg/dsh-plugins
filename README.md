@@ -19,6 +19,7 @@ existed.
 | [`voice-stack`](packages/voice-stack) | Local speech recognition on the machine's GPU — the agent hears voice messages without sending audio to anyone's cloud. Not a plugin: a service with a one-line command contract. |
 | [`omega-memory`](packages/omega-memory) | Long-term memory for agents, on your machine: service account model, systemd unit, and the wiring that actually reaches the agent. |
 | [`oom-watch`](packages/oom-watch) | Learn when the memory limit killed your agent. Reads the kernel journal, not the cgroup counter that resets on restart. Not a plugin: a systemd timer. |
+| [`a2a-bus`](packages/a2a-bus) | Let agents on one machine write to each other directly, without giving up isolation. Each agent owns a mailbox nobody else can list; a postman running as root transfers ownership of the letter, so the sender loses access once it is delivered. Not a plugin: a spool, a service and a timer. |
 
 `subscription-gateway`, `tool-bridge` and `schedule-guard` are one story, and each is useful on
 its own. Run the harness on a subscription (`subscription-gateway`); let a model driven that way

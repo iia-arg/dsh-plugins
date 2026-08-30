@@ -1,0 +1,14 @@
+[Unit]
+Description=Разносить почту A2A каждые 5 секунд
+
+[Timer]
+# 5 с — решение координатора 29.08. Цена названа: письмо ждёт до пяти секунд.
+# ОДИН юнит на машину, а не экземпляр на ящик: заводя одиннадцатого агента,
+# мы не хотим трогать конфигурацию системы.
+OnBootSec=30s
+OnUnitInactiveSec=5s
+AccuracySec=1s
+Unit=a2a-pochtalon.service
+
+[Install]
+WantedBy=timers.target

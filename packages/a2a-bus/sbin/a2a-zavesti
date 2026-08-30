@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# a2a-zavesti — завести агента в почтовую шину машины.
+#
+# ЗАЧЕМ ОТДЕЛЬНЫЙ ИНСТРУМЕНТ, А НЕ ТРИ КОМАНДЫ В ИНСТРУКЦИИ
+# Ящик нужен ровно с одним режимом (1730 + владелец агента + группа шины), и
+# получить его руками труднее, чем кажется: GNU chmod ЧИСЛОВЫМ режимом
+# СОХРАНЯЕТ setgid каталога, то есть `chmod 1730` поверх унаследованного 2730
+# даёт 3730 и выглядит успехом — код возврата 0. На этом обожглась Искра
+# 25.08 и 29.08. Инструкция, повторяемая руками, приводит к тому же.
+# Здесь режим ставится символьной формой и ПРОВЕРЯЕТСЯ отдельным действием.
+#
+# ЧТО ДЕЛАЕТ
+#   1. берёт системного пользователя агента ИЗ РЕЕСТРА (своего списка нет);
+#   2. заводит ящик /var/spool/a2a/<пользователь> с точным режимом;
+#   3. вносит пользователя в группу шины;
+#   4. проверяет каждый шаг фактом и печатает, что осталось сделать рукой.
+#
+# 🔴 ЧЕГО НЕ ДЕЛАЕТ И НЕ БУДЕТ
+# — не заводит системного пользователя: пользователь агента появляется вместе
+#   с самим агентом (дом, платформа, бот), и делать это молча нельзя;
+# — не вносит агента в реестр: реестр — намерение, его правит человек;
+# — не перезапускает платформу агента: живой процесс получает новую группу
+#   только при старте, а перезапуск чужой службы — не дело этого инструмента;
+# — не заводит телеграм-бота: без него шина работает, теряется лишь видимость
+#   владельцу (почтальон скажет об этом в журнал, письмо доставит).
+#
+# ИДЕМПОТЕНТЕН: повторный запуск на заведённом агенте ничего не портит и
+# сообщает, что уже было сделано.
+set -u
+
+KOREN="${A2A_KOREN:-/var/spool/a2a}"
+GRUPPA="${A2A_GRUPPA:-a2a-pochta}"
+REESTR="${A2A_REESTR_BIN:-/usr/local/bin/agent-registry}"
+
+sdelano=0
+bylo=0
+otkaz=0
+
+skazat()  { printf '%s\n' "$*"; }
+sdelal()  { printf '  ✔ %s\n' "$*"; sdelano=$((sdelano+1)); }
+uzhe()    { printf '  · %s\n' "$*"; bylo=$((bylo+1)); }
+otkazal()   { printf '  🔴 %s\n' "$*" >&2; otkaz=$((otkaz+1)); }
+
+if [ $# -ne 1 ] || [ -z "${1:-}" ]; then
+  skazat "a2a-zavesti — завести агента в почтовую шину."
+  skazat "  a2a-zavesti <кличка-агента-из-реестра>"
+  skazat ""
+  skazat "Пользователь берётся из реестра. Требуется root."
+  exit 2
+fi
+agent="$1"
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "a2a-zavesti: 🔴 нужен root: заведение ящика и правка группы — системные действия" >&2
+  exit 4
+fi
+
+# --- пользователь агента: единственный источник — реестр ---
+polzovatel="$("$REESTR" pole "$agent" polzovatel --json 2>/dev/null | tr -d '"')"
+if [ -z "$polzovatel" ]; then
+  echo "a2a-zavesti: 🔴 в реестре нет агента «$agent» либо у него не задан polzovatel." >&2
+  echo "             Сначала запись в /etc/agent-registry/agents.yaml, потом шина." >&2
+  exit 3
+fi
+if ! id -u "$polzovatel" >/dev/null 2>&1; then
+  echo "a2a-zavesti: 🔴 в реестре у «$agent» стоит пользователь «$polzovatel», а в системе его нет." >&2
+  echo "             Расхождение намерения и факта — заводить ящик не на кого." >&2
+  exit 3
+fi
+skazat "агент «$agent», системный пользователь «$polzovatel»"
+
+# --- группа шины ---
+if getent group "$GRUPPA" >/dev/null 2>&1; then
+  uzhe "группа $GRUPPA существует"
+else
+  if groupadd -r "$GRUPPA" 2>/dev/null; then sdelal "заведена группа $GRUPPA"
+  else otkazal "не удалось завести группу $GRUPPA"; fi
+fi
+
+# --- членство: нужно ОТПРАВИТЕЛЮ. Получателю не нужно: он владелец ящика ---
+if id -nG "$polzovatel" 2>/dev/null | tr ' ' '\n' | grep -qx "$GRUPPA"; then
+  uzhe "пользователь $polzovatel уже в группе $GRUPPA"
+else
+  if usermod -aG "$GRUPPA" "$polzovatel" 2>/dev/null; then
+    # Проверяем ФАКТОМ, а не кодом возврата.
+    if id -nG "$polzovatel" 2>/dev/null | tr ' ' '\n' | grep -qx "$GRUPPA"; then
+      sdelal "пользователь $polzovatel внесён в группу $GRUPPA"
+    else
+      otkazal "usermod отработал, а членства нет — проверьте /etc/group"
+    fi
+  else
+    otkazal "не удалось внести $polzovatel в группу $GRUPPA"
+  fi
+fi
+
+# --- ящик ---
+yashchik="$KOREN/$polzovatel"
+if [ ! -d "$KOREN" ]; then
+  if install -d -o root -g root -m 0755 "$KOREN" 2>/dev/null; then sdelal "заведён корень $KOREN"
+  else otkazal "не удалось завести корень $KOREN"; fi
+fi
+if [ -d "$yashchik" ]; then
+  uzhe "ящик $yashchik существует"
+else
+  if mkdir "$yashchik" 2>/dev/null; then sdelal "заведён ящик $yashchik"
+  else otkazal "не удалось завести ящик $yashchik"; fi
+fi
+
+if [ -d "$yashchik" ]; then
+  chown "$polzovatel":"$GRUPPA" "$yashchik" 2>/dev/null || otkazal "не удалось назначить владельца ящика"
+  # 🔴 СИМВОЛЬНАЯ форма, не числовая: числовая СОХРАНЯЕТ setgid, если он был.
+  chmod u=rwx,g=wx,o=,+t,g-s "$yashchik" 2>/dev/null || otkazal "не удалось поставить режим ящика"
+  rezhim="$(stat -c '%a' "$yashchik" 2>/dev/null)"
+  hozyain="$(stat -c '%U:%G' "$yashchik" 2>/dev/null)"
+  if [ "$rezhim" = "1730" ] && [ "$hozyain" = "$polzovatel:$GRUPPA" ]; then
+    sdelal "ящик проверен: $rezhim $hozyain"
+  else
+    otkazal "ящик НЕ такой, как надо: получилось $rezhim $hozyain, ожидалось 1730 $polzovatel:$GRUPPA"
+  fi
+fi
+
+# --- что осталось рукой: называем всегда, даже когда всё прошло ---
+skazat ""
+skazat "осталось сделать рукой (инструмент этого не делает намеренно):"
+if [ -r "/etc/agent-tell/${polzovatel}.conf" ]; then
+  skazat "  · телеграм-бот: /etc/agent-tell/${polzovatel}.conf на месте"
+else
+  skazat "  ⚠ телеграм-бота нет (/etc/agent-tell/${polzovatel}.conf):"
+  skazat "     шина будет работать, письма дойдут, но владелец НЕ УВИДИТ переписку"
+  skazat "     этого агента в своём чате — почтальон скажет о причине в журнал."
+fi
+skazat "  ⚠ перезапустить платформу агента «$agent» СНАРУЖИ: живой процесс получает"
+skazat "     новую группу только при старте. Без этого агент письма ПОЛУЧАЕТ (он"
+skazat "     владелец ящика), но ОТПРАВИТЬ не может."
+skazat ""
+skazat "проверка: a2a-proba-novichka $agent"
+skazat "итог: сделано $sdelano, уже было $bylo, отказов $otkaz"
+[ "$otkaz" -gt 0 ] && exit 1
+exit 0
