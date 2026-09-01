@@ -1,40 +1,15 @@
 {
   "name": "dsh-tool-bridge",
-  "version": "0.1.1",
-  "description": "Tool bridge for DeepSeek Harness — carries platform plugin tools onto a subscription route, where the host drives the model loop and the platform's own tool plane never reaches it.",
+  "version": "0.2.0",
   "type": "module",
   "main": "src/index.js",
-  "files": [
-    "src",
-    "tools",
-    "test-heartbeat.mjs",
-    "test-startup-lines.mjs",
-    "cordis.patch.yml",
-    "README.md"
-  ],
-  "keywords": [
-    "dsh",
-    "dsh-plugin",
-    "deepseek-harness",
-    "mcp",
-    "tools",
-    "bridge"
-  ],
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/iia-arg/dsh-plugins.git",
-    "directory": "packages/tool-bridge"
+  "description": "Мост инструментов платформы на движковый маршрут: делает инструменты плагинов платформы видимыми модели, которую ведёт сторонний движок",
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "*",
+    "yaml": "^2.0.0"
   },
   "engines": {
     "node": ">=20"
   },
-  "peerDependencies": {
-    "@deepseek-ai/schemastery": "*"
-  },
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    }
-  }
+  "license": "MIT"
 }

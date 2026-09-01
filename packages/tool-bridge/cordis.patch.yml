@@ -1,93 +1,43 @@
-# Bundle patch: what `dsh plugin add dsh-tool-bridge` composes into the profile.
+# Что команда `dsh plugin add dsh-tool-bridge` вносит в профиль.
 #
-# WHY THIS FILE EXISTS: so the plugin installs in one command, like the other
-# plugins in this repository.
+# ЗАЧЕМ ЭТОТ ФАЙЛ: чтобы плагин ставился одной командой, а не вписывался руками.
 #
-# 🔴 WHY EVERY FIELD IS WRITTEN OUT HERE, EVEN THE ONES EQUAL TO THE CODE
-# DEFAULTS. The config schema declares these keys WITHOUT a default value, and
-# that looks like "the platform will demand them". It will not: the config
-# validator drops a missing key silently instead of refusing to start (checked
-# against the platform's own schema library, 2026-08-23 — a required string
-# simply disappears from the resolved config). So the schema is not the
-# protection; this visible block is. A mount with no config block starts, works,
-# and runs on numbers nobody chose.
-# What DOES tell the two apart is the startup line: it prints "(configured)" or
-# "(default)" beside every number. Leave a field out here and you lose the
-# ability to tell "my configuration arrived" from "the field was lost while
-# editing the plugin set" — the mechanism keeps working, just not on your
-# numbers, and it says nothing about it.
+# 🔴 ПОЧЕМУ ВЫПИСАНЫ ВСЕ ПОЛЯ, ДАЖЕ РАВНЫЕ УМОЛЧАНИЯМ КОДА.
+# В схеме настроек часть ключей объявлена БЕЗ значения по умолчанию, и со стороны
+# это выглядит как «платформа их потребует». Не потребует: проверяющий настройки
+# молча выбрасывает пропущенный ключ вместо отказа запускаться. Значит защита —
+# не схема, а этот видимый блок. Монтаж без блока настроек поднимется, заработает
+# и пойдёт на числах, которых никто не выбирал.
 #
-# WHERE THIS ROW BELONGS: the profile layer is enough for this plugin — it is a
-# service, not a tool row, and it reaches the model through the MCP server it
-# opens rather than through the agent's toolset. (A channel-type plugin is the
-# opposite case: a row in the profile layer composes cleanly, reports as mounted
-# and never reaches the agent. Do not copy that reasoning across.)
+# Отличить «моя настройка доехала» от «поле потерялось при правке набора плагинов»
+# позволяет строка подъёма: рядом с каждым значением она печатает его источник —
+# файл агента, общий файл или умолчание кода. Пропустите поле здесь — и потеряете
+# эту возможность: механизм продолжит работать, просто не на ваших числах, и
+# ничего об этом не скажет.
+
 - insert:
     - name: dsh-tool-bridge
+      id: dsh-tool-bridge
       config:
-        # Loopback entry-point port. 0 — take a free one and report it to the
-        # adapter. Keep it 0 unless something else must find the bridge.
+        # Имя агента, которым адресуется его файл пределов
+        # /etc/agent-limits/<агент>.yml. Одно и то же системное имя пользователя
+        # может обслуживать разных агентов, поэтому имя задаётся, а не выводится.
+        # Файла с таким именем нет — чтение откажет ГРОМКО, возьмётся самый
+        # строгий набор пределов, и причина будет названа в журнале.
+        limitsAgent: agent
+
+        # Имя сервера MCP. От него зависят имена инструментов у модели:
+        # mcp__<имя>__<инструмент>. Меняя его, помните, что меняются и они.
+        serverName: bridge
+
+        # Порт точки входа на петле. Ноль — занять свободный и сообщить адаптеру.
         port: 0
 
-        # 🔴 THE ONE FIELD YOU MUST CHANGE. It becomes the prefix of every tool
-        # name the model sees (mcp__<name>__create_goal). Two rules:
-        #   — make it yours, not a generic word: on a collision with somebody
-        #     else's MCP server ours is the one silently shadowed;
-        #   — do not reuse a name already taken on another level.
-        # The placeholder below is deliberately absurd so it cannot survive
-        # unnoticed: it shows up in the startup line AND in every tool name.
-        serverName: changeme
+        # Домены платформы, которые мост выставляет модели.
+        domains: [goals]
 
-        # Goal-creation ceiling per agent, in a sliding window of minutes.
-        # WHAT IT GUARDS AGAINST: a loop, a coding error, an avalanche of
-        # repeats. WHERE IT DOES NOT APPLY: against a deliberate act by an agent
-        # holding full sudo — the counter lives in the host process, and that
-        # process is the agent's.
-        createLimit: 3
-        createWindowMinutes: 60
-
-        # Threshold for the `blocked` action. Must match the same threshold in
-        # the platform's goal tool: otherwise one prohibition behaves
-        # differently on the two routes. There is a script for checking this in
-        # tools/check-blocked-threshold.sh.
-        blockedAfterRounds: 3
-
-        # Upper lifetime of a one-time ticket, in minutes. Insurance for a turn
-        # that never ends: without a deadline a one-time ticket degenerates into
-        # a long-lived password.
-        ticketTtlMinutes: 360
-
-        # ── SELF-WAKE STOP LIMIT ────────────────────────────────────────────
-        # WHY: while alarms are one-shot the mechanism is safe. The first
-        # RECURRING reminder turns it into a guard without a boundary, and the
-        # cost is paid in the owner's quota at a time when nobody is watching.
-        # COUNTED FROM THE SESSION LOG, not from memory: a platform restart does
-        # not reset it, because there is nothing to reset.
-        # 🔴 THE DAILY NUMBER IS PER SESSION, NOT PER AGENT. An agent with two
-        # sessions therefore has a combined ceiling of twice this number. Said
-        # in writing on purpose: a spoken "per session" is forgotten, a written
-        # number is not.
-        # WHERE IT DOES NOT APPLY: to goal rounds (they have their own ceiling);
-        # to wake-ups from background jobs (their own too); to an agent without
-        # this bridge, whose schedule runs on the platform's native route and
-        # needs its own guard there; and against an agent with sudo — the
-        # isolation is behavioural, not enforced.
-        heartbeatMinIntervalSeconds: 1800
-        heartbeatMaxConsecutive: 6
-        heartbeatMaxPerDay: 48
-        heartbeatDayZone: Europe/Moscow
-
-        # 🔴 Source kinds that count as a word from a human and break the streak
-        # of autonomous wake-ups. `user` exists everywhere; ANY other kind is
-        # introduced by whichever module receives messages on your build. Leave
-        # your kind out and messages through it will not break the streak — and
-        # the error is silent, because a superfluous wake-up looks exactly like
-        # an honest one.
-        heartbeatHumanKinds: [user]
-
-        # Directory for the stop notice, written when the limit is reached.
-        # Empty — the notice goes to the log only. Point it at a directory
-        # something actually reads: the notice matters most when the model is
-        # the part that broke, so it must not depend on the model to be
-        # delivered.
+        # Каталог для письма об остановке цикла самопробуждения.
+        # Пустая строка — настроенный исход: текст письма целиком уходит в журнал.
+        # Это не потеря; путь по умолчанию был бы хуже, потому что у вас такого
+        # каталога нет, запись отказала бы, и отказ пришлось бы отличать от замысла.
         heartbeatNoticeDir: ''
