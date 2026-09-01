@@ -1,123 +1,166 @@
 # dsh-telegram-multiagent
 
-A Telegram channel for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): message
-your agent from a phone, get answers back, keep one conversation per chat.
+Канал Telegram для платформы DeepSeek Harness. Один модуль на машину обслуживает
+несколько агентов: у каждого свой бот, свой файл токена и свой список тех, кому он
+отвечает. Агенты не видят переписку друг друга.
 
-The harness ships no messenger channel — there is no channel abstraction in the product at all. This
-plugin builds one out of the two ends the harness does give you:
+## Установка
 
-```
-in:   ctx.agents.create/resume(...) → agent.send(message)
-out:  ctx.on('session/event', ...)  → send to Telegram
-```
+    npm install dsh-telegram-multiagent
 
-One chat = one session = one agent. Sessions live independently, the way the core intends.
+Строка подключения кладётся в пресет агента (см. «Куда класть строку» ниже):
 
-## Install
+    # внутри каталога профиля ($DSH_HOME/profiles/<имя>)
 
-```bash
-# inside your profile directory ($DSH_HOME/profiles/<name>)
-pnpm add dsh-telegram-multiagent
-```
+## Настройки
 
-Then add one row to your **agent preset** (`agent.cordis.yml`), not to the profile patch layer —
-see "Where to put the row" below:
-
-```yaml
-- insert:
-    - name: dsh-telegram-multiagent
-      config:
-        agentName: my-agent            # log label only
-        tokenFile: /etc/dsh/bot.token  # preferred: a file readable by this agent
-        appDir: /opt/my-agent/app      # where THIS agent's harness is installed
-        workspace: /opt/my-agent/work
-        allowedUsers: [123456789]      # empty = everyone; you do not want that
-```
-
-## Configuration
-
-| Field | Required | What it does |
+| Поле | Обязательно | Что делает |
 |---|---|---|
-| `tokenFile` | one of these | Path to a file holding the bot token. Preferred: the secret belongs to the machine, the config only carries a path. |
-| `token` / `tokenEnv` | one of these | Literal token, or the name of an env var. For debugging. |
-| `appDir` | yes | Directory where this agent's harness is installed. Platform packages are resolved from **here**, not from the plugin's own location — see "Why appDir" below. |
-| `agentName` | no | Label in log lines. Useful when several bots run on one machine. |
-| `allowedUsers` | no | Numeric user ids allowed to talk to the agent. **Empty means everyone** — an agent usually has real access to the machine, so set it. |
-| `workspace` | no | Working directory handed to the agent session. |
-| `preset` | no | Agent preset to mount for sessions created by this channel. |
-| `provider` / `model` | no | Fallback if the deployment has no default model service. |
-| `a2aDir` | no | Directory for a file-based agent-to-agent channel (`in/`, `out/`). Omit and no such channel exists. |
-| `a2aSession` | no | Session id used for that channel. Default `a2a`. |
-| `transcribeCommand` | no | External command for voice messages: `<cmd> <audio-file> auto` → transcript on stdout. Omit and voice is politely refused. |
-| `goalUsers` | no | Telegram user ids allowed to run `/goal`. **Empty (default) = the command is refused for everyone.** Not inherited from `allowedUsers` on purpose: talking to an agent and starting a paid autonomous loop are different rights. |
-| `goalA2ASenders` | no | Sender names allowed to run `/goal` from the agent-to-agent channel. The sender names itself in the first line of the file (`From: <name>`) — this is bookkeeping, not authentication; see 1.3.0 below. |
+| `tokenFile` | одно из трёх | Путь к файлу с токеном бота. Предпочтительно: секрет принадлежит машине, настройка несёт только путь. |
+| `token` / `tokenEnv` | одно из трёх | Сам токен либо имя переменной окружения. Для отладки. |
+| `appDir` | да | Каталог, где установлена платформа этого агента. Пакеты платформы разрешаются **отсюда**, а не от места самого плагина — см. «Почему `appDir`». |
+| `agentName` | нет | Подпись в строках журнала. Полезно, когда на машине несколько ботов. |
+| `allowedUsers` | нет | Числовые идентификаторы тех, кому можно говорить с агентом. **Пусто означает «всем»** — а у агента обычно есть настоящий доступ к машине, так что задайте. |
+| `workspace` | нет | Рабочий каталог, передаваемый сессии агента. |
+| `preset` | нет | Пресет агента для сессий, созданных этим каналом. |
+| `provider` / `model` | нет | Запасной вариант, если в установке нет службы модели по умолчанию. |
+| `a2aDir` | нет | Каталог файлового канала между агентами (`in/`, `out/`). Не задан — канала нет. |
+| `a2aSession` | нет | Идентификатор сессии для этого канала. По умолчанию `a2a`. |
+| `spoolDir` | нет | Системный почтовый ящик агента. Не задан — ящик не читается. |
+| `transcribeCommand` | нет | Внешняя команда для голосовых: `<команда> <файл> auto` → расшифровка в stdout. Не задана — голос вежливо отклоняется. |
+| `goalUsers` | нет | Кому можно ставить цель из Telegram. **Пусто — команда отвергается для всех.** Намеренно не наследуется от `allowedUsers`: говорить с агентом и запускать ему платный автономный цикл — разные права. |
+| `goalA2ASenders` | нет | Кому можно ставить цель из канала между агентами. Отправитель называет себя первой строкой файла `From: <имя>`. Это учёт, а не удостоверение личности. |
 
-## Five things that cost us a day
 
-Each of these fails **while looking like success**. They are commented inline in the source; this is
-the short version.
+🔴 **Предел: 3 постановки цели за скользящий час.** Считается по отметкам состоявшихся
+постановок, отдельно на каждый канал. Исчерпан — команда отвергается со словами «зовите
+человека». СНЯТИЕ цели при исчерпанном пределе разрешено: предел бережёт от разгона, а не
+запирает возможность остановиться.
 
-**1. Polling belongs to the bot, not to the mount.** The harness mounts a composition more than once
-per process and unmounts the extra one. With a single shared `running` flag you get two pollers
-fighting over one bot and Telegram cuts both with `Conflict`. With a polite "new mount asks the old
-one to step aside" you get *no* poller at all — because the new mount is the one that gets unmounted.
-The fix is reference counting: the first mount starts polling, the last unmount stops it.
+Предел не защищает от намеренного действия агента с правами администратора: такой агент
+снимет и счётчик, и сам предел. Защита здесь от разгона и случайности, а не от намерения.
+## Пять вещей, стоивших нам дня
 
-**2. Delete the incoming message only after it reached the agent.** Reading a file and unlinking it
-immediately loses the message whenever the handoff fails — and the handoff *will* fail, see (3).
-From the outside that is indistinguishable from "the bot ignored me".
+Каждая из них отказывает **выглядя успехом**. В исходниках они помечены комментариями
+рядом с местом; здесь короткая версия.
 
-**3. The agent factory appears later than the channel.** The first message can arrive before the
-harness has registered it, and you get `no agent factory registered`. Wait for the platform instead
-of assuming it is ready.
+**1. Опрос принадлежит боту, а не монтажу.** Платформа монтирует композицию больше
+одного раза на процесс и снимает лишний монтаж. С одним общим флагом «идёт» вы
+получите два опроса, дерущихся за одного бота, и Telegram оборвёт оба с ошибкой
+`Conflict`. С вежливым «новый монтаж просит старый посторониться» вы не получите
+опроса вовсе — потому что снимут именно новый. Лечение — счёт ссылок: первый монтаж
+запускает опрос, последний снятый его останавливает.
 
-**4. A session already on disk must be resumed, not created.** Calling `create()` with an existing
-session id makes the persistence layer abort *every* turn with an id-collision error. Externally:
-"accepted the message and went quiet" — the turn honestly starts and dies in milliseconds. It works
-until the first restart, which is what makes it nasty. Use `resume()` when the session exists.
+**2. Входящее письмо удаляется только после того, как дошло до агента.** Прочитать
+файл и сразу удалить — значит терять сообщение всякий раз, когда передача не удалась.
+А она не удастся, см. (3). Снаружи это неотличимо от «бот меня проигнорировал».
 
-**5. `ctx.get()` returns nothing *quietly* while a service is still starting.** cordis hands back
-`undefined` without throwing until the provider's fiber is active, so "this service is not in the
-build" and "this service is thirty milliseconds away" arrive as the same value. Code written as
-`const x = ctx.get('x'); if (x) {...}` then takes the "feature absent" branch and says nothing — the
-agent is assembled, answers, and never mentions what it lost. This bit us three times in three days:
-the agent factory (3), session persistence (4, the whole resume block was skipped), and the agent
-preset — where a neighbouring agent's toolset dropped from 33 tools to 3 with no error and no log
-line. Wait for the service with a stated deadline, and when the deadline passes, say so *and name
-the consequence*. One helper for all of them: a fix applied to the instance instead of the class
-guarantees a relapse, and the relapse looks like a new illness.
+**3. Фабрика агентов появляется позже канала.** Первое сообщение может прийти раньше,
+чем платформа её зарегистрировала, и вы получите `no agent factory registered`. Ждите
+платформу, а не предполагайте, что она готова.
 
-## Where to put the row
+**4. Сессию, уже лежащую на диске, надо продолжать, а не создавать.** Вызов `create()`
+с существующим идентификатором даёт новую пустую сессию, и переписка начинается с
+чистого листа — при том, что старая цела и лежит рядом.
 
-In the `web` profile the common-plane tools are **disabled on purpose**; the toolset comes from the
-agent preset. A plugin row placed in the profile patch layer composes without a single error, is
-listed as mounted — and never reaches the agent. Put the row in the agent preset.
+**5. Отказ незнакомцу должен быть громким.** Молчаливый отказ прячет событие
+безопасности: владелец не узнает, что кто-то нашёл его бота.
 
-The preset is also picked up when a **session is created**: editing the file does not affect a
-running session. Restart the platform, or change the default preset in settings (hot-reloaded, takes
-effect for the next created session).
+## Куда класть строку
 
-## Why `appDir`
+В профиле `web` инструменты общего плана **выключены намеренно**; набор приходит из
+пресета агента. Строка плагина, положенная в слой патча профиля, соберётся без единой
+ошибки, будет числиться смонтированной — и никогда не дойдёт до агента. Кладите строку
+в пресет агента.
 
-The plugin resolves `@deepseek-ai/dsh-llm` and `@deepseek-ai/dsh-agent` from the directory you pass
-in `appDir`, not from its own location. That is deliberate: the module is meant to live once on a
-machine and serve several agents, each with its own harness installation. Hard-linking it to one
-agent's `node_modules` would mean that removing *that* agent breaks the channel for everybody else.
+Пресет читается ещё и **при создании сессии**: правка файла не действует на уже идущую.
+Перезапустите платформу либо смените пресет по умолчанию в настройках (перечитывается на
+ходу, действует для следующей созданной сессии).
 
-## Security notes
+## Почему `appDir`
 
-- `allowedUsers` empty means anyone who finds the bot talks to an agent that usually has shell access
-  to the machine. Set it.
-- A rejected stranger is logged and reported to the owner. A silent refusal hides a security event.
-- The token is read from a file at startup; the config carries a path, not a secret.
+Плагин разрешает `@deepseek-ai/dsh-llm` и `@deepseek-ai/dsh-agent` из каталога, который
+вы передали в `appDir`, а не от собственного расположения. Это сделано намеренно: модуль
+должен лежать на машине один раз и обслуживать нескольких агентов, у каждого своя
+установка платформы. Привяжи его жёстко к `node_modules` одного агента — и удаление
+ЭТОГО агента сломает канал всем остальным.
 
-## Status
+## Заметки о безопасности
 
-Written for our own fleet and running in production on several agents. The harness is young
-(`0.1.0-rc`) and its plugin API moves; expect to adapt. Inline comments are currently in Russian —
-they carry the reasoning behind each non-obvious line, and a translation is welcome.
+- Пустой `allowedUsers` означает, что любой нашедший бота говорит с агентом, у которого
+  обычно есть доступ к оболочке машины. Задайте его.
+- Отвергнутый незнакомец попадает в журнал и в сообщение владельцу. Молчаливый отказ
+  прячет событие безопасности.
+- Токен читается из файла при запуске; настройка несёт путь, а не секрет.
+- Изоляция агентов держится на правах файлов токенов, а не на самом модуле: модуль
+  общий, разделяет их файловая система.
+
+## Состояние
+
+Написан для собственного парка агентов и работает в бою на нескольких. Платформа молодая
+(`0.1.0-rc`), её интерфейс плагинов меняется — рассчитывайте подстраиваться. Комментарии
+в исходниках русские: они несут причину каждой неочевидной строки.
 
 MIT.
+
+## 1.4.0 — причина сетевого отказа и чтение почтового ящика
+
+**Ломающих изменений НЕТ.** Проверено сравнением состава: из 1.3.0 не пропало ни одного
+файла, добавилось два стенда. Пути внутри пакета прежние.
+
+    пропало:      ничего
+    добавилось:   test/stend-imena.mjs, test/stend-yashchika-shiny.mjs
+    изменилось:   src/index.js, test/test-goal-control.mjs, cordis.patch.yml, README.md
+
+**Причина сетевого отказа печатается рядом с сообщением.** Раньше `fetch failed` скрывал
+причину: обрыв соединения, истёкшее ожидание и ненайденное имя выглядели одинаково, и по
+журналу нельзя было понять, что чинить. Теперь рядом печатается `e.cause`. Если причины
+нет — пишется «не указана», а не пустое место: пустое читается как «причины нет» и
+возвращает ту же слепоту.
+
+🔴 **У двух каналов РАЗНЫЕ способы назвать отправителя, и путать их дорого:**
+
+    канал a2a (каталог a2aDir)  — отправитель из заголовка первой строки: From: <имя>
+    почтовый ящик (spoolDir)    — отправитель из ИМЕНИ ФАЙЛА: ГГГГММДДTЧЧММССZ-<имя>-<хвост>
+
+Положив в ящик письмо с заголовком `From:`, вы получите отправителем то, что стоит
+в имени файла, а сам заголовок останется в тексте письма. Ошибки не будет, отказа
+тоже — просто отправитель окажется не тем, кого вы назвали. Проверено пробой.
+
+Причина разницы: в ящик кладёт посторонний процесс правами каталога, и имя файла —
+единственное, что он не может подделать незаметно для владельца ящика. В канале a2a
+файл пишет сам отправитель, там заголовок и есть его подпись. В обоих случаях это
+учёт, а не удостоверение личности.
+
+**Чтение писем из системного почтового ящика** (`spoolDir`). Письмо старше 12 часов
+подаётся с явной пометкой возраста — иначе двухсуточное письмо толкает отвечать на
+устаревшее. Больше пяти писем подаются одной пачкой, а не по одному. Ящик не задан —
+не читается, молчаливого умолчания нет.
+
+**Блок управления целями появился в `cordis.patch.yml`.** Раньше `goalUsers` и
+`goalA2ASenders` были описаны в README, но отсутствовали в патче монтажа — то есть
+настройка была недоступна тому, кто ставил пакет по инструкции.
+
+### Проверка, что работает
+
+Стенды едут вместе с кодом:
+
+    node test/test-goal-control.mjs        управление целями из канала
+    node test/stend-imena.mjs              метки отправителя и обезличенность
+    node test/stend-yashchika-shiny.mjs    чтение почтового ящика
+
+Коды: 0 — сошлось, 1 — расхождение, 2 — проверить нечем (слепота).
+🔴 Код 2 не означает «всё хорошо»: он означает, что часть проверок не состоялась. Чаще
+всего это отсутствие необязательных зависимостей или файлов настроек, которых у только
+что установленного модуля ещё нет.
+
+### Чего 1.4.0 НЕ делает
+
+- не хранит переписку — она живёт в журнале сессии платформы;
+- не гарантирует доставку при недоступной сети: повторяет опрос и пишет причину отказа в
+  журнал, но письмо в этот момент не уходит;
+- не проверяет, что пишущий в канал между агентами — тот, за кого себя выдаёт: метка
+  отправителя берётся из имени файла, а право положить файл раздаётся правами каталога.
 
 ## 1.1.0 — кто спросил, кому отвечено, и кто это видит
 
