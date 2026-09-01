@@ -1,34 +1,26 @@
-// dsh-schedule-guard — a behavioral guard over dsh-schedule self-wakeups.
+// schedule-guard — предел автономных пробуждений поверх dsh-schedule.
+// Путь 1 (решение координатора 22.08.2026): при пределе гасим ПОВТОРЯЮЩИЕСЯ будильники
+// (удаляем записи every из журнала сессии) и пишем владельцу. Одноразовые не
+// удаляем — они сами гаснут; их вклад учтён счётчиком пробуждений (не типом правила).
 //
-// What it is NOT: a security boundary. It caps a cooperative mechanism — the
-// reminders a model sets for itself through the schedule tools — and stops
-// ACCIDENTAL runaway loops (a model that keeps re-scheduling itself). An agent
-// with full privileges can read and rewrite its own session journal (where the
-// counter lives), drop the guard, or schedule through another path. Read the
-// limits below as a governor for a well-behaved loop, never as enforcement.
+// Счётчик сворачивается ИЗ ЖУРНАЛА СЕССИИ (schedule/change dispatch = пробуждение,
+// user/message source.kind="user" = человеческое слово и обнуление). Отдельного файла
+// нет, поэтому перезапуск структурно не может обнулить счётчик: он переживает его
+// ровно с той же надёжностью, что и сами напоминания (если сессия поднялась с диска).
 //
-// Counter is FOLDED FROM THE SESSION JOURNAL (schedule/change dispatch = one
-// autonomous wakeup, user/message with source.kind === "user" = a human word and
-// a reset). There is no separate state file, so a platform restart structurally
-// cannot zero the counter: it survives exactly as reliably as the reminders
-// themselves do (i.e. as long as the session is resumed from disk).
-//
-// Reentrancy: the platform publishes session events SYNCHRONOUSLY and holds a
-// lock while doing so ("session append cannot reenter while another append is
-// being published"). The shutdown (append delete) is therefore deferred through
-// ctx.agents.withoutInitiator, the same trick dsh-schedule's own requestDrive
-// uses. NOTE: this is a PRECAUTION here, not a fix for an observed failure — the
-// guard's hook is agent/status idle, which is NOT a session event, so the lock
-// does not hold it. (The sibling case where the lock DID bite was a hook on a
-// session event, proven by a separate harness. Don't merge the two cases: same
-// code change, different grounds.)
+// 🔴 РЕЕНТРАНТНОСТЬ (находка соседки, 22.08.2026): платформа публикует событие
+// СИНХРОННО и на время публикации держит замок — «session append cannot reenter
+// while another append is being published». Гашение отложено через
+// ctx.agents.withoutInitiator (тот же приём, что у самого dsh-schedule в requestDrive).
+// ⚠️ РАЗНИЦА ОСНОВАНИЙ — НЕ сливать со случаем соседки: у НЕЁ замок ПРОЯВЛЯЛСЯ и
+// доказан стендом (гашение висело на событии СЕССИИ, где замок держится). У МЕНЯ
+// гашение на agent/status idle — это НЕ событие сессии, замок его не держит: прежняя
+// синхронная версия сняла schedule-3 боевым замером без отказа. Поэтому у меня
+// отложенный вызов — ПРЕДУПРЕЖДЕНИЕ (страховка), а не ЛЕЧЕНИЕ проявившегося отказа.
 import { execFileSync } from 'node:child_process'
-import z from '@deepseek-ai/schemastery'
-
-// @deepseek-ai/dsh-schedule is the SUBJECT of this guard: without it there is
-// nothing to guard. Import it lazily so its absence degrades the guard to INERT
-// (one loud log line) instead of crashing the whole composition — a plugin whose
-// module fails to load kills the entire tree.
+// @deepseek-ai/dsh-schedule — ПРЕДМЕТ сторожа: без него сторожить нечего. Импорт
+// ЛЕНИВЫЙ, чтобы отсутствие пакета роняло сторожа до НЕДЕЙСТВУЮЩЕГО (одна громкая
+// строка), а не валило всё дерево — плагин, чей модуль не грузится, убивает весь состав.
 let foldScheduleEvents = null
 try {
   const scheduleModule = await import('@deepseek-ai/dsh-schedule')
@@ -36,13 +28,14 @@ try {
 } catch {
   foldScheduleEvents = null
 }
+import z from '@deepseek-ai/schemastery'
 
 export const name = 'dsh-schedule-guard'
 export const inject = ['agents', 'sessions', 'tools']
 
-// No .default(): a missing field stays undefined, so the startup line honestly
-// distinguishes "configured" from "defaulted". Behavior that looks identical for
-// a lost field and for a correct setting is blindness.
+// Без .default(): отсутствие поля в конфиге = undefined, и строка подъёма честно
+// различает «(настройка)» от «(умолчание)». Одинаковое поведение при потерянном
+// поле и при верной настройке — слепота.
 export const Config = z.object({
   maxConsecutiveWakeups: z.number(),
   maxPerDay: z.number(),
@@ -55,21 +48,21 @@ const DEFAULTS = {
   maxConsecutiveWakeups: 6,
   maxPerDay: 48,
   minRepeatingIntervalSeconds: 1800,
-  dayBoundaryOffsetMinutes: 0,
+  dayBoundaryOffsetMinutes: 0,   // нейтрально (UTC); московский сдвиг 180 — в профиле
 }
 
 function log(tag, text) {
   process.stderr.write(`schedule-guard [${tag}]: ${text}\n`)
 }
 
-/** Start of the local calendar day for a given timestamp. */
+/** Точка начала календарных суток для заданного времени. */
 function dayBoundaryStart(tsMs, offsetMinutes) {
   const shifted = new Date(tsMs + offsetMinutes * 60000)
   shifted.setUTCHours(0, 0, 0, 0)
   return shifted.getTime() - offsetMinutes * 60000
 }
 
-/** Wakeup counters, folded from the session journal. */
+/** Счётчики пробуждений по журналу сессии. */
 function countWakeups(events) {
   let consecutive = 0
   let maxConsecutive = 0
@@ -87,65 +80,74 @@ function countWakeups(events) {
 }
 
 function buildStopMessage(config, reason, deleted, done, now) {
-  const lines = ['🔴 schedule-guard: stopped by the autonomous-wakeup limit.']
-  lines.push(`Reason (in numbers): ${reason}`)
+  const lines = ['🔴 schedule-guard: остановился по пределу автономных пробуждений.']
+  lines.push(`Причина (числом): ${reason}`)
   if (deleted.length > 0) {
-    lines.push('Deleted repeating reminders:')
+    lines.push('Удалены повторяющиеся напоминания:')
     for (const r of deleted) {
-      lines.push(`  - id ${r.id}, interval ${r.everySeconds}s, text: ${JSON.stringify(r.prompt)}`)
+      lines.push(`  - id ${r.id}, интервал ${r.everySeconds} с, текст: ${JSON.stringify(r.prompt)}`)
     }
   } else {
-    lines.push('No repeating reminders to delete (the loop used one-shots).')
+    lines.push('Повторяющихся напоминаний для удаления не было (цикл шёл одноразовыми).')
   }
-  lines.push(`Accomplished during the autonomous stretch: ${done}`)
-  lines.push('Resume: only by a human word (any message resets the counter).')
-  lines.push(`Time: ${new Date(now).toISOString()}`)
+  lines.push(`Успел за автономный отрезок: ${done}`)
+  lines.push('Возобновление: только словом человека (любое сообщение обнуляет счётчик).')
+  lines.push(`Время: ${new Date(now).toISOString()}`)
   return lines.join('\n')
 }
 
+// 🔴 ЗАЩЁЛКА ТОЛЬКО НА СТРОКУ ПОДЪЁМА. cordis вызывает apply() ПОВТОРНО, когда
+// пересобираются впрыснутые сервисы (agents/sessions/tools). Сам apply и хуки
+// регистрируем на КАЖДОМ вызове — живым остаётся тот, что на живом ctx, подписки
+// мёртвого ctx платформа гасит сама (проверено: «сессия под надзором» и боевой
+// отказ приходят по одному разу). Гасим только ПОВТОРНЫЙ вывод подъёма: двойная
+// строка пугает читателя журнала и тянет на ложное расследование.
+let loggedStartup = false
 export function apply(ctx, rawConfig) {
   if (!foldScheduleEvents) {
-    log('startup', '🔴 @deepseek-ai/dsh-schedule is not resolvable — the guard is INERT (no schedule fold, nothing to guard)')
+    log('startup', '🔴 @deepseek-ai/dsh-schedule не резолвится — сторож НЕДЕЙСТВУЮЩИЙ (сворачивать нечего)')
     return
   }
-  // Resolve config with a source marker — for the startup line.
+  // Собрать конфиг с пометкой источника — для строки подъёма.
   const config = {}
   const srcParts = []
   for (const [k, dflt] of Object.entries(DEFAULTS)) {
     const has = rawConfig?.[k] !== undefined
     config[k] = has ? rawConfig[k] : dflt
-    srcParts.push(`${k}=${config[k]} (${has ? 'configured' : 'default'})`)
+    srcParts.push(`${k}=${config[k]} (${has ? 'настройка' : 'умолчание'})`)
   }
+  // notifyCmd вынесен из DEFAULTS (деанонимизация 01.09.2026): без него — только
+  // журнал (log only), не падение; путь чужой машины в код не зашиваем.
   const notifySet = rawConfig?.notifyCmd !== undefined
   config.notifyCmd = notifySet ? rawConfig.notifyCmd : undefined
-  srcParts.push(`notifyCmd=${notifySet ? 'set' : 'unset (log only)'} (${notifySet ? 'configured' : 'default'})`)
+  srcParts.push(`notifyCmd=${notifySet ? 'set' : 'unset (log only)'} (${notifySet ? 'настройка' : 'умолчание'})`)
+  if (!loggedStartup) {
+    log('подъём', `пределы: ${srcParts.join(', ')}`)
+    log('подъём', 'не действует: пробуждение по человеческому сообщению (это не dispatch); уже начатый ход (гасим цикл, не ход); раунды целей и фоновые задания — не schedule-диспетчеры, сторож их не трогает; агент под danger-full-access — запись журнала разрешена')
+    loggedStartup = true
+  }
 
-  log('startup', `limits: ${srcParts.join(', ')}`)
-  log('startup', 'not applied to: wakeups by a human message (not a dispatch); an already-running turn (the cycle is stopped, not the turn); goal rounds and background jobs (not schedule dispatchers)')
-
-  // Refuse before the fact, so the MODEL learns the floor; the idle reaper
-  // below stays as the backstop. TWO ROUTES, TWO PLACES — deleting either
-  // silently disarms one:
-  //  - this hook sees only calls that enter the platform tool registry (the
-  //    native loop); a bridge that invokes the tool body directly never reaches
-  //    this waterfall, and only the reaper catches those;
-  //  - the reaper sees only what was already created, and is invisible to the
-  //    model; only this hook tells the model "no, the floor is X" so it can
-  //    re-schedule correctly on the spot.
-  // They read like duplication and are not.
+  // Упреждающий отказ ДО факта, чтобы МОДЕЛЬ узнала предел; пропольщик на idle
+  // ниже остаётся страховкой. ДВА МАРШРУТА — ДВА МЕСТА, убрать одно нельзя:
+  //  - этот хук видит только вызовы, вошедшие в реестр инструментов платформы
+  //    (родной цикл); мост, зовущий тело инструмента напрямую, сюда не доходит —
+  //    таких ловит только пропольщик;
+  //  - пропольщик видит только уже созданное и модели невидим; только этот хук
+  //    говорит модели «нет, предел такой-то», и она переставит напоминание сразу.
+  //  Выглядят как дубль — и не дубль.
   ctx.on('tools/execute', async (exec, next) => {
     if (exec.name !== 'schedule_create') return next()
     const every = exec.arguments?.every_seconds
     if (typeof every !== 'number' || every >= config.minRepeatingIntervalSeconds) return next()
     const message =
-      `repeating reminder no more often than every ${config.minRepeatingIntervalSeconds}s ` +
-      `(asked ${every}s) — this is a host limit, not an error: re-schedule at or above the floor`
+      `повтор не чаще раза в ${config.minRepeatingIntervalSeconds} с ` +
+      `(запрошено ${every} с) — это предел платформы, не ошибка: переставь на порог или выше`
     return {
       content: [{ type: 'text', text: `Error: ${message}` }],
       isError: true,
-      // `error` is mandatory: without it the registry answers "tool result must
-      // be losslessly JSON-serializable" and the model is told the plumbing broke
-      // instead of why it was refused.
+      // `error` обязателен: без него реестр отвечает «tool result must be
+      // losslessly JSON-serializable», и модель узнает про поломку трубы, а не
+      // про причину отказа.
       error: { message, info: { name: 'ScheduleGuardError', code: 'SCHEDULE_TOO_FREQUENT' } },
     }
   })
@@ -156,7 +158,7 @@ export function apply(ctx, rawConfig) {
   ctx.on('agent/created', ({ agent }) => {
     if (!ctx.agents.roots().includes(agent)) return
     watched.add(agent)
-    log('startup', `session under guard: ${agent.session.id} (total ${watched.size})`)
+    log('подъём', `сессия под надзором: ${agent.session.id} (всего ${watched.size})`)
 
     agent.ctx.on('agent/status', ({ status }) => {
       if (status !== 'idle') return
@@ -177,14 +179,16 @@ export function apply(ctx, rawConfig) {
       if (!overConsecutive && !overPerDay && !overInterval) return
 
       const reason = overConsecutive
-        ? `${consecutive} wakeups in a row without a human word (limit ${config.maxConsecutiveWakeups})`
+        ? `подряд ${consecutive} пробуждений без слова человека (предел ${config.maxConsecutiveWakeups})`
         : overPerDay
-          ? `${perDay} wakeups today (limit ${config.maxPerDay})`
-          : `repeat faster than ${config.minRepeatingIntervalSeconds}s (intervals: ${[...new Set(tooFrequent.map((r) => r.everySeconds))].join(', ')}s)`
+          ? `в сутки ${perDay} пробуждений (предел ${config.maxPerDay})`
+          : `повтор чаще ${config.minRepeatingIntervalSeconds} с (интервалы: ${[...new Set(tooFrequent.map((r) => r.everySeconds))].join(', ')} с)`
 
-      // The interval limit stops only the offenders; the other two stop all repeats.
+      // Интервал-предел гасит только нарушившие; прочие два — все повторяющиеся.
       const toDelete = overInterval ? tooFrequent : repeating
 
+      // 🔴 Гашение ОТЛОЖЕНО: из обработчика события писать в журнал нельзя
+      // (замок публикации). withoutInitiator = тот же приём, что у dsh-schedule.
       ctx.agents.withoutInitiator(async () => {
         try {
           const deleted = []
@@ -195,18 +199,22 @@ export function apply(ctx, rawConfig) {
           if (deleted.length > 0) {
             ctx.sessions.flush(agent.session).catch(() => {})
           }
-          const msg = buildStopMessage(config, reason, deleted, `${dispatchTimes.length} autonomous wakeups total`, Date.now())
+          const msg = buildStopMessage(config, reason, deleted, `${dispatchTimes.length} автономных пробуждений всего`, Date.now())
           log(agent.session.id, msg.replace(/\n/g, ' | '))
           if (config.notifyCmd && !notified.has(agent)) {
             notified.add(agent)
             try {
-              execFileSync(config.notifyCmd, [msg], { stdio: 'ignore' })
+              // 🔴 ПЕРЕДАЧА ЧЕРЕЗ ВВОД, А НЕ АРГУМЕНТОМ (29.08.2026). Стоп-сообщение
+              // несёт текст напоминаний — что угодно, — а аргумент процесса виден
+              // любому в /proc/<pid>/cmdline (та же дыра, что нашлась у соседнего модуля).
+              // команда уведомления читает stdin, когда аргументов нет (msg="$(cat)").
+              execFileSync(config.notifyCmd, { input: msg, stdio: ['pipe', 'ignore', 'ignore'] })
             } catch (e) {
-              log(agent.session.id, `owner notification failed: ${e?.message ?? e}`)
+              log(agent.session.id, `уведомление владельцу не ушло: ${e?.message ?? e}`)
             }
           }
         } catch (e) {
-          log(agent.session.id, `shutdown failed: ${e?.message ?? e}`)
+          log(agent.session.id, `сбой гашения: ${e?.message ?? e}`)
         }
       })
     })

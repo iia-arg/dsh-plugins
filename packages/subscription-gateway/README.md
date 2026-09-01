@@ -1,5 +1,7 @@
 # subscription-gateway — run the platform on a subscription instead of per-token billing
 
+> Russian version: [README.ru.md](./README.ru.md).
+
 A system service: it takes a request from the platform (or from any other host),
 drives the model loop through the vendor's official SDK on **subscription**
 access, and streams the answer back.

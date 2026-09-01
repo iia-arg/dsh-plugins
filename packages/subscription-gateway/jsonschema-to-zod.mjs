@@ -1,47 +1,44 @@
 /**
- * JSON Schema → zod raw shape. A minimal subset: exactly what zod.toJSONSchema
- * produces on the platform's schemas.
+ * JSON Schema → zod raw shape. Минимальное подмножество: ровно то, что
+ * порождает zod.toJSONSchema на схемах платформы.
  *
- * WHY. tool() from the SDK requires zod, and zod cannot travel over a wire. The
- * platform hands the schema over as JSON Schema, and the gateway rebuilds zod
- * from it.
+ * ЗАЧЕМ. tool() из SDK требует zod, а через провод zod не передать. Платформа
+ * отдаёт схему как JSON Schema, шлюз собирает из неё zod обратно.
  *
- * 🔴 THE BOUNDARY. An unknown type does NOT silently become "anything": such a
- * substitution would give the model a tool with no parameter shape, and a failure
- * would look like working. An unknown type is an exception, the tool is not
- * exposed, and the gateway writes the reason.
+ * 🔴 ГРАНИЦА. Незнакомый тип НЕ превращается молча в «что угодно»: такая
+ * подмена дала бы модели инструмент без формы параметров, и отказ выглядел бы
+ * как работа. Незнакомый тип — исключение, инструмент не выставляется, шлюз
+ * пишет причину.
  */
 import { z } from 'zod'
 
 const node = (s, path) => {
-  if (!s || typeof s !== 'object') throw new Error(`${path}: empty schema`)
+  if (!s || typeof s !== 'object') throw new Error(`${path}: пустая схема`)
   if (Array.isArray(s.enum)) {
-    if (!s.enum.every((v) => typeof v === 'string')) throw new Error(`${path}: the enum is not made of strings`)
+    if (!s.enum.every((v) => typeof v === 'string')) throw new Error(`${path}: перечень не из строк`)
     return z.enum(s.enum)
   }
-  // The platform's branded strings (SessionId, GoalId) are described as an
-  // intersection of "string AND unknown", and on the wire that is an allOf with
-  // an empty second member. We take the single typed member: zod has no empty
-  // schema, and the type must not be lost.
-  // A branching shape: this is how the platform describes a parameter that takes
-  // either a string or an object (schedule_create.at). Without this branch the
-  // adapter would not understand a node WITHOUT a type field and would refuse —
-  // and the gateway would then silently fail to expose the tool at all. The
-  // refusal would be loud in the gateway log and invisible to the model: the tool
-  // is simply absent.
-  // THE BOUNDARY: there must be at least two branches, and each must assemble on
-  // its own. One branch is not a choice but a typo; a branch that will not
-  // assemble is a loss of shape, that is, exactly what this whole file guards
-  // against.
-  const branches = Array.isArray(s.oneOf) ? s.oneOf : Array.isArray(s.anyOf) ? s.anyOf : undefined
-  if (branches) {
-    const kw = Array.isArray(s.oneOf) ? 'oneOf' : 'anyOf'
-    if (branches.length < 2) throw new Error(`${path}: ${kw} of ${branches.length} branch is not a choice`)
-    return z.union(branches.map((v, i) => node(v, `${path}|${kw}[${i}]`)))
+  // Брендированные строки платформы (SessionId, GoalId) описаны пересечением
+  // «строка И неизвестное», и на проводе это allOf с пустым вторым членом.
+  // Берём единственный типизированный член: пустой схемы в zod нет, а
+  // потерять тип нельзя.
+  // Разветвление формы: у платформы так описан параметр, принимающий либо
+  // строку, либо объект (schedule_create.at). Без этой ветки конвертер не
+  // понимал бы узел БЕЗ поля type и отказывал — а шлюз молча не выставлял бы
+  // инструмент целиком. Отказ был бы громким в журнале шлюза и невидимым для
+  // модели: инструмент просто отсутствует.
+  // ГРАНИЦА: ветвей обязано быть не меньше двух, и каждая обязана собираться
+  // сама. Одна ветвь — это не выбор, а описка; несобираемая ветвь — потеря
+  // формы, то есть ровно то, от чего защищает весь этот файл.
+  const vetvi = Array.isArray(s.oneOf) ? s.oneOf : Array.isArray(s.anyOf) ? s.anyOf : undefined
+  if (vetvi) {
+    const kak = Array.isArray(s.oneOf) ? 'oneOf' : 'anyOf'
+    if (vetvi.length < 2) throw new Error(`${path}: ${kak} из ${vetvi.length} ветви — это не выбор`)
+    return z.union(vetvi.map((v, i) => node(v, `${path}|${kak}[${i}]`)))
   }
   if (Array.isArray(s.allOf)) {
     const typed = s.allOf.filter((m) => m && typeof m === 'object' && m.type !== undefined)
-    if (typed.length !== 1) throw new Error(`${path}: allOf with ${typed.length} typed members is not supported`)
+    if (typed.length !== 1) throw new Error(`${path}: allOf из ${typed.length} типизированных членов не поддержан`)
     return node(typed[0], path)
   }
   switch (s.type) {
@@ -51,15 +48,14 @@ const node = (s, path) => {
     case 'boolean': return z.boolean()
     case 'array': return bounds(z.array(node(s.items, `${path}[]`)), s, 'length')
     case 'object': return z.object(shape(s, path))
-    default: throw new Error(`${path}: type ${JSON.stringify(s.type)} is not supported`)
+    default: throw new Error(`${path}: тип ${JSON.stringify(s.type)} не поддержан`)
   }
 }
 
 /**
- * Value and length bounds. Without them the schema QUIETLY weakens: a positive
- * number becomes any number, and the model sees a different contract from the one
- * the platform will enforce. It will get a refusal at execution time, and the
- * reason will be far from obvious.
+ * Пределы значения и длины. Без них схема ТИХО слабеет: положительное число
+ * превращается в любое, и модель видит не тот договор, который проверит
+ * платформа. Отказ она получит уже на исполнении, а причина будет неочевидна.
  */
 const bounds = (t, s, kind) => {
   if (kind === 'value') {
@@ -77,16 +73,15 @@ const bounds = (t, s, kind) => {
 }
 
 export const shape = (schema, path = '$') => {
-  if (schema?.type !== 'object') throw new Error(`${path}: an object was expected`)
+  if (schema?.type !== 'object') throw new Error(`${path}: ожидался объект`)
   const required = new Set(schema.required ?? [])
   const out = {}
   for (const [key, sub] of Object.entries(schema.properties ?? {})) {
     let t = node(sub, `${path}.${key}`)
-    // THE ORDER MATTERS. optional() first, describe() second: the SDK's converter
-    // reads the description from the OUTER node, so with describe().optional() the
-    // parameter description is SILENTLY lost — the schema stays valid and the
-    // model does not see the explanation of an optional field. Verified with
-    // tools/list against a stub.
+    // ПОРЯДОК ЗНАЧИМ. Сначала optional(), потом describe(): конвертер SDK
+    // читает описание с ВНЕШНЕГО узла, и при describe().optional() описание
+    // параметра МОЛЧА теряется — схема остаётся годной, а модель не видит
+    // пояснения к необязательному полю. Проверено tools/list на пустышке.
     if (!required.has(key)) t = t.optional()
     if (typeof sub.description === 'string') t = t.describe(sub.description)
     out[key] = t

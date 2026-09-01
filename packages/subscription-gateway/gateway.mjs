@@ -1,55 +1,53 @@
 /**
- * Anthropic subscription gateway — a shared system service of the machine.
+ * Шлюз подписки Anthropic — общий системный сервис машины.
  *
- * WHY. There are several agents on the machine, each under its own user. If
- * every one of them kept the subscription token, the secret would multiply
- * across the machine. Here it lives in ONE place, under its own user, and the
- * agents get an entry point. A new agent is connected by a line of
- * configuration and knows nothing about the token.
+ * ЗАЧЕМ. Агентов на машине несколько, каждый под своим пользователем. Если бы
+ * подписочный токен клал себе каждый, секрет размножался бы по машине. Здесь он
+ * живёт в ОДНОМ месте, под своим пользователем, а агенты получают точку входа.
+ * Новый агент подключается строкой в конфиге и о токене не знает.
  *
- * 🔴 WHY THE OFFICIAL SDK INSIDE AND NOT HAND-ROLLED HTTP (lesson of 2026-08-19).
- * At first the gateway assembled the API request by hand: subscription token,
- * two beta flags pulled out of the client binary. Authorisation worked (a wrong
- * token got 401, ours got 429), but EVERY call was rejected by a rate limit
- * while the subscription was entirely healthy: three agents were working on it
- * at that very moment. We went through and discarded four hypotheses — client
- * headers, model binding, token expiry, the set of beta flags. The truth was
- * something else: the raw path is simply not served to subscription access. Same
- * token, same machine, same network egress — the SDK answers in four seconds, a
- * hand-rolled request is refused.
- * The general conclusion: DO NOT REINVENT THE VENDOR'S PROTOCOL. Vendor code
- * knows subtleties that are not in the documentation, and it will survive them
- * changing.
+ * 🔴 ПОЧЕМУ ВНУТРИ ОФИЦИАЛЬНЫЙ SDK, А НЕ РУЧНОЙ HTTP (урок 19.08.2026).
+ * Сначала шлюз собирал запрос к API руками: подписочный токен, два бета-флага,
+ * вынутые из бинаря. Авторизация проходила (с неверным токеном приходило 401,
+ * с нашим — 429), но КАЖДЫЙ вызов отбивался лимитом, при полностью живой
+ * подписке: в тот же момент на ней работали три агента. Перебрали и отбросили
+ * четыре версии — заголовки клиента, привязку к модели, срок годности токена,
+ * набор бета-флагов. Верным оказалось иное: сырой путь подписке просто не
+ * отдают. Тот же токен, та же машина, тот же выход в сеть — SDK отвечает за
+ * четыре секунды, ручной запрос получает отказ.
+ * Вывод общего вида: НЕ ИЗОБРЕТАТЬ ПРОТОКОЛ ПОСТАВЩИКА. Вендорский код знает
+ * тонкости, которых нет в документации, и переживёт их смену.
  *
- * 🔴 INDEPENDENCE FROM ANY OTHER MACHINE. The SDK is installed HERE, the token is
- * HERE, and the machine has its own network egress. No central node takes part
- * in the chain and any such node may be switched off — a direct requirement of
- * the owner, verified with a live call.
+ * 🔴 НЕЗАВИСИМОСТЬ ОТ ГЛАВНОЙ МАШИНЫ. SDK стоит ЗДЕСЬ, токен ЗДЕСЬ, выход в
+ * сеть у машины свой. aclaude в цепочке не участвует и может быть выключен —
+ * это прямое требование владельца, проверенное живым вызовом.
  *
- * BOUNDARIES. Listens on loopback only. It is never exposed outward: this is
- * access to our subscription without a password.
+ * ГРАНИЦЫ. Слушает только петлю. Наружу не выставляется никогда: это доступ к
+ * нашей подписке без пароля.
  *
- * 🔴 THE ENGINE EXECUTES THE TOOLS, NOT THE PLATFORM — AND THE CHOICE OF USER
- * FOLLOWS FROM THAT. The SDK is agentic: it drives the loop itself and itself
- * runs the shell, files, search and web. So the agent's "hands" are the user
- * THIS process runs as. That is why the service is started as an INSTANCE PER
- * AGENT (`...@<agent name>.service`), under the agent's own user name and on its
- * own port. A shared system user does not fit here structurally: it has no
- * access to the agent's home, and every agent on the machine would act as one
- * and the same person, treading on each other.
- * What DOES stay shared: the token file — one per machine, no secret in the
- * agent's configuration, rotation in one place.
- * What you must NOT imagine: an agent with sudo will read the token file
- * anyway. Isolation of the secret is real against agents WITHOUT sudo.
+ * 🔴 ИНСТРУМЕНТЫ ИСПОЛНЯЕТ ДВИЖОК, А НЕ ПЛАТФОРМА — И ОТСЮДА ВЫБОР ПОЛЬЗОВАТЕЛЯ.
+ * SDK агентный: он сам ведёт цикл и сам выполняет оболочку, файлы, поиск, веб.
+ * Значит «руки» агента — это тот пользователь, под которым идёт ЭТОТ процесс.
+ * Поэтому служба запускается ЭКЗЕМПЛЯРОМ НА АГЕНТА (`<служба>@<агент>.service`), под
+ * его собственным именем и на своём порту. Общий системный пользователь здесь
+ * не годится структурно: у него нет доступа к дому агента, а все агенты машины
+ * действовали бы одним лицом и топтали бы друг друга.
+ * Что при этом ОСТАЁТСЯ общим: файл токена — один на машину, в конфиге агента
+ * секрета нет, ротация в одном месте.
+ * Что НЕ надо себе воображать: агент с sudo прочитает файл токена в любом
+ * случае. Изоляция секрета реальна против агентов БЕЗ sudo.
  *
- * THE RIGHTS BOUNDARY. No confirmations are requested (`bypassPermissions`):
- * there is nobody here to ask, the far end is not a human but the platform. The
- * real boundary is the rights of the instance user, and it is set in systemd,
- * not here.
+ * ГРАНИЦА ПРАВ. Подтверждения не запрашиваются (`bypassPermissions`): спросить
+ * тут некого, на том конце не человек, а платформа. Реальная граница — права
+ * пользователя экземпляра, и задаётся она в systemd, а не здесь.
  */
 
 import http from 'node:http';
 import fs from 'node:fs';
+// 🔴 Глобальный crypto здесь — ВЕБ-версия: у неё есть randomUUID и нет
+// createHash. Проверка синтаксиса это пропускает, падает первый же запрос
+// (поймано пробой поведения 30.08.2026, до установки).
+import nodeCrypto from 'node:crypto';
 import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { shape } from './jsonschema-to-zod.mjs';
 
@@ -59,9 +57,9 @@ const TOKEN_FILE = process.env.GATEWAY_TOKEN_FILE || '/etc/subscription-gateway/
 const DEFAULT_MODEL = 'claude-opus-5';
 const DEFAULT_MAX_TURNS = Number(process.env.GATEWAY_MAX_TURNS || 60);
 /**
- * External tool servers (MCP) for this instance's agent. Set through the
- * GATEWAY_MCP variable as JSON: {"<server name>":{"type":"http","url":"..."}}.
- * Empty — the agent works without them, and that is not an error.
+ * Внешние серверы инструментов (MCP) для агента этого экземпляра. Задаются
+ * переменной GATEWAY_MCP как JSON: {"omega":{"type":"http","url":"..."}}.
+ * Пусто — агент работает без них, это не ошибка.
  */
 const MCP_SERVERS = (() => {
   const raw = process.env.GATEWAY_MCP;
@@ -70,30 +68,23 @@ const MCP_SERVERS = (() => {
     const v = JSON.parse(raw);
     return v && Object.keys(v).length ? v : null;
   } catch (e) {
-    // Ignoring this silently is not allowed: the agent would be left without
-    // memory, and it would look like "memory does not work" rather than "I wrote
-    // the line wrong".
-    console.error(`[subscription-gateway] 🔴 GATEWAY_MCP could not be parsed: ${e?.message}`);
+    // Молча игнорировать нельзя: агент останется без памяти, и это будет
+    // выглядеть как «память не работает», а не как «я неверно записала строку».
+    console.error(`[subscription-gateway] 🔴 GATEWAY_MCP не разобран: ${e?.message}`);
     return null;
   }
 })();
 
-/** Default working directory for the tools — the instance user's home. */
+/** Рабочий каталог инструментов по умолчанию — дом пользователя экземпляра. */
 const WORK_DIR = process.env.GATEWAY_WORK_DIR || process.env.HOME || '/tmp';
 
 const log = (m) => console.error(`[subscription-gateway] ${m}`);
 
 /**
- * "exited with code N" from the SDK is only a code without a reason; the truth
- * is in the session transcript. We look for attachment.type == "max_turns_reached"
- * and return a human-readable line with the numbers. Not found — the original
- * text plus an explicit "reason not established", WITHOUT inventing a plausible
- * one.
- *
- * 🔴 The strings matched here — 'exited with code', 'returned an error result',
- * 'max_turns_reached' — are the SDK'S OWN wording and protocol constants. They
- * are not ours to translate or prettify: change them and the match silently
- * stops finding anything, leaving a code without a reason again.
+ * «exited with code N» от SDK — это только код без причины; истина в транскрипте
+ * сессии. Ищем attachment.type == "max_turns_reached" и возвращаем человеческую
+ * строку с числами. Не нашли — прежний текст + явное «причина не установлена»,
+ * БЕЗ додумывания правдоподобной причины.
  */
 function explainExit(err, sessionId, cwd) {
   const raw = String(err?.message ?? err);
@@ -105,16 +96,16 @@ function explainExit(err, sessionId, cwd) {
       if (!line.includes('max_turns_reached')) continue;
       const a = JSON.parse(line)?.attachment;
       if (a?.type === 'max_turns_reached') {
-        return `the agent hit the turn limit: reached ${a.turnCount} against a threshold of ${a.maxTurns} (max_turns_reached)`;
+        return `агент упёрся в лимит ходов: дошёл до ${a.turnCount} при пороге ${a.maxTurns} (max_turns_reached)`;
       }
     }
   } catch {
-    return `${raw} — reason not established (the transcript could not be read)`;
+    return `${raw} — причина не установлена (транскрипт не прочитан)`;
   }
-  return `${raw} — reason not established (no max_turns_reached entry in the fresh transcript)`;
+  return `${raw} — причина не установлена (в свежем транскрипте записи max_turns_reached нет)`;
 }
 
-/** The token is read on EVERY request: rotating the secret needs no restart. */
+/** Токен читаем при КАЖДОМ запросе: смена секрета не требует перезапуска. */
 function readToken() {
   try {
     return fs.readFileSync(TOKEN_FILE, 'utf8').trim() || null;
@@ -123,7 +114,7 @@ function readToken() {
   }
 }
 
-/** A short caption for a tool call: what exactly it does, in one line. */
+/** Короткая подпись к вызову инструмента: что именно он делает, одной строкой. */
 function briefOf(input) {
   if (!input || typeof input !== 'object') return '';
   const v = input.command ?? input.file_path ?? input.pattern ?? input.url ?? input.path ?? input.query;
@@ -146,21 +137,17 @@ function readBody(req) {
 }
 
 /**
- * Assemble one text prompt out of the messages.
+ * Собираем один текстовый запрос из сообщений.
  *
- * A deliberate simplification: the SDK takes the prompt as a string. History is
- * glued together with role labels — the model understands them, and the platform
- * keeps its own history anyway. When there is time for it, real message passing
- * will appear here instead of gluing.
- *
- * 🔴 THESE ROLE LABELS ARE MODEL-FACING TEXT, NOT DISPLAY TEXT. They go into the
- * prompt, so changing them changes what the model reads. If your platform speaks
- * another language, change them deliberately and together, not one of the two.
+ * Осознанное упрощение: SDK принимает подсказку строкой. Историю склеиваем
+ * ролевыми метками — модель их понимает, а платформа всё равно держит свою
+ * историю у себя. Когда дойдут руки до инструментов, здесь появится настоящая
+ * передача сообщений, а не склейка.
  */
 function buildPrompt(messages) {
   const parts = [];
   for (const m of messages ?? []) {
-    const who = m.role === 'assistant' ? 'Assistant' : 'User';
+    const who = m.role === 'assistant' ? 'Ассистент' : 'Пользователь';
     const c = m.content;
     const text =
       typeof c === 'string'
@@ -174,52 +161,158 @@ function buildPrompt(messages) {
 }
 
 /**
- * THE PLATFORM TOOL BRIDGE.
+ * МЕЖХОДОВОЙ КЭШ ПОДСКАЗКИ.
  *
- * The engine executes the tools, so its own set is the only one the model sees.
- * Platform plugins do not reach it at all. The bridge builds an MCP server out of
- * the description sent by the platform and proxies the calls back.
+ * Беда, ради которой это написано (замер 30.08.2026): платформа присылает всю
+ * историю каждый ход, buildPrompt склеивает её в ОДИН блок, и этот блок
+ * меняется целиком — кэш подсказки не попадает ни разу. На 128 ходах: запись
+ * кэша 31,6 млн токенов на первых запросах ходов, то есть около 15% всей
+ * условной стоимости уходит на переписывание того, что уже было записано.
  *
- * 🔴 THE GATEWAY DOES NOT KNOW WHAT THESE TOOLS ARE. Names, descriptions and
- * schemas arrive from the other side; there is only transport here. The next
- * agent with a different tool set connects without editing this file — that is
- * what makes it a general solution rather than a patch for one case.
+ * Лечение: SDK умеет продолжать свою сессию (`resume`). Тогда история едет
+ * тем же байтом, что и в прошлый раз, и попадает в кэш целиком — замерено
+ * A/B на живом SDK: та же история прежним способом даёт запись 22 128, через
+ * resume — чтение 37 630 при записи 44.
  *
- * TRANSPORT sdk, NOT stdio: an sdk server lives in this same process and spawns
- * no child. Everything the SDK passes to a child process goes as the
- * --mcp-config argument and is readable by any user of the machine through
- * /proc/<pid>/cmdline (mode 444) — verified with a live observer on 2026-08-22.
- * That is why the bridge TICKET does not leak with sdk: it stays in the memory of
- * two processes and in the request body over loopback.
+ * 🔴 ГДЕ ЭТО НЕ ДЕЙСТВУЕТ И ЧЕГО НЕ ДЕЛАЕТ:
+ *  - не сокращает историю: это делает сжатие, отдельный рычаг;
+ *  - не переживает перезапуск шлюза — состояние живёт в памяти процесса.
+ *    После перезапуска первый ход каждой беседы снова холодный. Это осознанно:
+ *    состояние на диске пришлось бы сводить с историей платформы, а расхождение
+ *    двух источников правды дороже одного холодного хода;
+ *  - не действует, если платформа переписала прошлые сообщения (сжатие,
+ *    усечение, правка): префикс сверяется хэшем, не сошёлся — идём прежним
+ *    путём с полной историей. Молчаливого расхождения быть не должно;
+ *  - выключается целиком переменной GATEWAY_RESUME=0 без правки кода.
  *
- * 🔴 WHAT EXACTLY THE GATEWAY CARRIES. Not an identity and not a shared secret,
- * but a ONE-TIME TICKET issued by the platform for this turn. The gateway does
- * not know whose it is: there is not a single agent-identity field in this file,
- * neither in the code nor in the comments (we deliberately avoid writing even the
- * name of that field here: otherwise a grep check would find its own caveat and
- * take it for an occurrence). The platform retrieves the identity by the ticket
- * from its own table. So there is nothing here to assert somebody else's identity
- * with — neither for the model nor for the gateway itself.
+ * 🔴 ИСТОЧНИК ПРАВДЫ — ПЛАТФОРМА. Транскрипт SDK здесь только кэш: его потеря
+ * означает холодный ход, а не потерю разговора. Поэтому отказ возобновления
+ * ловится и переигрывается полной историей, а не отдаётся наружу.
+ */
+const RESUME_ON = (process.env.GATEWAY_RESUME ?? '1') !== '0';
+const SESSII = new Map(); // ключ беседы -> { sessionId, otdano, hashPref }
+const SESSII_MAX = 8;     // бесед у агента единицы; предел от утечки памяти
+
+function hashText(s) {
+  return nodeCrypto.createHash('sha256').update(s, 'utf8').digest('hex').slice(0, 32);
+}
+
+/** Текст сообщения в том же виде, в каком его склеивает buildPrompt. */
+function tekstSoobshcheniya(m) {
+  const c = m?.content;
+  if (typeof c === 'string') return c;
+  if (Array.isArray(c)) return c.filter((b) => b?.type === 'text').map((b) => b.text).join('\n');
+  return '';
+}
+
+/** Ключ беседы: первое сообщение. Сменилось — это другая беседа. */
+function kluchBesedy(messages) {
+  const first = (messages ?? [])[0];
+  if (!first) return null;
+  return hashText((first.role ?? '') + '\u0000' + tekstSoobshcheniya(first));
+}
+
+/** Отпечаток первых n сообщений — сторож против молчаливой правки истории. */
+function hashPrefiksa(messages, n) {
+  const parts = [];
+  for (let i = 0; i < n && i < messages.length; i++) {
+    parts.push((messages[i].role ?? '') + '\u0000' + tekstSoobshcheniya(messages[i]));
+  }
+  return hashText(parts.join('\u0001'));
+}
+
+/**
+ * Решение: продолжать сессию или начинать заново. Возвращает и то, чем потом
+ * обновить состояние, — чтобы обновление шло по ФАКТУ отправленного, а не по
+ * намерению.
+ */
+function planZaprosa(messages) {
+  const msgs = messages ?? [];
+  const kluch = kluchBesedy(msgs);
+  const polnyj = { kluch, resume: null, prompt: buildPrompt(msgs), otdano: msgs.length, pochemu: 'полная история' };
+  if (!RESUME_ON || !kluch) return polnyj;
+  const st = SESSII.get(kluch);
+  if (!st) return polnyj;
+  if (msgs.length <= st.otdano) return polnyj;
+  if (hashPrefiksa(msgs, st.otdano) !== st.hashPref) {
+    // История переписана на той стороне. Говорим вслух: молчаливое расхождение
+    // двух картин разговора — худшее, что здесь может случиться.
+    log('история изменена платформой — продолжение сессии отменено, иду полной историей');
+    SESSII.delete(kluch);
+    return polnyj;
+  }
+  // Ответ прошлого хода SDK уже записал у себя; повторно его не шлём.
+  let i = st.otdano;
+  while (i < msgs.length && msgs[i]?.role === 'assistant') i++;
+  if (i >= msgs.length) return polnyj;
+  return {
+    kluch,
+    resume: st.sessionId,
+    prompt: buildPrompt(msgs.slice(i)),
+    otdano: msgs.length,
+    pochemu: `продолжаю сессию, новых сообщений ${msgs.length - i} из ${msgs.length}`,
+  };
+}
+
+/** Запоминаем ФАКТ: что именно отдано и каким был префикс. */
+function zapomnit(plan, sessionId, messages) {
+  if (!plan.kluch) return;
+  if (SESSII.size >= SESSII_MAX && !SESSII.has(plan.kluch)) {
+    SESSII.delete(SESSII.keys().next().value); // самая старая
+  }
+  SESSII.set(plan.kluch, {
+    sessionId,
+    otdano: plan.otdano,
+    hashPref: hashPrefiksa(messages, plan.otdano),
+  });
+}
+
+/**
+ * МОСТ ИНСТРУМЕНТОВ ПЛАТФОРМЫ.
+ *
+ * Инструменты исполняет движок, поэтому его набор — единственный, который
+ * видит модель. Плагины платформы до неё не доходят вовсе. Мост собирает из
+ * описания, присланного платформой, MCP-сервер и проксирует вызовы обратно.
+ *
+ * 🔴 ШЛЮЗ НЕ ЗНАЕТ, ЧТО ЭТО ЗА ИНСТРУМЕНТЫ. Имена, описания и схемы приходят с
+ * той стороны; здесь только транспорт. Следующий агент с другим набором
+ * подключается без правки этого файла — это и есть общее решение, а не
+ * заплатка под одного.
+ *
+ * ТРАНСПОРТ sdk, А НЕ stdio: sdk-сервер живёт в этом же процессе и не
+ * порождает дочернего. Всё, что SDK передаёт дочернему процессу, уходит
+ * аргументом --mcp-config и читается любым пользователем машины через
+ * /proc/<pid>/cmdline (444) — проверено живым наблюдателем 22.08.2026.
+ * Поэтому ПРОПУСК моста при sdk не утекает: он остаётся в памяти двух
+ * процессов и в теле запроса по петле.
+ *
+ * 🔴 ЧТО ИМЕННО НОСИТ ШЛЮЗ. Не личность и не общий секрет, а ОДНОРАЗОВЫЙ
+ * ПРОПУСК, выданный платформой на этот ход. Шлюз не знает, чей он: поля
+ * личности агента в этом файле нет ни одного — ни в коде, ни в комментариях
+ * (нарочно не пишем здесь и само имя поля: иначе проверка грепом нашла бы
+ * собственную оговорку и приняла её за вхождение). Платформа сама достаёт
+ * личность по пропуску из своей таблицы. Значит заявить чужую личность отсюда
+ * нечем — ни модели, ни самому шлюзу.
  */
 function buildBridgeServer(bridge) {
   if (!bridge?.url || !bridge?.ticket || !Array.isArray(bridge.tools) || !bridge.tools.length) return null;
 
-  // 🔴 THE GATEWAY DOES NOT KNOW WHOSE REQUEST THIS IS, AND MUST NOT. It carries
-  // an opaque one-time ticket issued by the platform for this turn and presents it
-  // at the door. The platform retrieves the identity by that ticket from its own
-  // table. The identity is NOT transmitted: whoever asserts it must not be the one
-  // who assigns it. The ticket lives in the CLOSURE of this handler — with the sdk
-  // transport it goes neither into a command line nor into the environment
-  // (measured: 0 hits across 275 inspected processes).
+  // 🔴 ШЛЮЗ НЕ ЗНАЕТ, ЧЕЙ ЭТО ЗАПРОС, И ЗНАТЬ НЕ ДОЛЖЕН. Он носит непрозрачный
+  // одноразовый пропуск, выданный платформой на этот ход, и предъявляет его на
+  // двери. Личность по пропуску достаёт сама платформа из своей таблицы.
+  // Личность НЕ передаётся: тот, кто её заявляет, не должен быть тем, кто её
+  // назначает. Пропуск живёт в ЗАМЫКАНИИ этого обработчика — при транспорте sdk
+  // он не уходит ни в командную строку, ни в окружение (замерено: 0 попаданий
+  // при 275 просмотренных процессах).
   const callBridge = async (toolName, args) => {
     const r = await fetch(bridge.url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-bridge-ticket': bridge.ticket },
       body: JSON.stringify({ tool: toolName, args }),
     });
-    if (!r.ok) throw new Error(`the bridge answered ${r.status}`);
+    if (!r.ok) throw new Error(`мост ответил ${r.status}`);
     const out = await r.json();
-    if (out?.ok !== true) throw new Error(String(out?.error ?? 'the bridge refused without a reason'));
+    if (out?.ok !== true) throw new Error(String(out?.error ?? 'мост отказал без причины'));
     return out.value;
   };
 
@@ -229,10 +322,10 @@ function buildBridgeServer(bridge) {
     try {
       inputShape = shape(t.inputSchema ?? { type: 'object', properties: {} });
     } catch (e) {
-      // A tool whose schema we cannot assemble is NOT exposed "as is": the model
-      // would get a tool with no parameter shape and would fail at execution
-      // time. The skip is loud, the rest keep working.
-      log(`🔴 tool ${t.name} skipped: ${e?.message}`);
+      // Инструмент со схемой, которую мы не умеем собрать, НЕ выставляем
+      // «как есть»: модель получила бы инструмент без формы параметров и
+      // ошибалась бы на исполнении. Пропуск громкий, остальные работают.
+      log(`🔴 инструмент ${t.name} пропущен: ${e?.message}`);
       continue;
     }
     tools.push(
@@ -245,10 +338,9 @@ function buildBridgeServer(bridge) {
             const value = await callBridge(t.name, args ?? {});
             return { content: [{ type: 'text', text: JSON.stringify(value ?? null) }] };
           } catch (e) {
-            // The refusal is returned as text, not as an exception: the model
-            // must read the reason and decide what to do, not see the tool cut
-            // off. 🔴 This text is model-facing.
-            return { content: [{ type: 'text', text: `REFUSED: ${e?.message ?? e}` }], isError: true };
+            // Отказ отдаём текстом, а не исключением: модель должна прочитать
+            // причину и решить, что делать, а не увидеть обрыв инструмента.
+            return { content: [{ type: 'text', text: `ОТКАЗ: ${e?.message ?? e}` }], isError: true };
           }
         },
       ),
@@ -256,26 +348,24 @@ function buildBridgeServer(bridge) {
   }
   if (!tools.length) return null;
 
-  // alwaysLoad: otherwise the tools go behind a catalogue search and are not
-  // visible in the system header — and the header is precisely our acceptance sign.
+  // alwaysLoad: иначе инструменты уходят за поиск по каталогу и в системном
+  // заголовке их не видно — а именно заголовок у нас признак приёмки.
   return createSdkMcpServer({ name: bridge.name || 'dsh', version: '0.1.0', tools, alwaysLoad: true });
 }
 
 /**
- * Merge the tool servers WITHOUT letting the bridge overwrite somebody else's
- * server with its own name.
+ * Слить серверы инструментов, НЕ давая мосту затереть чужой сервер своим именем.
  *
- * 🔴 THE NAMING RULE (2026-08-22): server names must not coincide — neither with
- * ones already connected here, nor between the root and subagent levels. The
- * price of a collision is silent, and it goes both ways:
- *   * here a plain spread would overwrite a same-named server entirely, and the
- *     model would get the bridge in its place without ever learning of it;
- *   * for a subagent (experiment B, 2026-08-22) a server bearing THE ROOT'S NAME
- *     comes up with its own environment yet the root's one answers anyway — from
- *     the start-up alone it looks as if the configuration works.
- * Therefore a collision means refusing to connect the bridge, not a quiet
- * substitution: without the bridge the agent works worse, with a substituted
- * server it works wrongly.
+ * 🔴 ПРАВИЛО ИМЁН (главная, 22.08.2026): имена серверов не должны совпадать —
+ * ни с уже подключёнными здесь, ни между уровнями корень/помощник. Цена
+ * совпадения молчаливая и в обе стороны:
+ *   * здесь простой спред затёр бы одноимённый сервер (например omega) целиком,
+ *     и модель получила бы вместо него мост, ничего об этом не узнав;
+ *   * у помощника (опыт Б, 22.08) сервер с ИМЕНЕМ КОРНЯ поднимается со своим
+ *     окружением, а отвечает всё равно корневой — по факту старта кажется, что
+ *     настройка работает.
+ * Поэтому столкновение — отказ подключить мост, а не тихая замена: без моста
+ * агент работает хуже, с подменённым сервером — неверно.
  */
 function mergeMcpServers(base, bridgeName, bridgeServer) {
   const servers = { ...(base ?? {}) };
@@ -291,28 +381,23 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/health') {
     const ok = Boolean(readToken());
     res.writeHead(ok ? 200 : 503, { 'content-type': 'application/json' });
-    // Health means the PRESENCE OF THE SECRET, not "the process is alive":
-    // without a token the service is up but useless, and that must be visible
-    // from outside.
-    // 🔴 The `token` field is API SURFACE, not a log line: the README documents
-    // this exact response and acceptance step 1 compares against it. If you change
-    // the wording, change the README and anything scripted against it in the same
-    // pass — the HTTP status is the machine-readable part, this field is not.
-    res.end(JSON.stringify({ ok, token: ok ? 'present' : 'MISSING', sdk: true }));
+    // Здоровьем считаем НАЛИЧИЕ секрета, а не «процесс жив»: без токена служба
+    // поднята, но бесполезна, и это должно быть видно снаружи.
+    res.end(JSON.stringify({ ok, token: ok ? 'есть' : 'НЕТ', sdk: true }));
     return;
   }
 
   if (req.method !== 'POST' || req.url !== '/v1/agent-stream') {
     res.writeHead(404, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: 'unknown path; /v1/agent-stream and /health exist' }));
+    res.end(JSON.stringify({ error: 'неизвестный путь; есть /v1/agent-stream и /health' }));
     return;
   }
 
   const token = readToken();
   if (!token) {
     res.writeHead(503, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: { type: 'no_credential', message: 'no subscription token' } }));
-    log('🔴 request rejected: the token could not be read');
+    res.end(JSON.stringify({ error: { type: 'no_credential', message: 'нет подписочного токена' } }));
+    log('🔴 запрос отклонён: токен не прочитан');
     return;
   }
 
@@ -321,13 +406,13 @@ const server = http.createServer(async (req, res) => {
     body = await readBody(req);
   } catch {
     res.writeHead(400, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: { type: 'bad_json', message: 'the request body could not be parsed' } }));
+    res.end(JSON.stringify({ error: { type: 'bad_json', message: 'тело запроса не разобрано' } }));
     return;
   }
 
-  // A stream of events as JSON lines: one line, one event. The format is our own
-  // and deliberately simple; translating it into the platform's protocol is the
-  // job of a module on the agent's side.
+  // Поток событий строками JSON: одна строка — одно событие. Формат наш
+  // собственный и намеренно простой; переводом в протокол платформы занимается
+  // модуль на стороне агента.
   res.writeHead(200, {
     'content-type': 'application/x-ndjson; charset=utf-8',
     'cache-control': 'no-cache',
@@ -336,41 +421,53 @@ const server = http.createServer(async (req, res) => {
 
   const started = Date.now();
   const cwd = body.cwd || WORK_DIR;
-  const sessionId = crypto.randomUUID(); // Node >=19; we run v24, the global exists
+  let plan = planZaprosa(body.messages);
+  // Свой id нужен и при возобновлении: SDK его сохраняет (проверено — id после
+  // resume тот же), а нам он нужен для объяснения отказа в explainExit.
+  const sessionId = plan.resume || crypto.randomUUID(); // Node >=19, у нас v24
 
-  // The platform tool bridge: connected ONLY when the other side has sent a
-  // descriptor with a ticket. Without one the behaviour is exactly as before.
+  // Мост инструментов платформы: подключается ТОЛЬКО когда та сторона прислала
+  // описание с пропуском. Нет его — поведение прежнее, байт в байт.
   let bridgeServer = null;
   try {
     bridgeServer = buildBridgeServer(body.bridge);
   } catch (e) {
-    // A failure to build the bridge must not bring down the request itself:
-    // without tools the agent works worse, but it works. Staying silent about it
-    // is not allowed.
-    log(`🔴 the bridge was not built: ${e?.message}`);
+    // Сбой сборки моста не должен рушить сам запрос: без инструментов агент
+    // работает хуже, но работает. Молчать при этом нельзя.
+    log(`🔴 мост не собран: ${e?.message}`);
   }
   const bridgeName = body.bridge?.name || 'dsh';
   const merged = mergeMcpServers(MCP_SERVERS, bridgeName, bridgeServer);
   const mcpAll = merged.servers;
-  // The "connected" line is printed AFTER the merge and only on success: it is
-  // our acceptance sign, and it must not lie.
-  if (merged.mounted) log(`bridge connected: tools ${body.bridge.tools.length}, server "${bridgeName}" (the ticket carries the identity, the gateway does not know it)`);
-  else if (merged.conflict) log(`🔴 bridge NOT connected: the server name "${merged.conflict}" is already taken by another tool server`);
+  // Строка «подключён» печатается ПОСЛЕ слияния и только при удаче: она у нас
+  // признак приёмки, и врать ей нельзя.
+  if (merged.mounted) log(`мост подключён: инструментов ${body.bridge.tools.length}, сервер "${bridgeName}" (личность несёт пропуск, шлюз её не знает)`);
+  else if (merged.conflict) log(`🔴 мост НЕ подключён: имя сервера "${merged.conflict}" уже занято другим сервером инструментов`);
   try {
+    let model = null;
+    let otdanoSobytij = 0;
+    // Откат возможен, только пока наружу не ушло ни одного события: после
+    // первого отданного куска переиграть ход уже нельзя, иначе платформа
+    // получит два начала одного ответа.
+    const otdat = (o) => { otdanoSobytij++; send(o); };
+
+    const progon = async (tekushchij) => {
     const iter = query({
-      prompt: buildPrompt(body.messages),
+      prompt: tekushchij.prompt,
       options: {
         model: body.model || DEFAULT_MODEL,
-        // A loop with tools: one turn is only enough for a conversation. We keep
-        // a limit so that a jammed agent does not spin forever, but a generous one.
+        // Цикл с инструментами: одного хода хватает только на разговор. Предел
+        // держим, чтобы заклинивший агент не крутился вечно, но с запасом.
         maxTurns: Number(body.maxTurns) > 0 ? Number(body.maxTurns) : DEFAULT_MAX_TURNS,
         permissionMode: 'bypassPermissions',
-        sessionId,
-        // 🔴 EXTERNAL TOOL SERVERS ARE CONNECTED HERE, NOT IN THE PLATFORM
-        // (2026-08-19, it cost an hour). The engine executes the tools, so its
-        // own set is the only one the agent sees. A client plugin on the platform
-        // side connects without errors, appears in the plugin set — and does not
-        // reach the agent at all: in this arrangement the platform is only a chassis.
+        // Продолжаем свою же сессию, когда префикс сошёлся: тогда история
+        // едет тем же байтом и попадает в кэш подсказки целиком.
+        ...(tekushchij.resume ? { resume: tekushchij.resume } : { sessionId }),
+        // 🔴 ВНЕШНИЕ СЕРВЕРЫ ИНСТРУМЕНТОВ ПОДКЛЮЧАЮТСЯ ЗДЕСЬ, А НЕ В ПЛАТФОРМЕ
+        // (19.08.2026, стоило часа). Инструменты исполняет движок, поэтому его
+        // набор — единственный, который агент видит. Плагин-клиент на стороне
+        // платформы подключается без ошибок, числится в составе — и до агента
+        // не доходит вовсе: платформа в этой схеме только шасси.
         ...(Object.keys(mcpAll).length ? { mcpServers: mcpAll } : {}),
         ...(body.cwd ? { cwd: body.cwd } : { cwd: WORK_DIR }),
         ...(body.system ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: body.system } } : {}),
@@ -378,22 +475,21 @@ const server = http.createServer(async (req, res) => {
       },
     });
 
-    let model = null;
     for await (const m of iter) {
       if (m.type === 'assistant') {
         model = m.message?.model ?? model;
         for (const b of m.message?.content ?? []) {
-          if (b.type === 'text') send({ type: 'text', text: b.text });
-          else if (b.type === 'thinking') send({ type: 'thinking', text: b.thinking });
-          // Tool work is emitted outward as an EVENT rather than as silence:
-          // otherwise a long stretch looks like a hang and the platform has
-          // nothing to show. The tool input is not forwarded in full — there can
-          // be secrets and megabytes in it; only the name and a short caption.
-          else if (b.type === 'tool_use') send({ type: 'tool', name: b.name, brief: briefOf(b.input) });
+          if (b.type === 'text') otdat({ type: 'text', text: b.text });
+          else if (b.type === 'thinking') otdat({ type: 'thinking', text: b.thinking });
+          // Работу инструментами отдаём наружу СОБЫТИЕМ, а не молчанием: иначе
+          // долгий заход выглядит как зависший, и платформе нечего показать.
+          // Ввод инструмента не пересылаем целиком — там бывают секреты и
+          // мегабайты; только имя и короткая подпись.
+          else if (b.type === 'tool_use') otdat({ type: 'tool', name: b.name, brief: briefOf(b.input) });
         }
         const u = m.message?.usage;
         if (u) {
-          send({
+          otdat({
             type: 'usage',
             inputTokens: u.input_tokens ?? 0,
             outputTokens: u.output_tokens ?? 0,
@@ -403,13 +499,28 @@ const server = http.createServer(async (req, res) => {
         }
       }
     }
+    };
+
+    log(`подсказка: ${plan.pochemu}`);
+    try {
+      await progon(plan);
+    } catch (e) {
+      // Транскрипт SDK — кэш, а не источник правды. Его потеря (чистка,
+      // перезапуск, чужая рука) не должна стоить хода: переигрываем полной
+      // историей и говорим об этом вслух.
+      if (!plan.resume || otdanoSobytij > 0) throw e;
+      log(`🔴 продолжение сессии ${plan.resume} не удалось (${String(e?.message ?? e).slice(0, 140)}) — повторяю полной историей`);
+      SESSII.delete(plan.kluch);
+      plan = planZaprosa(body.messages);
+      await progon(plan);
+    }
+    zapomnit(plan, plan.resume || sessionId, body.messages);
     send({ type: 'done', model, tookMs: Date.now() - started });
   } catch (e) {
-    // The error is returned IN THE STREAM rather than as silence: a stream cut
-    // off without a reason reads as "the model went quiet", and the investigation
-    // starts from nothing.
+    // Ошибку отдаём В ПОТОКЕ, а не молчанием: оборванный поток без причины
+    // читается как «модель замолчала», и разбираться приходится с нуля.
     const message = explainExit(e, sessionId, cwd);
-    log(`🔴 call failed: ${message}`);
+    log(`🔴 сбой вызова: ${message}`);
     send({ type: 'error', message: message.slice(0, 500) });
   } finally {
     res.end();
@@ -417,13 +528,13 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  log(`listening on ${HOST}:${PORT}; token from ${TOKEN_FILE}; engine — the official SDK`);
-  if (!readToken()) log('🔴 warning: the token is NOT readable right now, requests will be rejected');
+  log(`слушаю ${HOST}:${PORT}; токен из ${TOKEN_FILE}; движок — официальный SDK`);
+  if (!readToken()) log('🔴 предупреждение: токен сейчас НЕ читается, запросы будут отклоняться');
 });
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.on(sig, () => {
-    log(`${sig} received, shutting down`);
+    log(`получен ${sig}, закрываюсь`);
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 5000).unref();
   });

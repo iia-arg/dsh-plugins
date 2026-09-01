@@ -1,11 +1,11 @@
 {
   "name": "dsh-schedule-guard",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Behavioral guard for DeepSeek Harness self-wakeups: caps autonomous schedule reminders (consecutive, per-day, minimum repeat interval), deletes runaway repeats, and tells the owner why.",
   "type": "module",
   "main": "src/index.js",
   "files": [
-    "src",
+    "src/index.js",
     "cordis.patch.yml",
     "README.md",
     "test-preemptive-refusal.mjs"

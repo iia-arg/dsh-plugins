@@ -1,76 +1,67 @@
-// Bench: does a `tools/execute` hook refuse a tool call before it runs?
-//
-// Needs three platform packages resolvable from the CURRENT directory (they are
-// test-only, not plugin runtime, and are declared in devDependencies):
-//   @deepseek-ai/cordis, @deepseek-ai/dsh-tools, @deepseek-ai/dsh-system-prompt
-// `npm install` in the package directory fetches them; NODE_PATH does not work for
-// ES modules, so a node_modules symlink to the platform's own copy is the alternative.
-//
-// The registry service is silent about its own dependency: ToolRuntime declares
-// `static inject = ["systemPrompt"]`, and mounted alone it leaves ctx.tools
-// undefined with no throw and no log. Mount both, or read the silence as "not
-// reproducible" and be wrong.
-import { Context } from '@deepseek-ai/cordis'
-import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+// Стенд упреждающего отказа: импортирует ПРЕДМЕТ (guard) и дёргает его РЕАЛЬНЫЙ хук
+// tools/execute, а не свою копию. Порча src:141 (every >= -> every >) обязана дать код 1
+// с именем разошедшегося случая.
+import { pathToFileURL } from 'node:url';
 
-const FLOOR = 1800
-let ok = 0, bad = 0
-const check = (label, actual, expected) => {
-  if (String(actual).includes(expected)) { ok++; console.log(`  ok   ${label}`) }
-  else { bad++; console.log(`  FAIL ${label}\n       expected to contain: ${expected}\n       got: ${actual}`) }
+const SRC = process.argv[2] || new URL('./src/index.js', import.meta.url).pathname;
+
+let apply;
+try {
+  ({ apply } = await import(pathToFileURL(SRC).href));
+} catch (e) {
+  console.log(`СЛЕПОТА: не загружается предмет ${SRC} — ${e?.code || e?.message}`);
+  process.exit(2);
 }
 
-function tool() {
-  return defineContentToolFixture({
-    name: 'schedule_create',
-    description: 'stand-in for the real schedule_create',
-    parameters: { every_seconds: { type: 'number' } },
-    async execute(args) { return [{ type: 'text', text: `CREATED every_seconds=${args.every_seconds}` }] },
-  })
+// подставной ctx: ловим хук tools/execute из apply()
+const handlers = {};
+const ctx = {
+  on(ev, h) { handlers[ev] = h; return () => {}; },
+  agents: { roots: () => [], withoutInitiator: (fn) => fn() },
+  sessions: { flush: async () => true },
+};
+
+apply(ctx, {
+  minRepeatingIntervalSeconds: 1800,
+  maxConsecutiveWakeups: 6,
+  maxPerDay: 48,
+  dayBoundaryOffsetMinutes: 0,
+});
+
+const hook = handlers['tools/execute'];
+if (!hook) {
+  console.log('СЛЕПОТА: хук tools/execute не зарегистрирован — guard INERT?');
+  process.exit(2);
 }
 
-async function registry() {
-  const ctx = new Context()
-  ctx.plugin(SystemPrompt, {})
-  ctx.plugin(ToolRuntime, {})
-  // The service appears when the provider's fiber goes active, not when plugin()
-  // returns. Waiting is the difference between a bench and a wrong conclusion.
-  for (let i = 0; i < 50 && !ctx.tools; i++) await new Promise((r) => setTimeout(r, 20))
-  if (!ctx.tools) throw new Error('tools service never became available')
-  ctx.tools.register(tool())
-  return ctx
+let ok = 0, fail = 0;
+const t = (n, c, s) => {
+  if (c) { ok++; console.log(`ok   ${n}`); }
+  else { fail++; console.log(`FAIL ${n}\n     ${s ?? ''}`); }
+};
+const next = async () => 'NEXT';
+
+// 1. ниже порога — отказ с причиной и кодом
+const r1 = await hook({ name: 'schedule_create', arguments: { every_seconds: 600 } }, next);
+t('ниже порога: отказ (isError)', r1?.isError === true, JSON.stringify(r1));
+t('ниже порога: код SCHEDULE_TOO_FREQUENT', r1?.error?.info?.code === 'SCHEDULE_TOO_FREQUENT', JSON.stringify(r1?.error));
+
+// 2. на пороге — пропуск (ровно тут ловится порча every >= -> every >)
+const r2 = await hook({ name: 'schedule_create', arguments: { every_seconds: 1800 } }, next);
+t('на пороге: пропуск', r2 === 'NEXT', JSON.stringify(r2));
+
+// 3. чужой инструмент — пропуск
+const r3 = await hook({ name: 'schedule_list', arguments: {} }, next);
+t('чужой инструмент: пропуск', r3 === 'NEXT', JSON.stringify(r3));
+
+// 4. без every_seconds — пропуск
+const r4 = await hook({ name: 'schedule_create', arguments: {} }, next);
+t('без every_seconds: пропуск', r4 === 'NEXT', JSON.stringify(r4));
+
+console.log(`ИТОГО: сошлось ${ok}, расхождений ${fail}`);
+const ZHDYOM = 5;
+if (ok + fail !== ZHDYOM) {
+  console.log(`🔴 КАНАРЕЙКА: проверок ${ok + fail}, а стенд состоит из ${ZHDYOM}`);
+  process.exit(2);
 }
-
-const call = (ctx, every, callId) => ctx.tools.execute({
-  name: 'schedule_create',
-  arguments: { every_seconds: every },
-  callId,
-  signal: new AbortController().signal,
-}).then((r) => r?.content?.[0]?.text ?? JSON.stringify(r))
-
-const guarded = await registry()
-guarded.on('tools/execute', async (exec, next) => {
-  if (exec.name !== 'schedule_create') return next()
-  const every = exec.arguments?.every_seconds
-  if (typeof every !== 'number' || every >= FLOOR) return next()
-  const message = `repeating reminder no more often than every ${FLOOR}s (asked ${every}s)`
-  // `error` is mandatory: without it the registry answers "tool result must be
-  // losslessly JSON-serializable" and the model is told the plumbing broke
-  // instead of why it was refused.
-  return {
-    content: [{ type: 'text', text: `Error: ${message}` }],
-    isError: true,
-    error: { message, info: { name: 'ScheduleGuardError', code: 'SCHEDULE_TOO_FREQUENT' } },
-  }
-})
-
-check('below the floor is refused, with the reason', await call(guarded, 300, 'a'), 'no more often than every 1800s')
-check('at the floor passes through', await call(guarded, FLOOR, 'b'), 'CREATED every_seconds=1800')
-
-// Control: the same call without the guard must succeed. A bench that refuses
-// everything proves its own breakage, not a guard.
-check('control, no guard: below the floor passes', await call(await registry(), 300, 'c'), 'CREATED every_seconds=300')
-
-console.log(`\n${ok} ok, ${bad} failed`)
-process.exit(bad === 0 ? 0 : 1)
+process.exit(fail ? 1 : 0);

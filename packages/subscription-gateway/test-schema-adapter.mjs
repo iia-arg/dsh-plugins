@@ -1,7 +1,21 @@
 // A bench for the schema adapter, taken FROM THE PACKAGE FILE. It checks exactly
 // what the adapter was fixed for: shapes that occur in the platform's schemas and
 // that the first version did not know — it lost them SILENTLY, returning z.any().
-import { shape } from './jsonschema-to-zod.mjs'
+// 🔴 ТРИ ИСХОДА, А НЕ ДВА: 0 сошлось · 1 расхождение · 2 проверить нечем.
+// Прежняя редакция знала два и при отсутствующей зависимости падала голым
+// стектрейсом с кодом 1 — «предмет расходится» при исправном предмете. У того,
+// кто ТОЛЬКО ЧТО поставил пакет, зависимостей ещё нет, и первое, что он увидит,
+// было бы ложным обвинением коду. Класс лечён в двух других наших пакетах;
+// здесь остался непройденным, пока не собрали третий (01.09.2026).
+let shape
+try {
+  ({ shape } = await import('./jsonschema-to-zod.mjs'))
+} catch (e) {
+  console.log(`СЛЕПОТА: адаптер не загрузился: ${String(e?.message ?? e).slice(0, 120)}`)
+  console.log('  Это не расхождение предмета: скорее всего не поставлена зависимость zod'
+    + ' (`npm install` в каталоге пакета) — поставьте и повторите.')
+  process.exit(2)
+}
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
@@ -10,6 +24,17 @@ let ok = 0, bad = 0
 const t = (name, cond, got) => {
   if (cond) { ok++; console.log(`  ok   ${name}`) }
   else { bad++; console.log(`  FAIL ${name}${got === undefined ? '' : ` — got ${JSON.stringify(got)}`}`) }
+}
+// 🔴 Исключение ВНУТРИ предмета — это расхождение, а не поломка стенда. Без этой
+// обёртки стенд падал голым стектрейсом: код был верный (1), но снаружи не отличить
+// «предмет плох» от «стенд сломан». Проверено порчей предмета 01.09.2026.
+// An exception INSIDE the subject is a discrepancy, not a broken bench: without this
+// wrapper the bench died with a raw stack trace and the two cases looked alike.
+const blok = (name, fn) => {
+  try { fn() } catch (e) {
+    bad++
+    console.log(`  FAIL ${name}: предмет бросил исключение / the subject threw: ${String(e?.message ?? e).slice(0, 160)}`)
+  }
 }
 const passes = (z, v) => { const r = z.safeParse(v); return r.success }
 
@@ -20,12 +45,14 @@ console.log('\n=== A. Real platform schedule schemas ===')
 const SCHEDULE_FILE = process.argv[2] ?? `${dirname(fileURLToPath(import.meta.url))}/schedule.json`
 const SCHEDULE = JSON.parse(readFileSync(SCHEDULE_FILE, 'utf8'))
 for (const tool of SCHEDULE) {
-  const s = shape(tool.parameters)
-  t(`${tool.name}: the schema assembled, fields ${Object.keys(s).length}`, Object.keys(s).length > 0 || tool.name === 'schedule_list')
+  blok(`${tool.name}: the schema assembled`, () => {
+    const s = shape(tool.parameters)
+    t(`${tool.name}: the schema assembled, fields ${Object.keys(s).length}`, Object.keys(s).length > 0 || tool.name === 'schedule_list')
+  })
 }
 
 console.log('\n=== B. The oneOf shape — the reason the adapter was fixed ===')
-{
+blok('B: the oneOf shape', () => {
   // at: a string OR an object — exactly what the platform hands over
   const s = shape({
     type: 'object',
@@ -34,10 +61,10 @@ console.log('\n=== B. The oneOf shape — the reason the adapter was fixed ===')
   t('the string branch passes', passes(s.at, '2026-08-23T10:00:00Z'))
   t('the object branch passes', passes(s.at, { date: '2026-08-23' }))
   t('a foreign type does NOT pass (it did not degenerate into any)', !passes(s.at, 42), s.at?._def?.typeName)
-}
+})
 
 console.log('\n=== C. Required and optional ===')
-{
+blok('C: required and optional', () => {
   const s = shape({
     type: 'object',
     properties: { prompt: { type: 'string' }, after_seconds: { type: 'number' } },
@@ -46,16 +73,26 @@ console.log('\n=== C. Required and optional ===')
   t('required with no value — refused', !passes(s.prompt, undefined))
   t('optional with no value — passes', passes(s.after_seconds, undefined))
   t('optional with a value — passes', passes(s.after_seconds, 300))
-}
+})
 
 console.log('\n=== D. Descriptions reach the model ===')
-{
+blok('D: descriptions', () => {
   // 🔴 This literal appears twice on purpose — as the input and as the expected
   // output. Change one without the other and the check goes red on healthy code.
   const DESCRIPTION = 'the exact identifier'
   const s = shape({ type: 'object', properties: { id: { type: 'string', description: DESCRIPTION } }, required: ['id'] })
   t('the field description was carried over', s.id?.description === DESCRIPTION, s.id?.description)
-}
+})
 
 console.log(`\nTOTAL: passed ${ok}, failed ${bad}`)
-process.exit(bad ? 1 : 0)
+// 🔴 Канарейка точного числа: вырезанный раздел иначе пройдёт молча, и стенд
+// будет зелен, проверив меньше. Число считается из предмета — по числу схем в
+// файле платформы плюс семь постоянных случаев (B=3, C=3, D=1).
+// Exact-count canary: a cut-out section would otherwise pass in silence.
+const ZHDYOM = SCHEDULE.length + 7
+if (ok + bad !== ZHDYOM) {
+  console.log(`СЛЕПОТА: проверок ${ok + bad}, а стенд состоит из ${ZHDYOM}`
+    + ' — раздел не исполнился / a section did not run')
+  process.exit(2)
+}
+process.exit(bad ? 1 : 0)   // слепота выходит раньше, кодом 2

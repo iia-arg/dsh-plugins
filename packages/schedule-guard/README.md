@@ -86,6 +86,8 @@ adds the same row to `cordis.patch.yml`:
 🔴 **Success:** `dsh --profile <name> --dump-config` shows a `dsh-schedule-guard` entry with your
 config (or, without config, the entry is present and the startup line will say `(default)`).
 
+> ⚠️ `--dump-config` is a **writing** command: it rewrites the profile's `cordis.yml` (expected — not read-only).
+
 **Step 4 — restart the platform.**
 
 🔴 **Success:** the startup log shows the limits line, verbatim (see "Reference journal lines").
@@ -154,15 +156,19 @@ Run this after install, and re-run it after any platform / vendor / core update 
 not a one-time ritual):
 
 1. `dsh --profile <name> --dump-config` → a `dsh-schedule-guard` entry is present.
+
+> ⚠️ `--dump-config` is a **writing** command: it rewrites the profile's `cordis.yml` (expected — not read-only).
 2. Restart, then read the startup log → the `limits:` line is present and each value is marked
    `(configured)` or `(default)`.
 3. `schedule_list` → returns (possibly empty), i.e. the schedule tool itself is alive.
 4. Create a repeating reminder below the floor (`every_seconds: 600`) → the tool call is refused
    immediately with `Error: repeating reminder no more often than every 1800s …`; `schedule_list`
    shows nothing new.
-5. Run the shipped bench: `node test-preemptive-refusal.mjs` → `3 ok, 0 failed` (it checks the
-   refusal, the pass-through at the floor, and a control without the guard, against the real
-   `@deepseek-ai/dsh-tools`).
+5. Run the shipped bench: `node test-preemptive-refusal.mjs` → `сошлось 5, расхождений 0`
+   (it imports the guard's real `tools/execute` hook from `src/index.js` and checks five cases
+   on a stub context — no dsh-tools, no platform: refusal below the floor with the reason and the
+   code, pass-through at the floor, pass-through for another tool, pass-through without
+   `every_seconds`).
 6. Prove the backstop still holds: create a too-frequent repeat through a route that bypasses the
    registry, and on the next agent idle the reaper deletes it (`schedule/change delete` in the
    journal, stop line in the log, owner notified).
