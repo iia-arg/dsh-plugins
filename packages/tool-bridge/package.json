@@ -15,7 +15,8 @@
     "test/stend-rezhimov.mjs",
     "test/stend-rezyume.mjs",
     "SAMOPROBUZHDENIE.md",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "CHANGELOG.md"
   ],
   "type": "module",
   "main": "src/index.js",
