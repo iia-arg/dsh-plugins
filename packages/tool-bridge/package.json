@@ -1,9 +1,24 @@
 {
   "name": "dsh-tool-bridge",
-  "version": "0.2.0",
+  "version": "0.2.1",
+  "files": [
+    "src/index.js",
+    "src/paritet.json",
+    "src/raspisanie.json",
+    "tools/izvlech-paritet.mjs",
+    "tools/izvlech-raspisanie.mjs",
+    "test/stend-cel-mosta.mjs",
+    "test/stend-heartbeat.mjs",
+    "test/stend-ostanovki.mjs",
+    "test/stend-predelov-iz-fajla.mjs",
+    "test/stend-publikacii.mjs",
+    "test/stend-rezhimov.mjs",
+    "SAMOPROBUZHDENIE.md",
+    "cordis.patch.yml"
+  ],
   "type": "module",
   "main": "src/index.js",
-  "description": "Мост инструментов платформы на движковый маршрут: делает инструменты плагинов платформы видимыми модели, которую ведёт сторонний движок",
+  "description": "Мост инструментов платформы на движковый маршрут (наш модуль)",
   "peerDependencies": {
     "@deepseek-ai/schemastery": "*",
     "yaml": "^2.0.0"
