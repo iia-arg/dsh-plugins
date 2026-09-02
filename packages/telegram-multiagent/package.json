@@ -1,6 +1,6 @@
 {
   "name": "dsh-telegram-multiagent",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Канал Telegram для DeepSeek Harness: один модуль на машину обслуживает несколько агентов, у каждого свой бот, свой файл токена и свой список разрешённых. Метка отправителя неподделываема, память владельца и координатора слита в одну, режим доставки переключается файлом вне кода, цели управляются из канала.",
   "type": "module",
   "main": "src/index.js",
@@ -11,9 +11,12 @@
     "test/stend-imena.mjs",
     "test/stend-yashchika-shiny.mjs",
     "test/test-goal-control.mjs",
+    "test/stend-komand-konteksta.mjs",
+    "test/stend-dostupa-sluzhb.mjs",
     "test/stend-pobudki.mjs",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "keywords": [
     "dsh",
