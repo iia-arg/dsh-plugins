@@ -7,6 +7,9 @@ deletes runaway repeats, and tells the owner why.
 tools, or if you don't enable the platform's `dsh-schedule` at all — with no self-wakeup there is
 nothing to cap.
 
+> **Version note:** 0.4.0 is the first release with the hourly cap and the `resetKinds` streak
+> reset. Version **0.3.0 was never released** — it was folded into 0.4.0 before publication.
+
 ## What it is
 
 The platform ships `@deepseek-ai/dsh-schedule` but does not enable it by default. Once you do, a
@@ -14,14 +17,19 @@ model can set reminders that wake itself — and a cooperative loop can accident
 autonomous wakeup sets the next reminder, forever, at your token cost.
 
 This guard folds a counter **from the session journal** (a `schedule/change dispatch` event is one
-autonomous wakeup; a `user/message` with `source.kind === "user"` is a human word and resets the
-streak). At a limit it deletes the runaway **repeating** reminders, writes the owner one message,
+autonomous wakeup; a `user/message` whose `source.kind` is in `resetKinds` (`user` or `a2a`) is an
+external word — human or coordinator — and resets the streak). At a limit it deletes the runaway **repeating** reminders, writes the owner one message,
 and stops. One-shot reminders are left alone — they expire on their own — but they still count
 toward the limits, because the counter counts *wakeups*, not rule types.
 
 It also refuses a too-frequent repeat **up front**: a `schedule_create` with an `every_seconds`
 below the floor is rejected at the tool call, so the model hears "no, the floor is 1800s" and
 re-schedules correctly on the spot. The reaper stays as the backstop.
+
+It also caps the **rate**: at most `maxPerHour` autonomous wakeups in a sliding hour, counted from
+the same journal `dispatch` events. This is what catches **one-shot** reminders — a one-shot has no
+`every_seconds`, so the repeating floor never sees it, and a chain of 10 s one-shots would otherwise
+be legal.
 
 ## Two mechanisms, two routes — keep both
 
@@ -106,8 +114,10 @@ on the next agent idle and logs the stop line.
 
 | Field | Default | What it does |
 |---|---|---|
-| `maxConsecutiveWakeups` | `6` | Autonomous wakeups allowed in a row without a single human word. Any human message resets the streak. |
+| `maxConsecutiveWakeups` | `6` | Autonomous wakeups allowed in a row without a single external word. Any message from a `resetKinds` source resets the streak. |
 | `maxPerDay` | `48` | Autonomous wakeups allowed per local calendar day (boundary = `dayBoundaryOffsetMinutes`). |
+| `maxPerHour` | `4` | Autonomous wakeups allowed in a sliding hour (`maxPerDay` ÷ 12). Refused up front with a code and the time until a slot frees. |
+| `resetKinds` | `["user","a2a"]` | Source kinds that count as an external word and reset the streak. `user` = human, `a2a` = coordinator. |
 | `minRepeatingIntervalSeconds` | `1800` | Floor for repeating (`every`) reminders. 1800 s = 30 min, deliberately tighter than the platform's own 300 s floor. |
 | `dayBoundaryOffsetMinutes` | `0` | Offset from UTC of the day boundary, e.g. `180` for UTC+3. |
 | `notifyCmd` | unset | Path to a command that notifies the owner. Called once per stop with the message as its single argument. Unset → the stop is only logged to stderr. |
@@ -128,7 +138,7 @@ schedule-guard [startup]: session under guard: <session-id> (total 1)
 Stop (one log line; `|` separates what the owner message contains):
 
 ```
-schedule-guard [<session-id>]: 🔴 schedule-guard: stopped by the autonomous-wakeup limit. | Reason (in numbers): repeat faster than 1800s (intervals: 600s) | Deleted repeating reminders: |   - id schedule-3, interval 600s, text: "…" | Accomplished during the autonomous stretch: 2 autonomous wakeups total | Resume: only by a human word (any message resets the counter). | Time: 2026-08-22T21:30:56.303Z
+schedule-guard [<session-id>]: 🔴 schedule-guard: stopped by the autonomous-wakeup limit. | Reason (in numbers): repeat faster than 1800s (intervals: 600s) | Deleted repeating reminders: |   - id schedule-3, interval 600s, text: "…" | Accomplished during the autonomous stretch: 2 autonomous wakeups total | Resume: only by an external word (human or coordinator — any `resetKinds` message resets the counter). | Time: 2026-08-22T21:30:56.303Z
 ```
 
 The delete itself is a durable session event:

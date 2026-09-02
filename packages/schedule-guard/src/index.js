@@ -4,7 +4,7 @@
 // удаляем — они сами гаснут; их вклад учтён счётчиком пробуждений (не типом правила).
 //
 // Счётчик сворачивается ИЗ ЖУРНАЛА СЕССИИ (schedule/change dispatch = пробуждение,
-// user/message source.kind="user" = человеческое слово и обнуление). Отдельного файла
+// user/message с source.kind из resetKinds = внешнее слово (человек или координатор) и обнуление). Отдельного файла
 // нет, поэтому перезапуск структурно не может обнулить счётчик: он переживает его
 // ровно с той же надёжностью, что и сами напоминания (если сессия поднялась с диска).
 //
@@ -40,6 +40,8 @@ export const Config = z.object({
   maxConsecutiveWakeups: z.number(),
   maxPerDay: z.number(),
   minRepeatingIntervalSeconds: z.number(),
+  maxPerHour: z.number(),
+  resetKinds: z.array(z.string()),
   dayBoundaryOffsetMinutes: z.number(),
   notifyCmd: z.string(),
 })
@@ -48,6 +50,8 @@ const DEFAULTS = {
   maxConsecutiveWakeups: 6,
   maxPerDay: 48,
   minRepeatingIntervalSeconds: 1800,
+  maxPerHour: 4,   // 48/12: суточный предел, поделённый на 12 часовых окон
+  resetKinds: ['user', 'a2a'],   // виды источника, обнуляющие полосу (человек и координатор)
   dayBoundaryOffsetMinutes: 0,   // нейтрально (UTC); московский сдвиг 180 — в профиле
 }
 
@@ -63,12 +67,13 @@ function dayBoundaryStart(tsMs, offsetMinutes) {
 }
 
 /** Счётчики пробуждений по журналу сессии. */
-function countWakeups(events) {
+function countWakeups(events, resetKinds) {   // без умолчания: список ВСЕГДА из настройки
+  if (!Array.isArray(resetKinds)) throw new Error('countWakeups: resetKinds обязателен')
   let consecutive = 0
   let maxConsecutive = 0
   const dispatchTimes = []
   for (const e of events) {
-    if (e.type === 'user/message' && e.data?.source?.kind === 'user') {
+    if (e.type === 'user/message' && resetKinds.includes(e.data?.source?.kind)) {
       consecutive = 0
     } else if (e.type === 'schedule/change' && e.data?.operation === 'dispatch') {
       consecutive += 1
@@ -124,6 +129,12 @@ export function apply(ctx, rawConfig) {
   if (!loggedStartup) {
     log('подъём', `пределы: ${srcParts.join(', ')}`)
     log('подъём', 'не действует: пробуждение по человеческому сообщению (это не dispatch); уже начатый ход (гасим цикл, не ход); раунды целей и фоновые задания — не schedule-диспетчеры, сторож их не трогает; агент под danger-full-access — запись журнала разрешена')
+    {
+      // «Сколько влезает в час» ВЫЧИСЛЯЕТСЯ из шага, а не стоит в тексте: поменяем шаг —
+      // строка не соврёт.
+      const vlezaetVChas = Math.floor(3600 / config.minRepeatingIntervalSeconds)
+      log('подъём', `темп: повторяющиеся не чаще ${config.minRepeatingIntervalSeconds} с (≤${vlezaetVChas} в час); одноразовые шагом не ограничены — против них потолок ${config.maxPerHour} в час`)
+    }
     loggedStartup = true
   }
 
@@ -137,6 +148,29 @@ export function apply(ctx, rawConfig) {
   //  Выглядят как дубль — и не дубль.
   ctx.on('tools/execute', async (exec, next) => {
     if (exec.name !== 'schedule_create') return next()
+    // 🔴 ЧАСОВОЙ ПОТОЛОК (02.09.2026, П-11). Одноразовый будильник поля every_seconds
+    // не несёт, поэтому проверка шага ниже его ПРОПУСКАЕТ — и цепочка одноразовых по
+    // 10 с законна. Потолок ловит ТЕМП, а не количество: считаем пробуждения в
+    // скользящем часе по dispatchTimes из журнала (счётчика в памяти нет — его нельзя
+    // потерять или обнулить рестартом).
+    if (config.maxPerHour > 0) {
+      const events = exec.agent?.session?.events ?? []
+      const { dispatchTimes } = countWakeups(events, config.resetKinds)
+      const hourAgo = Date.now() - 3600_000
+      const inHour = dispatchTimes.filter((t) => t >= hourAgo)
+      if (inHour.length >= config.maxPerHour) {
+        const spaceAt = inHour[0] + 3600_000   // старейшее в окне выпадет через час
+        const mins = Math.max(1, Math.ceil((spaceAt - Date.now()) / 60000))
+        const message =
+          `предел ${config.maxPerHour} автономных пробуждений в час достигнут ` +
+          `— место освободится через ~${mins} мин`
+        return {
+          content: [{ type: 'text', text: `Error: ${message}` }],
+          isError: true,
+          error: { message, info: { name: 'ScheduleGuardError', code: 'SCHEDULE_HOURLY_CAP' } },
+        }
+      }
+    }
     const every = exec.arguments?.every_seconds
     if (typeof every !== 'number' || every >= config.minRepeatingIntervalSeconds) return next()
     const message =
@@ -165,7 +199,7 @@ export function apply(ctx, rawConfig) {
       const events = agent.session.events
       if (!events.some((e) => e.type === 'schedule/change')) return
 
-      const { consecutive, dispatchTimes } = countWakeups(events)
+      const { consecutive, dispatchTimes } = countWakeups(events, config.resetKinds)
       const dayStart = dayBoundaryStart(Date.now(), config.dayBoundaryOffsetMinutes)
       const perDay = dispatchTimes.filter((t) => t >= dayStart).length
 
@@ -179,7 +213,7 @@ export function apply(ctx, rawConfig) {
       if (!overConsecutive && !overPerDay && !overInterval) return
 
       const reason = overConsecutive
-        ? `подряд ${consecutive} пробуждений без слова человека (предел ${config.maxConsecutiveWakeups})`
+        ? `подряд ${consecutive} пробуждений без внешнего слова (человек или координатор — ${config.resetKinds.join(', ')}; предел ${config.maxConsecutiveWakeups})`
         : overPerDay
           ? `в сутки ${perDay} пробуждений (предел ${config.maxPerDay})`
           : `повтор чаще ${config.minRepeatingIntervalSeconds} с (интервалы: ${[...new Set(tooFrequent.map((r) => r.everySeconds))].join(', ')} с)`
