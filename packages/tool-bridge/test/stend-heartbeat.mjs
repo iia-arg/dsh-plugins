@@ -101,7 +101,22 @@ try {
     // log — печать моста. В стенде она не нужна, но вырезанный код её зовёт,
     // поэтому подставляем заглушку: иначе сборка упала бы на живом предмете.
     'const log = () => {}',
-    'export { HEARTBEAT_HUMAN_KINDS_DEFAULT, turnLedger, heartbeatCounters, heartbeatGuard }',
+    // Отказ вместо нуля (02.09.2026): константа нужна вырезанному стражу.
+    'const HEARTBEAT_OTKAZ_SEKUND = 86400',
+    // 🔴 02.09.2026: тревога БОЛЬШЕ НЕ ЗАГЛУШКА. Была заглушка со следом — она
+    // доказывала «позвал», но не проверяла НИЧЕГО внутри самой тревоги. Когда у
+    // тревоги завелась выдержка (не чаще раза в сутки), заглушка молча оставила
+    // бы её непокрытой: порча выдержки не поймалась бы ни одной проверкой.
+    // Теперь из предмета берутся и выдержка, и состояние отказа, и объявление
+    // возврата; подменяется ТОЛЬКО отправка наружу.
+    cut('TREVOGA_POVTOR_MS', 'const'),
+    cut('otkazIstochnika', 'const'),
+    cut('otmetitVozvratIstochnika'), cut('trevogaOtkazIstochnika'),
+    // Заглушки внешнего мира: отправщик «есть», отправка оставляет след.
+    'globalThis.__trevogi = []',
+    'const existsSync = () => true',
+    'const execFileSync = (put, argv) => { globalThis.__trevogi.push(argv[0]) }',
+    'export { HEARTBEAT_HUMAN_KINDS_DEFAULT, turnLedger, heartbeatCounters, heartbeatGuard, otkazIstochnika }',
   ].join('\n')
   // 🔴 КАНАРЕЙКА ВНЕШНИХ ЗАВИСИМОСТЕЙ. Перечень вырезаемого — список внутри
   // потребителя: добавят вырезанной функции вызов НОВОЙ соседки — сборка пройдёт
@@ -133,7 +148,7 @@ try {
   console.log(`  СЛЕПОТА не удалось взять функции из моста: ${e?.message ?? e}`)
   process.exit(2)
 }
-const { HEARTBEAT_HUMAN_KINDS_DEFAULT, turnLedger, heartbeatCounters, heartbeatGuard } = mod
+const { HEARTBEAT_HUMAN_KINDS_DEFAULT, turnLedger, heartbeatCounters, heartbeatGuard, otkazIstochnika } = mod
 // Список приходит счётным функциям АРГУМЕНТОМ, как и в бою: мост кладёт в
 // limits.heartbeatHumanKinds множество из настройки либо из умолчания.
 const KINDS = new Set(HEARTBEAT_HUMAN_KINDS_DEFAULT)
@@ -252,6 +267,54 @@ console.log('\n=== В2. Часовой потолок: подставной пр
     heartbeatMinIntervalSeconds: 10, heartbeatMaxConsecutive: 100, heartbeatMaxPerDay: 100,
     heartbeatDayZone: 'Europe/Moscow', heartbeatHumanKinds: KINDS,
   }
+  // 🔴 ОТСУТСТВИЕ ИСТОЧНИКА СОБЫТИЙ = ОТКАЗ, А НЕ НОЛЬ (02.09.2026).
+  // Повод: в платформе 0.1.2 поле session.events снимают. Прежде страж при его
+  // пропаже кричал в журнал и ПРОПУСКАЛ пробуждение с запрошенным интервалом —
+  // то есть все три меры разом переставали действовать, а механизм выглядел
+  // исправным. Проверяем оба конца: без журнала не будит и зовёт тревогу,
+  // с журналом работает как прежде. Одного конца мало: «не будит» неотличимо
+  // от «сломался», пока не показано, что на исправных данных он будит.
+  {
+    const limits = { ...bazovye, heartbeatMaxVChas: 0 }
+    globalThis.__trevogi = []
+    const bezZhurnala = { get: () => ({ session: { events: undefined } }) }
+    const a1 = { after_seconds: 600 }
+    heartbeatGuard(a1, limits, bezZhurnala, 'proba')
+    t('журнала нет: НЕ будит, интервал отодвинут на сутки', a1.after_seconds, 86400)
+    t('журнала нет: тревога позвана', globalThis.__trevogi.length, 1)
+    // Числа ищем В ТЕКСТЕ, а не в аргументах: наружу уходит текст, и проверять
+    // надо то, что прочтёт человек. Резать текст нельзя — 🔴 суррогатная пара
+    // рвётся посередине (поймано порчей 02.09: вышло "\udd34" вместо числа).
+    t('журнала нет: тревога назвала запрошенное и поставленное',
+      [String(globalThis.__trevogi[0] ?? '').includes('600'),
+        String(globalThis.__trevogi[0] ?? '').includes('86400')], [true, true])
+
+    // 🔴 ГРАНИЦА ТРЕВОГИ (02.09.2026). Защита без верхней границы производит тот
+    // вред, от которого защищает: поток одинаковых тревог читается как поломка
+    // канала. Проверяем ОБА конца — что подавляет и что НЕ подавляет навсегда.
+    const a1b = { after_seconds: 600 }
+    heartbeatGuard(a1b, limits, bezZhurnala, 'proba')
+    t('второй отказ подряд: повтор ПОДАВЛЕН выдержкой', globalThis.__trevogi.length, 1)
+    t('подавленные СЧИТАЮТСЯ', otkazIstochnika.get('proba')?.podavleno, 1)
+
+    // Отказ длится дольше выдержки — повтор обязан уйти, иначе молчание вечно.
+    const sost = otkazIstochnika.get('proba')
+    sost.skazano -= 86400001
+    const a1c = { after_seconds: 600 }
+    heartbeatGuard(a1c, limits, bezZhurnala, 'proba')
+    t('отказ дольше суток: повтор УШЁЛ', globalThis.__trevogi.length, 2)
+
+    globalThis.__trevogi = []
+    const sZhurnalom = { get: () => ({ session: { events: [] } }) }
+    const a2 = { after_seconds: 600 }
+    heartbeatGuard(a2, limits, sZhurnalom, 'proba')
+    t('журнал есть: работает как прежде, не отказ', a2.after_seconds === 86400, false)
+    t('журнал есть: тревоги НЕ было', globalThis.__trevogi.length, 0)
+    // Возврат источника обязан ОЧИСТИТЬ состояние: иначе следующий отказ будет
+    // считаться продолжением прежнего и промолчит выдержкой.
+    t('источник вернулся: состояние отказа снято', otkazIstochnika.has('proba'), false)
+  }
+
   const progon = (potolok) => {
     const events = []
     const agents = { get: () => ({ session: { events } }) }
@@ -320,7 +383,7 @@ console.log(`\nИТОГО: сошлось ${ok}, расхождений ${bad}, 
 // не попали. Число точное, а не «не меньше»: порог слеп к убыли ровно того
 // размера, который умещается в запас.
 // Меняли стенд намеренно? Поправьте число и скажите, почему.
-const ZHDYOM = 31
+const ZHDYOM = 40
 if (ok + bad + slepota !== ZHDYOM) {
   console.log(`\nСЛЕПОТА: проверок ${ok + bad + slepota}, а стенд состоит из ${ZHDYOM} — часть не состоялась.`)
   process.exit(2)

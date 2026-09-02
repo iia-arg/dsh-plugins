@@ -26,6 +26,9 @@ const SLOJ = process.env.MOST_SLOJ
   || path.join(os.homedir(), '.dsh', 'profiles', 'web', 'cordis.patch.yml')
 // Имя службы платформы у каждого своё; умолчание — по имени пользователя,
 // под которым агент работает.
+// Каталог пределов — переменной: у постороннего он может лежать иначе, и без этого
+// стенд привязан к нашей установке. Он же даёт способ проверить сам стенд подставным.
+const PREDELY = process.env.MOST_PREDELY || '/etc/agent-limits'
 const YUNIT = process.env.MOST_YUNIT || `${os.userInfo().username}.service`
 const SRC = `${KORNI}/src/index.js`
 // Имя пакета берётся из манифеста ПРЕДМЕТА: вписанное разошлось бы с ним молча
@@ -48,6 +51,9 @@ let ok = 0, bad = 0, slepota = 0
 // Число проверок раздела 2 растёт вместе со слоем настроек: одна на поле.
 // Значит ожидание канарейки НЕЛЬЗЯ держать литералом — оно зависит от предмета.
 let polejSloja = null
+// Строк подъёма столько, сколько их напечатал САМ мост: считать литералом значило бы
+// править канарейку при каждой новой строке (02.09: строк стало 6, ожидание ждало 5).
+let strokPodyoma = null
 const good = (m) => { ok++; console.log(`  ok   ${m}`) }
 const fail = (m) => { bad++; console.log(`  FAIL ${m}`) }
 const slepo = (m) => { slepota++; console.log(`  СЛЕПОТА ${m}`) }
@@ -77,8 +83,28 @@ console.log('\n=== 1. Схемы инструментов сходятся с П
 for (const [gen, snimok] of [['izvlech-paritet.mjs', 'paritet.json'], ['izvlech-raspisanie.mjs', 'raspisanie.json']]) {
   const g = `${KORNI}/tools/${gen}`, s = `${KORNI}/src/${snimok}`
   if (!existsSync(g) || !existsSync(s)) { slepo(`${snimok}: нет ${existsSync(g) ? s : g}`); continue }
+  // 🔴 Корень платформы ищется ПО СВОЙСТВУ (каталог, где лежит node_modules/@deepseek-ai),
+  // а не задаётся путём: вшитый каталог сделал бы стенд непереносимым, а без довода
+  // извлекатель берёт cwd и не находит пакеты — стенд объявлял слепоту на исправном
+  // предмете (02.09: следствие обезличивания извлекателей, связь не была замечена).
+  const najtiKoren = () => {
+    let d = KORNI
+    for (let i = 0; i < 8; i++) {
+      if (existsSync(`${d}/node_modules/@deepseek-ai`)) return d
+      const up = path.dirname(d)
+      if (up === d) break
+      d = up
+    }
+    return process.env.MOST_APP || null
+  }
+  const korenPlatformy = najtiKoren()
+  if (!korenPlatformy) {
+    slepo(`${snimok}: не найден корень платформы (каталог с node_modules/@deepseek-ai) — `
+      + `извлекатель запускать не с чем. Задайте MOST_APP, если он лежит вне дерева плагина`)
+    continue
+  }
   let svezhee
-  try { svezhee = execFileSync(process.execPath, [g], { maxBuffer: 64 * 1024 * 1024 }).toString() }
+  try { svezhee = execFileSync(process.execPath, [g, korenPlatformy], { maxBuffer: 64 * 1024 * 1024 }).toString() }
   catch (e) {
     // 🔴 Причину РАЗЛИЧАЕМ, а не пересказываем. Голое «Command failed» у постороннего
     // неотличимо от «пакет сломан», а чаще всего это просто непоставленные зависимости:
@@ -159,6 +185,9 @@ console.log('\n=== 3. Строки подъёма из кода дословно
   } catch (e) { slepo(`не спросить systemd про ${YUNIT}: ${String(e?.message ?? e).slice(0, 120)}`) }
 
   const startMs = start ? Date.parse(start) : NaN
+  // Объявляется ЗДЕСЬ, а не у чтения файла: сверка строк живёт в этой области,
+  // и объявление глубже даёт ReferenceError при первом же срабатывании.
+  let nastrojkiMtime = null
   if (!start || Number.isNaN(startMs)) slepo(`служба ${YUNIT} не даёт времени подъёма (значение «${start}»)`)
   else if (mtime.getTime() > startMs) {
     // Это не отказ и не исправность: сверять нечего, потому что в памяти
@@ -219,6 +248,8 @@ console.log('\n=== 3. Строки подъёма из кода дословно
       // лежит в журнале живого процесса. Значения сверяет раздел 2 — слой против
       // схемы, и там источник другой.
       let limits
+      let znachFix = {}
+      const izFajla = new Set()
       // 🔴 ФИКСТУРА СОБИРАЕТСЯ ИЗ ПРЕДМЕТА ЦЕЛИКОМ — ни имён, ни значений от руки.
       // Прежняя редакция брала константы по шаблону «const X_DEFAULT» и рухнула,
       // когда в блок пришла HEARTBEAT_REZHIMY (31.08.2026): шаблон — признак, а
@@ -263,26 +294,65 @@ console.log('\n=== 3. Строки подъёма из кода дословно
         }
         return out
       }
+      /** Полный текст объявления `const ИМЯ = …`: строки накапливаются, пока кусок
+       *  не станет СИНТАКСИЧЕСКИ ЦЕЛЫМ. Критерий — «разбирается», а не «скобки
+       *  сошлись»: баланс спотыкается о скобки внутри регулярных литералов
+       *  (поймано на собственной пробе 02.09), а разбор о них не спотыкается.
+       *  Не собралось за 200 строк — null: лучше ничего, чем обрывок.
+       *  🔴 Так лечится КЛАСС: константа любого вида — многострочный объект, массив
+       *  объектов, JSON.parse(…), выражение с переносом — собирается сама, и новая
+       *  запись в мосте не ломает стенд. Прежде вид отбирался образцом («значение
+       *  равно {»), и всякий иной вид обрывался на первой строке: 31.08 на
+       *  HEARTBEAT_REZHIMY, 02.09 на OWN, и оба раза стенд обвинял мост. */
+      const vzyatObyavlenie = (istochnik, imya) => {
+        const stroki = istochnik.split('\n')
+        const re = new RegExp(`^\\s*const ${imya}\\s*=`)
+        const i = stroki.findIndex((l) => re.test(l))
+        if (i < 0) return null
+        const kus = []
+        for (let k = i; k < stroki.length && k - i <= 200; k++) {
+          kus.push(stroki[k])
+          const txt = kus.join('\n')
+          // Целость проверяем на КОПИИ, где модульные слова заменены безобидными:
+          // new Function не модуль, и на `import.meta` он спотыкается не потому, что
+          // текст не дописан. Возвращаем при этом исходный текст, а не копию.
+          const dlyaRazbora = txt.replace(/\bimport\.meta\b/g, "({url:''})")
+          try { new Function(dlyaRazbora); return txt } catch { /* ещё не целое — берём дальше */ }
+        }
+        return null
+      }
+
       const sobratKonstanty = (istochniki) => {
         const nuzhny = new Set()
         const dobavit = (txt) => {
           for (const m of txt.matchAll(/\b([A-Z][A-Z0-9_]{2,})\b/g)) nuzhny.add(m[1])
         }
         istochniki.forEach(dobavit)
+        // Имя, уже объявленное в самих источниках, второй раз не объявляем:
+        // иначе «Identifier has already been declared», и отказ снова читался бы
+        // как дефект моста. Прежде это пряталось за обрывом многострочных.
+        const uzheEst = new Set()
+        for (const ist of istochniki) {
+          for (const m of ist.matchAll(/^\s*const ([A-Z][A-Z0-9_]{2,})\s*=/gm)) uzheEst.add(m[1])
+        }
         const gotovo = new Map()
         for (let krug = 0; krug < 10; krug++) {
           let novoe = false
           for (const imya of [...nuzhny]) {
             if (gotovo.has(imya)) continue
-            const m = text.match(new RegExp(`^\\s*const ${imya} = (.+)$`, 'm'))
-            if (!m) continue
-            // Имя, определённое МНОГОСТРОЧНЫМ блоком (const X = {…}), не тянем
-            // отдельной строкой: такой блок либо уже подан как источник, либо
-            // фикстуре не нужен. Иначе стенд требует того, чего в однострочном
-            // виде не существует, и слепнет на исправном мосте.
-            if (m[1].trim() === '{') { gotovo.set(imya, ''); continue }
-            gotovo.set(imya, `const ${imya} = ${m[1]}`)
-            dobavit(m[1]); novoe = true
+            if (uzheEst.has(imya)) { gotovo.set(imya, ''); continue }
+            // 🔴 ОБЪЯВЛЕНИЕ БЕРЁТСЯ ЦЕЛИКОМ ПО БАЛАНСУ СКОБОК, а не по виду первой
+            // строки. Прежде многострочные отбирались по совпадению с образцом
+            // («значение равно {»), и всякая константа ИНОГО вида — [{…}],
+            // JSON.parse(…), перенос строки — обрывалась на первой строке, оставляя
+            // незакрытую скобку. Следующее объявление попадало внутрь неё, и стенд
+            // падал на «Unexpected identifier», обвиняя мост. Так было дважды: 31.08
+            // на HEARTBEAT_REZHIMY, 02.09 на OWN. Список видов лечит экземпляр,
+            // баланс — класс: новая константа любого вида собирается сама.
+            const obyavlenie = vzyatObyavlenie(text, imya)
+            if (obyavlenie === null) continue
+            gotovo.set(imya, obyavlenie)
+            dobavit(obyavlenie); novoe = true
           }
           if (!novoe) break
         }
@@ -309,7 +379,8 @@ console.log('\n=== 3. Строки подъёма из кода дословно
           const defs = [...gotovo.values()].filter(Boolean)
           const mUm = await import('data:text/javascript;charset=utf-8,'
             + encodeURIComponent(`export default () => {\n${defs.join('\n')}\n${blokUmolch}\nreturn UMOLCHANIYA_PREDELOV\n}`))
-          const znach = mUm.default()
+          znachFix = mUm.default()
+          const znach = znachFix
           // 🔴 02.09.2026: фикстура брала УМОЛЧАНИЯ, а бой читает НАСТРОЙКИ, и строки
           // подъёма расходились на каждом значении, отличном от умолчания. Поймано,
           // когда часовой потолок стал 4 при умолчании 0: стенд дал FAIL на исправном
@@ -317,7 +388,7 @@ console.log('\n=== 3. Строки подъёма из кода дословно
           // умолчания, и это честная граница (у постороннего файла и не бывает).
           let istochnikZnachenij = 'умолчания моста'
           try {
-            const fajl = `/etc/agent-limits/${AGENT_FIX}.yml`
+            const fajl = path.join(PREDELY, `${AGENT_FIX}.yml`)
             if (existsSync(fajl)) {
               const txt = readFileSync(fajl, 'utf8')
               let vzyato = 0
@@ -333,13 +404,17 @@ console.log('\n=== 3. Строки подъёма из кода дословно
                   : /^\[.*\]$/.test(raw) ? raw.slice(1, -1).split(',').map((x) => x.trim()).filter(Boolean)
                   : raw.replace(/^["']|["']$/g, '')
                 vzyato += 1
+                izFajla.add(k)
               }
               if (vzyato) istochnikZnachenij = `${fajl} (полей ${vzyato})`
+              // Время правки нужно, только если значения ОТТУДА и взяты: при умолчаниях
+              // расходиться нечему, и слепота была бы ложной.
+              if (vzyato) nastrojkiMtime = statSync(fajl).mtime.getTime()
             }
           } catch { /* остаются умолчания: причина названа строкой ниже */ }
           good(`значения фикстуры: ${istochnikZnachenij}`)
           const pdFix = { znach, ist: {}, beda: null }
-          for (const k of Object.keys(znach)) pdFix.ist[k] = `/etc/agent-limits/${AGENT_FIX}.yml`
+          for (const k of Object.keys(znach)) pdFix.ist[k] = path.join(PREDELY, `${AGENT_FIX}.yml`)
           const m = await import('data:text/javascript;charset=utf-8,'
             + encodeURIComponent(`export default (config, pd) => {\n${defs.join('\n')}\n${blok}\nreturn limits\n}`))
           limits = m.default(config, pdFix)
@@ -364,7 +439,16 @@ console.log('\n=== 3. Строки подъёма из кода дословно
       // 🔴 Второй источник с 31.08.2026: восемь пределов читаются из файла, и строки
       // подъёма называют ФАЙЛ, а не слово «настройка». Фикстура повторяет форму
       // предмета: короткое имя файла.
-      const srcP = (k) => `${AGENT_FIX}.yml`
+      // 🔴 Источник называется ПО ФАКТУ, как в предмете (src/index.js:1853): ключ
+      // есть в прочитанных значениях — значит файл, нет — «умолчание кода».
+      // Прежде фикстура возвращала имя файла ВСЕГДА, и совпадала с боем лишь пока
+      // все ключи строк подъёма приходили из файла. Появился ключ, которого в файле
+      // нет (резюме полосы), и фикстура объявила источником файл, а мост — умолчание.
+      // Константа вместо вычисления даёт ложное расхождение на исправном предмете.
+      // Признак — ключ ВЗЯТ ИЗ ФАЙЛА, а не «есть в znach»: znach начинается таблицей
+      // умолчаний моста, там ключи ЕСТЬ ВСЕ, и такой признак объявлял бы файлом
+      // источник любого значения. Первая редакция лечения ошиблась ровно этим.
+      const srcP = (k) => (izFajla.has(k) ? `${AGENT_FIX}.yml` : 'умолчание кода')
       if (!limits) {
         // Причина уже названа выше. Исполнять блок подъёма без фикстуры значило бы
         // получить второй отказ по той же причине — и читался бы он как отдельный
@@ -399,10 +483,19 @@ console.log('\n=== 3. Строки подъёма из кода дословно
           { maxBuffer: 256 * 1024 * 1024 }).toString()
       } catch (e) { slepo(`журнал ${YUNIT} не читается: ${String(e?.message ?? e).slice(0, 120)}`) }
 
+      strokPodyoma = out.length
       if (zhurnal !== undefined && limits && !out.length) {
         // Молчаливый исход: блок нашёлся, исполнился и не напечатал ничего —
         // сверять с журналом нечего, а раньше это проходило тихо.
         fail('блок строк подъёма исполнился, но не дал ни одной строки — сверять с журналом нечего')
+      } else if (nastrojkiMtime && !Number.isNaN(startMs) && nastrojkiMtime > startMs) {
+        // 🔴 Симметрично проверке свежести КОДА выше. Настройки правлены, рестарта ещё нет:
+        // фикстура строит строки по НОВЫМ значениям, а журнал старого подъёма знает старые.
+        // Это не расхождение предмета, а невозможность сверки. Поймано аудитором 02.09.2026:
+        // «настроено ≠ действует» было закрыто для кода и открыто для настроек.
+        slepo(`настройки правлены ${new Date(nastrojkiMtime).toISOString()}, а служба поднята `
+          + `${new Date(startMs).toISOString()}: фикстура строит строки по новым значениям, `
+          + 'которых в журнале старого подъёма нет — сверка невозможна до перезапуска')
       } else if (zhurnal !== undefined && out.length) {
         if (!zhurnal.includes('[mcp-bridge]')) {
           slepo('в журнале с подъёма нет ни одной строки моста — возможно, ротация журнала или мост не смонтирован')
@@ -436,14 +529,22 @@ console.log(`\nИТОГО: сошлось ${ok}, расхождений ${bad}, 
 // строки подъёма теперь исполняются целиком (блок берётся по ОТСТУПУ, а не по виду
 // последней строки) и сверяются с журналом построчно, а не обрывались на первом же
 // «)» без запятой.
-const BAZA = 13
+// 🔴 База 13 -> 8 (02.09.2026): пять «строк подъёма» ушли из литерала в счёт из
+// предмета (strokPodyoma). Прежде каждая новая строка в мосте ломала канарейку
+// числа на исправном стенде — и это был не счётчик, а список в другой одежде.
+// Осталось в базе: 3 файла на месте, 2 слепоты/успеха извлекателей, 3 о фикстуре.
+const BAZA = 8
 if (polejSloja === null) {
   console.log('\nСЛЕПОТА: раздел 2 не отработал, число полей слоя неизвестно — считать ожидание не из чего.')
   process.exit(2)
 }
-const ZHDYOM = BAZA + polejSloja
+if (strokPodyoma === null) {
+  console.log('\nСЛЕПОТА: блок строк подъёма не исполнился, число его строк неизвестно — считать ожидание не из чего.')
+  process.exit(2)
+}
+const ZHDYOM = BAZA + polejSloja + strokPodyoma
 if (ok + bad + slepota !== ZHDYOM) {
-  console.log(`\nСЛЕПОТА: проверок ${ok + bad + slepota}, а стенд состоит из ${ZHDYOM} (${BAZA} + ${polejSloja} полей слоя) — часть не состоялась.`)
+  console.log(`\nСЛЕПОТА: проверок ${ok + bad + slepota}, а стенд состоит из ${ZHDYOM} (${BAZA} база + ${polejSloja} полей слоя + ${strokPodyoma} строк подъёма) — часть не состоялась.`)
   process.exit(2)
 }
 process.exit(bad ? 1 : (slepota ? 2 : 0))
