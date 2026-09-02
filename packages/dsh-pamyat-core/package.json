@@ -1,0 +1,37 @@
+{
+  "name": "dsh-pamyat-core",
+  "version": "0.1.0-alpha.3",
+  "description": "Оперативная память агента для DSH: локальное хранилище, журнал решений и политика записи по классам. Ноль внешних зависимостей.",
+  "type": "module",
+  "main": "src/index.js",
+  "files": [
+    "src/index.js",
+    "src/hranilishche.js",
+    "src/zhurnal.js",
+    "src/politika.js",
+    "test/stend-hranilishcha.mjs",
+    "test/stend-politiki.mjs",
+    "test/stend-zhurnala.mjs",
+    "test/stend-sborki.mjs",
+    "test/stend-readme.mjs",
+    "README.md",
+    "README.en.md"
+  ],
+  "scripts": {
+    "test": "node test/stend-hranilishcha.mjs && node test/stend-politiki.mjs && node test/stend-zhurnala.mjs && node test/stend-sborki.mjs && node test/stend-readme.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "agent",
+    "memory",
+    "plugin"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "*"
+  }
+}
