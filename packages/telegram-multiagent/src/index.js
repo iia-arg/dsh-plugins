@@ -788,7 +788,7 @@ export function apply(ctx, config = {}) {
         }
       } else if (event.type === 'assistant/message'
                  && (turnAsk.get(sid)?.origin ?? lastOrigin.get(sid) ?? (chatId === A2A_CHAT ? 'a2a' : 'tg')) === 'a2a') {
-        // ответ для Забавы — в файл, Telegram тут ни при чём
+        // ответ координатору — в файл, Telegram тут ни при чём
         const blocks = event.data?.message?.content ?? [];
         // 🔴 МАРКЕР ВЫРЕЗАЕМ ИЗ ВСЕГО, ЧТО УХОДИТ НАРУЖУ — из доставляемого
         // текста и из копий. Он служебный: его дело остановить цикл, а не
@@ -801,7 +801,7 @@ export function apply(ctx, config = {}) {
             fs.mkdirSync(A2A_OUT, { recursive: true });
             fs.writeFileSync(path.join(A2A_OUT, `${Date.now()}.txt`), replyHeader(sid) + text);
             { const c = copyTo('a2a'); if (c) sendCopy(c, sid, text); }
-            log(`[a2a] ответ Забаве записан (${text.length} знаков)`);
+            log(`[a2a] ответ координатору записан (${text.length} знаков)`);
           } catch (e) { log(`[a2a] не смог записать ответ: ${e?.message ?? e}`); }
         }
       } else if (event.type === 'assistant/message') {
