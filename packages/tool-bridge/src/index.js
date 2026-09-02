@@ -50,7 +50,7 @@
  */
 import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import z from '@deepseek-ai/schemastery'
 
@@ -300,7 +300,40 @@ const SCHEDULE = JSON.parse(
  * здесь, а не подразумевается: пересечение имён двух источников молча отняло
  * бы у модели один инструмент, а строка журнала показала бы правильное число.
  */
-const TOOLS = [...PARITY, ...SCHEDULE]
+/**
+ * 🔴 ТРЕТИЙ ИСТОЧНИК — НАШ СОБСТВЕННЫЙ, И ОН ОБЪЯВЛЕН ЗДЕСЬ РУКАМИ НАРОЧНО.
+ *
+ * Первые два источника ПОРОЖДЕНЫ исполнением чужих пакетов, и это их главное
+ * свойство: расхождение с оригиналом там невозможно по построению. Дописать
+ * своё в порождённый файл значило бы отнять у него это свойство — при
+ * следующей пересборке своё либо исчезло бы, либо выглядело бы как чужое.
+ *
+ * Поэтому наш инструмент лежит отдельно и виден отдельным числом в строке
+ * подъёма: читающий обязан различать «мост отдаёт набор соседнего агента»
+ * и «мост отдаёт свою способность».
+ */
+const OWN = [{
+  pkg: 'mcp-bridge',
+  name: 'heartbeat_close',
+  description: 'Close the current streak of autonomous wake-ups and state a short summary of what it '
+    + 'achieved. Call it in the last autonomous turn, when you decide not to schedule another '
+    + 'wake-up. The summary is printed immediately and delivered to the machine owner. Calling it '
+    + 'is a convention, not a requirement: if you forget, the streak is still summarised — by '
+    + 'numbers alone — as soon as an outside message arrives.',
+  parameters: {
+    type: 'object',
+    properties: {
+      summary: {
+        type: 'string',
+        description: 'One or two sentences: what the streak achieved and why it ends here.',
+      },
+    },
+    required: ['summary'],
+    additionalProperties: false,
+  },
+}]
+
+const TOOLS = [...PARITY, ...SCHEDULE, ...OWN]
 {
   const seen = new Set()
   for (const t of TOOLS) {
@@ -489,6 +522,19 @@ const EXEC = {
   job_kill: {
     authority: 'none',
     local: (ctx, agent, a) => ctx.get('jobs').kill(String(a.job_id), agent, a.reason),
+  },
+
+  /**
+   * Явное закрытие полосы самопробуждений.
+   *
+   * ПОЛНОМОЧИЕ 'none' — не послабление: вызов ничего не меняет ни в целях, ни в
+   * расписании, он только произносит итог того, что уже случилось. Требовать
+   * здесь открытого хода или человеческого полномочия значило бы запретить
+   * агенту рассказать о своей работе.
+   */
+  heartbeat_close: {
+    authority: 'none',
+    local: (ctx, agent, a, limits) => zakrytPolosu(agent, String(a.summary ?? ''), limits),
   },
 
   /**
@@ -773,6 +819,24 @@ function releaseCreate(agentId, now) {
  */
 const HEARTBEAT_HUMAN_KINDS_DEFAULT = ['user', 'a2a']
 
+/**
+ * Печатать ли резюме полосы автономных пробуждений.
+ *
+ * 🔴 ЗАЧЕМ ЭТО ВООБЩЕ. Замер 02.09.2026 по журналу за десять суток: полос было
+ * пять, и ни одна не кончилась ни исчерпанием предела, ни снятием напоминания
+ * своей рукой. Четыре оборвало внешнее слово, одна кончилась молча. И главное:
+ * ОСОЗНАННОЕ окончание в журнале НЕОТЛИЧИМО от молчаливого — одноразовое
+ * напоминание после срабатывания исчезает само, снимать нечего, события delete
+ * не возникает. То есть человек, вернувшийся к переписке, не может узнать из
+ * журнала ни что полоса была, ни чем кончилась.
+ *
+ * ГРАНИЦА: резюме отвечает на вопрос «была ли полоса и какая», и НЕ отвечает на
+ * вопрос «что в ней сделано» — содержательный итог знает только сам агент и
+ * даёт его явным вызовом. Без вызова печатаются одни числа, и это честнее
+ * молчания, но беднее объявления.
+ */
+const HEARTBEAT_REZYUME_DEFAULT = true
+
 // ── ЧТЕНИЕ ПРЕДЕЛОВ ИЗ СИСТЕМНОГО ФАЙЛА (31.08.2026) ─────────────────────────
 //
 // 🔴 ЗАЧЕМ. Решение владельца 31.08.2026: управляемые настройки живут в системе,
@@ -884,20 +948,31 @@ function chitatPredely(agent, umolchaniya) {
 function turnLedger(events, humanKinds) {
   const turns = []
   let dispatched = false
+  // Время пробуждения, начавшего ход. Нужно только резюме полосы: границы
+  // полосы называются по времени САМИХ пробуждений, а не по времени ходов —
+  // ход мог начаться позже доставки, и разница читалась бы как неточность.
+  let dispatchAt
   let current
   for (const e of events) {
     const t = e?.type
     if (t === 'schedule/change') {
-      if (e.data?.operation === 'dispatch') dispatched = true
+      if (e.data?.operation === 'dispatch') { dispatched = true; dispatchAt = e.time }
       continue
     }
     if (t === 'turn/start') {
-      current = { turn: e.data?.turn, autonomous: dispatched, human: false }
+      current = {
+        turn: e.data?.turn,
+        autonomous: dispatched,
+        human: false,
+        at: e.time,
+        dispatchAt: dispatched ? dispatchAt : undefined,
+      }
       turns.push(current)
       dispatched = false
+      dispatchAt = undefined
       continue
     }
-    if (t === 'turn/end') { current = undefined; dispatched = false; continue }
+    if (t === 'turn/end') { current = undefined; dispatched = false; dispatchAt = undefined; continue }
     if (t === 'user/message' && current !== undefined
       && humanKinds.has(e.data?.source?.kind)) current.human = true
   }
@@ -935,6 +1010,143 @@ function heartbeatCounters(events, zone, now, humanKinds) {
       && dayKey(e.time) === today) perDay += 1
   }
   return { streak, perDay, turns: turns.length }
+}
+
+// ── РЕЗЮМЕ ПОЛОСЫ САМОПРОБУЖДЕНИЙ (02.09.2026) ───────────────────────────────
+//
+// 🔴 ПРИЗНАК «РЕЗЮМЕ ПОРА ПЕЧАТАТЬ» — СТРУКТУРНЫЙ, И ЭТО ГЛАВНОЕ РЕШЕНИЕ ЗДЕСЬ.
+// Он истинен ровно на одном конце хода: на том, который первым оборвал полосу.
+// Поэтому отдельной отметки «уже печатали» не нужно вовсе, а значит нет и
+// состояния, которое пришлось бы хранить и переживать перезапуск.
+//
+// ПОЧЕМУ НЕ СВОЁ СОБЫТИЕ В ЖУРНАЛЕ, как просили. Плагин не может завести свой
+// тип события: платформа отказывается читать журнал с незнакомым типом, а
+// «registration surface for them is deferred until such a consumer exists»
+// (@deepseek-ai/dsh-session, known-event-types.d.ts). Доступны только события,
+// которые порождают инструменты платформы, — и ни одно из них не означает
+// «резюме напечатано». Значит признак пришлось выводить из формы самих ходов.
+
+/** Часы и минуты в названном поясе — тем же способом, что и ключ суток. */
+function chasyMinuty(zone) {
+  const fmt = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: zone, hour: '2-digit', minute: '2-digit', hour12: false,
+  })
+  return (ms) => fmt.format(ms)
+}
+
+/** Полоса автономных ходов, идущая ПРЯМО СЕЙЧАС (для явного закрытия). */
+function tekushchayaPolosa(events, humanKinds) {
+  const turns = turnLedger(events, humanKinds)
+  return sobratPolosu(turns, turns.length - 1)
+}
+
+/**
+ * Полоса, которая ТОЛЬКО ЧТО оборвалась. null, если обрывать было нечего.
+ *
+ * Обрыв — это ход, который сам не автономен, а перед ним подряд шли автономные.
+ * На следующем таком же ходу перед ним будет уже неавтономный, полоса выйдет
+ * пустой и резюме не напечатается: дубль невозможен по построению, а не по
+ * отметке.
+ *
+ * ГРАНИЦА: если процесс перезапустить ровно на этом ходу, резюме потеряется —
+ * следующий конец хода уже не увидит полосы. Потеря резюме, а не потеря защиты:
+ * три меры предела считаются отдельно и этим не задеты.
+ */
+function polosaKotoraiaOborvalas(events, humanKinds) {
+  const turns = turnLedger(events, humanKinds)
+  if (turns.length === 0) return null
+  const posledniy = turns[turns.length - 1]
+  // Ход автономный и никем не прерван — полоса продолжается, резюме рано.
+  if (posledniy.autonomous && !posledniy.human) return null
+  return sobratPolosu(turns, turns.length - 2)
+}
+
+/** Подряд идущие автономные ходы, кончая указанным. null, если их нет. */
+function sobratPolosu(turns, ot) {
+  const polosa = []
+  for (let i = ot; i >= 0; i -= 1) {
+    const t = turns[i]
+    if (t.human || !t.autonomous) break
+    polosa.unshift(t)
+  }
+  if (polosa.length === 0) return null
+  const vremia = (t) => t.dispatchAt ?? t.at
+  return {
+    n: polosa.length,
+    ot: vremia(polosa[0]),
+    do: vremia(polosa[polosa.length - 1]),
+  }
+}
+
+/**
+ * Текст резюме.
+ *
+ * 🔴 ВЫРОЖДЕННЫЙ СЛУЧАЙ НАЗЫВАЕТСЯ СВОИМИ СЛОВАМИ. «Полоса из 1 оборвалась»
+ * звучит нелепо и потому читается как ошибка механизма. Число при этом остаётся
+ * честным и печатается: подгонять слова под красоту ценой числа нельзя.
+ */
+function tekstRezyume(p, itog, zone) {
+  const vr = chasyMinuty(zone)
+  const obyavleno = typeof itog === 'string' && itog !== ''
+  if (p.n === 1) {
+    return obyavleno
+      ? `одиночное автономное пробуждение в ${vr(p.ot)} закрыто агентом (полоса из 1): ${itog}`
+      : `одиночное автономное пробуждение в ${vr(p.ot)} осталось без объявления (полоса из 1)`
+  }
+  return obyavleno
+    ? `полоса из ${p.n} закрыта агентом, с ${vr(p.ot)} до ${vr(p.do)}: ${itog}`
+    : `полоса из ${p.n} оборвалась без объявления, с ${vr(p.ot)} до ${vr(p.do)}`
+}
+
+/**
+ * Отметка «за эту полосу агент уже объявил итог».
+ *
+ * 🔴 ЗАЧЕМ ОНА, если признак структурный. Структурный признак закрывает случай
+ * «оборвалось словом»: там резюме печатается один раз и повториться не может.
+ * Но явный вызов печатает итог РАНЬШЕ обрыва, изнутри полосы, — и обрыв, когда
+ * он наступит, напечатал бы второе резюме поверх объявленного. Отметка нужна
+ * ровно для этого стыка и ни для чего больше.
+ *
+ * 🔴 ГДЕ ЖИВЁТ И ЧЕГО НЕ ПЕРЕЖИВАЕТ. Основной путь — файл рядом с письмами:
+ * переживает перезапуск. Каталог не задан (умолчание у поставившего модуль) —
+ * отметка держится в памяти процесса, и тогда перезапуск между объявлением и
+ * внешним словом даст ПОВТОР резюме. Это деградация, а не поломка: повторённое
+ * резюме шумно, но не лживо. Названо вслух при подъёме.
+ */
+const otmetkiObyavleniya = new Map()
+
+function putOtmetki(dir, sid, kluch) {
+  return `${dir}/.polosa-zakryta-${encodeURIComponent(sid)}-${kluch}`
+}
+
+function postavitOtmetku(limits, sid, kluch, itog) {
+  if (limits.heartbeatNoticeDir === '') {
+    otmetkiObyavleniya.set(sid, kluch)
+    return 'в памяти процесса: каталог писем не задан'
+  }
+  try {
+    mkdirSync(limits.heartbeatNoticeDir, { recursive: true })
+    writeFileSync(putOtmetki(limits.heartbeatNoticeDir, sid, kluch), `${itog}\n`)
+    return `в ${limits.heartbeatNoticeDir}`
+  } catch (e) {
+    // Не падаем: итог уже произнесён, и это главное. Но и не молчим —
+    // молчаливый откат в память неотличим от работающего файла.
+    otmetkiObyavleniya.set(sid, kluch)
+    return `🔴 в памяти процесса: файл не записан (${e?.message ?? e})`
+  }
+}
+
+/** Снять отметку и сказать, была ли она. Снимаем всегда: отметка одноразовая. */
+function snyatOtmetku(limits, sid, kluch) {
+  let bylo = false
+  if (otmetkiObyavleniya.get(sid) === kluch) { otmetkiObyavleniya.delete(sid); bylo = true }
+  if (limits.heartbeatNoticeDir !== '') {
+    const f = putOtmetki(limits.heartbeatNoticeDir, sid, kluch)
+    try {
+      if (existsSync(f)) { unlinkSync(f); bylo = true }
+    } catch { /* отметка не снялась — хуже повтор резюме, чем падение хода */ }
+  }
+  return bylo
 }
 
 /**
@@ -1132,6 +1344,78 @@ function heartbeatGuard(args, limits, agents, agentId) {
  * исходе, поэтому письмо пишется и тогда, когда гашение не удалось, и тогда
  * гасить надо будет рукой.
  */
+/**
+ * Напечатать резюме полосы: в журнал платформы всегда, письмом — если каталог
+ * задан. Письмо и журнал несут ОДИН И ТОТ ЖЕ текст: расхождение между тем, что
+ * видит человек, и тем, что видит разбирающий аварию, — отдельный источник спора.
+ */
+function napechatatRezyume(agent, p, itog, limits, povod) {
+  const sid = String(agent?.id ?? '?')
+  const stroka = tekstRezyume(p, itog, limits.heartbeatDayZone)
+  log(`резюме полосы ${sid} (${povod}): ${stroka}`)
+  if (limits.heartbeatNoticeDir === '') return
+  try {
+    mkdirSync(limits.heartbeatNoticeDir, { recursive: true })
+    const file = `${limits.heartbeatNoticeDir}/${Date.now()}-rezyume-polosy.txt`
+    writeFileSync(file, `[резюме полосы] сессия ${sid}\n\n${stroka}\n`)
+    log(`резюме полосы ${sid}: письмо владельцу положено в ${file}`)
+  } catch (e) {
+    // Как и у письма об остановке: не падаем, но и не молчим — текст целиком
+    // уходит в журнал, иначе потеря письма неотличима от отсутствия полосы.
+    log(`🔴 резюме полосы ${sid}: письмо в ${limits.heartbeatNoticeDir} НЕ ЗАПИСАНО (${e?.message ?? e}). Текст: ${stroka}`)
+  }
+}
+
+/**
+ * Решение на конце хода: печатать ли резюме и какое.
+ *
+ * 🔴 ВЫНЕСЕНО В ОТДЕЛЬНУЮ ФУНКЦИЮ РАДИ ПРОВЕРЯЕМОСТИ. Останься это внутри
+ * обработчика события, стенду пришлось бы проверять НАЛИЧИЕ строк в файле, а
+ * слово присутствует и у мёртвого кода: порча условием оставила бы обе половины
+ * на месте и прошла бы незамеченной. Здесь стенд зовёт функцию с подставными
+ * зависимостями и смотрит НАБЛЮДАЕМОЕ СЛЕДСТВИЕ — печаталось или нет.
+ */
+function rezyumeNaKonceHoda(agent, limits, snyat, pechat) {
+  const sid = String(agent?.id ?? '?')
+  const p = polosaKotoraiaOborvalas(agent?.session?.events ?? [], limits.heartbeatHumanKinds)
+  if (p === null) return { pechatali: false, prichina: 'полосы, которая только что оборвалась, нет' }
+  // Отметка снимается ВСЕГДА, когда полоса закрылась, — печатаем мы или молчим.
+  // Пережившая свою полосу отметка заглушила бы резюме следующей.
+  if (snyat(limits, sid, p.do)) {
+    return { pechatali: false, prichina: 'итог уже объявлен агентом', polosa: p }
+  }
+  pechat(agent, p, '', limits, 'оборвана внешним словом')
+  return { pechatali: true, polosa: p }
+}
+
+/**
+ * Явное закрытие полосы агентом: печатает итог немедленно и ставит отметку,
+ * чтобы обрыв не напечатал второе резюме поверх объявленного.
+ *
+ * ГРАНИЦА: полосы может не быть вовсе — вызов в обычном, не автономном ходу.
+ * Это не отказ и не ошибка: отвечаем честно «закрывать было нечего», а не
+ * выдумываем полосу из одного человеческого хода.
+ */
+function zakrytPolosu(agent, summary, limits) {
+  const sid = String(agent?.id ?? '?')
+  const itog = summary.trim()
+  const p = tekushchayaPolosa(agent?.session?.events ?? [], limits.heartbeatHumanKinds)
+  if (p === null) {
+    log(`резюме полосы ${sid}: закрывать было нечего — автономных пробуждений подряд нет`)
+    return { closed: false, streak: 0, reason: 'полосы автономных пробуждений сейчас нет' }
+  }
+  if (itog === '') {
+    // Пустой итог хуже отсутствия вызова: он объявляет полосу закрытой и
+    // при этом не говорит ничего, а отметка заглушила бы честные числа.
+    log(`🔴 резюме полосы ${sid}: итог пуст — объявление не принято, полоса ${p.n} осталась без объявления`)
+    return { closed: false, streak: p.n, reason: 'итог пуст: скажите одной-двумя фразами, чем кончилась полоса' }
+  }
+  napechatatRezyume(agent, p, itog, limits, 'закрыта агентом')
+  const gde = postavitOtmetku(limits, sid, p.do, itog)
+  log(`резюме полосы ${sid}: отметка объявления ${gde}`)
+  return { closed: true, streak: p.n, from: p.ot, to: p.do, summary: itog }
+}
+
 async function stopHeartbeat(ctx, agent, why, counters, limits, rootCount) {
   const sid = String(agent?.id ?? '?')
   const removed = []
@@ -1256,7 +1540,7 @@ async function callTool(ctx, agents, toolName, agentId, args, limits) {
     // Родной путь требует того же живого агента и по той же причине: без него
     // расписание писалось бы в чужую сессию либо не писалось бы вовсе.
     if (exec.native) return await nativeCall(ctx, agent, toolName, args)
-    return await exec.local(ctx, agent, args)
+    return await exec.local(ctx, agent, args, limits)
   } catch (e) {
     if (reserved !== undefined) {
       releaseCreate(agentId, reserved)
@@ -1435,6 +1719,7 @@ export function apply(ctx, config) {
     ravnomernoIntervalSeconds: HEARTBEAT_RAVNOMERNO_SECONDS_DEFAULT,
     maxVChasCount: HEARTBEAT_MAX_V_CHAS_DEFAULT,
     szhimatIstoriyuPeredUdarom: HEARTBEAT_SZHATIE_DEFAULT,
+    rezyumirovatPolosu: HEARTBEAT_REZYUME_DEFAULT,
   }
   // Имя агента — из НАСТРОЙКИ, а не из имени пользователя процесса: одно и то же
   // системное имя может обслуживать разных агентов, а файл пределов адресуется
@@ -1459,6 +1744,7 @@ export function apply(ctx, config) {
     heartbeatRavnomernoSeconds: pd.znach.ravnomernoIntervalSeconds,
     heartbeatMaxVChas: pd.znach.maxVChasCount,
     heartbeatSzhatie: pd.znach.szhimatIstoriyuPeredUdarom === true,
+    heartbeatRezyume: pd.znach.rezyumirovatPolosu !== false,
   }
 
   /**
@@ -1494,6 +1780,15 @@ export function apply(ctx, config) {
     // выключенного — сегодня мы это уже проходили на persistence.
     log(`самопробуждение ${sid}: подряд ${c.streak}/${limits.heartbeatMaxConsecutive}, `
       + `за сутки ${c.perDay}/${limits.heartbeatMaxPerDay} (пояс ${limits.heartbeatDayZone})`)
+    // 🔴 РЕЗЮМЕ ПЕЧАТАЕТСЯ ДО ПРОВЕРКИ ПРЕДЕЛОВ, А НЕ ПОСЛЕ. Ход, оборвавший
+    // полосу, пределов не нарушает (полоса-то кончилась), и проверка ниже
+    // выходит раньше — резюме после неё не напечаталось бы никогда.
+    if (limits.heartbeatRezyume) {
+      const r = rezyumeNaKonceHoda(agent, limits, snyatOtmetku, napechatatRezyume)
+      if (!r.pechatali && r.polosa) {
+        log(`резюме полосы ${sid}: ${r.prichina} — повтора нет (полоса ${r.polosa.n})`)
+      }
+    }
     if (!overStreak && !overDay) {
       // 🔴 УСЛОВИЕ СНЯТИЯ СТОРОЖА, без которого он сработал бы один раз за жизнь
       // процесса: полосу прервал человек либо начались новые сутки.
@@ -1565,7 +1860,8 @@ export function apply(ctx, config) {
     // исполнения, и пропажа целого слоя обязана быть видна в строке подъёма.
     log(`точка входа 127.0.0.1:${port}; инструментов ${TOOLS.length}`
       + ` (набор соседнего агента ${PARITY.length}: ${PARITY.map((t) => t.name).join(', ')};`
-      + ` расписание платформы ${SCHEDULE.length}: ${SCHEDULE.map((t) => t.name).join(', ')})`)
+      + ` расписание платформы ${SCHEDULE.length}: ${SCHEDULE.map((t) => t.name).join(', ')};`
+      + ` наши ${OWN.length}: ${OWN.map((t) => t.name).join(', ')})`)
     log(`потолок создания целей: ${limits.createLimit} (${srcP('createLimitCount')}) `
       + `за ${limits.createWindowMs / 60000} мин (${srcP('createWindowMinutes')}); `
       + `под потолком: ${Object.entries(EXEC).filter(([, e]) => e.counted).map(([n]) => n).join(', ') || 'ничего'}`)
@@ -1634,6 +1930,22 @@ export function apply(ctx, config) {
         + 'но МЕХАНИЗМА СЖАТИЯ ЗДЕСЬ НЕТ — настройка НЕ ДЕЙСТВУЕТ. Это точка подключения '
         + 'под будущий приём: история перед пробуждением НЕ сжимается, расход не снижается')
     }
+
+    // Резюме полосы — отдельной строкой, вместе с тем, чего оно НЕ делает.
+    log(limits.heartbeatRezyume
+      ? `резюме полосы: печатается (${srcP('rezyumirovatPolosu')}) — при обрыве полосы внешним `
+        + `словом числами, а по вызову ${OWN[0].name} — сразу и с итогом от агента. `
+        + `Признак «пора печатать» структурный: ход не автономен, а перед ним подряд шли `
+        + `автономные — истинно ровно один раз, поэтому дубля не бывает и состояния для этого `
+        + `не заведено. Отметка объявления живёт `
+        + (limits.heartbeatNoticeDir === ''
+          ? '🔴 ТОЛЬКО В ПАМЯТИ: каталог писем не задан, и перезапуск между объявлением и '
+            + 'внешним словом даст ПОВТОР резюме'
+          : `файлом в ${limits.heartbeatNoticeDir} — переживает перезапуск`)
+        + '. НЕ отвечает на вопрос «что сделано»: содержательный итог знает только агент'
+      : `резюме полосы: ВЫКЛЮЧЕНО (${srcP('rezyumirovatPolosu')}) — окончание полосы `
+        + 'самопробуждений нигде не объявляется; осознанное окончание и молчаливое '
+        + 'в журнале неотличимы')
 
     // Противоречия настроек. Молчаливое «победила первая достигнутая мера»
     // означало бы: задано одно, работает другое, и никто об этом не сказал.

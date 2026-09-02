@@ -14,12 +14,19 @@
 //   * спор настроек проверяется на здравый смысл ЧИСЕЛ, а не на удачность
 //     выбранных значений: согласованный набор может быть плохим.
 import fs from 'node:fs'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 // Путь выводится от расположения стенда: он едет вместе с предметом, и частных
 // имён в нём быть не должно.
 const SRC = path.resolve(process.argv[2]
   || path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'src', 'index.js'))
 const t = fs.readFileSync(SRC, 'utf-8')
+
+// 🔴 ПРОГОН ОБЪЯВЛЯЕТ СВОЙ ПРЕДМЕТ. Несуществующая переменная или флаг молча
+// игнорируются, и прогон идёт на умолчаниях — я трижды за неделю считала подставным
+// прогон, шедший на боевом файле (MOST_KORNI вместо MOST_SRC; --karta, которого нет).
+// Ни ошибки, ни признака: проверять надо не «команда отработала», а «на ТЕХ ли данных».
+console.log(`предмет: ${SRC} (sha256-16 ${createHash('sha256').update(t).digest('hex').slice(0, 16)})`)
 
 if (!t.includes('function vychislitInterval(')) {
   console.log(`СЛЕПОТА: в ${SRC} нет vychislitInterval — правка режимов не установлена`)
@@ -37,7 +44,8 @@ const F = new Function(`${oknoConst[0]}
 ${vyrez('udarovVOkne')}
 ${vyrez('vychislitInterval')}
 ${vyrez('protivorechiyaKonfiga')}
-return { udarovVOkne, vychislitInterval, protivorechiyaKonfiga, OKNO: HEARTBEAT_OKNO_CHASA_MS }`)()
+${vyrez('vmestimostChasa')}
+return { udarovVOkne, vychislitInterval, protivorechiyaKonfiga, vmestimostChasa, OKNO: HEARTBEAT_OKNO_CHASA_MS }`)()
 
 let ok = 0, bad = 0, slep = 0
 const sud = (uslovie, imya, fakt) => {
@@ -107,10 +115,56 @@ sud(/недостижим/.test(spor({ heartbeatMaxConsecutive: 60 })),
   'предел подряд выше суточного назван недостижимым', spor({ heartbeatMaxConsecutive: 60 }))
 sud(/отвергнута/.test(spor({ heartbeatRezhim: 'ravnomerno', heartbeatRavnomernoSeconds: 300 })),
   'ровный тик чаще минимального интервала назван обречённым')
-sud(/не сработает/.test(spor({ heartbeatMaxVChas: 5 })),
-  'недостижимый потолок темпа назван бессильным', spor({ heartbeatMaxVChas: 5 }))
+// 🔴 02.09.2026: проверка перевёрнута. Раньше стенд ТРЕБОВАЛ, чтобы спор объявлял
+// потолок «недостижимым, не сработает ни разу». Требование было неверным: расчёт шёл
+// по шагу ПОВТОРЯЮЩИХСЯ, а потолок защищает от ОДНОРАЗОВЫХ, у которых интервала нет.
+// Теперь стенд требует обратного — механизм не вправе объявлять меру мёртвой.
+sud(!/не сработает|недостижим/.test(spor({ heartbeatMaxVChas: 5 })),
+  'потолок темпа НЕ объявляется мёртвым (он защищает от одноразовых)', spor({ heartbeatMaxVChas: 5 }))
+sud(F.protivorechiyaKonfiga(L({ heartbeatMaxVChas: 5 })).length === 0,
+  'потолок темпа вообще не порождает спора')
 sud(F.protivorechiyaKonfiga(L({ heartbeatMaxVChas: 1 })).length === 0,
   'достижимый потолок темпа спором не считается')
+
+// 🔴 Требование координатора 02.09: число «в час помещается N» обязано ВЫЧИСЛЯТЬСЯ из
+// шага, а не стоять готовым в тексте. Иначе смена шага заставит строку врать тем же
+// способом, только тише. Проверяем действием — разные шаги дают разные числа.
+sud(F.vmestimostChasa(L({ heartbeatMinIntervalSeconds: 1800 })).vlezaet === 2, 'шаг 1800 -> 2 в час')
+sud(F.vmestimostChasa(L({ heartbeatMinIntervalSeconds: 900 })).vlezaet === 4, 'шаг 900 -> 4 в час')
+sud(F.vmestimostChasa(L({ heartbeatRezhim: 'ravnomerno', heartbeatRavnomernoSeconds: 120 })).vlezaet === 30,
+  'ровный тик 120 -> 30 в час')
+// И структурно: в исходнике не должно быть вписанного числа рядом со словом «помещается».
+sud(!/помещается\s+\d/.test(t), 'число «помещается N» не вписано в текст руками')
+
+// 🔴 02.09.2026: обе меры — часовая и суточная — считаются по журналу СЕССИИ, а не
+// агента. Суточная строка это оговаривала, часовая нет — и читалась строже, чем есть.
+// Соседние строки про однотипные меры обязаны говорить с одинаковой честностью,
+// иначе менее честная выглядит сильнее механизма.
+{
+  const chas = t.slice(t.indexOf('log(limits.heartbeatMaxVChas > 0'))
+  const chasStroka = chas.slice(0, chas.indexOf('можно израсходовать за минуты'))
+  sud(/НА СЕССИЮ, а не на агента/.test(chasStroka), 'часовая строка оговаривает «на сессию»')
+  sud(/2 \* limits\.heartbeatMaxVChas/.test(chasStroka),
+    'суммарный потолок агента в часовой строке ВЫЧИСЛЯЕТСЯ, а не вписан')
+}
+
+// 🔴 02.09.2026: этикетка меры обязана совпадать с механизмом. Пока в humanKinds есть
+// a2a, полосу рвёт и координатор — значит «без слова человека» в строках подъёма ложь.
+{
+  // Конец ищем ОТ начала среза, а не от начала файла: «письмо об остановке»
+  // встречается в шапке раньше, и срез выходил отрицательной длины — то есть
+  // пустым. На пустом срезе отрицательная проверка проходит сама собой.
+  const nachalo = t.indexOf('предел самопробуждения: не чаще')
+  const podyom = t.slice(nachalo, t.indexOf('письмо об остановке', nachalo))
+  sud(podyom.length > 200, 'срез строки подъёма не пуст', `длина ${podyom.length}`)
+  // Запрещаем не саму фразу, а её РОЛЬ определения: «подряд без слова человека».
+  // Объяснение «мера называется так лишь по имени настройки» — наоборот, нужно.
+  sud(!/подряд без слова человека/.test(podyom),
+    'мера не ОПРЕДЕЛЯЕТСЯ как «подряд без слова человека»')
+  sud(/без ВНЕШНЕГО слова/.test(podyom), 'мера названа по существу — «без внешнего слова»')
+  sud(/limits\.heartbeatHumanKinds\]\.join/.test(podyom) || /\[\.\.\.limits\.heartbeatHumanKinds\]/.test(podyom),
+    'фактический список видов печатается, а не подразумевается')
+}
 // Строки спора обязаны нести ЧИСЛА: «настройки несогласованы» без чисел непроверяемо.
 sud(/\d/.test(spor({ heartbeatMaxConsecutive: 60 })), 'строка спора называет числа')
 
@@ -171,7 +225,7 @@ sud(F2.pochelovecheski(SUT * 465) === '465 сут' && F2.pochelovecheski(1800) =
 
 // --- КАНАРЕЙКА -------------------------------------------------------------
 // Число проверок здесь постоянно: случаи заданы перечнем и от данных не зависят.
-const ZHDYOM = 31
+const ZHDYOM = 42
 const vsego = ok + bad + slep
 console.log(`ИТОГО: сошлось ${ok}, расхождений ${bad}, слепот ${slep}`)
 if (vsego !== ZHDYOM) {

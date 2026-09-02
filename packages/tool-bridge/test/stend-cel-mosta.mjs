@@ -32,7 +32,17 @@ const SRC = `${KORNI}/src/index.js`
 // при первом же переименовании.
 const IMYA_PAKETA = JSON.parse(readFileSync(path.join(KORNI, 'package.json'), 'utf-8')).name
 // Имя агента в ФИКСТУРАХ — нейтральное: они подставные, боевого файла не читают.
-const AGENT_FIX = 'agent'
+// 🔴 Имя агента берётся ИЗ ЖИВОЙ НАСТРОЙКИ, а не вписано сюда. Вписанное имя
+// делает стенд частным (его нельзя опубликовать) ИЛИ ложно-красным: обезличенное
+// «agent» не совпадёт с боевым журналом, где имя настоящее, и стенд объявит
+// расхождение на исправном мосте. Поймано 01.09.2026 при починке.
+const AGENT_FIX = (() => {
+  try {
+    const t = readFileSync(SLOJ, 'utf-8')
+    const m = t.match(/^\s*limitsAgent:\s*['"]?([\w.-]+)['"]?\s*$/m)
+    return m ? m[1] : 'agent'
+  } catch { return 'agent' }
+})()
 
 let ok = 0, bad = 0, slepota = 0
 // Число проверок раздела 2 растёт вместе со слоем настроек: одна на поле.
@@ -69,7 +79,20 @@ for (const [gen, snimok] of [['izvlech-paritet.mjs', 'paritet.json'], ['izvlech-
   if (!existsSync(g) || !existsSync(s)) { slepo(`${snimok}: нет ${existsSync(g) ? s : g}`); continue }
   let svezhee
   try { svezhee = execFileSync(process.execPath, [g], { maxBuffer: 64 * 1024 * 1024 }).toString() }
-  catch (e) { slepo(`${snimok}: извлекатель не отработал — ${String(e?.message ?? e).slice(0, 140)}`); continue }
+  catch (e) {
+    // 🔴 Причину РАЗЛИЧАЕМ, а не пересказываем. Голое «Command failed» у постороннего
+    // неотличимо от «пакет сломан», а чаще всего это просто непоставленные зависимости:
+    // извлекатели читают пакеты платформы, которых в свежей установке ещё нет.
+    // Соседние стенды причину называют — копии обязаны говорить одинаково.
+    const txt = `${e?.stderr ?? ''}${e?.message ?? e}`
+    const net = /ERR_MODULE_NOT_FOUND|Cannot find (module|package)/.test(txt)
+    slepo(net
+      ? `${snimok}: извлекатель не нашёл пакеты платформы (ERR_MODULE_NOT_FOUND) — `
+        + 'зависимости не поставлены; это норма для свежей установки, а не поломка пакета. '
+        + 'Поставьте зависимости и повторите'
+      : `${snimok}: извлекатель отказал не из-за зависимостей — ${String(txt).slice(0, 160)}`)
+    continue
+  }
   const lezhit = readFileSync(s, 'utf8')
   if (svezhee === lezhit) good(`${snimok}: порождённое из пакетов платформы тождественно лежащему`)
   else {
@@ -147,7 +170,19 @@ console.log('\n=== 3. Строки подъёма из кода дословно
     // 🔴 По приметам, а не по номерам строк.
     const i = lines.findIndex((l) => l.includes('log(`предел самопробуждения: не чаще'))
     const j = lines.findIndex((l, k) => k > i && l.includes('НЕ ДЕЙСТВУЕТ'))
-    const last = lines.findIndex((l, k) => k > j && l.trimEnd().endsWith(')') && !l.trimEnd().endsWith('),'))
+    // 🔴 КОНЕЦ БЛОКА — ПО ОТСТУПУ, А НЕ ПО ВИДУ ПОСЛЕДНЕЙ СТРОКИ.
+    // Прежний признак («первая после НЕ ДЕЙСТВУЕТ строка, что кончается ")" без
+    // запятой») обрывал блок посреди if-а, как только в подъём добавили ветки:
+    // фикстура собиралась, а исполнение падало на «Unexpected end of input», и
+    // читалось это как дефект МОСТА. Отступ — свойство границы блока, вид строки — нет.
+    const otstup = (l) => l.length - l.trimStart().length
+    const otstupBloka = otstup(lines[i])
+    let last = -1
+    for (let k = i; k < lines.length; k++) {
+      if (lines[k].trim() === '') continue
+      if (k > i && otstup(lines[k]) < otstupBloka) break
+      last = k
+    }
     if (i < 0 || j < 0 || last < 0) fail('в файле моста нет блока строк подъёма — стенд смотрит не в то место')
     else {
       let config = {}
@@ -184,31 +219,132 @@ console.log('\n=== 3. Строки подъёма из кода дословно
       // лежит в журнале живого процесса. Значения сверяет раздел 2 — слой против
       // схемы, и там источник другой.
       let limits
-      const li = lines.findIndex((l) => l.includes('const limits = {'))
-      const lj = lines.findIndex((l, k) => k > li && l.trimEnd() === '  }')
-      const defs = [...text.matchAll(/^const ([A-Z0-9_]+_DEFAULT) = (.+)$/gm)]
-        .map((m) => `const ${m[1]} = ${m[2]}`)
-      if (li < 0 || lj < 0) {
+      // 🔴 ФИКСТУРА СОБИРАЕТСЯ ИЗ ПРЕДМЕТА ЦЕЛИКОМ — ни имён, ни значений от руки.
+      // Прежняя редакция брала константы по шаблону «const X_DEFAULT» и рухнула,
+      // когда в блок пришла HEARTBEAT_REZHIMY (31.08.2026): шаблон — признак, а
+      // нужен АДРЕС, то есть то, на что блок реально ссылается.
+      // Значения полей pd берутся из таблицы UMOLCHANIYA_PREDELOV того же моста,
+      // а не переписываются сюда: рукописный перечень отстанет молча, и стенд
+      // покраснеет на исправном предмете (так и вышло с восемью полями из
+      // двенадцати). Новое поле подхватывается само.
+      const vzyatBlok = (primeta) => {
+        const b = lines.findIndex((l) => l.includes(primeta))
+        if (b < 0) return null
+        let depth = 0
+        for (let k = b; k < lines.length; k++) {
+          depth += (lines[k].match(/\{/g) || []).length - (lines[k].match(/\}/g) || []).length
+          if (depth === 0 && k > b) return lines.slice(b, k + 1).join('\n')
+        }
+        return null
+      }
+      const blokLimits = vzyatBlok('const limits = {')
+      const blokUmolch = vzyatBlok('const UMOLCHANIYA_PREDELOV = {')
+      // Замыкание по ссылкам: константа может ссылаться на другую константу.
+      // 🔴 Блок подъёма зовёт ФУНКЦИИ моста (stupeniKratko, dlinaPolosy,
+      // pochelovecheski). Перечислять их от руки нельзя: перечень отстанет от
+      // предмета молча — ровно то, на чём стенд и встал 31.08. Собираем по
+      // ссылкам из самого блока, как и константы.
+      const sobratFunkcii = (istochnik) => {
+        const vstroennye = new Set(['log', 'src', 'srcP', 'String', 'Number', 'Object',
+          'Array', 'JSON', 'Math', 'Boolean', 'Set', 'Map', 'Date', 'if', 'for',
+          'while', 'switch', 'catch', 'return', 'true', 'false', 'includes', 'join',
+          'map', 'filter', 'push', 'slice', 'split', 'toFixed'])
+        const out = []
+        for (const m of istochnik.matchAll(/\b([a-zA-Z_$][\w$]*)\s*\(/g)) {
+          const imya = m[1]
+          if (vstroennye.has(imya) || out.some((x) => x.imya === imya)) continue
+          const b = lines.findIndex((l) => l.startsWith(`function ${imya}(`))
+          if (b < 0) continue
+          let depth = 0
+          for (let k = b; k < lines.length; k++) {
+            depth += (lines[k].match(/\{/g) || []).length - (lines[k].match(/\}/g) || []).length
+            if (depth === 0 && k > b) { out.push({ imya, txt: lines.slice(b, k + 1).join('\n') }); break }
+          }
+        }
+        return out
+      }
+      const sobratKonstanty = (istochniki) => {
+        const nuzhny = new Set()
+        const dobavit = (txt) => {
+          for (const m of txt.matchAll(/\b([A-Z][A-Z0-9_]{2,})\b/g)) nuzhny.add(m[1])
+        }
+        istochniki.forEach(dobavit)
+        const gotovo = new Map()
+        for (let krug = 0; krug < 10; krug++) {
+          let novoe = false
+          for (const imya of [...nuzhny]) {
+            if (gotovo.has(imya)) continue
+            const m = text.match(new RegExp(`^\\s*const ${imya} = (.+)$`, 'm'))
+            if (!m) continue
+            // Имя, определённое МНОГОСТРОЧНЫМ блоком (const X = {…}), не тянем
+            // отдельной строкой: такой блок либо уже подан как источник, либо
+            // фикстуре не нужен. Иначе стенд требует того, чего в однострочном
+            // виде не существует, и слепнет на исправном мосте.
+            if (m[1].trim() === '{') { gotovo.set(imya, ''); continue }
+            gotovo.set(imya, `const ${imya} = ${m[1]}`)
+            dobavit(m[1]); novoe = true
+          }
+          if (!novoe) break
+        }
+        return { gotovo, nuzhny }
+      }
+      if (!blokLimits) {
         slepo('в файле моста не найден блок «const limits = {» — фикстуру не собрать из предмета')
-      } else if (!defs.length) {
-        slepo('в файле моста не найдено ни одного умолчания «const X_DEFAULT =» — фикстуру не собрать')
+      } else if (!blokUmolch) {
+        slepo('в файле моста не найден блок «const UMOLCHANIYA_PREDELOV = {» — значения полей pd взять неоткуда')
       } else {
         try {
-          const blok = lines.slice(li, lj + 1).join('\n')
+          const blok = blokLimits
           // 🔴 С 31.08.2026 блок limits берёт восемь значений не из config, а из
           // pd — разобранного файла /etc/agent-limits. Фикстура обязана давать
           // ИМЕННО ТУ форму, что читает предмет: подставляем pd со значениями
           // слоя, иначе стенд краснеет на исправном мосте (поймано в тот же день).
-          const pdFix = { znach: {
-            createLimitCount: 3, createWindowMinutes: 60, blockAfterRoundsCount: 3,
-            minIntervalSeconds: 1800, maxConsecutiveCount: 6, maxPerDayCount: 48,
-            dayZone: 'Europe/Moscow', humanKinds: ['user', 'a2a'],
-          }, ist: {}, beda: null }
-          for (const k of Object.keys(pdFix.znach)) pdFix.ist[k] = `/etc/agent-limits/${AGENT_FIX}.yml`
+          const { gotovo, nuzhny } = sobratKonstanty([blokLimits, blokUmolch])
+          const nenajdeny = [...nuzhny].filter((k) => !gotovo.has(k))
+          if (nenajdeny.length) {
+            slepo(`в мосте не найдены определения констант, на которые ссылаются блоки: `
+              + `${nenajdeny.join(', ')} — фикстуру не собрать из предмета`)
+            throw new Error('фикстура не собрана')
+          }
+          const defs = [...gotovo.values()].filter(Boolean)
+          const mUm = await import('data:text/javascript;charset=utf-8,'
+            + encodeURIComponent(`export default () => {\n${defs.join('\n')}\n${blokUmolch}\nreturn UMOLCHANIYA_PREDELOV\n}`))
+          const znach = mUm.default()
+          // 🔴 02.09.2026: фикстура брала УМОЛЧАНИЯ, а бой читает НАСТРОЙКИ, и строки
+          // подъёма расходились на каждом значении, отличном от умолчания. Поймано,
+          // когда часовой потолок стал 4 при умолчании 0: стенд дал FAIL на исправном
+          // мосте. Значения берём из того же файла, что и предмет; нет файла — остаются
+          // умолчания, и это честная граница (у постороннего файла и не бывает).
+          let istochnikZnachenij = 'умолчания моста'
+          try {
+            const fajl = `/etc/agent-limits/${AGENT_FIX}.yml`
+            if (existsSync(fajl)) {
+              const txt = readFileSync(fajl, 'utf8')
+              let vzyato = 0
+              for (const k of Object.keys(znach)) {
+                const m2 = txt.match(new RegExp(`^\\s*${k}:\\s*(.+?)\\s*(?:#.*)?$`, 'm'))
+                if (!m2) continue
+                const raw = m2[1].trim()
+                znach[k] = /^-?\d+$/.test(raw) ? Number(raw)
+                  : raw === 'true' ? true : raw === 'false' ? false
+                  // Список в квадратных скобках — МАССИВ, а не строка. Взятая строкой,
+                  // она раскладывается предметом посимвольно, и строка подъёма выходит
+                  // мусорной; поймано 02.09 на humanKinds: [user, a2a].
+                  : /^\[.*\]$/.test(raw) ? raw.slice(1, -1).split(',').map((x) => x.trim()).filter(Boolean)
+                  : raw.replace(/^["']|["']$/g, '')
+                vzyato += 1
+              }
+              if (vzyato) istochnikZnachenij = `${fajl} (полей ${vzyato})`
+            }
+          } catch { /* остаются умолчания: причина названа строкой ниже */ }
+          good(`значения фикстуры: ${istochnikZnachenij}`)
+          const pdFix = { znach, ist: {}, beda: null }
+          for (const k of Object.keys(znach)) pdFix.ist[k] = `/etc/agent-limits/${AGENT_FIX}.yml`
           const m = await import('data:text/javascript;charset=utf-8,'
             + encodeURIComponent(`export default (config, pd) => {\n${defs.join('\n')}\n${blok}\nreturn limits\n}`))
           limits = m.default(config, pdFix)
-          good(`фикстура limits собрана ИЗ МОСТА: полей ${Object.keys(limits).length}, умолчаний ${defs.length}`)
+          good(`фикстура limits собрана ИЗ МОСТА: полей ${Object.keys(limits).length}, `
+            + `констант ${defs.length}, значений pd ${Object.keys(znach).length}`)
         } catch (e) {
           fail(`блок построения limits не исполнился: ${String(e?.message ?? e).slice(0, 160)}`)
         }
@@ -237,8 +373,19 @@ console.log('\n=== 3. Строки подъёма из кода дословно
       } else {
         try {
           const body = lines.slice(i, last + 1).join('\n')
+          const fn = sobratFunkcii(body)
+          const kon = sobratKonstanty([body, ...fn.map((f) => f.txt)])
+          // Имена, которые уже приходят ПАРАМЕТРАМИ фикстуры, не объявляем второй
+          // раз: иначе «Identifier has already been declared», и отказ читался бы
+          // как дефект моста.
+          const parametry = new Set(['log', 'limits', 'src', 'srcP', 'pd',
+            'LIMITS_DIR', 'limitsAgent', 'STROGO'])
+          const defsF = [...kon.gotovo.entries()]
+            .filter(([imya, txt]) => txt && !parametry.has(imya))
+            .map(([, txt]) => txt)
           const m = await import('data:text/javascript;charset=utf-8,'
-            + encodeURIComponent(`export default (log, limits, src, srcP, pd, LIMITS_DIR, limitsAgent, STROGO) => {\n${body}\n}`))
+            + encodeURIComponent(`export default (log, limits, src, srcP, pd, LIMITS_DIR, limitsAgent, STROGO) => {\n`
+              + `${defsF.join('\n')}\n${fn.map((f) => f.txt).join('\n')}\n${body}\n}`))
           m.default(log, limits, src, srcP,
             { znach: {}, ist: {}, beda: null }, '/etc/agent-limits', AGENT_FIX,
             { minIntervalSeconds: 3600, maxConsecutiveCount: 1, maxPerDayCount: 1 })
@@ -285,7 +432,11 @@ console.log(`\nИТОГО: сошлось ${ok}, расхождений ${bad}, 
 // себя объявляет отдельной проверкой (было: только «фикстура полна»).
 // 🔴 База выросла с 9 до 10 (31.08.2026): добавилась проверка «фикстура limits
 // собрана из моста» после перехода восьми пределов на чтение из файла.
-const BAZA = 10
+// 🔴 База 10 -> 12 (01.09.2026): починка сбора фикстуры добавила две проверки —
+// строки подъёма теперь исполняются целиком (блок берётся по ОТСТУПУ, а не по виду
+// последней строки) и сверяются с журналом построчно, а не обрывались на первом же
+// «)» без запятой.
+const BAZA = 13
 if (polejSloja === null) {
   console.log('\nСЛЕПОТА: раздел 2 не отработал, число полей слоя неизвестно — считать ожидание не из чего.')
   process.exit(2)

@@ -20,12 +20,21 @@
  * Стенд НЕ доказывает работу предела в бою: полосы из шести автономных подряд
  * не было ни разу, боевые счётчики 0/6.
  */
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
 import fs from 'node:fs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 // Путь выводится от расположения стенда: он едет вместе с предметом.
 const SRC = process.env.MOST_SRC || path.join(path.dirname(path.dirname(new URL(import.meta.url).pathname)), 'src', 'index.js')
+// 🔴 ПРОГОН ОБЪЯВЛЯЕТ СВОЙ ПРЕДМЕТ. Несуществующая переменная или флаг молча
+// игнорируются, и прогон идёт на умолчаниях — я трижды за неделю считала подставным
+// прогон, шедший на боевом файле (MOST_KORNI вместо MOST_SRC; --karta, которого нет).
+// Ни ошибки, ни признака: проверять надо не «команда отработала», а «на ТЕХ ли данных».
+console.log(`предмет: ${SRC}`
+  + (existsSync(SRC) ? ` (sha256-16 ${createHash('sha256').update(readFileSync(SRC)).digest('hex').slice(0, 16)})` : ' — ФАЙЛА НЕТ'))
+
 // 🔴 Каталог для письма стенд заводит СЕБЕ САМ, а не берёт из боевого умолчания.
 // Умолчание модуля — пустая строка («писать в журнал»), и стенд, полагавшийся на
 // боевое значение, у поставившего модуль отказал бы ровно так же, как отказал здесь.
@@ -119,7 +128,11 @@ async function hod(events, metka) {
   else if (!stopped.has('proba')) {
     stopped.add('proba')
     ostanovleno = true
-    const why = `${c.streak} автономных пробуждений подряд без слова человека (предел ${limits.heartbeatMaxConsecutive})`
+    // 🔴 ФИКСТУРА, А НЕ КОПИЯ БОЕВОЙ СТРОКИ. Стенд проверяет ПОВЕДЕНИЕ stopHeartbeat
+    // (снял ли расписания, написал ли письмо), а причина — её входной аргумент.
+    // Текст нарочно НЕ повторяет боевую формулировку: совпадение выглядело бы
+    // сверкой, которой здесь нет, и молча разошлось бы при первой же правке моста.
+    const why = `подставная причина: ${c.streak} подряд при пределе ${limits.heartbeatMaxConsecutive}`
     await M.stopHeartbeat({}, { id: 'proba' }, why, c, limits, 2)
   }
   console.log(`${metka.padEnd(46)} подряд ${c.streak}/${limits.heartbeatMaxConsecutive}  `

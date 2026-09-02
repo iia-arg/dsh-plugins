@@ -19,6 +19,7 @@
  *
  * Коды возврата: 0 — сошлось, 1 — расхождение, 2 — слепота (проверить не вышло).
  */
+import { createHash } from 'node:crypto'
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
@@ -28,6 +29,13 @@ import os from 'node:os'
 // (проверка зрячести портит копию, а не предмет) и на распакованном тарболе.
 // Путь выводится от расположения стенда: он едет вместе с предметом.
 const SRC = process.env.MOST_SRC || path.join(path.dirname(path.dirname(new URL(import.meta.url).pathname)), 'src', 'index.js')
+// 🔴 ПРОГОН ОБЪЯВЛЯЕТ СВОЙ ПРЕДМЕТ. Несуществующая переменная или флаг молча
+// игнорируются, и прогон идёт на умолчаниях — я трижды за неделю считала подставным
+// прогон, шедший на боевом файле (MOST_KORNI вместо MOST_SRC; --karta, которого нет).
+// Ни ошибки, ни признака: проверять надо не «команда отработала», а «на ТЕХ ли данных».
+console.log(`предмет: ${SRC}`
+  + (existsSync(SRC) ? ` (sha256-16 ${createHash('sha256').update(readFileSync(SRC)).digest('hex').slice(0, 16)})` : ' — ФАЙЛА НЕТ'))
+
 const ZHURNAL = process.env.MOST_ZHURNAL
   // Журнал сессии лежит в доме агента, но имя сессии у каждого своё и заранее
   // неизвестно. Поэтому умолчание — САМЫЙ СВЕЖИЙ найденный журнал, а не выдуманный
@@ -234,6 +242,42 @@ console.log('\n=== В. Страж интервала ===')
   t('не число — отказ', otkaz({ every_seconds: '1800' }), PREFIX)
 }
 
+console.log('\n=== В2. Часовой потолок: подставной прогон и контроль зрячести ===')
+{
+  // Режим ровного тика с шагом 10 с выбран нарочно: лесенка тогда не поднимает
+  // интервал, и всякое отодвигание сверх 10 с приходит ТОЛЬКО от потолка. С
+  // лесенкой пришлось бы отделять один эффект от другого, а это уже толкование.
+  const bazovye = {
+    heartbeatRezhim: 'ravnomerno', heartbeatRavnomernoSeconds: 10,
+    heartbeatMinIntervalSeconds: 10, heartbeatMaxConsecutive: 100, heartbeatMaxPerDay: 100,
+    heartbeatDayZone: 'Europe/Moscow', heartbeatHumanKinds: KINDS,
+  }
+  const progon = (potolok) => {
+    const events = []
+    const agents = { get: () => ({ session: { events } }) }
+    const limits = { ...bazovye, heartbeatMaxVChas: potolok }
+    const itogi = []
+    for (let i = 0; i < 5; i += 1) {
+      const args = { after_seconds: 10 }
+      heartbeatGuard(args, limits, agents, 'proba')
+      itogi.push(args.after_seconds)
+      // Пробуждение состоялось: кладём dispatch, как это делает платформа.
+      events.push({ type: 'schedule/change', data: { operation: 'dispatch' }, time: Date.now() })
+    }
+    return itogi
+  }
+  const s4 = progon(4)
+  t('потолок 4: первые четыре по 10 с', s4.slice(0, 4).join(','), '10,10,10,10')
+  t('потолок 4: ПЯТОЕ отодвинуто', s4[4] > 10, true, `пятое = ${s4[4]} с`)
+  t('потолок 4: отодвинуто почти на час', s4[4] > 3500 && s4[4] <= 3600, true, `${s4[4]} с`)
+
+  // 🔴 КОНТРОЛЬ ЗРЯЧЕСТИ. Без него «пятое отодвинуто» доказывает лишь, что
+  // функция что-то делает, но не что делает это ИМЕННО потолок: тот же прогон
+  // при выключенном потолке обязан пройти целиком.
+  const s0 = progon(0)
+  t('контроль: при потолке 0 проходят все пять', s0.join(','), '10,10,10,10,10')
+}
+
 console.log('\n=== Г. Предел на ЖИВОМ журнале сессии ===')
 // Здесь проверяется не логика, а факт: не нарушен ли предел на настоящей
 // истории. Отказ чтения — слепота, а не расхождение: журнала может не быть
@@ -276,7 +320,7 @@ console.log(`\nИТОГО: сошлось ${ok}, расхождений ${bad}, 
 // не попали. Число точное, а не «не меньше»: порог слеп к убыли ровно того
 // размера, который умещается в запас.
 // Меняли стенд намеренно? Поправьте число и скажите, почему.
-const ZHDYOM = 27
+const ZHDYOM = 31
 if (ok + bad + slepota !== ZHDYOM) {
   console.log(`\nСЛЕПОТА: проверок ${ok + bad + slepota}, а стенд состоит из ${ZHDYOM} — часть не состоялась.`)
   process.exit(2)
