@@ -101,7 +101,14 @@ export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, k
     const klass = KLASSY.includes(t?.kind) ? t.kind : null;
     if (!klass) { itog.chuzhoiKlass++; krik(`тема «${t?.theme}» пропущена: класс «${t?.kind}» вне объявленного списка`); continue; }
     const s2 = await sprosit({ klyuch: k.klyuch, model: nastrojka.model, system: STATYA,
-                               tekst: `ТЕМА: ${t.theme}\n\n${transkript}`, maxTokens: nastrojka.maxTokenovStati,
+                               // 🔴 ТЕМА В КОНЦЕ, А НЕ В НАЧАЛЕ — РАДИ КЭША ПРОВАЙДЕРА.
+                               // Замер 03.09.2026: при теме впереди префикс у всех двенадцати
+                               // вызовов разный с первого знака, кэш не срабатывает вовсе —
+                               // 3072 попадания на 824 033 токена входа (0,37%). Транскрипт
+                               // один и тот же; поставив его ПЕРВЫМ, делаем префикс общим.
+                               // Ставка кэш-попадания у deepseek-v4-flash в 31 раз ниже
+                               // ставки свежего входа, и вся вторая ступень идёт по ней.
+                               tekst: `${transkript}\n\nТЕМА: ${t.theme}`, maxTokens: nastrojka.maxTokenovStati,
                                ...(adres ? { adres } : {}) });
     uchest(s2.usage);   // до разбора исхода: оплачен и отказ
     if (s2.ishod !== 'ok') { itog.otkazov++; krik(`статья «${t.theme}» не написана [${s2.ishod}]: ${s2.pochemu}`); continue; }

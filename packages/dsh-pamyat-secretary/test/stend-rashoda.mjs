@@ -37,7 +37,11 @@ const otvety = [
   { content: [{ type: 'thinking', thinking: 'думаю слишком долго' }],
     stop_reason: 'max_tokens', usage: { input_tokens: 3000, output_tokens: 300 } },
 ];
+const zaprosy = [];
 const server = createServer((req, res) => {
+  let syroe = '';
+  req.on('data', (c) => { syroe += c; });
+  req.on('end', () => { try { zaprosy.push(JSON.parse(syroe)); } catch { zaprosy.push(null); } });
   const telo = otvety[Math.min(vyzov++, otvety.length - 1)];
   res.writeHead(200, { 'content-type': 'application/json' });
   res.end(JSON.stringify(telo));
@@ -80,6 +84,20 @@ t('кеш считается отдельно от свежего входа', (
   const r = itog.rashod;
   if (r.keshChtenie !== 7 || r.keshZapis !== 3) {
     throw new Error('кеш чтение ' + r.keshChtenie + ', запись ' + r.keshZapis + ' — ждали 7 и 3');
+  }
+});
+t('🔴 ТЕМА СТОИТ ПОСЛЕ ТРАНСКРИПТА — иначе кэш провайдера не работает', () => {
+  // Замер 03.09.2026: тема впереди → префикс у каждого вызова свой → попаданий в кэш
+  // 0,37% входа. Тема в конце → 84,7%. Транскрипт один и тот же, экономия кратная.
+  // Проба стоит здесь, чтобы «наведение порядка» не вернуло тему вперёд молча.
+  const stati = zaprosy.filter((z) => z && /ТЕМА:/.test(z.messages?.[0]?.content ?? ''));
+  if (stati.length === 0) throw new Error('запросов со статьями не видно — проба слепа');
+  for (const z of stati) {
+    const t = z.messages[0].content;
+    const gde = t.indexOf('ТЕМА:');
+    if (gde < t.length / 2) {
+      throw new Error('ТЕМА на позиции ' + gde + ' из ' + t.length + ' — она впереди транскрипта, кэш не сработает');
+    }
   }
 });
 t('расход НЕ переводится в деньги внутри пакета', () => {
