@@ -1,6 +1,6 @@
 {
   "name": "dsh-tool-bridge",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "files": [
     "src/index.js",
     "src/paritet.json",
@@ -40,6 +40,6 @@
     "directory": "packages/tool-bridge"
   },
   "scripts": {
-    "test": "for f in test/stend-*.mjs; do node \"$f\" || exit 1; done"
+    "test": "r=0; for f in test/stend-*.mjs; do node \"$f\"; c=$?; if [ $c -eq 1 ]; then r=1; elif [ $c -eq 2 ] && [ $r -ne 1 ]; then r=2; elif [ $c -ne 0 ] && [ $c -ne 2 ] && [ $r -ne 1 ]; then r=$c; fi; done; exit $r"
   }
 }
