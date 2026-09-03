@@ -8,7 +8,19 @@ a failure looks exactly like a success. Everything here was written because the 
 ship it, and every non-obvious line carries a comment explaining what went wrong before that line
 existed.
 
-## Plugins
+## What is here: 15 packages, two kinds
+
+**[Platform plugins (8)](#platform-plugins-8)** — independent pieces, each solving one problem the
+harness leaves open. Install any of them alone.
+
+**[Memory family `dsh-pamyat` (7)](#memory-family-dsh-pamyat-7)** — a set built and checked
+*together*: layers that give an agent memory surviving a compaction and a restart. Install the whole
+set by its name, `npm i dsh-pamyat`.
+
+Two kinds, not one list: a platform plugin is useful by itself, a memory layer is useful with its
+siblings. Counting them as one number hides that difference.
+
+## Platform plugins (8)
 
 | Package | What it does |
 |---|---|
@@ -21,7 +33,7 @@ existed.
 | [`oom-watch`](packages/oom-watch) | Learn when the memory limit killed your agent. Reads the kernel journal, not the cgroup counter that resets on restart. Not a plugin: a systemd timer. |
 | [`a2a-bus`](packages/a2a-bus) | Let agents on one machine write to each other directly, without giving up isolation. Each agent owns a mailbox nobody else can list; a postman running as root transfers ownership of the letter, so the sender loses access once it is delivered. Not a plugin: a spool, a service and a timer. |
 
-## Memory: a family of seven
+## Memory family `dsh-pamyat` (7)
 
 The harness compacts a long conversation by summarising it — and the summary is gone the moment
 the process restarts. These packages give an agent memory that survives that, split into layers
