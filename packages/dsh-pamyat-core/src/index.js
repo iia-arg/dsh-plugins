@@ -233,7 +233,24 @@ export function apply(ctx, config = {}) {
       // и знание уехало бы в оперативный слой, не уехав в долговременный. Лечить класс, а не
       // место: две ветки возврата — два места одной болезни.
       const vDolgovremennuyu = (id, zapisSoderzhim, bezPodtverzhdeniya) => {
-        if (!config.klassyZnaniy?.includes(zapis.klass)) return id;
+        // 🔴 «ВНЕ ПЕРЕЧНЯ» ТОЖЕ ОТМЕЧАЕТСЯ. Прежде эта ветка молчала — и «класс не из
+        // перечня знаний» было НЕОТЛИЧИМО от «долговременный слой не позвали»: в обоих
+        // случаях в журнале не появлялось ничего. Разбирающий, почему знания нет в общей
+        // памяти, не мог узнать, решение это или сбой.
+        //
+        // Исход отдельный (`ostalos-v-operativnom`), а не `zapisano`: запись состоялась,
+        // но НЕ везде, и это состояние своё, а не оттенок успеха.
+        if (!config.klassyZnaniy?.includes(zapis.klass)) {
+          zhurnal?.otmetit({
+            agent, klass: zapis.klass, ishod: 'ostalos-v-operativnom',
+            priroda: 'klass-vne-klassyZnaniy',
+            pochemu: 'класс «' + zapis.klass + '» не входит в klassyZnaniy (' +
+                     (config.klassyZnaniy?.join(', ') || 'перечень пуст') +
+                     ') — в долговременную память не идёт по решению, а не по сбою',
+            istochnik: zapis.istochnik ?? null,
+          });
+          return id;
+        }
         const dolgo = ctx.get?.('pamyatDolgovremennaya');
         if (!dolgo) {
           zhurnal?.otmetit({

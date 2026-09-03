@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-let ok = 0, bed = 0;
+let ok = 0, bed = 0, slepot = 0;
 const t = (imya, f) => { try { f(); ok++; console.log('  ok   ' + imya) }
   catch (e) { bed++; console.log('  FAIL ' + imya + ' — ' + e.message) } };
 
@@ -138,6 +138,51 @@ const zhurnalZapisi = (k) => {
   });
 }
 
+// [F] 🔴 «ВНЕ ПЕРЕЧНЯ» ОТМЕЧАЕТСЯ В ЖУРНАЛЕ. Молчание этой ветки делало «класс не из
+// перечня знаний» неотличимым от «долговременный слой не позвали»: в обоих случаях в
+// журнале не появлялось ничего, и разбирающий не мог узнать, решение это или сбой.
+{
+  const k = await podnyat({ dolgo: { dostupna: () => true, pochemuNedostupna: () => '',
+    sohranit: async () => ({ sostoyanie: 'dostavleno', id: 'mem-x' }) } });
+  k.pamyat.zapisat({ klass: 'svodka-kompakcii', soderzhim: 'сводка', istochnik: 's#1-2' });
+  await new Promise((r) => setTimeout(r, 40));
+  t('[F] класс вне перечня — отдельный исход в журнале, а не тишина', () => {
+    const z = zhurnalZapisi(k).filter((x) => x.priroda === 'klass-vne-klassyZnaniy');
+    if (!z.length) throw new Error('ветка «вне перечня» молчит — решение неотличимо от сбоя');
+    if (z[0].ishod !== 'ostalos-v-operativnom') throw new Error('исход ' + z[0].ishod + ', ждали ostalos-v-operativnom');
+    if (!/не входит в klassyZnaniy/.test(z[0].pochemu ?? '')) throw new Error('причина не называет перечень: ' + z[0].pochemu);
+  });
+}
+
+// [G] 🔴 ПЕРЕЧНИ ДВУХ ПАКЕТОВ СОГЛАСОВАНЫ. Секретарь выбирает классы для статей, ядро решает,
+// какие из них уедут в долговременную память. Разойдись они — часть знаний останется только
+// в оперативном слое, и НИКТО об этом не узнает: у обоих пакетов свой список верен, а дыра
+// между ними невидима каждому по отдельности.
+//
+// ГДЕ НЕ ПРИМЕНЯЕТСЯ: соседний пакет может быть не установлен — тогда СЛЕПОТА, а не «сошлось».
+{
+  let klassySecretarya = null;
+  for (const put of ['../../dsh-pamyat-secretary/src/promty.js',
+                     '../node_modules/dsh-pamyat-secretary/src/promty.js']) {
+    try { ({ KLASSY: klassySecretarya } = await import(new URL(put, import.meta.url).href)); break; }
+    catch { /* ищем дальше */ }
+  }
+  if (!klassySecretarya) {
+    slepot++;
+    console.log('  СЛЕПОТА: пакет секретаря не найден рядом — согласованность перечней не проверена');
+    console.log('    Это НЕ «сошлось»: проверка не состоялась. Поставьте dsh-pamyat-secretary рядом.');
+  } else {
+    const nashi = new Config({ putBazy: join(kat, 'x.db'), agent: 'proba' }).klassyZnaniy ?? [];
+    t('[G] все классы секретаря входят в klassyZnaniy ядра', () => {
+      const lishnie = klassySecretarya.filter((x) => !nashi.includes(x));
+      if (lishnie.length) {
+        throw new Error('секретарь пишет классы, которых ядро не отправит в долговременную память: ' +
+                        lishnie.join(', ') + ' — знание останется только в оперативном слое');
+      }
+    });
+  }
+}
+
 rmSync(kat, { recursive: true, force: true });
-console.log('ИТОГО: сошлось ' + ok + ', расхождений ' + bed);
-process.exit(bed ? 1 : 0);
+console.log('ИТОГО: сошлось ' + ok + ', расхождений ' + bed + ', слепота ' + slepot);
+process.exit(bed ? 1 : (slepot ? 2 : 0));
