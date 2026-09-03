@@ -215,24 +215,36 @@ proba('🔴 ВСЁ, ЧТО ЧИТАЕТ СТЕНД, ЕСТЬ В СОСТАВЕ �
 // он покрывает.
 // ГДЕ НЕ ПРИМЕНЯЕТСЯ: проба смотрит, что описание НЕ ОТСТАЛО от состава. О том, верен ли
 // сам состав, она не говорит ничего — это работа соседних проб и ворот.
-proba('🔴 README перечисляет РОВНО тех членов и те версии, что в составе', () => {
-  const opisanie = readFileSync(join(koren, 'README.md'), 'utf-8');
-  for (const ch of sostav.sostav) {
-    const stroka = new RegExp(ch.paket.replace(/[-]/g, '\\-') + '\\s+' +
-                              ch.versiya.replace(/[.]/g, '\\.'));
-    if (!stroka.test(opisanie)) {
-      throw new Error('README не называет ' + ch.paket + ' ' + ch.versiya +
-                      ' — описание отстало от состава');
+// 🔴 ОБА ОПИСАНИЯ, А НЕ ОДНО (03.09.2026). Первая редакция этой пробы читала только
+// README.md — и английское описание отстало НА СЕМЬ ВЕРСИЙ незамеченным: называло пять
+// членов (core alpha.9, omega alpha.6, secretary alpha.3, byudzhet alpha.4, nudzh alpha.4)
+// и не знало о restore вовсе, при зелёном стенде.
+// Это наш класс парных объектов: рассинхрон двух описаний не виден ничем, кроме сверки
+// САМИХ описаний, а проба, читающая одно из пары, даёт ровно ту уверенность, которой
+// пара и должна была помешать.
+// ГДЕ НЕ ПРИМЕНЯЕТСЯ: проба смотрит, что описание НЕ ОТСТАЛО от состава. О том, верен ли
+// сам состав, она не говорит ничего — это работа соседних проб и ворот. И она не сверяет
+// два описания МЕЖДУ СОБОЙ: оба сверяются с составом, он и есть общий источник.
+for (const [imya, fajl] of [['русское', 'README.md'], ['английское', 'README.en.md']]) {
+  proba('🔴 ' + imya + ' описание перечисляет РОВНО тех членов и те версии, что в составе', () => {
+    const opisanie = readFileSync(join(koren, fajl), 'utf-8');
+    for (const ch of sostav.sostav) {
+      const stroka = new RegExp(ch.paket.replace(/[-]/g, '\\-') + '\\s+' +
+                                ch.versiya.replace(/[.]/g, '\\.'));
+      if (!stroka.test(opisanie)) {
+        throw new Error(fajl + ' не называет ' + ch.paket + ' ' + ch.versiya +
+                        ' — описание отстало от состава');
+      }
     }
-  }
-  // и обратно: в README не должно быть членов, которых в составе НЕТ
-  const imena = new Set(sostav.sostav.map((x) => x.paket));
-  for (const m of opisanie.matchAll(/^\s{2,}(dsh-pamyat-[a-z]+)\s/gm)) {
-    if (!imena.has(m[1])) {
-      throw new Error('README называет ' + m[1] + ', которого в составе нет');
+    // и обратно: в описании не должно быть членов, которых в составе НЕТ
+    const imena = new Set(sostav.sostav.map((x) => x.paket));
+    for (const m of opisanie.matchAll(/^\s{2,}(dsh-pamyat-[a-z]+)\s/gm)) {
+      if (!imena.has(m[1])) {
+        throw new Error(fajl + ' называет ' + m[1] + ', которого в составе нет');
+      }
     }
-  }
-});
+  });
+}
 
 console.log('  итог: ' + proshlo + ' из ' + vsego);
 

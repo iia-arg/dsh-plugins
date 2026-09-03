@@ -1,14 +1,15 @@
 # dsh-pamyat
 
-**A name for a set.** This metapackage carries no code — it declares which five
+**A name for a set.** This metapackage carries no code — it declares which six
 memory packages were built and checked TOGETHER, at which exact versions, and by
 what means that was verified.
 
-    dsh-pamyat-core       0.1.0-alpha.9    store, journal, write policy
-    dsh-pamyat-omega      0.1.0-alpha.6    long-term memory provider
-    dsh-pamyat-secretary  0.1.0-alpha.3    compaction summaries → records
-    dsh-pamyat-byudzhet   0.1.0-alpha.4    incoming budget: what to lift back
-    dsh-pamyat-nudzh      0.1.0-alpha.4    spend accounting: time to compact?
+    dsh-pamyat-core      0.1.0-alpha.11   store, journal, write policy
+    dsh-pamyat-omega     0.1.0-alpha.8    long-term memory provider
+    dsh-pamyat-secretary 0.1.0-alpha.5    compaction summaries → records
+    dsh-pamyat-byudzhet  0.1.0-alpha.6    incoming budget: what to lift back
+    dsh-pamyat-nudzh     0.1.0-alpha.8    spend accounting: time to compact?
+    dsh-pamyat-restore   0.1.0-alpha.14   knowledge back into context: post-compaction summary and briefing
 
 ## 🔴 Exact versions, no ranges
 

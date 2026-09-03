@@ -1,7 +1,7 @@
 {
   "name": "dsh-pamyat",
-  "version": "0.1.0-alpha.10",
-  "description": "Память агента: имя для набора из пяти пакетов, собранных и проверенных вместе",
+  "version": "0.1.0-alpha.11",
+  "description": "Память агента: имя для набора из шести пакетов, собранных и проверенных вместе",
   "type": "module",
   "files": [
     "test",
@@ -20,7 +20,7 @@
     "dsh-pamyat-secretary": "0.1.0-alpha.5",
     "dsh-pamyat-byudzhet": "0.1.0-alpha.6",
     "dsh-pamyat-nudzh": "0.1.0-alpha.8",
-    "dsh-pamyat-restore": "0.1.0-alpha.13"
+    "dsh-pamyat-restore": "0.1.0-alpha.14"
   },
   "repository": {
     "type": "git",
