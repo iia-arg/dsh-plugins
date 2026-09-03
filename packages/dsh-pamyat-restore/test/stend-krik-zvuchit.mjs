@@ -112,7 +112,16 @@ const sostoyanie = (r.out.match(/SOSTOYANIE=(\d+)/) ?? [])[1]
 t('плагин активен, а не ждёт службу (состояние 2)', sostoyanie === '2', `состояние ${sostoyanie}`)
 
 console.log('\n=== 2. Крик доходит до РЕАЛЬНОГО дескриптора 2 ===')
-t('строка подъёма пришла в настоящий stderr', /\[dsh-pamyat-restore\] подъём:/.test(r.err), JSON.stringify(r.err.slice(0, 200)))
+// 🔴 Проба сверяет строку С МАНИФЕСТОМ, а не с шаблоном имени: правило фермы 03.09.2026 —
+// каждая строка несёт имя И версию, и версия читается из package.json, а не пишется
+// константой. Константа при следующем выпуске утверждала бы номер, которому предмет уже не
+// соответствует. Прежде проба ждала имя без номера и охраняла старый формат — при правке
+// она честно покраснела, и это верное поведение: правка предмета и правка проверки идут парой.
+const versiyaVManifeste = JSON.parse(
+  __chitat(new URL('../package.json', import.meta.url), 'utf-8')).version
+t('строка подъёма пришла в настоящий stderr и несёт ВЕРСИЮ ИЗ МАНИФЕСТА',
+  r.err.includes(`[dsh-pamyat-restore ${versiyaVManifeste}] подъём:`),
+  'ждали версию ' + versiyaVManifeste + ', пришло: ' + JSON.stringify(r.err.slice(0, 200)))
 t('строка несёт значения настроек, а не одно имя', /restore=true/.test(r.err) && /welcome=true/.test(r.err), r.err.slice(0, 200))
 t('крик пришёл именно в stderr, а не в stdout', !/подъём:/.test(r.out), r.out.slice(0, 200))
 

@@ -30,6 +30,7 @@ import z from '@deepseek-ai/schemastery'
 //   grep -E '^import' <платформа>/@deepseek-ai/dsh-llm/lib/types/message.js
 //   -> ровно две строки: ./brand.js и ./call-config.js
 // Корень пакета потянул бы второй экземпляр cordis рядом с платформенным.
+import { createRequire } from 'node:module'
 import { createUserMessage } from '@deepseek-ai/dsh-llm/message'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -67,7 +68,18 @@ export const Config = z.object({
 // неотличим от готовой возможности (пользователь ставит значение — получает тишину).
 // Заведём ключ вместе с настоящим механизмом обновления, а не раньше.
 
-const say = (s) => process.stderr.write(`[${name}] ${s}\n`)
+// 🔴 ИМЯ И ВЕРСИЯ В КАЖДОЙ СТРОКЕ. Правило фермы от 03.09.2026: по журналу должно быть
+// видно не только КТО сказал, но и КАКАЯ редакция это сказала. За сутки мы трижды получали
+// в процессе не тот код, что на диске (ESM-кэш при перемонтаже без рестарта), и строка без
+// номера этого не различала — исполняемую редакцию приходилось угадывать по косвенным
+// признакам. Версия читается ИЗ СВОЕГО package.json, а не пишется константой: константа при
+// следующем выпуске утверждала бы номер, которому предмет уже не соответствует.
+const versiya = (() => {
+  try { return createRequire(import.meta.url)('../package.json').version ?? 'версия неизвестна' }
+  catch { return 'версия неизвестна' }
+})()
+
+const say = (s) => process.stderr.write(`[${name} ${versiya}] ${s}\n`)
 
 // ── ПЕРЕХОДНИК К ЯДРУ ПАМЯТИ ─────────────────────────────────────────────────
 // 🔴 ЗАГЛУШКА УБРАНА ЦЕЛИКОМ (03.09.2026), а не оставлена «на случай». Она год
