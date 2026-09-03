@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat",
-  "version": "0.1.0-alpha.8",
+  "version": "0.1.0-alpha.9",
   "description": "Память агента: имя для набора из пяти пакетов, собранных и проверенных вместе",
   "type": "module",
   "files": [
