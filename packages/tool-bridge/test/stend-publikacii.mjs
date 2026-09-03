@@ -183,7 +183,8 @@ for (const f of SOSTAV) {
   if (n.imena === null) {
     slep += 1
     console.log(`СЛЕПОТА ${f}: частные ИМЕНА не проверены — списка основ нет, `
-      + 'проверять нечем. Это не «чисто»')
+      + 'проверять нечем. Это не «чисто». Путь берётся из переменной SPISOK_IMYON: '
+      + 'SPISOK_IMYON=<файл со списком основ> npm test')
   } else {
     sud(n.imena.length <= dopusk, `${f}: частных имён не больше объявленного`,
       `найдено ${n.imena.length}, допущено ${dopusk}: ${[...new Set(n.imena)].join(', ')}`)
@@ -202,7 +203,7 @@ for (const i of ISKLYUCHENIYA) {
   if (n.imena === null) {
     slep += 1
     console.log(`СЛЕПОТА исключение ${i.fajl}: списка основ нет — судить о том, `
-      + 'нужно ли исключение, нечем')
+      + 'нужно ли исключение, нечем. Задайте SPISOK_IMYON=<файл со списком основ>')
   } else {
     sud(n.imena.length === i.skolko, `исключение ${i.fajl} ровно на своё число`,
       `объявлено ${i.skolko}, а в файле ${n.imena.length} — список исключений разошёлся с предметом`)

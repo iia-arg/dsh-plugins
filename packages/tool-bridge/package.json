@@ -1,6 +1,6 @@
 {
   "name": "dsh-tool-bridge",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "files": [
     "src/index.js",
     "src/paritet.json",
