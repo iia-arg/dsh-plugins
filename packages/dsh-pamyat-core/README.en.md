@@ -48,6 +48,23 @@ from the core.
 **An unknown outcome is a failure with a code, not "a human".** If the core ever
 adds a new outcome, the package says so instead of silently blaming a person.
 
+## Belief in a record: empty is not zero
+
+A record carries an optional `vera` field (0..1) — the gating of retrieved
+knowledge rests on it (use / verify / ignore).
+
+🔴 **The field allows emptiness on purpose.** `null` means "belief was never
+measured", which is **not** the same as `0` — measured distrust. Collapse them,
+and a record nobody assessed becomes indistinguishable from one judged worthless,
+while the "verify" branch loses its meaning.
+
+An invalid value (outside 0..1, not a number) is **rejected with a code** rather
+than silently coerced to zero: coercion would turn a caller's mistake into quiet
+data corruption.
+
+Old databases migrate by adding a column; rows written before the field existed
+are **not** given a belief value — they never had one.
+
 ## The gate lives inside the service
 
 The policy is not an advisory the caller may skip: `zapisat` applies it itself.
@@ -71,6 +88,7 @@ the code keeps defaults as schema values, not literals scattered around.
 | `sprashivat` | `ogranichenie`, `navyk` | classes requiring confirmation |
 | `chtenieSkolko` | `20` | how many records a read returns |
 | `zhurnalSkolko` | `20` | how many journal rows a read returns |
+| `otvechayushchegoNet` | `false` | nobody to ask on this node: `ask` classes are stored with an in-record mark |
 
 `putBazy` and `agent` are required on purpose: published code knows nothing about
 the machines it will run on. A missing key must be distinguishable from a
@@ -94,6 +112,67 @@ a silent failure must not be configurable: one day someone will switch it off.
    protocol literal is a way to drift from the platform unnoticed.
 3. **Failure behaviour** ("no source → do not write, and shout"). A configurable
    fail-closed means the guard can be switched off by configuration.
+
+## How to call — one live example per function
+
+```js
+const pamyat = ctx.get('pamyat');
+
+const id = pamyat.zapisat({
+  klass: 'zametka',
+  soderzhim: 'a thought that must outlive the session',
+  istochnik: 'session#42',
+});
+
+pamyat.zapisat({
+  klass: 'navyk',
+  soderzhim: 'a technique useful to other agents',
+  podtverzhdenie: 'allowed-once',            // 'rejected' | 'cancelled' | 'unavailable' | …
+});
+
+const poslednie = pamyat.prochitat({ klass: 'zametka', skolko: 5 });
+const vse = pamyat.prochitat({});            // object argument, not positional
+
+const { reshenie, pochemu } = pamyat.reshit('navyk');   // 'ask' | 'auto'
+
+pamyat.otmetitOtkaz({ klass: 'navyk', priroda: 'otkazano-chelovekom', pochemu: 'declined' });
+
+const { zapisano, otkloneno, poPrirode } = pamyat.svodka();
+
+if (!pamyat.dostupna()) console.error(pamyat.pochemuNedostupna());
+```
+
+⚠️ Common first-call mistakes (seen during review): the field is `soderzhim`, not
+`soderzhanie`; `prochitat` takes an OBJECT, not positional arguments; the agent
+name comes from configuration and is not passed per call. All three fail loudly
+with a code — but each costs an attempt.
+
+## Known about output
+
+The package shouts through **`console.error` only** — there is no branch. The
+reason matters, and the previous wording of this section was **wrong**: it said
+"the platform does not give plugins `ctx.logger` (verified 2026-09-02)".
+
+What actually happens, measured at the gate on 2026-09-03 against cordis 4.0.1:
+`ctx.logger` **is created for every Context** (`cordis/lib/index.js:1687`), so it
+exists and calling `.error()` succeeds. But the only built-in exporter
+(`LoggerService`, lines 582–605) pushes the message into a 1000-entry ring
+buffer, and DSH installs no exporter of its own — **nothing reaches any stream**.
+
+Two consequences worth coming back here for:
+
+1. **Checking that an output channel exists proves nothing.** The function is
+   there, the call succeeds, and no one hears it. Only a path traced all the way
+   to where a human reads it counts. Under a service `stderr` goes to the system
+   journal; that is verified by a probe, not by reasoning.
+2. **A platform upgrade may give the logger a voice** — and then output would be
+   printed twice. If DSH ever installs an exporter, rewrite this section together
+   with `krik()`, not on top of it.
+
+⚠️ On the word "verified" in our documents: it must name the **method**, not just
+a date. "Verified 2026-09-02" cannot be re-checked, and the next reader simply
+believes it. The method here: call `krik` under a real `Context` and wait for the
+line on the process `stderr` — that is exactly what `stend-krik-zvuchit` does.
 
 ## Testing
 
@@ -127,3 +206,8 @@ ctx); that `ctx.provide` in 0.1.1-rc.2 behaves as in the reference.
 ## License
 
 MIT
+
+## What it was tested against
+
+This package's test stands were run against `@deepseek-ai/cordis` 4.0.1 and `@deepseek-ai/schemastery` 3.18.1
+This is a MEASUREMENT, not a compatibility promise: other versions were not run. The `peerDependencies` range uses `^` by semver contract, not by our measurement.

@@ -1,0 +1,55 @@
+{
+  "kak_schitano": {
+    "instrument": "summa-predmeta",
+    "summa_instrumenta": "d4fc96426534a870",
+    "gde": "рабочее дерево семейства, рядом с packages/",
+    "kontrol": "summa-predmeta --kontrol → «контроль зрячести: ПРОЙДЕН»",
+    "pochemu_ne_prozoy": "способ, описанный словами, имеет столько реализаций, сколько читателей: 03.09 два добросовестных описания дали 8 разных чисел на 4 предметах. Способ, живущий файлом, имеет одну."
+  },
+  "sostav": [
+    {
+      "paket": "dsh-pamyat-core",
+      "versiya": "0.1.0-alpha.10",
+      "predmet": "6e419bc56fa0eb51",
+      "faylov": 13,
+      "prob": 57
+    },
+    {
+      "paket": "dsh-pamyat-omega",
+      "versiya": "0.1.0-alpha.7",
+      "predmet": "6bd8d6b66377e0f1",
+      "faylov": 11,
+      "prob": 35
+    },
+    {
+      "paket": "dsh-pamyat-secretary",
+      "versiya": "0.1.0-alpha.4",
+      "predmet": "d80f5fa20469d9f0",
+      "faylov": 9,
+      "prob": 30
+    },
+    {
+      "paket": "dsh-pamyat-byudzhet",
+      "versiya": "0.1.0-alpha.5",
+      "predmet": "65db5e2b7dd545ce",
+      "faylov": 10,
+      "prob": 31
+    },
+    {
+      "paket": "dsh-pamyat-nudzh",
+      "versiya": "0.1.0-alpha.5",
+      "predmet": "9cf8e1f2f633046b",
+      "faylov": 9,
+      "prob": 42
+    },
+    {
+      "paket": "dsh-pamyat-restore",
+      "versiya": "0.1.0-alpha.12",
+      "predmet": "b97c9ff79aabdc7c",
+      "faylov": 7
+    }
+  ],
+  "podtverzhdeno": "двумя руками (автор и ворота), одним файлом инструмента с одной суммой, 03.09.2026",
+  "pro_nomera": "номер версии может быть поднят без изменения кода — правились манифесты или справка; одинаковая сумма ИСХОДНИКА при разных номерах не означает потерянную правку; сумма ПРЕДМЕТА при этом меняется всегда, потому что манифест входит в предмет",
+  "otsechka_snyatiya": "2026-09-03 05:31 МСК, с диска своей рукой (не из письма и не из метки); проба частных имён и штатный прогон включаемого — в тот же заход. Предмет взят из ящика postavka-alpha7, где он заморожен автором до пересборки."
+}

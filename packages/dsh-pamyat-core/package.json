@@ -1,24 +1,17 @@
 {
   "name": "dsh-pamyat-core",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.10",
   "description": "Оперативная память агента для DSH: локальное хранилище, журнал решений и политика записи по классам. Ноль внешних зависимостей.",
   "type": "module",
   "main": "src/index.js",
   "files": [
-    "src/index.js",
-    "src/hranilishche.js",
-    "src/zhurnal.js",
-    "src/politika.js",
-    "test/stend-hranilishcha.mjs",
-    "test/stend-politiki.mjs",
-    "test/stend-zhurnala.mjs",
-    "test/stend-sborki.mjs",
-    "test/stend-readme.mjs",
+    "src",
+    "test",
     "README.md",
     "README.en.md"
   ],
   "scripts": {
-    "test": "node test/stend-hranilishcha.mjs && node test/stend-politiki.mjs && node test/stend-zhurnala.mjs && node test/stend-sborki.mjs && node test/stend-readme.mjs"
+    "test": "node test/stend-hranilishcha.mjs && node test/stend-politiki.mjs && node test/stend-zhurnala.mjs && node test/stend-sborki.mjs && node test/stend-readme.mjs && node test/stend-krik-zvuchit.mjs"
   },
   "engines": {
     "node": ">=22"
@@ -32,6 +25,11 @@
     "plugin"
   ],
   "peerDependencies": {
-    "@deepseek-ai/schemastery": "*"
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/schemastery": "3.18.1"
   }
 }

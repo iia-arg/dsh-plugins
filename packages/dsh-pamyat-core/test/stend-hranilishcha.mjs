@@ -8,7 +8,28 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { otkrytHranilishche, zagruzitDrajver } from '../src/hranilishche.js';
+let otkrytHranilishche, zagruzitDrajver, zavestiZhurnal
+try {
+  ;({ otkrytHranilishche, zagruzitDrajver } = await import('../src/hranilishche.js'))
+  ;({ zavestiZhurnal } = await import('../src/zhurnal.js'))
+} catch (e) {
+  const net = e?.code === 'ERR_MODULE_NOT_FOUND'
+  console.log(`СЛЕПОТА: предмет не загрузился — ${net ? 'не установлены зависимости пакета' : String(e?.message ?? e).slice(0, 160)}`)
+  if (net) console.log('  Выполните `npm install` в каталоге пакета и повторите.')
+  process.exit(2)
+}
+
+// 🔴 ПЕЧАТЬ СИЛЬНЕЕ СПРАВКИ (03.09.2026). Справка в README верна на день, когда её
+// писали; эта строка верна всегда, потому что снимается с дерева в момент прогона.
+// Довод: «число в тексте — перечень из одного элемента, и он устаревает молча».
+{
+  const { createRequire } = await import('node:module')
+  const trebovat = createRequire(import.meta.url)
+  const versiya = (imya) => {
+    try { return trebovat(`@deepseek-ai/${imya}/package.json`).version } catch { return 'НЕ НАЙДЕНА' }
+  }
+  console.log(`платформа: cordis ${versiya('cordis')} · schemastery ${versiya('schemastery')} · Node ${process.version}`)
+}
 
 let vsego = 0, proshlo = 0;
 const proba = (imya, f) => {
@@ -65,6 +86,80 @@ proba('РАЗЛИЧЕНИЕ: пустая база отдаёт пустой с�
   if (!Array.isArray(zapisi) || zapisi.length !== 0) throw new Error('ожидался пустой список');
   if (h.skolkoZapisej('nikogo-net') !== 0) throw new Error('счёт не ноль');
   h.zakryt();
+});
+
+proba('ВЕРА: записывается и читается', () => {
+  const h = otkrytHranilishche(join(katalog, 'v1.db'));
+  h.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'проверенное знание', vera: 0.9 });
+  const z = h.prochitat({ agent: 'stend' })[0];
+  if (z.vera !== 0.9) throw new Error('вера ' + z.vera);
+  h.zakryt();
+});
+
+proba('ГЛАВНОЕ: «веру не измеряли» ОТЛИЧАЕТСЯ от «вера ноль»', () => {
+  const h = otkrytHranilishche(join(katalog, 'v2.db'));
+  h.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'неоценённое' });
+  h.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'признано негодным', vera: 0 });
+  const zapisi = h.prochitat({ agent: 'stend' });
+  const neizmereno = zapisi.find((z) => z.soderzhim === 'неоценённое');
+  const nol = zapisi.find((z) => z.soderzhim === 'признано негодным');
+  if (neizmereno.vera !== null) throw new Error('неизмеренная вера стала ' + neizmereno.vera);
+  if (nol.vera !== 0) throw new Error('измеренный ноль стал ' + nol.vera);
+  if (neizmereno.vera === nol.vera) throw new Error('схлопнулись — ветка verify потеряет смысл');
+  h.zakryt();
+});
+
+proba('ПОРЧА: негодная вера отвергается, а не подменяется нулём', () => {
+  const h = otkrytHranilishche(join(katalog, 'v3.db'));
+  for (const durnoe of [1.5, -0.1, 'много', NaN]) {
+    let upalo = false;
+    try { h.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'x', vera: durnoe }); }
+    catch (e) { upalo = e.code === 'PAMYAT_VERA_NEGODNA'; }
+    if (!upalo) throw new Error('принято негодное значение: ' + String(durnoe));
+  }
+  h.zakryt();
+});
+
+proba('МИГРАЦИЯ: база без столбца vera читается, старым строкам вера НЕ выдумывается', () => {
+  const put = join(katalog, 'v4.db');
+  const { DatabaseSync } = zagruzitDrajver();
+  const staraya = new DatabaseSync(put);
+  staraya.exec('CREATE TABLE zapisi (id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT NOT NULL, klass TEXT NOT NULL, soderzhim TEXT NOT NULL, istochnik TEXT, sozdano INTEGER NOT NULL)');
+  staraya.prepare('INSERT INTO zapisi (agent, klass, soderzhim, sozdano) VALUES (?,?,?,?)').run('stend', 'zametka', 'из прошлой версии', Date.now());
+  staraya.close();
+  const h = otkrytHranilishche(put);
+  const z = h.prochitat({ agent: 'stend' })[0];
+  if (z.soderzhim !== 'из прошлой версии') throw new Error('старая строка потеряна');
+  if (z.vera !== null) throw new Error('старой строке приписали веру ' + z.vera);
+  h.zakryt();
+});
+
+proba('🔴 ЗАПИСЬ ПЕРЕЖИВАЕТ ПЕРЕОТКРЫТИЕ ХРАНИЛИЩА (урок инцидента 03.09)', () => {
+  // «Записалось» и «прочитается» — РАЗНЫЕ утверждения. У соседнего пакета запись
+  // была принята хранилищем и сломала его при следующей загрузке: отказ ждал не
+  // ошибки, а СОБЫТИЯ — перезагрузки. Поэтому проверяем не факт вставки, а
+  // пригодность вставленного к чтению после закрытия и повторного открытия.
+  const put = join(katalog, 'perezagruzka.db');
+  const h1 = otkrytHranilishche(put);
+  const id = h1.zapisat({
+    agent: 'stend', klass: 'navyk', soderzhim: 'знание, которое обязано пережить перезапуск',
+    istochnik: 'session#7-9', vera: 0.75, bezPodtverzhdeniya: true,
+  });
+  h1.zakryt();
+
+  const h2 = otkrytHranilishche(put);          // ДРУГОЙ экземпляр, как после перезапуска службы
+  const zapisi = h2.prochitat({ agent: 'stend' });
+  if (zapisi.length !== 1) throw new Error('после переоткрытия записей ' + zapisi.length);
+  const z = zapisi[0];
+  if (z.id !== id) throw new Error('опознаватель изменился');
+  if (z.soderzhim !== 'знание, которое обязано пережить перезапуск') throw new Error('содержимое искажено');
+  if (z.istochnik !== 'session#7-9') throw new Error('ссылка на источник потеряна');
+  if (z.vera !== 0.75) throw new Error('вера потеряна: ' + z.vera);
+  if (z.bez_podtverzhdeniya !== 1) throw new Error('отметка о подтверждении потеряна');
+  // и журнал тоже переживает
+  const zh = zavestiZhurnal(h2.baza);
+  h2.zakryt();
+  if (!zh) throw new Error('журнал не поднялся на переоткрытой базе');
 });
 
 rmSync(katalog, { recursive: true, force: true });

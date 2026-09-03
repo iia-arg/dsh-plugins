@@ -1,0 +1,24 @@
+{
+  "name": "dsh-pamyat",
+  "version": "0.1.0-alpha.8",
+  "description": "Память агента: имя для набора из пяти пакетов, собранных и проверенных вместе",
+  "type": "module",
+  "files": [
+    "test",
+    "sostav.json",
+    "summa-predmeta",
+    "README.md",
+    "README.en.md"
+  ],
+  "scripts": {
+    "test": "node test/stend-sostava.mjs"
+  },
+  "dependencies": {
+    "dsh-pamyat-core": "0.1.0-alpha.10",
+    "dsh-pamyat-omega": "0.1.0-alpha.7",
+    "dsh-pamyat-secretary": "0.1.0-alpha.4",
+    "dsh-pamyat-byudzhet": "0.1.0-alpha.5",
+    "dsh-pamyat-nudzh": "0.1.0-alpha.5",
+    "dsh-pamyat-restore": "0.1.0-alpha.12"
+  }
+}

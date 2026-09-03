@@ -7,7 +7,21 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { apply, name } from '../src/index.js';
+let apply, name
+try {
+  ;({ apply, name } = await import('../src/index.js'))
+} catch (e) {
+  const net = e?.code === 'ERR_MODULE_NOT_FOUND'
+  console.log(`СЛЕПОТА: предмет не загрузился — ${net ? 'не установлены зависимости пакета' : String(e?.message ?? e).slice(0, 160)}`)
+  if (net) console.log('  Выполните `npm install` в каталоге пакета и повторите.')
+  process.exit(2)
+}
+
+// Перехват настоящего вывода пакета: console.error — единственный его путь.
+const nastoyashchiyKrik = [];
+const iznachalnyj = console.error;
+console.error = (...a) => { nastoyashchiyKrik.push(a.join(' ')); };
+process.on('exit', () => { console.error = iznachalnyj; });
 
 let vsego = 0, proshlo = 0;
 const proba = (imya, f) => {
@@ -22,7 +36,11 @@ function podelnyjCtx() {
   return {
     provide(imya, obj) { servisy[imya] = obj; },
     on() {},
-    logger: { error(m) { oshibki.push(m); } },
+    // 🔴 03.09: раньше здесь стоял самодельный logger и пробы читали ЕГО —
+    // то есть проверяли путь, который в бою НЕМОЙ (буфер cordis никто не
+    // читает). Теперь ловим тот же поток, в который пакет пишет на самом деле.
+    // Конечный звук проверяет отдельный стенд stend-krik-zvuchit.
+    logger: { error(m) { oshibki.push('ЧЕРЕЗ-ЛОГГЕР:' + m); } },
     servisy, oshibki,
   };
 }
@@ -69,7 +87,8 @@ proba('ПОРЧА: база не открылась → сервис ЕСТЬ, �
   let upalo = false;
   try { p.zapisat({ klass: 'zametka', soderzhim: 'x' }); } catch { upalo = true; }
   if (!upalo) throw new Error('запись при недоступной памяти прошла молча — это тихая потеря');
-  if (ctx.oshibki.length === 0) throw new Error('при старте не было ни одного громкого сообщения');
+  if (nastoyashchiyKrik.length === 0) throw new Error('при старте не было ни одного громкого сообщения');
+  if (ctx.oshibki.length !== 0) throw new Error('пакет писал в ctx.logger — это НЕМОЙ путь, развилка вернулась');
 });
 
 proba('ВОРОТА ВНУТРИ: класс ask без подтверждения НЕ пишется в обход', () => {
@@ -142,6 +161,68 @@ proba('НАСТРОЙКА: без ключа работает умолчание
   for (let i = 0; i < 25; i++) p.zapisat({ klass: 'zametka', soderzhim: 'з' + i });
   const skolko = p.prochitat().length;
   if (skolko !== 20) throw new Error('умолчание не 20, а ' + skolko);
+});
+
+proba('УЗЕЛ БЕЗ ОТВЕЧАЮЩЕГО, срез 1: при подъёме есть громкая строка', () => {
+  const ctx = podelnyjCtx();
+  apply(ctx, { putBazy: join(katalog, 'j.db'), agent: 'stend', otvechayushchegoNet: true });
+  if (nastoyashchiyKrik.length === 0) throw new Error('узел без отвечающего поднялся молча');
+  if (!nastoyashchiyKrik.some(m => /спрашивать некого/.test(m))) throw new Error('строка не объясняет состояние');
+  if (ctx.oshibki.length !== 0) throw new Error('пакет писал в ctx.logger — это НЕМОЙ путь, развилка вернулась');
+});
+
+proba('УЗЕЛ БЕЗ ОТВЕЧАЮЩЕГО, срез 2: класс ask СОХРАНЯЕТСЯ, а не отвергается', () => {
+  const ctx = podelnyjCtx();
+  apply(ctx, { putBazy: join(katalog, 'k.db'), agent: 'stend', otvechayushchegoNet: true });
+  const p = ctx.servisy.pamyat;
+  const id = p.zapisat({ klass: 'navyk', soderzhim: 'навык на узле без отвечающего' });
+  if (!(id > 0)) throw new Error('запись не сохранилась');
+  if (p.prochitat({ klass: 'navyk' }).length !== 1) throw new Error('знания нет в памяти');
+});
+
+proba('УЗЕЛ БЕЗ ОТВЕЧАЮЩЕГО, срез 3: отметка стоит В САМОЙ ЗАПИСИ, не только в журнале', () => {
+  const ctx = podelnyjCtx();
+  apply(ctx, { putBazy: join(katalog, 'l.db'), agent: 'stend', otvechayushchegoNet: true });
+  const p = ctx.servisy.pamyat;
+  p.zapisat({ klass: 'navyk', soderzhim: 'знание без подтверждения' });
+  const zapis = p.prochitat({ klass: 'navyk' })[0];
+  if (zapis.bez_podtverzhdeniya !== 1) {
+    throw new Error('в строке знания отметки нет: ' + JSON.stringify(zapis));
+  }
+});
+
+proba('ЗЕРКАЛЬНО (важнее прочего): на узле С отвечающим отметки НЕТ', () => {
+  const ctx = podelnyjCtx();
+  apply(ctx, { putBazy: join(katalog, 'm.db'), agent: 'stend' });
+  const p = ctx.servisy.pamyat;
+  p.zapisat({ klass: 'navyk', soderzhim: 'подтверждённое', podtverzhdenie: 'allowed-once' });
+  p.zapisat({ klass: 'zametka', soderzhim: 'обычная заметка' });
+  for (const z of p.prochitat({})) {
+    if (z.bez_podtverzhdeniya !== 0) {
+      throw new Error('отметка приклеилась к записи, принятой нормально: ' + z.soderzhim);
+    }
+  }
+});
+
+proba('ЕДИНСТВЕННЫЙ ПУТЬ: даже когда логгер ЕСТЬ, крик идёт в консоль, а не в него', () => {
+  const vyzovy = [];
+  const ctx = {
+    provide() {}, on() {},
+    logger: { error: (m) => { vyzovy.push('logger:' + m); return undefined; } },
+  };
+  const prezhnij = console.error;
+  console.error = (m) => vyzovy.push('console:' + m);
+  try {
+    apply(ctx, { putBazy: join(katalog, 'n.db'), agent: 'stend', otvechayushchegoNet: true });
+  } finally { console.error = prezhnij; }
+  const cherez = vyzovy.filter((v) => v.startsWith('logger:')).length;
+  const konsol = vyzovy.filter((v) => v.startsWith('console:')).length;
+  // 🔴 03.09 ожидание ПЕРЕВЁРНУТО. Прежде здесь требовалось «через логгер 1,
+  // в консоль 0» — то есть проба закрепляла НЕМОЙ путь как правильный и была
+  // зелёной весь вечер. Логгер cordis 4.0.1 существует, но его сообщения
+  // уходят в буфер, который никто не читает. Верное ожидание обратное.
+  if (cherez !== 0) throw new Error('пакет писал в ctx.logger (' + cherez + ') — это НЕМОЙ путь, развилка вернулась');
+  if (konsol !== 1) throw new Error('в консоли строк ' + konsol + ', ожидалась ровно одна');
 });
 
 rmSync(katalog, { recursive: true, force: true });

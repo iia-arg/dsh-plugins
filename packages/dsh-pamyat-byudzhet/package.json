@@ -1,0 +1,26 @@
+{
+  "name": "dsh-pamyat-byudzhet",
+  "version": "0.1.0-alpha.5",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "test",
+    "README.md",
+    "README.en.md"
+  ],
+  "scripts": {
+    "test": "node test/stend-mery.mjs && node test/stend-otbora.mjs && node test/stend-readme.mjs && node test/stend-krik-zvuchit.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/schemastery": "3.18.1"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "dsh-pamyat-omega",
+  "version": "0.1.0-alpha.7",
+  "description": "Долговременный слой памяти агента для DSH: запись знаний во внешнее хранилище по MCP с ПОДТВЕРЖДЕНИЕМ доставки, а не с отчётом об отправке.",
+  "type": "module",
+  "main": "src/index.js",
+  "files": [
+    "src",
+    "test",
+    "README.md",
+    "README.en.md"
+  ],
+  "scripts": {
+    "test": "node test/stend-svyazi.mjs && node test/stend-podtverzhdeniya.mjs && node test/stend-sborki.mjs && node test/stend-readme.mjs && node test/stend-krik-zvuchit.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "agent",
+    "memory",
+    "mcp",
+    "plugin"
+  ],
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/schemastery": "3.18.1"
+  }
+}

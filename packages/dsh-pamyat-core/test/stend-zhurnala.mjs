@@ -6,8 +6,16 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { zagruzitDrajver } from '../src/hranilishche.js';
-import { zavestiZhurnal } from '../src/zhurnal.js';
+let zagruzitDrajver, zavestiZhurnal
+try {
+  ;({ zagruzitDrajver } = await import('../src/hranilishche.js'))
+  ;({ zavestiZhurnal } = await import('../src/zhurnal.js'))
+} catch (e) {
+  const net = e?.code === 'ERR_MODULE_NOT_FOUND'
+  console.log(`СЛЕПОТА: предмет не загрузился — ${net ? 'не установлены зависимости пакета' : String(e?.message ?? e).slice(0, 160)}`)
+  if (net) console.log('  Выполните `npm install` в каталоге пакета и повторите.')
+  process.exit(2)
+}
 
 let vsego = 0, proshlo = 0;
 const proba = (imya, f) => {

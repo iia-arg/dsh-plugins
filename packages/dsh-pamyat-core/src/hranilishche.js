@@ -67,7 +67,21 @@ CREATE TABLE IF NOT EXISTS zapisi (
   klass      TEXT NOT NULL,
   soderzhim  TEXT NOT NULL,
   istochnik  TEXT,
-  sozdano    INTEGER NOT NULL
+  sozdano    INTEGER NOT NULL,
+  -- 🔴 Отметка «принято БЕЗ подтверждения» живёт в САМОЙ записи, а не в журнале
+  -- решений (правка 02.09). Довод: журнал отвечает на вопрос «что происходило»,
+  -- а знание живёт дольше журнала и уезжает в другие слои отдельно от него.
+  -- Через месяц без отметки записи неразличимы: какие подтверждены человеком,
+  -- какие прошли на узле, где спрашивать было некого. Появится отвечающий —
+  -- старые записи честно скажут, что подтверждены не были.
+  bez_podtverzhdeniya INTEGER NOT NULL DEFAULT 0,
+  -- 🔴 Вера в знание — для гейтинга при выдаче (use / verify / ignore).
+  -- ДОПУСКАЕТ ПУСТОТУ НАМЕРЕННО: NULL значит «веру не измеряли», и это НЕ то же
+  -- самое, что «вера ноль». Ноль — измеренное недоверие, пустота — отсутствие
+  -- измерения. Схлопнешь их в 0 — и знание, которое никто не оценивал, станет
+  -- неотличимо от знания, признанного негодным; ветка verify потеряет смысл.
+  -- Значение: 0..1. Заведено 03.09 по заявке слоя приветствия.
+  vera REAL DEFAULT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_zapisi_agent_klass ON zapisi(agent, klass);
 CREATE INDEX IF NOT EXISTS idx_zapisi_sozdano ON zapisi(sozdano);
@@ -94,6 +108,18 @@ export function otkrytHranilishche(putK, { drajver } = {}) {
   try {
     baza = new DatabaseSync(putK);
     baza.exec(SHEMA);
+    // Схема растёт только добавлением: база, созданная прежней версией, обязана
+    // читаться новой без переноса данных — иначе обновление плагина потеряет
+    // память агента. Отсутствие колонки в старой базе — норма, а не отказ.
+    const stolbcy = baza.prepare('PRAGMA table_info(zapisi)').all().map((r) => r.name);
+    if (!stolbcy.includes('bez_podtverzhdeniya')) {
+      baza.exec('ALTER TABLE zapisi ADD COLUMN bez_podtverzhdeniya INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!stolbcy.includes('vera')) {
+      // Старым строкам вера НЕ проставляется: они её не имели, и приписывать им
+      // задним числом любое число значило бы выдумать измерение.
+      baza.exec('ALTER TABLE zapisi ADD COLUMN vera REAL DEFAULT NULL');
+    }
   } catch (prichina) {
     const e = new Error(
       'dsh-pamyat: база памяти не открылась по пути ' + putK + '. ' +
@@ -111,15 +137,26 @@ export function otkrytHranilishche(putK, { drajver } = {}) {
      */
     baza,
     /** Записать знание. Возвращает id — доказательство записи, а не «успех». */
-    zapisat({ agent, klass, soderzhim, istochnik = null, sozdano = Date.now() }) {
+    zapisat({ agent, klass, soderzhim, istochnik = null, sozdano = Date.now(), bezPodtverzhdeniya = false, vera = null }) {
       if (!agent || !klass || !soderzhim) {
         const e = new Error('dsh-pamyat: запись без обязательных полей (agent, klass, soderzhim)');
         e.code = 'PAMYAT_NEPOLNAYA_ZAPIS';
         throw e;
       }
+      // Вера: число 0..1 либо пустота. Мусор не пишем и не подменяем нулём —
+      // отвергаем, потому что «неизмеренное» и «измеренное как ноль» разные.
+      let veraZnach = null;
+      if (vera !== null && vera !== undefined) {
+        if (typeof vera !== 'number' || Number.isNaN(vera) || vera < 0 || vera > 1) {
+          const e = new Error('dsh-pamyat: вера должна быть числом 0..1 либо не задана вовсе; получено ' + JSON.stringify(vera));
+          e.code = 'PAMYAT_VERA_NEGODNA';
+          throw e;
+        }
+        veraZnach = vera;
+      }
       const r = baza.prepare(
-        'INSERT INTO zapisi (agent, klass, soderzhim, istochnik, sozdano) VALUES (?, ?, ?, ?, ?)'
-      ).run(agent, klass, soderzhim, istochnik, sozdano);
+        'INSERT INTO zapisi (agent, klass, soderzhim, istochnik, sozdano, bez_podtverzhdeniya, vera) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).run(agent, klass, soderzhim, istochnik, sozdano, bezPodtverzhdeniya ? 1 : 0, veraZnach);
       return Number(r.lastInsertRowid);
     },
     /** Прочитать последние записи агента. Пустой массив = записей нет (база жива). */

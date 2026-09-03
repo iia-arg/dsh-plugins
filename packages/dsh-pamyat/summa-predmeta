@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# summa-predmeta — сумма ПРЕДМЕТА пакета: одно число, один способ, один файл.
+#
+# ЗАЧЕМ. 03.09.2026 автор и аудитор посчитали суммы четырёх пакетов и не совпали
+# НИ ОДНОЙ. Содержимое было одинаковым; разошёлся ПОРЯДОК ПОЛЕЙ в строке, по
+# которой считается итог: «сумма␣␣путь» против «путь␣сумма». Оба способа честные,
+# оба воспроизводимые — и потому дающие два разных числа на одном предмете.
+# Способ, живущий прозой в двух письмах, имеет две реализации. Способ, живущий
+# скриптом, — одну. Этот файл И ЕСТЬ определение способа; прозы про него больше
+# нет нигде.
+#
+# ⚠️ И то, что страшнее расхождения: совпади порядок полей случайно — мы бы
+# ничего не заметили, а следующий посчитал бы третье число. Спасло не внимание,
+# а то, что мы разошлись.
+#
+#   summa-predmeta <каталог-пакета>    посчитать
+#   summa-predmeta --kontrol           проверить САМ СКРИПТ на подставном
+#
+# ФОРМАТ (канонический, менять только с новым именем файла):
+#   состав = npm pack --dry-run --json -> files[].path
+#   порядок = LC_ALL=C sort
+#   строка на файл = "<путь> <sha256 содержимого>\n"
+#   итог = sha256 всех строк, первые 16 знаков
+set -uo pipefail
+
+schitat() {
+  local kat=$1
+  [ -d "$kat" ] || { echo "нет каталога: $kat" >&2; return 2; }
+  local spisok
+  spisok=$(cd "$kat" && npm pack --dry-run --json 2>/dev/null \
+    | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s)[0].files.map(f=>f.path).join("\n"))}catch(e){process.exit(3)}})' \
+    | LC_ALL=C sort)
+  [ -n "$spisok" ] || { echo "npm не отдал состав для $kat" >&2; return 3; }
+  local n; n=$(echo "$spisok" | wc -l)
+  local itog
+  itog=$( cd "$kat" && echo "$spisok" | while read -r f; do
+            printf '%s %s\n' "$f" "$(sha256sum "$f" | cut -d' ' -f1)"
+          done | sha256sum | cut -c1-16 )
+  printf '%s  файлов %s\n' "$itog" "$n"
+}
+
+if [ "${1:-}" = "--kontrol" ]; then
+  # Контроль зрячести: сумма ОБЯЗАНА измениться от правки одного байта и от
+  # переименования файла. Гоняется ТОЙ ЖЕ функцией — иначе контролируешь не то,
+  # чем меряешь.
+  vremenno=$(mktemp -d)
+  mkdir -p "$vremenno/src"
+  printf '{"name":"proba","version":"0.0.0","files":["src"]}\n' > "$vremenno/package.json"
+  printf 'soderzhimoe\n' > "$vremenno/src/a.js"
+  do1=$(schitat "$vremenno" | cut -d' ' -f1)
+  printf 'soderzhimoe2\n' > "$vremenno/src/a.js"
+  do2=$(schitat "$vremenno" | cut -d' ' -f1)
+  printf 'soderzhimoe\n' > "$vremenno/src/a.js"
+  mv "$vremenno/src/a.js" "$vremenno/src/b.js"
+  do3=$(schitat "$vremenno" | cut -d' ' -f1)
+  rm -rf "$vremenno"
+  if [ "$do1" = "$do2" ]; then echo "контроль: ПРОВАЛЕН — правка содержимого не изменила сумму"; exit 1; fi
+  if [ "$do1" = "$do3" ]; then echo "контроль: ПРОВАЛЕН — переименование файла не изменило сумму"; exit 1; fi
+  echo "контроль зрячести: ПРОЙДЕН (правка содержимого и переименование меняют сумму)"
+  exit 0
+fi
+
+[ $# -ge 1 ] || { sed -n '2,30p' "$0"; exit 64; }
+for k in "$@"; do printf '%-24s %s\n' "$(basename "$k")" "$(schitat "$k")"; done

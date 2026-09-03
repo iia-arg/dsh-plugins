@@ -3,7 +3,15 @@
  * РАЗНЫЕ исходы с разными объяснениями. Если стенд это перестанет ловить,
  * сломанная установка станет неотличима от осторожного человека.
  */
-import { reshitPoKlassu, istolkovatPodtverzhdenie, KLASSY_SPRASHIVAT } from '../src/politika.js';
+let reshitPoKlassu, istolkovatPodtverzhdenie, KLASSY_SPRASHIVAT
+try {
+  ;({ reshitPoKlassu, istolkovatPodtverzhdenie, KLASSY_SPRASHIVAT } = await import('../src/politika.js'))
+} catch (e) {
+  const net = e?.code === 'ERR_MODULE_NOT_FOUND'
+  console.log(`СЛЕПОТА: предмет не загрузился — ${net ? 'не установлены зависимости пакета' : String(e?.message ?? e).slice(0, 160)}`)
+  if (net) console.log('  Выполните `npm install` в каталоге пакета и повторите.')
+  process.exit(2)
+}
 
 let vsego = 0, proshlo = 0;
 const proba = (imya, f) => {
