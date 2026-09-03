@@ -57,8 +57,22 @@ const PUT_SPISKA = process.env.SPISOK_IMYON
 let OSNOVY = null
 try {
   if (PUT_SPISKA && existsSync(PUT_SPISKA)) {
-    const d = JSON.parse(readFileSync(PUT_SPISKA, 'utf-8'))
-    if (Array.isArray(d.osnovy) && d.osnovy.length) OSNOVY = d.osnovy
+    // 🔴 ЕДИНЫЙ СПИСОК ХРАНИТСЯ ТЕКСТОМ, А НЕ JSON (03.09.2026). Прежде здесь стоял
+    // только JSON.parse с полем `osnovy` — формата, которого на машине НЕ СУЩЕСТВУЕТ:
+    // единый список основ — это строки с комментариями на «#», а не JSON. Стенд
+    // слепнул восемь прогонов подряд, и слепота выглядела законной («списка нет»),
+    // хотя список был — просто в другом формате. Заводить рядом JSON значило бы
+    // развести ДВА списка одних и тех же имён, а они разойдутся молча.
+    const syroe = readFileSync(PUT_SPISKA, 'utf-8')
+    let iz = null
+    try {
+      const d = JSON.parse(syroe)
+      if (Array.isArray(d.osnovy) && d.osnovy.length) iz = d.osnovy
+    } catch {
+      iz = syroe.split('\n').map((x) => x.trim())
+        .filter((x) => x && !x.startsWith('#'))
+    }
+    if (iz && iz.length) OSNOVY = iz
   }
 } catch { /* остаётся встроенное; причина названа строкой ниже */ }
 // 🔴 ДВА НАБОРА ВРОЗЬ, А НЕ ОДИН СКЛЕЕННЫЙ (02.09.2026).

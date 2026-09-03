@@ -1,6 +1,6 @@
 {
   "name": "dsh-tool-bridge",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "files": [
     "src/index.js",
     "src/paritet.json",
@@ -16,7 +16,9 @@
     "test/stend-rezyume.mjs",
     "SAMOPROBUZHDENIE.md",
     "cordis.patch.yml",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "test/isklyucheniya-nejtralnosti.json",
+    "test/sobiraemye-pri-publikacii.json"
   ],
   "type": "module",
   "main": "src/index.js",
@@ -31,5 +33,13 @@
   "license": "MIT",
   "devDependencies": {
     "yaml": "2.9.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iia-arg/dsh-plugins.git",
+    "directory": "packages/tool-bridge"
+  },
+  "scripts": {
+    "test": "for f in test/stend-*.mjs; do node \"$f\" || exit 1; done"
   }
 }
