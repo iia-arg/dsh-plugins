@@ -45,7 +45,12 @@ const ctx = {
   on(ev, h) { handlers[ev] = h; return () => {} },
   get: (imya) => (imya === 'pamyat' ? pamyat : undefined),
 }
-apply(ctx, Config({}))
+// 🔴 СВОЙ ПУТЬ ОТМЕТОК О БРИФИНГЕ. Боевой файл — единственная сущность: стенд, пишущий
+// в него, сорвал бы предел частоты живому агенту, а прогон стенда дважды подряд провалил
+// бы сам себя (второй раз брифинг был бы «уже дан»). Проверено делом 03.09.2026: первый
+// же прогон после правки упал именно так.
+const otmetkiProby = join(tmpdir(), `restore-welcome-${process.pid}-${Date.now()}.json`)
+apply(ctx, Config({ welcomeOtmetki: otmetkiProby }))
 
 const prestep = handlers['agent/pre-step']
 // 🔴 Компакт подаётся ТАК ЖЕ, КАК ЕГО ПОДАЁТ ПЛАТФОРМА: через хук session/event
@@ -58,6 +63,8 @@ const compactEnd = (data = { compactionId: 'c1', turn: 7 }) =>
 if (!prestep) { console.log('СЛЕПОТА: хук agent/pre-step не зарегистрирован'); process.exit(2) }
 
 import { createHash as __hash } from 'node:crypto'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { readFileSync as __chitat } from 'node:fs'
 import { fileURLToPath as __put } from 'node:url'
 // 🔴 ПРИБОР НАЗЫВАЕТ СЕБЯ (03.09.2026, условие ворот). Стенд правится на месте, и
@@ -89,7 +96,16 @@ console.log(`стенд: ${__put(import.meta.url).split('/').pop()} сумма $
 let ok = 0, fail = 0, slep = 0
 const t = (n, c, s) => { if (c) { ok++; console.log(`ok   ${n}`); } else { fail++; console.log(`FAIL ${n}\n     ${s ?? ''}`); } }
 const next = async () => ({ kind: 'enter', messages: [] })
-const call = (turn, step) => prestep({ agent: { id: 'agent-1', session: { id: 'sess-1' } }, turn, step, signal: {} }, next)
+// 🔴 СЕССИЯ — ПАРАМЕТР (03.09.2026). Welcome теперь даётся ОДИН РАЗ на сессию за подъём
+// процесса, а не при каждом turn===1. Значит проверки, которым нужен свежий брифинг,
+// обязаны брать СВОЮ сессию — иначе они молча меряют «брифинг уже был», и провал
+// выглядит дефектом механизма, хотя дефект в пробе.
+// Уникальная сессия для проверок, которым нужен СВЕЖИЙ брифинг: welcome одноразовый
+// на сессию за подъём процесса, и повторный вызов на той же сессии вернёт пустоту.
+let nSess = 0
+const svezhaya = () => `sess-svezh-${++nSess}`
+const call = (turn, step, sid = 'sess-1') =>
+  prestep({ agent: { id: 'agent-1', session: { id: sid } }, turn, step, signal: {} }, next)
 
 // C: welcome на старте (turn=1, step=1)
 const d1 = await call(1, 1)
@@ -121,7 +137,7 @@ let logged = ''
 const origWrite = process.stderr.write
 process.stderr.write = (s) => { logged += s; return true }
 pamyat.prochitat = () => undefined
-const d5 = await call(1, 1)   // welcome на старте при недоступном источнике
+const d5 = await call(1, 1, 'sess-porcha-istochnika')   // welcome при недоступном источнике: СВОЯ сессия, иначе брифинг уже дан
 process.stderr.write = origWrite
 pamyat.prochitat = origProchitat
 t('порча входа: нет инъекции при недоступном источнике', d5.messages.length === 0, JSON.stringify(d5.messages))
@@ -192,7 +208,7 @@ t('компакт чужой сессии не взводит нашу', dChuzha
 // перестаёт грузиться. Узнаётся это НЕ при записи, а при следующем подъёме: запись
 // принимается молча. «Доказана запись» и «доказано чтение» — разные величины.
 {
-  const dW = await call(1, 1)
+  const dW = await call(1, 1, 'sess-welcome-id')
   const mW = dW.messages[0]
   t('welcome: сообщение несёт id', typeof mW?.id === 'string' && mW.id.length > 0, JSON.stringify(mW?.id))
   t('welcome: id не пустой и не повторяет текст', mW?.id !== mW?.content?.[0]?.text, String(mW?.id))
@@ -233,7 +249,9 @@ t('компакт чужой сессии не взводит нашу', dChuzha
     console.log('  Пакет вне дерева платформы разрешить имя не может. Задайте путь явно:')
     console.log('  DSH_PERSIST=<платформа>/node_modules/@deepseek-ai/dsh-session-persistence/lib/index.js node test/stend-restore.mjs')
   } else {
-    const d = await call(1, 1)
+    // Своя сессия: welcome одноразовый, иначе messages[0] окажется undefined и блок
+    // упадёт TypeError вместо честной проверки. Поймано прогоном 03.09.2026.
+    const d = await call(1, 1, 'sess-legacy')
     const nashe = d.messages[0]
     t('наше сообщение НЕ считается устаревшей записью',
       uslovie(nashe, Object) === false,
@@ -265,7 +283,8 @@ t('компакт чужой сессии не взводит нашу', dChuzha
     console.log(`СЛЕПОТА: adoptSessionEvent не загрузилась из ${IST} — путь загрузки не проверен.`)
     console.log('  Задайте путь явно: DSH_SESSION=<платформа>/node_modules/@deepseek-ai/dsh-session/lib/index.js')
   } else {
-    const d = await call(1, 1)
+    // Своя сессия: welcome одноразовый на сессию за подъём процесса.
+    const d = await call(1, 1, 'sess-validator')
     const nashe = d.messages[0]
     let prinyato = null
     try { adopt({ seq: 1, type: 'user/message', data: nashe }); prinyato = true }
@@ -352,7 +371,7 @@ t('компакт чужой сессии не взводит нашу', dChuzha
   process.stderr.write = (x) => { sled += x; return true }
   const bylo = ctx.get
   ctx.get = () => undefined            // ядро не смонтировано
-  const d = await call(1, 1)
+  const d = await call(1, 1, svezhaya())
   ctx.get = bylo
   process.stderr.write = orig
   t('нет службы памяти: инъекции НЕТ', d.messages.length === 0, JSON.stringify(d.messages))
@@ -361,7 +380,7 @@ t('компакт чужой сессии не взводит нашу', dChuzha
   let sled2 = ''
   process.stderr.write = (x) => { sled2 += x; return true }
   sluzhbaZhiva = false
-  const d2 = await call(1, 1)
+  const d2 = await call(1, 1, svezhaya())
   sluzhbaZhiva = true
   process.stderr.write = orig
   t('память отвечает «недоступна»: инъекции НЕТ', d2.messages.length === 0, JSON.stringify(d2.messages))
@@ -376,7 +395,7 @@ t('компакт чужой сессии не взводит нашу', dChuzha
   const orig = process.stderr.write
   let sled = ''
   process.stderr.write = (x) => { sled += x; return true }
-  const d1 = await call(1, 1)                     // бюджета в ctx нет
+  const d1 = await call(1, 1, svezhaya())                     // бюджета в ctx нет
   process.stderr.write = orig
   t('без бюджета: брифинг всё равно построен', d1.messages.length === 1, JSON.stringify(d1.messages))
   t('без бюджета: сказано вслух', /бюджет не смонтирован/.test(sled), sled)
@@ -388,7 +407,7 @@ t('компакт чужой сессии не взводит нашу', dChuzha
   ctx.get = (imya) => (imya === 'byudzhetPamyati' ? byudzhet : byloGet(imya))
   let sled2 = ''
   process.stderr.write = (x) => { sled2 += x; return true }
-  const d2 = await call(1, 1)
+  const d2 = await call(1, 1, svezhaya())
   process.stderr.write = orig
   t('бюджет спрошен на ТЕХ ЖЕ записях, что прочитаны', Array.isArray(sprosili?.zapisi) && sprosili.zapisi.length > 0, JSON.stringify(sprosili && Object.keys(sprosili)))
   t('в брифинг попало только поднятое', (d2.messages[0]?.content?.[0]?.text ?? '').split('\n').length - 1 === 1,
@@ -399,7 +418,7 @@ t('компакт чужой сессии не взводит нашу', dChuzha
   ctx.get = (imya) => (imya === 'byudzhetPamyati' ? { otobrat() { throw new Error('проба: предел не прочитан') } } : byloGet(imya))
   let sled3 = ''
   process.stderr.write = (x) => { sled3 += x; return true }
-  const d3 = await call(1, 1)
+  const d3 = await call(1, 1, svezhaya())
   process.stderr.write = orig
   ctx.get = byloGet
   t('отказ бюджета НЕ отменяет брифинг', d3.messages.length === 1, JSON.stringify(d3.messages))

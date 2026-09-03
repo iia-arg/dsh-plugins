@@ -31,6 +31,9 @@ import z from '@deepseek-ai/schemastery'
 //   -> ровно две строки: ./brand.js и ./call-config.js
 // Корень пакета потянул бы второй экземпляр cordis рядом с платформенным.
 import { createUserMessage } from '@deepseek-ai/dsh-llm/message'
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
 
 export const name = 'dsh-pamyat-restore'
 export const inject = ['agents']
@@ -39,6 +42,16 @@ export const Config = z.object({
   restoreEnabled: z.boolean().default(true),
   welcomeEnabled: z.boolean().default(true),
   welcomeBudget: z.number().default(800),
+  // Предел частоты брифинга: не чаще раза в столько миллисекунд на сессию. Заведён
+  // вместе с потребителем (см. слой C), умолчание — сутки.
+  welcomeInterval: z.number().default(86400000),
+  // Где помнить, когда брифинг давался. На диске, а не в памяти процесса: перезапуск
+  // и есть тот случай, ради которого отметка нужна.
+  // 🔴 Умолчание НЕЙТРАЛЬНОЕ: путь строится от дома того, кто запустил, а не зашит
+  // именем агента. Первая редакция несла жёсткий путь с именем агента — проба частных имён
+  // ответила «ПУБЛИКОВАТЬ НЕЛЬЗЯ», и правильно: у получателя нашего пути нет, а жёсткий
+  // путь в публикуемом предмете — это наше частное имя, уехавшее наружу.
+  welcomeOtmetki: z.string().default(join(homedir(), '.dsh-pamyat-welcome-otmetki.json')),
   ignoreAfterMs: z.number().default(7 * 24 * 3600 * 1000),
   useVeraThreshold: z.number().default(0.7),
   // 🔴 КЛАСС СВОДКИ — НАСТРОЙКОЙ, А НЕ КОНСТАНТОЙ. Ту же строку пишет секретарь
@@ -293,8 +306,31 @@ export function apply(ctx, config) {
       say(`компакт был, но записи класса «${config.klassSvodki}» в памяти нет — вставлять нечего`)
     }
 
-    // C: welcome на старте сессии
-    if (config.welcomeEnabled && turn === 1 && step === 1) {
+    // C: welcome на первом шаге ПОСЛЕ СТАРТА ПРОЦЕССА, а не на первом шаге сессии.
+    //
+    // 🔴 ПОЧЕМУ КРЮЧОК СМЕНИЛСЯ (03.09.2026). Было `turn === 1 && step === 1` — первый
+    // шаг СЕССИИ. На живом узле сессия telegram-a2a переживает перезапуски и длится
+    // сутками: её первый шаг случился ОДИН РАЗ в жизни, и за всё время брифинг не
+    // сработал НИ РАЗУ (журнал: 0 строк «welcome-брифинг»). Код был верен, условие
+    // недостижимо — механизм, который нельзя запустить, неотличим от несмонтированного.
+    //
+    // 🔴 И ВТОРАЯ ГРАНИЦА, БЕЗ КОТОРОЙ ЛЕЧЕНИЕ ХУЖЕ БОЛЕЗНИ: «первый шаг после старта»
+    // сам по себе даёт брифинг на КАЖДЫЙ перезапуск. 03.09 их было три за шесть часов —
+    // столько же брифингов подряд, и они превратились бы в шум ровно тем способом,
+    // каким ежедневная тревога превращает сторожа в мебель. Поэтому рядом стоит предел
+    // по времени: не чаще раза в `welcomeInterval` на сессию. Отметка живёт НА ДИСКЕ —
+    // в памяти процесса её держать нельзя, перезапуск и есть тот случай, который она
+    // должна пережить.
+    if (config.welcomeEnabled && !welcomeDano.has(sid)) {
+      welcomeDano.add(sid)
+      const proshlo = Date.now() - welcomeKogdaBylo(config, sid)
+      if (proshlo < config.welcomeInterval) {
+        say(`welcome пропущен: прошлый брифинг был ${Math.round(proshlo / 3600000)} ч назад, ` +
+            `предел ${Math.round(config.welcomeInterval / 3600000)} ч (сессия ${sid}). ` +
+            'Это не отказ: брифинг раз в сутки, чтобы не стать шумом.')
+        return decision
+      }
+      welcomeOtmetit(config, sid)
       const records = await readRecords(ctx)
       if (!records) return decision
       // 🔴 БЮДЖЕТ ЗОВЁТСЯ ЗДЕСЬ И НЕ ЗОВЁТСЯ В СЛОЕ B — это решение, а не пропуск.
@@ -317,3 +353,34 @@ export function apply(ctx, config) {
     return decision
   }, { prepend: true })
 }
+  // Кому брифинг уже дан В ЭТОМ ПРОЦЕССЕ. Отдельно от дисковой отметки: диск помнит
+  // «когда давали вообще», а это множество — «не давать дважды за один подъём».
+  const welcomeDano = new Set()
+
+  /** Когда брифинг давался этой сессии в прошлый раз. 0 — не давался никогда. */
+  function welcomeKogdaBylo (cfg, sid) {
+    try {
+      const d = JSON.parse(readFileSync(cfg.welcomeOtmetki, 'utf-8'))
+      const t = Number(d?.[sid])
+      return Number.isFinite(t) ? t : 0
+    } catch {
+      // Файла нет или он нечитаем — это «не давался», а не беда: первый брифинг
+      // после заведения механизма должен состояться, а не быть пропущен молча.
+      return 0
+    }
+  }
+
+  /** Отметить, что брифинг дан. Отказ записи НЕ отменяет брифинг, но НЕ молчит. */
+  function welcomeOtmetit (cfg, sid) {
+    let d = {}
+    try { d = JSON.parse(readFileSync(cfg.welcomeOtmetki, 'utf-8')) } catch { d = {} }
+    d[sid] = Date.now()
+    try {
+      mkdirSync(dirname(cfg.welcomeOtmetki), { recursive: true })
+      writeFileSync(cfg.welcomeOtmetki, JSON.stringify(d, null, 2) + '\n')
+    } catch (e) {
+      say(`отметка о брифинге НЕ сохранена (${e?.message ?? e}) — следующий подъём ` +
+          'даст брифинг снова, предел частоты в этот раз не сработает')
+    }
+  }
+
