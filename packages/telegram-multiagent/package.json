@@ -39,5 +39,8 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1"
   }
 }

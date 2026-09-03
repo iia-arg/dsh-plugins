@@ -27,8 +27,8 @@ try { text = readFileSync(SRC, 'utf8') } catch (e) {
 }
 try { ({ Context } = await import(KORDIS)) } catch (e) {
   console.log(`СЛЕПОТА: cordis не загружается (${KORDIS}): ${e?.message ?? e}`)
-  console.log('  Пакет, лежащий ВНЕ дерева зависимостей платформы (у нас — /opt/agent-plugins),')
-  console.log('  разрешить имя не может. Задайте путь явно:')
+  console.log('  Пакет, лежащий ВНЕ дерева зависимостей платформы, разрешить имя не может.')
+  console.log('  Задайте путь явно:')
   console.log('  KORDIS=<путь к платформе>/node_modules/@deepseek-ai/cordis/lib/index.js node test/stend-dostupa-sluzhb.mjs')
   process.exit(2)
 }
