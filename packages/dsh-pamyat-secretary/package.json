@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat-secretary",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "description": "Секретарь компакции для DSH: снимает сводку затираемой истории и кладёт её в память с verbatim-ссылкой на затенённый диапазон.",
   "type": "module",
   "main": "src/index.js",
@@ -8,7 +8,8 @@
     "src",
     "test",
     "README.md",
-    "README.en.md"
+    "README.en.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "test": "node test/stend-razbora.mjs && node test/stend-shva.mjs && node test/stend-readme.mjs && node test/stend-krik-zvuchit.mjs"
@@ -32,5 +33,10 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/schemastery": "3.18.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iia-arg/dsh-plugins.git",
+    "directory": "packages/dsh-pamyat-secretary"
   }
 }

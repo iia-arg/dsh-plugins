@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat-byudzhet",
-  "version": "0.1.0-alpha.5",
+  "version": "0.1.0-alpha.6",
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -10,7 +10,8 @@
     "src",
     "test",
     "README.md",
-    "README.en.md"
+    "README.en.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "test": "node test/stend-mery.mjs && node test/stend-otbora.mjs && node test/stend-readme.mjs && node test/stend-krik-zvuchit.mjs"
@@ -22,5 +23,10 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/schemastery": "3.18.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iia-arg/dsh-plugins.git",
+    "directory": "packages/dsh-pamyat-byudzhet"
   }
 }

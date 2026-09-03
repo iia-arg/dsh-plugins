@@ -36,11 +36,29 @@ await proba('ГЛАВНОЕ: порог перейдён → подталкив�
   const s = slushat();
   try {
     const k = await podnyat({ predel: 1000, dolyaTrevogi: 0.8 });
-    k.nudzhPamyati.uchest({ inputTokens: 700, outputTokens: 200 });
+    // 🔴 МЕРА СМЕНИЛАСЬ 03.09.2026: порог считается от ЗАНЯТОСТИ окна (вход последнего
+    // вызова), а не от суммы расхода по всем вызовам. Прежде здесь стояло 700+200=900
+    // «расхода»; выход в занятость не входит — он станет частью ВХОДА следующего вызова.
+    k.nudzhPamyati.uchest({ inputTokens: 900, outputTokens: 200 });
   } finally { s.vernut(); }
   const t = s.kriki.join(' ');
   if (!/пора подтолкнуть/.test(t)) throw new Error('молчит при переходе порога');
-  if (!/НЕ МЕНЬШЕ 900 из 1000/.test(t)) throw new Error('нет чисел: ' + t.slice(0, 160));
+  if (!/занято 900 из 1000/.test(t)) throw new Error('нет чисел: ' + t.slice(0, 160));
+});
+
+await proba('🔴 СУММА ВЫШЕ ПОРОГА, А ЗАНЯТОСТЬ НЕТ → МОЛЧИТ (возврат к старой мере ловится)', async () => {
+  const s = slushat();
+  try {
+    const k = await podnyat({ predel: 1000, dolyaTrevogi: 0.8 });
+    // Два вызова по 700: сумма 1400 — выше и порога, и самого предела. Занятость 700 —
+    // ниже порога 800. Это ровно боевая картина 03.09.2026 («1255120 из 1000000» при
+    // двух вызовах и без всякого переполнения окна). Тревоги быть НЕ ДОЛЖНО.
+    k.nudzhPamyati.uchest({ inputTokens: 700, outputTokens: 0 });
+    k.nudzhPamyati.uchest({ inputTokens: 700, outputTokens: 0 });
+  } finally { s.vernut(); }
+  if (/пора подтолкнуть/.test(s.kriki.join(' '))) {
+    throw new Error('тревога по СУММЕ: мера вернулась к прежней, занятость не считается');
+  }
 });
 
 await proba('подталкивает ОДИН раз, а не на каждом вызове', async () => {

@@ -1,13 +1,14 @@
 {
   "name": "dsh-pamyat-restore",
-  "version": "0.1.0-alpha.12",
+  "version": "0.1.0-alpha.13",
   "type": "module",
   "main": "src/index.js",
   "files": [
     "src",
     "test",
     "README.md",
-    "README.en.md"
+    "README.en.md",
+    "CHANGELOG.md"
   ],
   "description": "dsh-pamyat-restore: восстановление после компакта и welcome-брифинг на шве agent/pre-step",
   "peerDependencies": {
@@ -21,5 +22,10 @@
   },
   "scripts": {
     "test": "node test/stend-restore.mjs && node test/stend-readme.mjs && node test/stend-krik-zvuchit.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iia-arg/dsh-plugins.git",
+    "directory": "packages/dsh-pamyat-restore"
   }
 }

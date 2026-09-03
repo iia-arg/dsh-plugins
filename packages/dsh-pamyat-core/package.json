@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat-core",
-  "version": "0.1.0-alpha.10",
+  "version": "0.1.0-alpha.11",
   "description": "Оперативная память агента для DSH: локальное хранилище, журнал решений и политика записи по классам. Ноль внешних зависимостей.",
   "type": "module",
   "main": "src/index.js",
@@ -8,7 +8,8 @@
     "src",
     "test",
     "README.md",
-    "README.en.md"
+    "README.en.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "test": "node test/stend-hranilishcha.mjs && node test/stend-politiki.mjs && node test/stend-zhurnala.mjs && node test/stend-sborki.mjs && node test/stend-readme.mjs && node test/stend-krik-zvuchit.mjs"
@@ -31,5 +32,10 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/schemastery": "3.18.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iia-arg/dsh-plugins.git",
+    "directory": "packages/dsh-pamyat-core"
   }
 }

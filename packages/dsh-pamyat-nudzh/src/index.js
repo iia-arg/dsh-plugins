@@ -57,11 +57,30 @@ export function apply(ctx, config = {}) {
     uchest(usage) {
       schet.uchest(usage);
       const i = schet.itog();
-      if (predel > 0 && !trevogaPodana && i.neMenshe >= predel * dolya) {
-        trevogaPodana = true;
-        krik('пора подтолкнуть к компакту: израсходовано НЕ МЕНЬШЕ ' + i.neMenshe +
-             ' из ' + predel + ' (порог ' + Math.round(dolya * 100) + '%). ' +
-             opisaniePolnoty(i) + ' Настоящий расход может быть только БОЛЬШЕ.');
+      // 🔴 ПОРОГ СЧИТАЕТСЯ ОТ ЗАНЯТОСТИ, А НЕ ОТ СУММЫ (03.09.2026). Прежде здесь
+      // стояло `i.neMenshe >= predel * dolya` — сумма входов по всем вызовам. Она растёт
+      // без предела, поэтому порог переходился раньше времени, а после компакта не
+      // возвращался назад НИКОГДА: подтолкнуть было уже не к чему, а число всё росло.
+      if (predel > 0 && typeof i.zanyato === 'number') {
+        const perejden = i.zanyato >= predel * dolya;
+        if (perejden && !trevogaPodana) {
+          trevogaPodana = true;
+          krik('пора подтолкнуть к компакту: занято ' + i.zanyato + ' из ' + predel +
+               ' (порог ' + Math.round(dolya * 100) + '%). ' + opisaniePolnoty(i) +
+               ' Занятость — вход ПОСЛЕДНЕГО вызова, у которого было число от провайдера;' +
+               (i.bezChisla > 0
+                 ? ' после него ' + i.bezChisla + ' вызовов пришли БЕЗ ЧИСЛА, значит она могла устареть.'
+                 : ' вызовов без числа не было.') +
+               ' Сумма расхода по всем вызовам при этом ' + i.neMenshe +
+               ', и она может быть только БОЛЬШЕ. ' + poyasnenieEdinicy(i.neMenshe, predel));
+        } else if (!perejden && trevogaPodana) {
+          // Тревога СНИМАЕТСЯ, когда занятость вернулась под порог: обычно это значит,
+          // что компакт прошёл. Механизм, который кричит однажды и молчит навсегда,
+          // не отличает «полегчало» от «я уже сказал».
+          trevogaPodana = false;
+          krik('занятость вернулась под порог: ' + i.zanyato + ' из ' + predel +
+               ' — похоже, компакт прошёл. Подталкивать больше не о чем.');
+        }
       }
       return i;
     },
@@ -83,9 +102,15 @@ export function apply(ctx, config = {}) {
         return { sostoyanie: 'neizvestno', pochemu: 'предел не задан',
                  uchtenoVyzovov: i.uchtenoVyzovov, bezChisla: i.bezChisla };
       }
-      if (i.neMenshe >= predel * dolya) {
-        return { sostoyanie: 'porog-pereyden', neMenshe: i.neMenshe, predel,
+      if (typeof i.zanyato !== 'number') {
+        return { sostoyanie: 'neizvestno',
+                 pochemu: 'занятость окна ещё не измерена: ни одного вызова с числом от провайдера',
+                 neMenshe: i.neMenshe, predel,
                  uchtenoVyzovov: i.uchtenoVyzovov, bezChisla: i.bezChisla };
+      }
+      if (i.zanyato >= predel * dolya) {
+        return { sostoyanie: 'porog-pereyden', zanyato: i.zanyato, neMenshe: i.neMenshe,
+                 predel, uchtenoVyzovov: i.uchtenoVyzovov, bezChisla: i.bezChisla };
       }
       // 🔴 Числа полноты отдаются ПОЛЯМИ, а не только строкой: «неизвестно»
       // должно быть с мерой, иначе вызывающий не может решить, насколько
@@ -148,6 +173,34 @@ export function apply(ctx, config = {}) {
            '. Учёт НЕПОЛОН сверх обычного — этот вызов не посчитан вовсе.');
     }
   });
+}
+
+/**
+ * 🔴 ЕДИНИЦА ЭТОГО ЧИСЛА, названная рядом с ним самим.
+ *
+ * `neMenshe` — это СУММА расхода по вызовам: сколько токенов прошло через API.
+ * Каждый вызов шлёт весь контекст заново, поэтому сумма растёт БЕЗ ПРЕДЕЛА и
+ * компакция её не уменьшает — это величина счёта за работу, а не заполненность окна.
+ *
+ * Заполненность окна — другое число: `ctx.tokenMeter.measure(session).totalTokens`,
+ * «current request-and-response pressure» по контракту dsh-token-meter. Именно его
+ * платформа сравнивает со своим порогом, и именно оно падает после компакта.
+ *
+ * Почему это записано: 03.09.2026 нудж напечатал «израсходовано НЕ МЕНЬШЕ 1255120
+ * из 1000000» при ДВУХ учтённых вызовах — и сжатия не последовало. Читается это как
+ * «контекст переполнен на четверть», а означает «два вызова суммарно стоили столько».
+ * Два ВЕРНЫХ числа про разные вещи; и наш собственный процент, посчитанный от суммы,
+ * был бы честным расчётом по негодному числителю.
+ */
+function poyasnenieEdinicy(neMenshe, predel) {
+  const kratno = predel > 0 ? (neMenshe / predel) : 0;
+  const preduprezhdenie = kratno > 1
+    ? ' Число уже БОЛЬШЕ предела, а это возможно без переполнения окна: сумма по' +
+      ' вызовам не ограничена размером окна.'
+    : '';
+  return 'ЕДИНИЦА: это СУММА по вызовам (что прошло через API), а НЕ заполненность' +
+         ' окна. Компакция сумму не уменьшает.' + preduprezhdenie +
+         ' Заполненность меряет платформа: tokenMeter.measure(session).totalTokens.';
 }
 
 function opisaniePolnoty(i) {

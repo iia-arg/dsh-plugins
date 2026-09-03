@@ -4,14 +4,36 @@
 time to nudge towards compaction. What to lift back into the conversation is the
 neighbouring layer's job (budget) and is deliberately not duplicated here.
 
-## 🔴 It reports a LOWER BOUND, not the spend
+## 🔴 TWO DIFFERENT quantities — never conflate them
+
+The package counts both and names each one aloud.
+
+**OCCUPANCY of the window** — the input of the **last** call (`inputTokens` +
+cache read + cache write). This is what the limit is compared against: it drops
+after a compaction, as it should. The "time to compact" threshold is measured
+**against occupancy**.
+
+**TOTAL spend** — how many tokens went through the API across all calls. Every
+call re-sends the whole conversation, so the total grows without bound and a
+compaction never reduces it. It is the size of the bill, not the fullness of the
+window.
+
+    занято 900 из 1000 (порог 80%).
+    Учтено 3 вызовов, ещё 2 БЕЗ ЧИСЛА от провайдера.
+    Сумма расхода по всем вызовам при этом 4200, и она может быть только БОЛЬШЕ.
+
+🔴 **Why this is written down.** Until 2026-09-03 the threshold was measured
+against the TOTAL, and in production it printed "NOT LESS THAN 1,255,120 of
+1,000,000" after **two** accounted calls — with no window overflow whatsoever.
+That reads as "the context is a quarter past full"; it means "two calls cost that
+much together". A percentage of the total crosses 100% and keeps climbing, however
+many compactions happen.
 
 The provider's number does not always arrive: the compaction contract marks the
 field «Provider-reported token usage … **when emitted**», optional. The total is
-therefore incomplete by construction, and the package never says "spent X":
-
-    израсходовано НЕ МЕНЬШЕ 900 из 1000 (порог 80%).
-    Учтено 3 вызовов, ещё 2 БЕЗ ЧИСЛА от провайдера.
+therefore incomplete by construction, and the package never says "spent X".
+Occupancy is taken from the last call that HAD a number: if calls without a number
+arrived after it, occupancy may be stale — and the package says so aloud.
 
 Hence an **asymmetric** rule: "already at least the threshold" is honest and is
 stated; "there is room left" is not honest on incomplete data and is **never**
@@ -83,7 +105,7 @@ process under a real `Context` and waits for the line on its `stderr`.
 
     npm test
 
-Four stands, 42 probes; the first probe of each runs against a known-good
+Four stands, 43 probes; the first probe of each runs against a known-good
 subject — if it is red, the stand is broken, not the package.
 
 ## What it was tested against
