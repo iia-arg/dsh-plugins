@@ -22,11 +22,14 @@
   "main": "src/index.js",
   "description": "Мост инструментов платформы на движковый маршрут: делает инструменты плагинов платформы видимыми модели, которую ведёт сторонний движок",
   "peerDependencies": {
-    "@deepseek-ai/schemastery": "*",
+    "@deepseek-ai/schemastery": "^3.18.1",
     "yaml": "^2.0.0"
   },
   "engines": {
     "node": ">=20"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "yaml": "2.9.0"
+  }
 }
