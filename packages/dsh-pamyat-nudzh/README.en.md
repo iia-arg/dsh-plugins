@@ -74,6 +74,36 @@ interrupted, the spend was not — the tokens are already paid for.
 The threshold is queried by the greeting layer (C), which also shows the number
 to the human.
 
+## Who the measurement is addressed to
+
+    hook:  agent/pre-step (waterfall)
+    when:  exactly once per alarm cycle
+    what:  a reminder to the model — "write down what must survive the compaction", with numbers
+
+🔴 **A shout to the log and an injection into the context have different
+addressees.** Until 2026-09-03 the package only called `console.error` when the
+threshold was crossed: the line went to the human's journal and died there, while
+the model it was addressed to received nothing. The mechanism shouted correctly,
+but in a direction where nobody listens — from the outside "works" and "useless"
+are indistinguishable: there is a trace, there is no consequence. The shout is
+kept: it is what later proves the injection happened.
+
+🔴 **Exactly once per cycle.** The alarm lives as long as occupancy stays above
+the threshold; the injection is single and its flag is cleared BEFORE the message
+is built. Clearing it after would leave the flag armed on an exception during the
+build, and the reminder would arrive on every step until the compaction. The cost
+is asymmetric: losing one reminder is cheaper than burying the conversation in
+them. A new cycle starts where a new alarm starts — after occupancy returns below
+the threshold.
+
+⚠️ **Session boundary.** The package keeps ONE count per plugin: the session is
+not distinguished in accounting. So both the threshold and the injection are
+shared. If the agent ever runs two sessions at once, the reminder goes to
+whichever one steps first — correct by number, wrong by address.
+
+⚠️ **`predel: 0` → no injection at all**, just as there is no alarm: injecting a
+reminder under an unknown limit would assert what the package does not know.
+
 ## 🔴 Arithmetic: three rules taken from the code
 
 Measured 2026-09-03; method — reading `@deepseek-ai/dsh-llm`
@@ -105,10 +135,10 @@ process under a real `Context` and waits for the line on its `stderr`.
 
     npm test
 
-Four stands, 43 probes; the first probe of each runs against a known-good
+Five stands, 49 probes; the first probe of each runs against a known-good
 subject — if it is red, the stand is broken, not the package.
 
 ## What it was tested against
 
-This package's test stands were run against `@deepseek-ai/cordis` 4.0.1 and `@deepseek-ai/schemastery` 3.18.1
+This package's test stands were run against `@deepseek-ai/cordis` 4.0.1, `@deepseek-ai/schemastery` 3.18.1 and `@deepseek-ai/dsh-llm` 0.1.1-rc.2
 This is a MEASUREMENT, not a compatibility promise: other versions were not run. The `peerDependencies` range uses `^` by semver contract, not by our measurement.

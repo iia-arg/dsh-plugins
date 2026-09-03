@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat-nudzh",
-  "version": "0.1.0-alpha.8",
+  "version": "0.1.0-alpha.9",
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -17,8 +17,9 @@
     "test": "node test/stend-scheta.mjs && node test/stend-porogov.mjs && node test/stend-readme.mjs && node test/stend-krik-zvuchit.mjs"
   },
   "peerDependencies": {
-    "@deepseek-ai/schemastery": "^3.18.1",
-    "@deepseek-ai/cordis": "^4.0.1"
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-llm": "^0.1.1-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
