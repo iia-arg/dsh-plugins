@@ -108,6 +108,11 @@ function buildStopMessage(config, reason, deleted, done, now) {
 // отказ приходят по одному разу). Гасим только ПОВТОРНЫЙ вывод подъёма: двойная
 // строка пугает читателя журнала и тянет на ложное расследование.
 let loggedStartup = false
+// 🔴 СЧЁТЧИК виденных вызовов (правило 8.9): без него ноль строк в журнале
+// двусмысленен — «отказов не было» неотличимо от «хук не срабатывал». На уровне
+// модуля, чтобы пересборка apply не обнуляла.
+let seenCalls = 0
+let refusedCalls = 0
 export function apply(ctx, rawConfig) {
   if (!foldScheduleEvents) {
     log('startup', '🔴 @deepseek-ai/dsh-schedule не резолвится — сторож НЕДЕЙСТВУЮЩИЙ (сворачивать нечего)')
@@ -117,9 +122,16 @@ export function apply(ctx, rawConfig) {
   const config = {}
   const srcParts = []
   for (const [k, dflt] of Object.entries(DEFAULTS)) {
-    const has = rawConfig?.[k] !== undefined
-    config[k] = has ? rawConfig[k] : dflt
-    srcParts.push(`${k}=${config[k]} (${has ? 'настройка' : 'умолчание'})`)
+    const raw = rawConfig?.[k]
+    // 🔴 ПУСТОЙ МАССИВ = «не настроено» (02.09.2026). schemastery для z.array() без
+    // .default() отдаёт [], а не undefined — в отличие от z.number()/z.string(). Поэтому
+    // «отсутствие» определяем по типу: undefined ИЛИ пустой массив. 🔴 Выразить «не
+    // сбрасывать никогда» пустотой НЕЛЬЗЯ — намеренно: пустота неотличима от «не
+    // настроили» (тот же спор, что про sprashivat). Понадобится «не сбрасывать никогда»
+    // — заведём ЯВНЫЙ способ, а не будем читать мысли по пустоте.
+    const isAbsent = raw === undefined || (Array.isArray(raw) && raw.length === 0)
+    config[k] = isAbsent ? dflt : raw
+    srcParts.push(`${k}=${config[k]} (${isAbsent ? 'умолчание' : 'настройка'})`)
   }
   // notifyCmd вынесен из DEFAULTS (деанонимизация 01.09.2026): без него — только
   // журнал (log only), не падение; путь чужой машины в код не зашиваем.
@@ -148,6 +160,7 @@ export function apply(ctx, rawConfig) {
   //  Выглядят как дубль — и не дубль.
   ctx.on('tools/execute', async (exec, next) => {
     if (exec.name !== 'schedule_create') return next()
+    seenCalls += 1
     // 🔴 ЧАСОВОЙ ПОТОЛОК (02.09.2026, П-11). Одноразовый будильник поля every_seconds
     // не несёт, поэтому проверка шага ниже его ПРОПУСКАЕТ — и цепочка одноразовых по
     // 10 с законна. Потолок ловит ТЕМП, а не количество: считаем пробуждения в
@@ -164,6 +177,8 @@ export function apply(ctx, rawConfig) {
         const message =
           `предел ${config.maxPerHour} автономных пробуждений в час достигнут ` +
           `— место освободится через ~${mins} мин`
+        refusedCalls += 1
+        log('счётчик', `schedule_create: видел ${seenCalls}, отказал ${refusedCalls}`)
         return {
           content: [{ type: 'text', text: `Error: ${message}` }],
           isError: true,
@@ -172,10 +187,15 @@ export function apply(ctx, rawConfig) {
       }
     }
     const every = exec.arguments?.every_seconds
-    if (typeof every !== 'number' || every >= config.minRepeatingIntervalSeconds) return next()
+    if (typeof every !== 'number' || every >= config.minRepeatingIntervalSeconds) {
+      log('счётчик', `schedule_create: видел ${seenCalls}, отказал ${refusedCalls}`)
+      return next()
+    }
     const message =
       `повтор не чаще раза в ${config.minRepeatingIntervalSeconds} с ` +
       `(запрошено ${every} с) — это предел платформы, не ошибка: переставь на порог или выше`
+    refusedCalls += 1
+    log('счётчик', `schedule_create: видел ${seenCalls}, отказал ${refusedCalls}`)
     return {
       content: [{ type: 'text', text: `Error: ${message}` }],
       isError: true,
@@ -197,6 +217,21 @@ export function apply(ctx, rawConfig) {
     agent.ctx.on('agent/status', ({ status }) => {
       if (status !== 'idle') return
       const events = agent.session.events
+      // 🔴 Отсутствие источника событий = ОТКАЗ, а не ноль (02.09.2026).
+      // В платформе 0.1.2 поле session.events снимают. Без этой ветки .some бросит
+      // TypeError внутри обработчика agent/status, и если платформа его проглотит —
+      // сторож тихо перестанет считать, оставаясь с виду живым. Решение по умолчанию —
+      // НЕ ПРОПУСКАТЬ: сторож ограничивает, значит при неизвестных пределах он обязан
+      // запрещать, а не разрешать.
+      if (!Array.isArray(events)) {
+        // 🔴 НЕ бросаем: мы внутри обработчика agent/status (статус-переход агента).
+        // Бросок здесь прервал бы setPhase -> kick -> driver.reject, то есть агент
+        // завис бы в «running» без драйвера — громкий кирпич вместо тихого разрешения.
+        // Поэтому решение по умолчанию — не будить (жатва пропускается) и сказать вслух.
+        log(`🔴 schedule-guard: источник событий сессии недоступен — пределы `
+          + `(подряд, за сутки) НЕ вычисляются, жатва ПРОПУЩЕНА. Решение: не будим.`)
+        return
+      }
       if (!events.some((e) => e.type === 'schedule/change')) return
 
       const { consecutive, dispatchTimes } = countWakeups(events, config.resetKinds)

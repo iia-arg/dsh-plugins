@@ -231,3 +231,5 @@ immediate — the hook returns before the tool runs. The **47 s and 12 s** figur
 latency (time from reminder creation to deletion on the next agent idle, two live runs on the route
 that bypasses the registry). If you cite a sibling deployment's 3 ms / 1 ms figures, mark their
 origin — they are a different route, not this one.
+
+> English README pending.
