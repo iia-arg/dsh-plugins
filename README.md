@@ -21,6 +21,26 @@ existed.
 | [`oom-watch`](packages/oom-watch) | Learn when the memory limit killed your agent. Reads the kernel journal, not the cgroup counter that resets on restart. Not a plugin: a systemd timer. |
 | [`a2a-bus`](packages/a2a-bus) | Let agents on one machine write to each other directly, without giving up isolation. Each agent owns a mailbox nobody else can list; a postman running as root transfers ownership of the letter, so the sender loses access once it is delivered. Not a plugin: a spool, a service and a timer. |
 
+## Memory: a family of seven
+
+The harness compacts a long conversation by summarising it — and the summary is gone the moment
+the process restarts. These packages give an agent memory that survives that, split into layers
+that each do one thing and say out loud what they cannot do.
+
+| Package | What it does |
+|---|---|
+| [`dsh-pamyat`](packages/dsh-pamyat) | The **name for the set**: no code, just the declaration of which six packages were built and checked *together*, in exactly which versions, and by what. Versions are exact, ranges are refused — a name that resolves to different sets for different people is worse than no name. |
+| [`dsh-pamyat-core`](packages/dsh-pamyat-core) | Storage on `node:sqlite`, a journal of write decisions, and the policy for which classes need confirmation. A node with nobody to confirm says so out loud instead of silently writing anyway. |
+| [`dsh-pamyat-secretary`](packages/dsh-pamyat-secretary) | Takes the summary *before* compaction overwrites the history. A refused write is shouted, not swallowed. |
+| [`dsh-pamyat-restore`](packages/dsh-pamyat-restore) | The reading side: puts the summary back after a compaction, and a briefing at start. Trust and age are read by an explicit branch *before* any comparison — a missing number never becomes a zero. |
+| [`dsh-pamyat-byudzhet`](packages/dsh-pamyat-byudzhet) | An incoming budget: how much of the past to lift back into context. Its absence is announced — "budget not applied" must not be indistinguishable from "applied and dropped nothing". |
+| [`dsh-pamyat-nudzh`](packages/dsh-pamyat-nudzh) | Spend accounting: is it time to compact yet. Counts **occupancy of the window** (the last call's input), not the sum over all calls — the sum grows without bound and a compaction never reduces it. |
+| [`dsh-pamyat-omega`](packages/dsh-pamyat-omega) | An optional long-term layer over external storage via MCP. Without it nothing breaks; you only lose the ability to carry knowledge off the node. |
+
+Install the set by its name — `npm i dsh-pamyat` pulls the six in their exact versions. Each layer
+also stands alone. Every package carries a stand suite; a stand that cannot check anything exits
+**2** ("nothing to check"), never **0**, because "no checks ran" must not look like "checks passed".
+
 `subscription-gateway`, `tool-bridge` and `schedule-guard` are one story, and each is useful on
 its own. Run the harness on a subscription (`subscription-gateway`); let a model driven that way
 still reach the harness's own tools (`tool-bridge`); and if you then let the agent schedule its
