@@ -61,8 +61,12 @@ export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, k
   const k = vzyat_klyuch(nastrojka.klyuch);
   if (!k.klyuch) { krik('дистилляция не начата: ' + k.pochemu); return { ishod: 'net-klyucha' }; }
 
+  // adres берётся из настройки только если задан; умолчание живёт в distillyaciya.js —
+  // двух умолчаний быть не должно, иначе они разойдутся молча. Потребитель настройки —
+  // стенд шва: без неё проверить учёт расхода можно лишь платным вызовом к провайдеру.
+  const adres = nastrojka.adres || undefined;
   const s1 = await sprosit({ klyuch: k.klyuch, model: nastrojka.model, system: VYBOR_TEM,
-                             tekst: transkript, maxTokens: nastrojka.maxTokenovTem });
+                             tekst: transkript, maxTokens: nastrojka.maxTokenovTem, ...(adres ? { adres } : {}) });
   if (s1.ishod !== 'ok') { krik('выбор тем не состоялся [' + s1.ishod + ']: ' + s1.pochemu); return { ishod: s1.ishod }; }
   const m = razobrat_massiv(s1.tekst);
   if (!m.godno) { krik('темы не разобраны: ' + m.pochemu); return { ishod: 'temy-ne-razobrany' }; }
@@ -76,12 +80,30 @@ export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, k
   }
 
   const istochnik = `${seansId}#${Math.min(...seqs)}-${Math.max(...seqs)}`;
+  // 🔴 РАСХОД СЧИТАЕТСЯ, А НЕ ОЦЕНИВАЕТСЯ. Заход ходит к платному чужому API, и до
+  // 03.09.2026 механизм тратил деньги, НЕ считая их: цену приходилось прикидывать по
+  // знакам транскрипта, а прикидка расходится с настоящим счётом молча.
+  // 🔴 ОТКАЗЫ ВХОДЯТ В РАСХОД. Вызов, кончившийся на stop_reason=max_tokens, статьи не
+  // дал, но оплачен полностью. Считать только удавшиеся значит занижать цену ровно на
+  // ту часть, которая и есть беда.
+  const rashod = { vyzovov: 0, vhod: 0, vyhod: 0, keshChtenie: 0, keshZapis: 0 };
+  const uchest = (u) => {
+    rashod.vyzovov++;
+    if (!u) return;
+    rashod.vhod += Number(u.input_tokens ?? 0);
+    rashod.vyhod += Number(u.output_tokens ?? 0);
+    rashod.keshChtenie += Number(u.cache_read_input_tokens ?? 0);
+    rashod.keshZapis += Number(u.cache_creation_input_tokens ?? 0);
+  };
+  uchest(s1.usage);
   const itog = { ishod: 'ok', tem: temy.length, zapisano: 0, pusto: 0, otkazov: 0, chuzhoiKlass: 0 };
   for (const t of temy) {
     const klass = KLASSY.includes(t?.kind) ? t.kind : null;
     if (!klass) { itog.chuzhoiKlass++; krik(`тема «${t?.theme}» пропущена: класс «${t?.kind}» вне объявленного списка`); continue; }
     const s2 = await sprosit({ klyuch: k.klyuch, model: nastrojka.model, system: STATYA,
-                               tekst: `ТЕМА: ${t.theme}\n\n${transkript}`, maxTokens: nastrojka.maxTokenovStati });
+                               tekst: `ТЕМА: ${t.theme}\n\n${transkript}`, maxTokens: nastrojka.maxTokenovStati,
+                               ...(adres ? { adres } : {}) });
+    uchest(s2.usage);   // до разбора исхода: оплачен и отказ
     if (s2.ishod !== 'ok') { itog.otkazov++; krik(`статья «${t.theme}» не написана [${s2.ishod}]: ${s2.pochemu}`); continue; }
     if (s2.tekst.trim() === NET_RELEVANTNOGO) { itog.pusto++; continue; }
     try {
@@ -91,5 +113,12 @@ export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, k
   }
   krik(`дистилляция: тем ${itog.tem}, записано знаний ${itog.zapisano}, ` +
        `пусто по теме ${itog.pusto}, отказов ${itog.otkazov}, чужой класс ${itog.chuzhoiKlass}; источник ${istochnik}`);
+  itog.rashod = rashod;
+  // Печатаем ТОКЕНАМИ, а не деньгами: ставка живёт у провайдера и меняется без нас,
+  // а зашитая цена устареет молча и будет выглядеть замером. Деньги считает тот, кто
+  // возьмёт ставку с прайса в день расчёта.
+  krik(`расход захода: вызовов ${rashod.vyzovov}, вход ${rashod.vhod}, выход ${rashod.vyhod}, ` +
+       `кеш чтение ${rashod.keshChtenie}, кеш запись ${rashod.keshZapis} — токенами, ` +
+       'цену считать по прайсу провайдера на день расчёта (отказы сюда ВХОДЯТ: они оплачены)');
   return itog;
 }
