@@ -21,6 +21,7 @@
  * пакет НЕ РАБОТАЕТ и говорит об этом словами при каждом обращении — молчаливой
  * работы «без записи» здесь нет по построению.
  */
+import { createRequire } from 'node:module';
 import { otkrytHranilishche } from './hranilishche.js';
 import { zavestiZhurnal } from './zhurnal.js';
 import { reshitPoKlassu, istolkovatPodtverzhdenie } from './politika.js';
@@ -128,8 +129,17 @@ export const Config = z.object({
  * строка проверена до КОНЦА — до места, где её прочтёт человек. У службы
  * stderr идёт в системный журнал, и это проверено пробой, а не предположением.
  */
+// 🔴 ВЕРСИЯ ИЗ СВОЕГО МАНИФЕСТА, НЕ КОНСТАНТОЙ. Правило фермы 03.09.2026: по журналу должно
+// быть видно не только КТО сказал, но и КАКАЯ редакция. Константа при следующем выпуске
+// утверждала бы номер, которому предмет уже не соответствует. Не прочиталось — говорим
+// «версия неизвестна», а не подставляем последнюю известную.
+const versiya = (() => {
+  try { return createRequire(import.meta.url)('../package.json').version ?? 'версия неизвестна'; }
+  catch { return 'версия неизвестна'; }
+})();
+
 function krik(soobshchenie) {
-  console.error('[dsh-pamyat-core] ' + soobshchenie);
+  console.error('[dsh-pamyat-core ' + versiya + '] ' + soobshchenie);
 }
 
 export function apply(ctx, config = {}) {
@@ -154,6 +164,18 @@ export function apply(ctx, config = {}) {
     e.code = prichinaOtkaza?.code ?? 'PAMYAT_NEDOSTUPNA';
     throw e;
   };
+
+  // 🔴 БЕЗУСЛОВНЫЙ СЛЕД ПОДЪЁМА. Прежде ядро говорило только при беде и при настройке
+  // otvechayushchegoNet — то есть при исправной работе было неотличимо от несмонтированного,
+  // а исполняемую редакцию приходилось угадывать. Механизм, чьё единственное свидетельство
+  // существования — жалоба, подтверждается тем хуже, чем лучше он настроен.
+  //
+  // Строка называет и долговременный слой: без неё «знания не уходят в OMEGA» и «класс не в
+  // перечне» неразличимы снаружи до первой записи.
+  krik('подъём: база ' + (config.putBazy ?? '—') +
+       ', классы знаний в долговременную память: ' +
+       (config.klassyZnaniy?.length ? config.klassyZnaniy.join(', ') : 'ни одного') +
+       (prichinaOtkaza ? ' — НО ХРАНИЛИЩЕ НЕ ОТКРЫТО, см. строку ниже' : ''));
 
   if (prichinaOtkaza) {
     // Один громкий выкрик при старте: молчащая память выглядит как пустая.
