@@ -30,6 +30,7 @@
  * редакция этой шапки говорила «дистилляция — следующий шаг слоя»; шаг сделан,
  * строка сохранена бы как призрак — текст, переживший код, который он объяснял.
  */
+import { createRequire } from 'node:module';
 import z from '@deepseek-ai/schemastery';
 import { razobratSvodku } from './razbor-sobytiya.js';
 import { distillirovat } from './distill-shov.js';
@@ -90,8 +91,20 @@ export const Config = z.object({
  * транспорта. У службы stdout попадает в системный журнал — не пропадёт.
  * (В ядре это же записано в README как знаемое про вывод.)
  */
+// 🔴 ВЕРСИЯ ЧИТАЕТСЯ ИЗ СВОЕГО package.json, А НЕ ПИШЕТСЯ КОНСТАНТОЙ. Константа при
+// следующем выпуске утверждала бы номер, которому предмет уже не соответствует, — прибор,
+// врущий уверенно. Отсюда же и граница: не прочиталось — говорим «версия неизвестна», а не
+// молчим и не подставляем последнюю известную.
+const versiya = (() => {
+  try { return createRequire(import.meta.url)('../package.json').version ?? 'версия неизвестна'; }
+  catch { return 'версия неизвестна'; }
+})();
+
+// Имя И версия в каждой строке: по журналу должно быть видно не только КТО сказал, но и
+// КАКАЯ редакция это сказала. Без номера строка подъёма не различает редакции, а мы за день
+// трижды получали в процессе не тот код, что на диске.
 function krik(soobshchenie) {
-  console.error('[dsh-pamyat-secretary] ' + soobshchenie);
+  console.error('[dsh-pamyat-secretary ' + versiya + '] ' + soobshchenie);
 }
 
 export function apply(ctx, config = {}) {

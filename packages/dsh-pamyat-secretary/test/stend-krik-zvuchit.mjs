@@ -13,6 +13,7 @@
  * реальном `stderr` этого процесса.
  */
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -61,6 +62,25 @@ proba('стенд годен: секретарь поднимается на н�
     setTimeout(() => console.log('PODNYALSYA'), 30);
   `));
   if (!/PODNYALSYA/.test(r.stdout)) throw new Error('не поднялся: ' + r.stderr.slice(0, 160));
+});
+
+proba('🔴 КАЖДАЯ строка несёт ИМЯ И ВЕРСИЮ, и версия взята ИЗ МАНИФЕСТА', () => {
+  // По журналу должно быть видно не только кто сказал, но и КАКАЯ редакция: за 03.09.2026
+  // мы трижды получали в процессе не тот код, что лежит на диске, и строка без номера
+  // этого не различала. Версия читается из своего package.json, а не пишется константой:
+  // константа при следующем выпуске утверждала бы номер, которому предмет не соответствует.
+  const nastoyashchaya = JSON.parse(readFileSync(join(zdes, '..', 'package.json'), 'utf-8')).version;
+  const r = podnyat(OSNOVA(`
+    k.provide('pamyat');
+    k.pamyat = { zapisat: () => 1 };
+    k.plugin({ name, inject, apply }, {});
+    setTimeout(() => {}, 30);
+  `));
+  const stroka = (r.stderr.split('\n').find((x) => x.includes('подъём:')) ?? '');
+  if (!stroka) throw new Error('следа подъёма нет вовсе: ' + r.stderr.slice(0, 160));
+  if (!stroka.includes('[dsh-pamyat-secretary ' + nastoyashchaya + ']')) {
+    throw new Error('в строке нет версии из манифеста (' + nastoyashchaya + '): ' + stroka.slice(0, 120));
+  }
 });
 
 proba('ПРЕДПОСЫЛКА: настоящий ctx.logger ЕСТЬ и НЕМ (иначе стенд про другой мир)', () => {
