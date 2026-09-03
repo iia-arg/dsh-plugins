@@ -1,0 +1,143 @@
+// Стенд write-through в долговременную память (Э3.1).
+//
+// 🔴 ГЛАВНОЕ ЗДЕСЬ — РАЗНЫЕ ПРИРОДЫ У РАЗНЫХ ОТКАЗОВ. «Канала нет», «служба не смонтирована»
+// и «позвал, но не подтвердилось» лечатся по-разному: первое — установкой, второе — правкой
+// профиля, третье — разбором на стороне провайдера. Схлопни их в один «не удалось» — и
+// пришедший по журналу пойдёт чинить не то.
+import { Context } from '@deepseek-ai/cordis';
+import { apply, name, Config } from '../src/index.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+
+let ok = 0, bed = 0;
+const t = (imya, f) => { try { f(); ok++; console.log('  ok   ' + imya) }
+  catch (e) { bed++; console.log('  FAIL ' + imya + ' — ' + e.message) } };
+
+const kat = mkdtempSync(join(tmpdir(), 'stend-dolgo-'));
+let putBazy = '';
+
+/** Поднять ядро с подставным долговременным слоем. */
+async function podnyat({ dolgo = null, nastrojka = {} } = {}) {
+  const koren = new Context();
+  koren.provide('logger'); koren.logger = { error: () => {} };
+  if (dolgo) { koren.provide('pamyatDolgovremennaya'); koren.pamyatDolgovremennaya = dolgo; }
+  putBazy = join(kat, 'p-' + Math.random().toString(36).slice(2) + '.db');
+  const cfg = new Config({ putBazy,
+                           otvechayushchegoNet: true, agent: 'proba-uzel', ...nastrojka });
+  koren.plugin({ name, apply }, cfg);
+  await new Promise((r) => setTimeout(r, 40));
+  return koren;
+}
+
+// Журнал читаем ПРЯМО ИЗ БАЗЫ: служба отдаёт только сводку по природам, а нам нужны
+// отдельные записи с причиной. Читаем другим средством, чем писали, — тем же путём туда и
+// обратно мы перенесли бы слепое пятно из работы в проверку.
+const zhurnalZapisi = (k) => {
+  const put = k.pamyat.gdeBaza?.() ?? putBazy;
+  const db = new DatabaseSync(put, { readOnly: true });
+  const r = db.prepare('SELECT ishod, priroda, pochemu FROM zhurnal ORDER BY id').all();
+  db.close();
+  return r;
+};
+
+// [0] КОНТРОЛЬ НА ИСПРАВНОМ: класс НЕ из перечня в долговременную не идёт вовсе.
+{
+  const zvali = [];
+  const k = await podnyat({ dolgo: { dostupna: () => true, pochemuNedostupna: () => '',
+    sohranit: async (z) => { zvali.push(z); return { sostoyanie: 'dostavleno', id: 'mem-1' }; } } });
+  k.pamyat.zapisat({ klass: 'svodka-kompakcii', soderzhim: 'сводка', istochnik: 's#1-2' });
+  await new Promise((r) => setTimeout(r, 40));
+  t('[0] сводка компакции в долговременную НЕ идёт (контроль на исправном)', () => {
+    if (zvali.length !== 0) throw new Error('позвали ' + zvali.length + ' раз, ждали 0');
+  });
+}
+
+// [A] класс из перечня, слой доступен → доставлено, в журнале исход и id
+{
+  const zvali = [];
+  const k = await podnyat({ dolgo: { dostupna: () => true, pochemuNedostupna: () => '',
+    sohranit: async (z) => { zvali.push(z); return { sostoyanie: 'dostavleno', id: 'mem-77' }; } } });
+  k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание', istochnik: 'telegram-a2a#10-20' });
+  await new Promise((r) => setTimeout(r, 60));
+  t('[A] знание уходит в долговременную, source_uri = istochnik', () => {
+    if (zvali.length !== 1) throw new Error('позвали ' + zvali.length + ' раз');
+    if (zvali[0].metadannye.source_uri !== 'telegram-a2a#10-20') {
+      throw new Error('source_uri = ' + zvali[0].metadannye.source_uri);
+    }
+    if (zvali[0].tip !== 'urok') throw new Error('tip = ' + zvali[0].tip);
+  });
+  t('[A] исход доставки попал в журнал с id', () => {
+    const z = zhurnalZapisi(k).filter((x) => x.priroda === 'dolgovremennyj-sloj');
+    if (!z.length) throw new Error('в журнале нет отметки долговременного слоя');
+    if (z[0].ishod !== 'dostavleno') throw new Error('исход ' + z[0].ishod);
+  });
+}
+
+// [B] слой недоступен → ne-udalos-proverit с ПРИРОДОЙ «недоступен», оперативный слой цел
+{
+  const k = await podnyat({ dolgo: { dostupna: () => false,
+    pochemuNedostupna: () => 'служба OMEGA не отвечает',
+    sohranit: async () => { throw new Error('не должны были звать'); } } });
+  const id = k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание', istochnik: 's#1-2' });
+  await new Promise((r) => setTimeout(r, 40));
+  t('[B] недоступный слой НЕ откатывает оперативную запись', () => {
+    if (!id) throw new Error('оперативная запись не сделана: id = ' + id);
+  });
+  t('[B] природа отказа — «недоступен», с причиной от провайдера', () => {
+    const z = zhurnalZapisi(k).filter((x) => String(x.priroda ?? '').startsWith('dolgovremennyj'));
+    if (!z.length) throw new Error('отказ не отмечен в журнале — «выстрелил и забыл» стало молчанием');
+    if (z[0].priroda !== 'dolgovremennyj-sloj-nedostupen') throw new Error('природа ' + z[0].priroda);
+    if (!/не отвечает/.test(z[0].pochemu ?? '')) throw new Error('причина провайдера потеряна: ' + z[0].pochemu);
+  });
+}
+
+// [C] слой ответил, но без подтверждения → ne-najdeno, ПРИРОДА ОТЛИЧАЕТСЯ от [B]
+{
+  const k = await podnyat({ dolgo: { dostupna: () => true, pochemuNedostupna: () => '',
+    sohranit: async () => ({ sostoyanie: 'ne-najdeno', pochemu: 'записал, но чтением не подтвердилось' }) } });
+  k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание', istochnik: 's#1-2' });
+  await new Promise((r) => setTimeout(r, 60));
+  t('[C] «позвал, но не подтвердилось» отличается от «канала нет»', () => {
+    const z = zhurnalZapisi(k).filter((x) => String(x.priroda ?? '').startsWith('dolgovremennyj'));
+    if (!z.length) throw new Error('исход не отмечен');
+    if (z[0].ishod !== 'ne-najdeno') throw new Error('исход ' + z[0].ishod);
+    if (z[0].priroda === 'dolgovremennyj-sloj-nedostupen') {
+      throw new Error('природа совпала с [B] — два разных отказа неразличимы в журнале');
+    }
+  });
+}
+
+// [D] служба не смонтирована вовсе → своя природа, не молчание
+{
+  const k = await podnyat({ dolgo: null });
+  k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание', istochnik: 's#1-2' });
+  await new Promise((r) => setTimeout(r, 40));
+  t('[D] несмонтированная служба названа отдельно от недоступной', () => {
+    const z = zhurnalZapisi(k).filter((x) => String(x.priroda ?? '').startsWith('dolgovremennyj'));
+    if (!z.length) throw new Error('отсутствие службы не отмечено — тишина вместо причины');
+    if (z[0].priroda !== 'dolgovremennyj-sloj-ne-smontirovan') throw new Error('природа ' + z[0].priroda);
+  });
+}
+
+// [E] 🔴 ВТОРАЯ ВЕТКА ЗАПИСИ: класс, требующий подтверждения, на узле без отвечающего
+{
+  const zvali = [];
+  const k = await podnyat({
+    nastrojka: { sprashivat: ['urok'] },
+    dolgo: { dostupna: () => true, pochemuNedostupna: () => '',
+      sohranit: async (z) => { zvali.push(z); return { sostoyanie: 'dostavleno', id: 'mem-9' }; } } });
+  k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание', istochnik: 's#1-2' });
+  await new Promise((r) => setTimeout(r, 60));
+  t('[E] знание «без подтверждения» тоже уходит, и пометка едет с ним', () => {
+    if (zvali.length !== 1) throw new Error('позвали ' + zvali.length + ' раз — ветка без подтверждения не покрыта');
+    if (zvali[0].metadannye.bezPodtverzhdeniya !== true) {
+      throw new Error('пометка не доехала: ' + JSON.stringify(zvali[0].metadannye));
+    }
+  });
+}
+
+rmSync(kat, { recursive: true, force: true });
+console.log('ИТОГО: сошлось ' + ok + ', расхождений ' + bed);
+process.exit(bed ? 1 : 0);

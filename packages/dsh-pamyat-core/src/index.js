@@ -49,6 +49,14 @@ export const Config = z.object({
    * политики; отключить спрашивание пустым списком нельзя (см. politika.js).
    */
   sprashivat: z.array(z.string()).default([]),
+  // 🔴 КЛАССЫ, ИДУЩИЕ В ДОЛГОВРЕМЕННУЮ ПАМЯТЬ. Решение владельца 03.09.2026: туда идут
+  // ЗНАНИЯ — решения, уроки, выводы, наблюдения, факты.
+  //
+  // 🔴 `svodka-kompakcii` СЮДА НЕ ВХОДИТ, И ЭТО НЕ УПУЩЕНИЕ. Сводка — сжатый снимок хода
+  // беседы: в ней есть неточности, отменённые замыслы и опровергнутые мысли. Попав в общий
+  // поиск, они выпадали бы как знание, не будучи им, и притягивали бы запросы всеми своими
+  // темами разом. Не добавляйте её «для полноты»: оперативный слой её и так хранит.
+  klassyZnaniy: z.array(z.string()).default(['reshenie', 'urok', 'vyvod', 'nablyudenie', 'fakt']),
   /** Сколько записей отдавать за раз при чтении памяти. */
   chtenieSkolko: z.number().default(20),
   /** Сколько строк журнала отдавать за раз. */
@@ -187,6 +195,69 @@ export function apply(ctx, config = {}) {
      */
     zapisat(zapis) {
       if (!hranilishche) otkaz();
+      // 🔴 ДОЛГОВРЕМЕННЫЙ СЛОЙ — «ВЫСТРЕЛИЛ И ЗАБЫЛ», НО НЕ МОЛЧА.
+      //
+      // Развилка (разбор Э3, 03.09.2026): `zapisat` синхронный, `sohranit` асинхронный. Выбран
+      // первый выход — не ждать доставки. Довод: долговременный слой ОБЪЯВЛЕН необязательным,
+      // память обязана работать без него, и его исход не должен задерживать ответ ядра.
+      //
+      // 🔴 ГРАНИЦА, БЕЗ КОТОРОЙ ЭТОТ ВЫБОР ЛОЖЬ: возвращённый id означает ТОЛЬКО оперативный
+      // слой. Вызывающий по ответу НЕ узнает, ушло ли знание в долговременную память — это
+      // знает журнал, и только он. Поэтому исход доставки пишется туда ВСЕГДА, включая отказ:
+      // «выстрелил и забыл» без записи исхода превращается в «не знаем, дошло ли».
+      //
+      // Зовётся из ОБЕИХ веток записи. Первая редакция правки стояла только в обычной, а
+      // запись класса, требующего подтверждения, на узле без отвечающего идёт другой веткой —
+      // и знание уехало бы в оперативный слой, не уехав в долговременный. Лечить класс, а не
+      // место: две ветки возврата — два места одной болезни.
+      const vDolgovremennuyu = (id, zapisSoderzhim, bezPodtverzhdeniya) => {
+        if (!config.klassyZnaniy?.includes(zapis.klass)) return id;
+        const dolgo = ctx.get?.('pamyatDolgovremennaya');
+        if (!dolgo) {
+          zhurnal?.otmetit({
+            agent, klass: zapis.klass, ishod: 'ne-udalos-proverit',
+            priroda: 'dolgovremennyj-sloj-ne-smontirovan',
+            pochemu: 'служба pamyatDolgovremennaya не предоставлена — знание осталось только в оперативном слое',
+            istochnik: zapis.istochnik ?? null,
+          });
+          return id;
+        }
+        if (!dolgo.dostupna()) {
+          zhurnal?.otmetit({
+            agent, klass: zapis.klass, ishod: 'ne-udalos-proverit',
+            priroda: 'dolgovremennyj-sloj-nedostupen', pochemu: dolgo.pochemuNedostupna(),
+            istochnik: zapis.istochnik ?? null,
+          });
+          return id;
+        }
+        void dolgo.sohranit({
+          soderzhim: zapisSoderzhim,
+          tip: zapis.klass,
+          // Корень агента. Под-корни по категориям — отдельная работа: граф сущностей на
+          // узле пуст, их придётся ЗАВОДИТЬ, а не использовать. Слово владельца на этот
+          // случай прямое: не определил категорию — клади в сам корень агента.
+          kto: config.koren ?? agent,
+          metadannye: {
+            source_uri: zapis.istochnik ?? null,
+            klass: zapis.klass,
+            // Пометка едет вместе со знанием: в долговременной памяти оно переживёт журнал,
+            // и «принято без подтверждения» должно читаться там же, где само знание.
+            bezPodtverzhdeniya: Boolean(bezPodtverzhdeniya),
+          },
+        }).then((r) => {
+          zhurnal?.otmetit({
+            agent, klass: zapis.klass, ishod: r.sostoyanie, priroda: 'dolgovremennyj-sloj',
+            pochemu: r.pochemu ?? ('id ' + r.id), istochnik: zapis.istochnik ?? null,
+          });
+        }).catch((e) => {
+          zhurnal?.otmetit({
+            agent, klass: zapis.klass, ishod: 'ne-udalos-proverit', priroda: 'dolgovremennyj-sloj',
+            pochemu: e?.message ?? String(e), istochnik: zapis.istochnik ?? null,
+          });
+        });
+        return id;
+      };
+
       const reshenie = reshitPoKlassu(zapis.klass, { sprashivat: config.sprashivat });
       // На узле без отвечающего класс, требующий подтверждения, всё равно
       // записывается — но НЕ молча: отметка идёт в саму запись, а не в журнал
@@ -200,7 +271,7 @@ export function apply(ctx, config = {}) {
           pochemu: 'на узле нет отвечающего; запись помечена как принятая без подтверждения',
           istochnik: zapis.istochnik ?? null,
         });
-        return id;
+        return vDolgovremennuyu(id, zapis.soderzhim, true);
       }
       if (reshenie.reshenie === 'ask') {
         // 🔴 Отсутствие подтверждения — СВОЯ природа, а не 'unavailable'.
@@ -230,7 +301,7 @@ export function apply(ctx, config = {}) {
         agent, klass: zapis.klass, ishod: 'zapisano',
         pochemu: 'записано в оперативный слой', istochnik: zapis.istochnik ?? null,
       });
-      return id;
+      return vDolgovremennuyu(id, zapis.soderzhim, false);
     },
     /** Отметить отказ в журнале — чтобы «не записали» имело причину. */
     otmetitOtkaz({ klass, priroda, pochemu, istochnik = null }) {
