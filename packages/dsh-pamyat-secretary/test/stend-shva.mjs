@@ -56,7 +56,7 @@ function slushat() {
 }
 
 /** Поднять плагин на настоящем контексте, подсунув службу памяти. */
-function podnyat({ pamyatEst = true } = {}) {
+function podnyat({ pamyatEst = true, nastrojka = {} } = {}) {
   const koren = new Context();
   const zapisi = [], kriki = [];
   if (pamyatEst) {
@@ -66,7 +66,7 @@ function podnyat({ pamyatEst = true } = {}) {
   koren.provide('logger');
   koren.logger = { error: (m) => kriki.push(m) };
   return new Promise((gotovo) => {
-    koren.plugin({ name, inject, apply }, {});
+    koren.plugin({ name, inject, apply }, nastrojka);
     setTimeout(() => gotovo({ koren, zapisi, kriki }), 30);
   });
 }
@@ -135,6 +135,34 @@ await proba('ПОРЧА: выключён настройкой → говори�
   } finally { sluh.vernut(); }
   if (sluh.kriki.length === 0) throw new Error('выключился молча');
   if (!/ВЫКЛЮЧЕН/.test(sluh.kriki.join(' '))) throw new Error('причина не названа');
+});
+
+// ═══ ДИСТИЛЛЯЦИЯ: ветка Э4 ═══
+// 🔴 Проверяется РАЗВЕДЕНИЕ, а не работа модели: при выключенной настройке к чужому
+// платному API не ходят вовсе, при включенной без ключа — отказывают ВСЛУХ, а не молчат.
+// Саму дистилляцию проверяет stend-distillyacii на подставном сервере.
+await proba('дистилляция ВЫКЛЮЧЕНА по умолчанию: сводка записана, к API не ходили', async () => {
+  const { koren, zapisi, kriki } = await podnyat();
+  koren.emit('session/event', { id: 'sess-1' }, SOBYTIE);
+  await new Promise((r) => setTimeout(r, 60));
+  if (zapisi.length !== 1) throw new Error('сводка не записана');
+  if (kriki.some((k) => /дистилляц/i.test(String(k)))) throw new Error('дистилляция пошла при выключенной настройке');
+});
+
+await proba('ПОРЧА: включена, но ключа нет → отказ ВСЛУХ и сводка всё равно записана', async () => {
+  const prezhnij = console.error; const skazano = [];
+  console.error = (...a) => skazano.push(a.join(' '));
+  let zapisi;
+  try {
+    const p = await podnyat({ nastrojka: { distillyaciya: true, putZhurnala: '/net/takogo/zhurnala' } });
+    zapisi = p.zapisi;
+    p.koren.emit('session/event', { id: 'sess-1' }, SOBYTIE);
+    await new Promise((r) => setTimeout(r, 120));
+  } finally { console.error = prezhnij; }
+  if (zapisi.length !== 1) throw new Error('штатная сводка потеряна из-за дистилляции');
+  if (!skazano.some((k) => /дистилляция не начата|нет shadowedSeqs/i.test(k))) {
+    throw new Error('отказ дистилляции НЕ назван вслух: ' + JSON.stringify(skazano).slice(0, 160));
+  }
 });
 
 await proba('inject объявлен — иначе боевой контекст бросит на первом обращении', () => {

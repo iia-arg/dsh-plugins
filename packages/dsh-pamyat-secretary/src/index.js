@@ -21,12 +21,18 @@
  * поэтому проба, поставленная на корневом Context, зелена по неверной причине.
  *
  * ЧЕГО ЗДЕСЬ НЕТ. Своей компакции не делаем и штатную не трогаем: событие
- * наблюдаем, в ход не вмешиваемся. Дистилляция отдельной моделью — следующий
- * шаг слоя; пока кладём готовую сводку платформы, потому что она уже написана
- * и второй раз платить за неё незачем.
+ * наблюдаем, в ход не вмешиваемся.
+ *
+ * 🔴 ДВЕ РАЗНЫЕ РАБОТЫ, А НЕ ЗАМЕНА ОДНОЙ ДРУГОЙ (03.09.2026, Э4).
+ * Штатная сводка платформы кладётся как была — она ОПЕРАТИВНАЯ и остаётся
+ * локально. Дистилляция снимает с того же среза ЗНАНИЯ (решения, уроки,
+ * ограничения) отдельной дешёвой моделью и пишет их своими классами. Прежняя
+ * редакция этой шапки говорила «дистилляция — следующий шаг слоя»; шаг сделан,
+ * строка сохранена бы как призрак — текст, переживший код, который он объяснял.
  */
 import z from '@deepseek-ai/schemastery';
 import { razobratSvodku } from './razbor-sobytiya.js';
+import { distillirovat } from './distill-shov.js';
 
 export const name = 'dsh-pamyat-secretary';
 
@@ -42,6 +48,26 @@ export const Config = z.object({
    * от сломанного.
    */
   vklyuchen: z.boolean().default(true),
+
+  // ═══ ДИСТИЛЛЯЦИЯ ЗНАНИЙ ОТДЕЛЬНОЙ МОДЕЛЬЮ (Э4, решение владельца 03.09.2026) ═══
+  // 🔴 ВЫКЛЮЧЕНА ПО УМОЛЧАНИЮ. Механизм ходит к ПЛАТНОМУ чужому API: включённый
+  // молча у получателя, он тратил бы его деньги без спроса. Включение — осознанный
+  // шаг, и без ключа он всё равно откажет вслух.
+  distillyaciya: z.boolean().default(false),
+  /** Файл журнала сессии. Пустой — дистилляция откажет с названной причиной. */
+  putZhurnala: z.string().default(''),
+  /** Ключ: файл 0600 либо запись pass. Никогда не аргумент команды. */
+  klyuchFajl: z.string().default(''),
+  klyuchPass: z.string().default(''),
+  model: z.string().default('deepseek-v4-flash'),
+  // 🔴 Числа с запасом: модель ДУМАЮЩАЯ, рассуждение съедает бюджет. Замер на живом
+  // диапазоне: 8000 не хватило (stop_reason=max_tokens, блока text нет), 32000 хватило.
+  maxTokenovTem: z.number().default(32000),
+  maxTokenovStati: z.number().default(4000),
+  /** Пределы расхода, объявленные числами: механизм платный. */
+  predelTem: z.number().default(12),
+  predelZnakov: z.number().default(200000),
+  minTokenov: z.number().default(2000),
 });
 
 /**
@@ -94,6 +120,27 @@ export function apply(ctx, config = {}) {
         soderzhim: z.soderzhim,
         istochnik: z.istochnik,
       });
+
+      // 🔴 ДИСТИЛЛЯЦИЯ ИДЁТ СЛЕДОМ И НЕ ЖДЁТСЯ. Мы в чужом потоке событий; один
+      // заход занимает минуты (замер: выбор тем 72 с, каждая статья 18 с). Ждать
+      // здесь значило бы держать компакт и всех остальных подписчиков.
+      // Штатная сводка уже записана выше — она оперативная и остаётся локально;
+      // дистилляция снимает ЗНАНИЯ, и это разные вещи, а не замена одного другим.
+      if (config.distillyaciya) {
+        distillirovat({
+          putZhurnala: config.putZhurnala,
+          dannye: event.data,
+          seansId: session?.id ?? 'session',
+          nastrojka: {
+            model: config.model, maxTokenovTem: config.maxTokenovTem,
+            maxTokenovStati: config.maxTokenovStati, predelTem: config.predelTem,
+            predelZnakov: config.predelZnakov, minTokenov: config.minTokenov,
+            klyuch: { fajlKlyucha: config.klyuchFajl || null, zapisPass: config.klyuchPass || null },
+          },
+          krik,
+          zapisat: (zn) => pamyat.zapisat(zn),
+        }).catch((e) => krik('дистилляция оборвалась: ' + (e?.message ?? e)));
+      }
     } catch (e) {
       krik('секретарь не смог обработать событие компакции: ' + (e?.message ?? e) +
                 '. Сводка НЕ записана.');
