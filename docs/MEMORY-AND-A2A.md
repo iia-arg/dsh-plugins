@@ -3,7 +3,7 @@
 > **The original is Russian** — [`MEMORY-AND-A2A.ru.md`](MEMORY-AND-A2A.ru.md); this file is a
 > translation from Russian. Edits are made **in pairs**: change one file, change the other in the
 > same commit.
-> **Document version: 2026-09-04 (rev. 2 — §6.1 sender side).** Written from the repository code as of that date; package
+> **Document version: 2026-09-04 (rev. 2 — §6.1 sender side, §5.1.6 alpha.25).** Written from the repository code as of that date; package
 > versions are in table §1.3. Anything that depends on the state of the npm registry (`latest` /
 > `alpha` tags) is **not** treated as stable in this document — see §7 "Installing" and §8
 > "Release order".
@@ -352,10 +352,14 @@ so that a reader understands how the versions differ and does not install by tag
 | alpha.21 | `key` in the list | no left boundary: `monkey=`, `hotkey=`, `отключ=` — false refusals |
 | alpha.22, alpha.23 | left boundary; all nine stands in `npm test` | **the exclusion class includes `_`** — every `NAME_API_KEY=`, `NAME_TOKEN=`, `NAME_SECRET=` is lost |
 | alpha.24 | boundary without `_` | no `preshared` in the list (`PresharedKey=` → mark/miss); words glued to a prefix (`cftoken=`, `authtoken=`, `dbpassword=`) → miss |
-| next | `preshared[-_ ]?key`; selective boundary; hex → marks; the reasoning for the modes — into the code | — |
+| alpha.25 | `preshared[-_ ]?key` in the list; the boundary **selectively** (only before `key`/`api-key`/`apikey`/`privkey`/`private-key`/`preshared-key` and the four Russian words; no boundary before `token`/`secret`/`password`/…); quote after the word (JSON); a table of three boundary editions with numbers — in the code comment. **Accepted for the `latest` tag** | the variable name (`BITRIX24_CLIENT_SECRET=`) itself becomes an entropy candidate before the declaration rule → mark instead of lock; hex still locks |
+| alpha.26 (planned) | skip the name after the declaration check; hex → marks; the reasoning for the modes — into the code next to `strogo` | — |
 
-On the document date the core's `latest` tag points at alpha.24, and the `dsh-pamyat` set
-alpha.28 pulls alpha.24. **A tag is not fitness** — see §7.
+On the document date the core's `latest` tag points at alpha.25 — the only version that day whose
+tag was set **after** acceptance rather than before. The `dsh-pamyat` set alpha.28 pulls alpha.24.
+Observed on the same date: the `latest` tag moves **by itself** on publish — the rule "the tag is set
+by acceptance" works only after the publish wrapper is changed (publish under a separate tag).
+**A tag is not fitness** — see §7.
 
 #### 5.1.7. Refusals
 
