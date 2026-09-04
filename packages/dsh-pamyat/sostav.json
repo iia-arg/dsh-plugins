@@ -32,17 +32,17 @@
     },
     {
       "paket": "dsh-pamyat-byudzhet",
-      "versiya": "0.1.0-alpha.6",
-      "predmet": "aa201b23a59d2a5d",
-      "faylov": 11,
-      "prob": 31
+      "versiya": "0.1.0-alpha.7",
+      "predmet": "f00b3dc51e982c06",
+      "faylov": 12,
+      "prob": 39
     },
     {
       "paket": "dsh-pamyat-nudzh",
-      "versiya": "0.1.0-alpha.9",
-      "predmet": "b5e1aa4270e6cb97",
+      "versiya": "0.1.0-alpha.10",
+      "predmet": "cb2e31f0f54d30e8",
       "faylov": 11,
-      "prob": 49
+      "prob": 50
     },
     {
       "paket": "dsh-pamyat-restore",

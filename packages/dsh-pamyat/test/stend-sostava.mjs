@@ -13,10 +13,11 @@
  * безупречно. Прибор, разойдясь, врёт обо ВСЁМ, что им померено, — пакет врёт
  * только о себе. Поэтому сумма инструмента проверяется наравне с числами.
  */
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const koren = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -145,19 +146,41 @@ proba('🔴 ВЕРСИИ ТОЧНЫЕ, без диапазонов — инач�
   }
 });
 
-proba('🔴 СУММЫ ПРЕДМЕТОВ совпадают с тем, что даёт инструмент СЕЙЧАС', () => {
-  trebuetDereva();
+// 🔴 СУММЫ СВЕРЯЮТСЯ С РЕЕСТРОМ, А НЕ С РАБОЧИМ ДЕРЕВОМ (правка 04.09.2026).
+// Состав описывает то, что ПОЛУЧИТ СТАВЯЩИЙ, то есть опубликованные редакции. Дерево —
+// другой предмет: по правилу владельца правки копятся в репозитории между выпусками,
+// поэтому дерево ЗАКОННО опережает реестр, и проба по дереву в это время красная всегда.
+// Так и вышло: 04.09 ядро несло в дереве непубликованную правку, проба краснела на
+// исправном составе, и красное «известной причины» через день перестают читать.
+// Это тот же довод, что и для тарбола против каталога: проверять надо ТО, ЧТО ПОЕДЕТ.
+// ⚠️ Цена: пробе нужна сеть. Нет сети или нет версии в реестре — СЛЕПОТА с названной
+// причиной, а не «сошлось» и не «расхождение»: «не смогли спросить» ≠ «не совпало».
+proba('🔴 СУММЫ ПРЕДМЕТОВ совпадают с тем, что лежит В РЕЕСТРЕ под заявленной версией', () => {
   const rashozhdeniya = [];
-  for (const p of sostav.sostav) {
-    const put = najtiPaket(p.paket);
-    if (!put) { rashozhdeniya.push(p.paket + ': каталога нет ни в packages/, ни рядом'); continue; }
-    let vyvod;
-    try { vyvod = execFileSync(instrument, [put], { encoding: 'utf8' }); }
-    catch (e) { rashozhdeniya.push(p.paket + ': инструмент не смог посчитать (' + (e.message ?? '').split('\n')[0] + ')'); continue; }
-    const chislo = vyvod.trim().split(/\s+/)[1];
-    if (chislo !== p.predmet) rashozhdeniya.push(p.paket + ': факт ' + chislo + ', в составе ' + p.predmet);
-  }
+  const slepye = [];
+  const vremenno = mkdtempSync(join(tmpdir(), 'sostav-'));
+  try {
+    for (const p of sostav.sostav) {
+      const kat = join(vremenno, p.paket);
+      mkdirSync(kat, { recursive: true });
+      try {
+        execFileSync('npm', ['pack', p.paket + '@' + p.versiya, '--pack-destination', kat],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
+        const tgz = readdirSync(kat).find((f) => f.endsWith('.tgz'));
+        if (!tgz) { slepye.push(p.paket + ': npm pack не отдал тарбол'); continue; }
+        execFileSync('tar', ['xzf', join(kat, tgz), '-C', kat], { encoding: 'utf8' });
+        const vyvod = execFileSync(instrument, [join(kat, 'package')], { encoding: 'utf8' });
+        const chislo = vyvod.trim().split(/\s+/)[1];
+        if (chislo !== p.predmet)
+          rashozhdeniya.push(p.paket + '@' + p.versiya + ': в реестре ' + chislo + ', в составе ' + p.predmet);
+      } catch (e) {
+        slepye.push(p.paket + '@' + p.versiya + ': ' + String(e.message ?? e).split('\n')[0].slice(0, 90));
+      }
+    }
+  } finally { rmSync(vremenno, { recursive: true, force: true }); }
+  // Расхождение важнее слепоты: сперва говорим о найденном, потом о непроверенном.
   if (rashozhdeniya.length) throw new Error(rashozhdeniya.join('; '));
+  if (slepye.length) throw new Error('СЛЕПОТА (не расхождение), спросить не удалось: ' + slepye.join('; '));
 }, true);
 
 proba('версия каждого пакета на диске совпадает с заявленной', () => {

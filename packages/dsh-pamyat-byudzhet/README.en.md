@@ -32,6 +32,53 @@ written before the field existed, judged by a property they could never have had
 So under the `vera` order an unmeasured record ranks **after** high measured ones
 but **ahead of** low measured ones: unknown is not worse than proven-bad.
 
+## 🔴 Cause and property are different things
+
+Selection rejects on ONE ground: the price did not fit the limit. Confidence rejected
+nothing — it is a **property** of the rejected records, not a cause of rejection. Until
+2026-09-04 both were printed in one line, and whoever read "3 with confidence below 0.5"
+went to tune the confidence threshold, which under the "freshness" order took no part at
+all.
+
+Now `prichiny` is about the limit only; `svoystva` is a separate field, "of these:".
+
+And there are **two causes, because they are cured differently**:
+
+| cause | meaning | cure |
+|---|---|---|
+| does not fit at all | ONE record costs more than the WHOLE limit | splitting or distilling at write time |
+| did not fit in the remainder | it would fit, but the budget is taken | order or limit |
+
+The first is cured neither by order nor by threshold: such a record will never be raised.
+Measurement 2026-09-04 on the live base: 7 of 23 rejected are compaction summaries priced
+4008…4841 against a limit of 2000 — twice the whole budget each.
+
+## 🔴 Warmth: an instrument, not a rule
+
+Warmth measures demand: is the record used or not. It is **computed and printed on every
+selection, but influences nothing**. That is a decision, not an omission, and two
+measurements stand under it:
+
+1. **Ordering by warmth is identical to ordering by freshness.** On 31 live records the
+   position difference is zero — and that is by construction, not by sample: the record
+   schema has no touch counter at all, so warmth here is a pure function of age. Ranking
+   by a monotone function of age is ranking by age.
+2. **The threshold cuts nothing.** Warmth of every record is 0.918…1.000 against a "cold"
+   threshold of 0.25. The whole memory history is 1.7 days against a 14-day half-life: a
+   measure cannot resolve what is shorter than its own step.
+
+The 14-day half-life, the 0.25 threshold and the per-touch increment are **hypotheses**,
+unverified on a live corpus. The increment carries zero weight on purpose: picking it
+blindly would pass reasoning off as measurement.
+
+**When this stops being true** (named in advance so the boundary does not outlive its
+cause): a touch counter appears — warmth parts ways with freshness; history reaches three
+half-lives (42 days) — the distribution becomes observable and the threshold can be set
+from it.
+
+Absence of warmth is a **third state**, neither cold nor an error. Same argument as for
+confidence: emptiness is not zero.
+
 ## 🔴 Known about units
 
 The package counts with **its own** measure and calls it its own: `оценка наша`.
@@ -70,14 +117,17 @@ process under a real `Context` and waits for the line on its `stderr`.
 
     npm test
 
-Three stands, 21 probes; the first probe of each is run against a **known-good**
+Four stands, 39 probes. The numbers are not rewritten by hand: a probe checks them
+against the stands. Until 2026-09-04 that probe was missing here and the line "Three
+stands, 21 probes" stood false against four stands and 36 probes.
+
+The first probe of each stand is run against a **known-good**
 subject — if it is red, the stand is broken and the rest mean nothing. The very
 first draft of the sound stand queried the service synchronously and failed a
 healthy package (cordis applies plugins asynchronously).
 
 The sound stand is verified **by corruption**: restoring the `ctx.logger` branch
-turns three of its probes red **while the measure and selection stands stay green
-at 9 of 9** — they inspect return values and cannot see muteness at all.
+turns three of its probes red **while the measure and selection stands stay fully green** — they inspect return values and cannot see muteness at all.
 
 ## What it was tested against
 

@@ -7,10 +7,12 @@
  * проверкой не остаётся ни одной нашей подделки.
  */
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const zdes = dirname(fileURLToPath(import.meta.url));
+const NAZVANIE = 'dsh-pamyat-nudzh';
 let vsego = 0, proshlo = 0;
 const proba = (imya, f) => { vsego++; try { f(); proshlo++; console.log('  ✅ ' + imya); }
   catch (e) { console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 200)); } };
@@ -83,6 +85,25 @@ proba('в громком подталкивании названа ПОЛНОТ�
 proba('ПРЕДЕЛ НЕ ЗАДАН: молчаливой бесполезности не бывает', () => {
   const r = podnyat(OSNOVA(`k.plugin({ name, Config, apply }, { predel: 0 });`));
   if (!/НЕ ЗАДАН/.test(r.stderr)) throw new Error('поднялся молча при нулевом пределе');
+});
+
+// 🔴 ВЕРСИЯ В СТРОКЕ ПОДЪЁМА СВЕРЯЕТСЯ С МАНИФЕСТОМ, А НЕ С ШАБЛОНОМ.
+// Правило фермы 03.09.2026: по журналу должно быть видно, какую редакцию держит процесс.
+// Проба сравнивает напечатанное с package.json — иначе версия-константа прошла бы её,
+// а при следующем выпуске строка утверждала бы номер, которому предмет не соответствует.
+// ⚠️ Где НЕ работает: проба не проверяет, что строка подъёма безусловна — это соседняя
+// проба; и не заметит, если манифест сам врёт про свою версию.
+proba('версия в строке подъёма взята из СВОЕГО манифеста', () => {
+  const { version } = JSON.parse(readFileSync(join(zdes, '..', 'package.json'), 'utf8'));
+  // Плагин надо ПОДНЯТЬ: пустое тело даёт процесс, который ничего не монтирует,
+  // и «своих строк нет» означало бы «мы его не звали», а не «он молчит».
+  const r = podnyat(OSNOVA(`
+    k.plugin({ name, Config, apply }, { predel: 1000 });
+    kogdaGotovo(() => {});
+  `));
+  if (!r.stderr.includes('[' + NAZVANIE + ' ' + version + ']'))
+    throw new Error(`в stderr нет «[${NAZVANIE} ${version}]»; напечатано: ` +
+      (r.stderr.split('\n').find((l) => l.includes(NAZVANIE)) ?? '(ни одной своей строки)'));
 });
 
 console.log('  итог: ' + proshlo + ' из ' + vsego);

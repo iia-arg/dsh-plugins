@@ -85,7 +85,13 @@ proba('🔴 число проб в README СЧИТАЕТСЯ по стендам
     const t = readFileSync(join(koren, 'test', f), 'utf8');
     schet += (t.match(/^\s*(await\s+)?proba\(/gm) ?? []).length;
   }
-  const obeshchano = Number(ru.match(/(\d+)\s+проб/)?.[1]);
+  // 🔴 ЧИСЛО БЕРЁТСЯ СО СТРОКИ, ГДЕ НАЗВАНЫ СТЕНДЫ, А НЕ ПЕРВОЕ ПОХОЖЕЕ В ТЕКСТЕ.
+  // Ниже по README стоят ОБЪЯСНЕНИЯ с прежними числами («21 проба простояла ложной»),
+  // и признак, берущий первое совпадение, однажды прочтёт объяснение вместо утверждения.
+  // Это наш класс за 04.09: механизм, судящий по тексту, не отличает дефект от рассказа
+  // о дефекте. Привязка к слову «стенд» на той же строке разводит их.
+  const stroka = ru.split('\n').find((l) => /стенд/i.test(l) && /\d+\s+проб/.test(l));
+  const obeshchano = Number(stroka?.match(/(\d+)\s+проб/)?.[1]);
   if (!obeshchano) throw new Error('README не называет число проб');
   if (obeshchano !== schet) throw new Error('README обещает ' + obeshchano + ', а стендов на ' + schet);
 });

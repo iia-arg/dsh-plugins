@@ -2,7 +2,7 @@
  * Стенд README: описание обязано совпадать с кодом. Разошлись — виноват тот,
  * кто правил код и не тронул README; в бою читают README.
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 let SIMVOLOV_NA_EDINICU, PORYADKI
@@ -111,6 +111,46 @@ proba('🔴 ОБА README НАЗЫВАЮТ ОДИН И ТОТ ЖЕ СПОСОБ 
     throw new Error('README разошлись: только в русском [' + tolkoRu.join(', ') +
                     '], только в английском [' + tolkoEn.join(', ') + ']');
   }
+});
+
+// 🔴 ЧИСЛО СТЕНДОВ В README ПРОТИВ ФАЙЛОВ НА ДИСКЕ.
+// До 04.09.2026 README утверждал «Три стенда, 21 проба» — стендов было четыре, проб 36.
+// Строка простояла ложной, потому что её не сверял никто: стенд README сверял два
+// ОПИСАНИЯ между собой и был слеп к их общему отставанию от предмета.
+// Число ПРОБ намеренно убрано из README (оно менялось трижды за сутки), а число СТЕНДОВ
+// оставлено — оно снимается счётом файлов и потому проверяемо.
+// ⚠️ Где проба НЕ работает: она не считает пробы и не заметит, если стенд опустеет.
+proba('🔴 число проб в README СЧИТАЕТСЯ по стендам, а не сверяется с самим собой', () => {
+  // Механизм перенесён 04.09.2026 из соседнего пакета семейства, где стоял с 03.09.
+  // Здесь его не было — и «Три стенда, 21 проба» простояло ложным при четырёх стендах
+  // и 36 пробах. Сверять README с самим собой бесполезно: он согласен с собой всегда.
+  const stendy = readdirSync(join(koren, 'test')).filter((f) => f.endsWith('.mjs'));
+  let schet = 0;
+  for (const f of stendy) {
+    const t = readFileSync(join(koren, 'test', f), 'utf8');
+    schet += (t.match(/^\s*(await\s+)?proba\(/gm) ?? []).length;
+  }
+  // 🔴 ЧИСЛО БЕРЁТСЯ СО СТРОКИ, ГДЕ НАЗВАНЫ СТЕНДЫ, А НЕ ПЕРВОЕ ПОХОЖЕЕ В ТЕКСТЕ.
+  // Ниже по README стоят ОБЪЯСНЕНИЯ с прежними числами («21 проба простояла ложной»),
+  // и признак, берущий первое совпадение, однажды прочтёт объяснение вместо утверждения.
+  // Это наш класс за 04.09: механизм, судящий по тексту, не отличает дефект от рассказа
+  // о дефекте. Привязка к слову «стенд» на той же строке разводит их.
+  const stroka = ru.split('\n').find((l) => /стенд/i.test(l) && /\d+\s+проб/.test(l));
+  const obeshchano = Number(stroka?.match(/(\d+)\s+проб/)?.[1]);
+  if (!obeshchano) throw new Error('README не называет число проб');
+  if (obeshchano !== schet) throw new Error('README обещает ' + obeshchano + ', а в стендах ' + schet);
+});
+
+proba('🔴 число стендов в README сверено с диском, а не запомнено', () => {
+  const fajlov = readdirSync(join(koren, 'test')).filter((f) => f.endsWith('.mjs')).length;
+  const slova = { 1: 'один', 2: 'два', 3: 'три', 4: 'четыре', 5: 'пять', 6: 'шесть' };
+  const slovaEn = { 1: 'one', 2: 'two', 3: 'three', 4: 'four', 5: 'five', 6: 'six' };
+  const ozhid = new RegExp(slova[fajlov], 'i');
+  const ozhidEn = new RegExp(slovaEn[fajlov], 'i');
+  if (!ozhid.test(ru))
+    throw new Error(`README.md не называет ${slova[fajlov]} стендов, а на диске их ${fajlov}`);
+  if (!ozhidEn.test(en))
+    throw new Error(`README.en.md не называет ${slovaEn[fajlov]} stands, а на диске их ${fajlov}`);
 });
 
 console.log('  итог: ' + proshlo + ' из ' + vsego);

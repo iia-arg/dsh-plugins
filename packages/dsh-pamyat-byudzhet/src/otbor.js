@@ -13,6 +13,7 @@
  * и называются по отдельности. Пустота — не ноль.
  */
 import { ocenit } from './mera.js';
+import { raspredelenie, teplo } from './teplo.js';
 
 /** Порядки важности, какие пакет умеет. Больше не выдумывать — их два. */
 export const PORYADKI = ['svezhest', 'vera'];
@@ -57,16 +58,54 @@ export function otobrat({ zapisi, predel, poryadok = 'svezhest', porogVery = 0.5
   return { podnyato, otbrosheno, svodka: svodkaOtbrosa({ zapisi, podnyato, otbrosheno, cena, predel, poryadok, porogVery }) };
 }
 
-/** Сводка: числа И названные причины. Одно без другого бесполезно. */
+/**
+ * Сводка: числа И названные причины.
+ *
+ * 🔴 ПРИЧИНА И СВОЙСТВО — РАЗНЫЕ ВЕЩИ, И ДО 04.09.2026 ОНИ БЫЛИ СЛИТЫ.
+ * Отбор отвергает по ОДНОМУ основанию: `cena + c > predel`. Вера на это не влияет
+ * вовсе при порядке «svezhest», и всё же прежняя сводка перечисляла отброшенных
+ * ПО ВЕРЕ так, будто вера их и отвергла. Свойство отброшенных выдавалось за причину
+ * отброса — а разбирающий, прочтя «3 с верой ниже 0.5», пойдёт крутить порог веры,
+ * который тут ни при чём.
+ * Теперь причины — только про предел, свойства — отдельным полем, «из них:».
+ *
+ * 🔴 И ПРИЧИН ДВЕ, А НЕ ОДНА. Их нельзя сливать, потому что лечатся они разным:
+ *   «не влезает целиком»  — цена ОДНОЙ записи больше ВСЕГО предела. Такая запись не
+ *                           поднимется НИКОГДА и НИ ПРИ КАКОМ порядке. Лечение —
+ *                           дробление или выжимка при записи, а не порядок и не порог.
+ *                           Замер 04.09.2026: 7 из 23 отброшенных на живой базе — это
+ *                           сводки компакции ценой 4008…4841 при пределе 2000, то есть
+ *                           вдвое дороже всего бюджета.
+ *   «не поместилась в остаток» — влезла бы, но бюджет уже занят. Вот ЭТО лечится
+ *                           порядком и пределом.
+ * Слив их в одну строку означал бы, что за чужой дефект («запись вдвое больше предела»)
+ * будут винить порядок и без конца его перебирать.
+ */
 function svodkaOtbrosa({ zapisi, podnyato, otbrosheno, cena, predel, poryadok, porogVery }) {
   const prichiny = [];
+  const svoystva = [];
   if (otbrosheno.length) {
+    const neVlezaet = otbrosheno.filter((z) => ocenit(z) > predel);
+    const neVMestilos = otbrosheno.length - neVlezaet.length;
+    if (neVlezaet.length) {
+      prichiny.push(neVlezaet.length + ' НЕ ВЛЕЗАЮТ ЦЕЛИКОМ: цена записи больше всего предела ('
+        + predel + ') — порядок и пороги тут ни при чём');
+    }
+    if (neVMestilos) {
+      prichiny.push(neVMestilos + ' не поместились в остаток предела по порядку «' + poryadok + '»');
+    }
+    // ── СВОЙСТВА отброшенных. НЕ причины: они ничего не отвергали. ──
     const niz = otbrosheno.filter((z) => z.vera !== null && z.vera !== undefined && Number(z.vera) < porogVery).length;
     const neizmereno = otbrosheno.filter((z) => z.vera === null || z.vera === undefined).length;
-    const ostalnye = otbrosheno.length - niz - neizmereno;
-    if (ostalnye) prichiny.push(ostalnye + ' не поместились по порядку «' + poryadok + '»');
-    if (niz) prichiny.push(niz + ' с верой ниже ' + porogVery);
-    if (neizmereno) prichiny.push(neizmereno + ' с НЕИЗМЕРЕННОЙ верой (это не ноль)');
+    if (niz) svoystva.push('с верой ниже ' + porogVery + ': ' + niz);
+    if (neizmereno) svoystva.push('с НЕИЗМЕРЕННОЙ верой (это не ноль): ' + neizmereno);
+    const holodnyh = otbrosheno.filter((z) => { const t = teplo(z); return t !== null && t < 0.25; }).length;
+    const bezTepla = otbrosheno.filter((z) => teplo(z) === null).length;
+    // 🔴 ТРИ состояния, а не два: «холодная», «тепло не измерялось», и всё остальное.
+    // Приравняв отсутствие тепла к холоду, мы утопили бы все записи, сделанные до
+    // появления поля, — тот же довод, что для веры. Пустота не ноль.
+    if (holodnyh) svoystva.push('холодных (тепло ниже 0.25): ' + holodnyh);
+    if (bezTepla) svoystva.push('с НЕИЗМЕРЕННЫМ теплом (это не холод): ' + bezTepla);
   }
   return {
     prosili: zapisi.length,
@@ -77,5 +116,10 @@ function svodkaOtbrosa({ zapisi, podnyato, otbrosheno, cena, predel, poryadok, p
     poryadok,
     edinicy: 'оценка наша',      // 🔴 не «токены»: см. src/mera.js
     prichiny,
+    svoystva,
+    // Прибор ставится раньше порога: тепло печатается при КАЖДОМ отборе, чтобы наклон
+    // через месяц появился из боевых чисел, а не из выдумки. На отбор не влияет.
+    teplo: raspredelenie(zapisi),
   };
 }
+
