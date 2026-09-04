@@ -861,10 +861,11 @@ date the core was released nine times in one day, and the tag twice pointed at a
 known filter defect (§5.1.6). Therefore:
 
 1. Install **by explicit number**, not by tag. The set — one line with a number:
-   `npm i dsh-pamyat@0.1.0-alpha.26` (core alpha.21: no boundary defect, with false refusals on
-   `key` homonyms) or `dsh-pamyat@0.1.0-alpha.28` (core alpha.24: no false refusals, with misses on
-   `PresharedKey=` and glued names). Which of these is fit **for you** — by §5.1.6 and by your own
-   live name forms; the next core version closes both lists.
+   `npm i dsh-pamyat@0.1.0-alpha.29` (core alpha.25 — accepted; what remains is a mark instead of a
+   lock on names like `NAME_SECRET=`, see §5.1.6). Older sets, if needed for comparison: alpha.26
+   (core alpha.21: false refusals on `key` homonyms), alpha.28 (core alpha.24: misses on
+   `PresharedKey=` and glued names). What is fit **for you** — by §5.1.6 and by your own live name
+   forms.
 2. Check the tag state yourselves, by command, not by this document:
    `npm view dsh-pamyat-core dist-tags --json` and `npm view dsh-pamyat dist-tags --json`.
    **A tag is not fitness.** A tag is moved by acceptance, not by release (§8), but between a
