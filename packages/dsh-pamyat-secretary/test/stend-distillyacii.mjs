@@ -97,10 +97,30 @@ await proba('D2. пусто с ИНЫМ stop_reason → pusto, причина н
   if (!/stop_sequence/.test(r.pochemu)) throw new Error('stop_reason не назван дословно');
 });
 
-await proba('HTTP 401 → ne-sprosili с кодом, а не «нечего извлекать»', async () => {
+// 🔴 ТРИ ОТКАЗА — ТРИ ПРИРОДЫ. Прежде 401, 402 и сетевой сбой возвращались одним
+// «ne-sprosili»: разбирающий видел «не смогла спросить» и не знал, ждать ли, менять ключ
+// или пополнять счёт. Проба ждала старую форму и честно покраснела на разведении — она
+// стерегла верное требование («код назван, а не «нечего извлекать»») в устаревшем виде.
+await proba('HTTP 401 → своя природа klyuch-ne-prinyat, повтор не поможет', async () => {
   otvechat = () => ({ code: 401, telo: { error: 'bad key' } });
   const r = await sprosit({ klyuch: 'k', tekst: 'x', adres: ADRES });
-  if (r.ishod !== 'ne-sprosili' || !/401/.test(r.pochemu)) throw new Error(r.ishod + '/' + r.pochemu);
+  if (r.ishod !== 'klyuch-ne-prinyat' || !/401/.test(r.pochemu)) throw new Error(r.ishod + '/' + r.pochemu);
+  if (r.okonchatelno !== true) throw new Error('отказ не помечен окончательным — шов будет перебирать темы');
+});
+
+await proba('HTTP 402 → net-deneg, и это НЕ то же, что не принят ключ', async () => {
+  otvechat = () => ({ code: 402, telo: { error: 'Insufficient Balance' } });
+  const r = await sprosit({ klyuch: 'k', tekst: 'x', adres: ADRES });
+  if (r.ishod !== 'net-deneg') throw new Error('исход ' + r.ishod);
+  if (r.okonchatelno !== true) throw new Error('отказ по деньгам не окончателен — заход переберёт все темы');
+  if (!/пополните/.test(r.pochemu)) throw new Error('причина не называет лечение: ' + r.pochemu);
+});
+
+await proba('HTTP 500 → ne-sprosili, НЕ окончательный: сеть чинится сама', async () => {
+  otvechat = () => ({ code: 500, telo: { error: 'oops' } });
+  const r = await sprosit({ klyuch: 'k', tekst: 'x', adres: ADRES });
+  if (r.ishod !== 'ne-sprosili') throw new Error('исход ' + r.ishod);
+  if (r.okonchatelno) throw new Error('временный сбой помечен окончательным — заход оборвётся зря');
 });
 
 // ── C. толерантный разбор ──────────────────────────────────────────────────────
