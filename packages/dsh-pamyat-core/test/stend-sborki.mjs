@@ -4,7 +4,7 @@
  * он повторяет ровно то, чем пакет пользуется (provide, on, logger), и ничего
  * больше — иначе стенд начнёт проверять выдуманное ядро вместо настоящего.
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 let apply, name
@@ -231,6 +231,30 @@ proba('ЕДИНСТВЕННЫЙ ПУТЬ: даже когда логгер ЕС�
   const bezVersii = vyzovy.filter((v) => v.startsWith('console:') && !/\[dsh-pamyat-core \S+\]/.test(v));
   if (bezVersii.length) {
     throw new Error('строк без версии в имени: ' + bezVersii.length + ' — например ' + bezVersii[0].slice(0, 90));
+  }
+});
+
+// ── КАЖДЫЙ СТЕНД НА ДИСКЕ ЗВАН ИЗ npm test ──────────────────────────────────
+// 🔴 ЗАВЕДЕНО 04.09.2026 ПО ЗАМЕРУ, А НЕ ПО ОСТОРОЖНОСТИ. `scripts.test` называл ШЕСТЬ
+// стендов из девяти. Не звались: stend-filtra-vhoda (31 проба, весь входной фильтр),
+// stend-dolgovremennoj (10), stend-ocheredi-dostavki (19) — то есть шестьдесят проб
+// самой свежей работы. У получателя `npm test` давал код 0 и НИЧЕГО про них не говорил.
+// Стенд, лежащий на диске и не званный, неотличим от отсутствующего — и хуже него,
+// потому что числится сделанным. Пишущий новый стенд правит `scripts.test` по памяти,
+// а память не держит: здесь замер вместо памяти.
+// ⚠️ ГРАНИЦА: проба сверяет ИМЕНА, а не то, что стенд внутри что-то проверяет. Пустой
+// файл `test/stend-*.mjs`, вписанный в scripts.test, её пройдёт. Она закрывает «забыли
+// вписать», а не «вписали пустышку».
+proba('🔴 КАЖДЫЙ стенд на диске зван из npm test', () => {
+  const naDiske = readdirSync(new URL('.', import.meta.url))
+    .filter((f) => f.startsWith('stend-') && f.endsWith('.mjs')).sort();
+  if (!naDiske.length) throw new Error('СЛЕПОТА: стендов на диске не найдено вовсе — проба смотрит не туда');
+  const komanda = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8')).scripts?.test ?? '';
+  const nezvanye = naDiske.filter((f) => !komanda.includes(f));
+  if (nezvanye.length) {
+    throw new Error('стендов на диске ' + naDiske.length + ', не званных из npm test: '
+      + nezvanye.length + ' — ' + nezvanye.join(', '));
   }
 });
 
