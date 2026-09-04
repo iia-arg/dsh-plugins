@@ -131,7 +131,9 @@ async function zahodSOtkazom(kod, telo) {
   try {
     r = await distillirovat({
       putZhurnala: zhurnal,
-      dannye: { shadowedSeqs: [10, 11], shadowedTokenCount: 5000 },
+      // Срез СВОЙ у каждого сценария — код отказа и различает: повтор ОДНОГО среза
+      // защита от двойного захода отвергает намеренно, а здесь проверяется другое.
+      dannye: { shadowedSeqs: [10, 11, kod], shadowedTokenCount: 5000 },
       seansId: 'proba',
       nastrojka: { klyuch: { fajlKlyucha: klyuchFajl }, model: 'proba-model', adres: a,
                    maxTokenovTem: 1000, maxTokenovStati: 1000, predelTem: 5, minTokenovSreza: 1 },
@@ -198,7 +200,7 @@ async function zahodSOtkazom(kod, telo) {
   const zapisi = [];
   const r = await distillirovat({
     putZhurnala: zhurnal,
-    dannye: { shadowedSeqs: [10, 11], shadowedTokenCount: 5000 },
+    dannye: { shadowedSeqs: [10, 11, 13], shadowedTokenCount: 5000 },
     seansId: 'proba',
     nastrojka: { klyuch: { fajlKlyucha: klyuchFajl }, model: 'proba-model', adres: a,
                  maxTokenovTem: 1000, maxTokenovStati: 1000, predelTem: 8, minTokenovSreza: 1 },

@@ -123,6 +123,22 @@ delivered the same way. The outcomes are separated by machine:
 Emptiness on the merits is the exact string `НЕТ РЕЛЕВАНТНОГО`, not a short answer:
 without a machine-readable marker an empty answer is indistinguishable from a failed call.
 
+
+### No second pass over the same slice
+
+The package is mounted **several times** in one process (measured 2026-09-04: three times on
+one node, twice on another — the journal records differ by monotonic timestamp, so these are
+distinct calls, not a repeated display). Event handling is single so far, but **why is not
+established**: the safety rests on a platform property we do not know.
+
+The mechanism calls a paid API, so a doubling would surface in the monthly bill. Passes are
+counted per slice; a repeat over the same range is **not performed** and says so.
+
+⚠️ This is **not a cure for the cause**. The counter sees our own call doubling and will not
+see memory writes doubling by another path — related faults, different places. The count lives
+in process memory: a restart clears it, which is correct — the same slice will not arrive again.
+
+
 ## Testing
 
     npm test
