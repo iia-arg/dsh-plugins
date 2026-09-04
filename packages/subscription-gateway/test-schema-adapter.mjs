@@ -43,7 +43,24 @@ console.log('\n=== A. Real platform schedule schemas ===')
 // an argument, because what must be checked is your installation, not the one the
 // bench was written on.
 const SCHEDULE_FILE = process.argv[2] ?? `${dirname(fileURLToPath(import.meta.url))}/schedule.json`
-const SCHEDULE = JSON.parse(readFileSync(SCHEDULE_FILE, 'utf8'))
+// 🔴 ТРЕТИЙ ИСХОД И ЗДЕСЬ. Выше этот класс уже лечён для ЗАВИСИМОСТИ, а для самого файла
+// схем остался непройденным: без него стенд падал голым стектрейсом с кодом 1 — то есть
+// говорил «предмет расходится» при исправном предмете. Путь берётся из аргумента и пакет
+// прямо приглашает указать СВОЙ файл: опечатка в пути — обычное дело, и отвечать на неё
+// обвинением коду нельзя. Нет файла или он не разбирается — проверять НЕЧЕМ, это код 2.
+// The same third outcome for the schema file itself: a missing or unparsable file means
+// there is nothing to check (exit 2), not that the subject disagrees (exit 1).
+let SCHEDULE
+try {
+  SCHEDULE = JSON.parse(readFileSync(SCHEDULE_FILE, 'utf8'))
+  if (!Array.isArray(SCHEDULE)) throw new Error('ожидался массив схем / an array of schemas was expected')
+} catch (e) {
+  console.log(`СЛЕПОТА: файл схем не прочитан: ${String(e?.message ?? e).slice(0, 120)}`)
+  console.log(`  Путь: ${SCHEDULE_FILE}`)
+  console.log('  Это не расхождение предмета: укажите файл схем аргументом'
+    + ' (`node test-schema-adapter.mjs /путь/к/schedule.json`) и повторите.')
+  process.exit(2)
+}
 for (const tool of SCHEDULE) {
   blok(`${tool.name}: the schema assembled`, () => {
     const s = shape(tool.parameters)
