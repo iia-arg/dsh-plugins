@@ -174,6 +174,34 @@ a date. "Verified 2026-09-02" cannot be re-checked, and the next reader simply
 believes it. The method here: call `krik` under a real `Context` and wait for the
 line on the process `stderr` — that is exactly what `stend-krik-zvuchit` does.
 
+
+## Input filter: invisible characters and secrets (E5.2)
+
+Wired into the **first lines** of `zapisat()`, before any branching. The function has seven
+exit points and two branches leading to an actual write; a filter placed "before the write"
+would miss one of them, and the hole would look closed.
+
+| what | mode | action |
+|---|---|---|
+| invisible, bidi, TAG characters | fail-open | cleans, records an `ochistka` mark in the record itself |
+| secrets (declared, high-entropy, structural, hex of unusual length) | fail-closed | rejects; the journal gets class and position — **never the value** |
+| service fields `klass`, `istochnik` | fail-closed | NFC-normalises; invisible characters cause a **refusal, not cleaning** |
+| the filter itself is broken | fail-closed | no write happens at all |
+
+The asymmetry is deliberate: the filter is fail-open on invisible characters, but a **broken**
+filter is fail-closed. Otherwise a failure silently opens the gate.
+
+🔴 **What the filter does not close — three limits and one hole.** In full in the header of
+`src/filtr-vhoda.js`. Briefly: a model's retelling of foreign text (a text filter cannot catch
+this at all), homoglyphs, base64 blobs are limits; a **hex key exactly 32/40/64 characters
+long** is a hole — it is indistinguishable from md5/sha1/sha256, and checksums appear in every
+report of ours.
+
+⚠️ **The provenance mark is written but read by nobody; judgement is E5.3, not done.**
+
+Thresholds were verified by running over real records of the base, not over imagined text: the
+first revision blocked 5 records out of 6.
+
 ## Testing
 
     npm test

@@ -146,6 +146,14 @@ export function otkrytHranilishche(putK, { drajver } = {}) {
     if (!stolbcy.includes('bez_podtverzhdeniya')) {
       baza.exec('ALTER TABLE zapisi ADD COLUMN bez_podtverzhdeniya INTEGER NOT NULL DEFAULT 0');
     }
+    if (!stolbcy.includes('ochistka')) {
+      // Отметка о чистке — В САМОЙ ЗАПИСИ, а не в журнале: журнал живёт короче знания,
+      // а сверка с источником (Э8.1) сравнит изменённый текст с исходным и покраснеет
+      // без причины, если не знает, что фильтр входа что-то вычистил.
+      // NULL значит «текст не менялся». Пустой объект НЕ пишется: «нет отметки» и
+      // «отметка пустая» обязаны различаться.
+      baza.exec('ALTER TABLE zapisi ADD COLUMN ochistka TEXT DEFAULT NULL');
+    }
     if (!stolbcy.includes('vera')) {
       // Старым строкам вера НЕ проставляется: они её не имели, и приписывать им
       // задним числом любое число значило бы выдумать измерение.
@@ -168,7 +176,7 @@ export function otkrytHranilishche(putK, { drajver } = {}) {
      */
     baza,
     /** Записать знание. Возвращает id — доказательство записи, а не «успех». */
-    zapisat({ agent, klass, soderzhim, istochnik = null, sozdano = Date.now(), bezPodtverzhdeniya = false, vera = null }) {
+    zapisat({ agent, klass, soderzhim, istochnik = null, sozdano = Date.now(), bezPodtverzhdeniya = false, vera = null, ochistka = null }) {
       if (!agent || !klass || !soderzhim) {
         const e = new Error('dsh-pamyat: запись без обязательных полей (agent, klass, soderzhim)');
         e.code = 'PAMYAT_NEPOLNAYA_ZAPIS';
@@ -185,9 +193,12 @@ export function otkrytHranilishche(putK, { drajver } = {}) {
         }
         veraZnach = vera;
       }
+      // Отметка о чистке: NULL значит «текст не менялся». Пустой объект не пишем —
+      // «нет отметки» и «отметка пустая» обязаны различаться.
+      const ochistkaZnach = ochistka ? JSON.stringify(ochistka) : null;
       const r = baza.prepare(
-        'INSERT INTO zapisi (agent, klass, soderzhim, istochnik, sozdano, bez_podtverzhdeniya, vera) VALUES (?, ?, ?, ?, ?, ?, ?)'
-      ).run(agent, klass, soderzhim, istochnik, sozdano, bezPodtverzhdeniya ? 1 : 0, veraZnach);
+        'INSERT INTO zapisi (agent, klass, soderzhim, istochnik, sozdano, bez_podtverzhdeniya, vera, ochistka) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(agent, klass, soderzhim, istochnik, sozdano, bezPodtverzhdeniya ? 1 : 0, veraZnach, ochistkaZnach);
       return Number(r.lastInsertRowid);
     },
     /** Прочитать последние записи агента. Пустой массив = записей нет (база жива). */

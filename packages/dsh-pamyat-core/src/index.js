@@ -25,6 +25,7 @@ import { createRequire } from 'node:module';
 import { otkrytHranilishche } from './hranilishche.js';
 import { zavestiZhurnal } from './zhurnal.js';
 import { reshitPoKlassu, istolkovatPodtverzhdenie } from './politika.js';
+import { filtr_ispraven, najti_sekret, ochistit, trevozhno, proverit_sluzhebnoe, normalizovat } from './filtr-vhoda.js';
 import z from '@deepseek-ai/schemastery';
 
 export const name = 'dsh-pamyat-core';
@@ -232,6 +233,84 @@ export function apply(ctx, config = {}) {
      */
     zapisat(zapis) {
       if (!hranilishche) otkaz();
+
+      // ═══ ФИЛЬТР ВХОДА (Э5.2). ВРЕЗКА ЗДЕСЬ НАМЕРЕННО — ДО ВСЯКОЙ РАЗВИЛКИ ═══
+      // 🔴 У этой функции СЕМЬ точек выхода и ДВЕ ветки, ведущие к настоящей записи
+      // (класс с подтверждением на узле без отвечающего — и обычный путь). Поставь
+      // фильтр «перед записью» — вторая ветка пройдёт мимо, и дыра будет выглядеть
+      // закрытой. Признак приёмки числом: счёт точек выхода в теле = 7 на 04.09.2026
+      // (считать словом, которое здесь нарочно не написано литералом: признак искал бы
+      // сам себя — этот класс мы ловили сегодня трижды);
+      // стало больше — проверять заново, могла появиться ветка мимо фильтра.
+      //
+      // 🔴 ЧЕГО ФИЛЬТР НЕ ЗАКРЫВАЕТ — см. шапку filtr-vhoda.js. Коротко: отравление
+      // приходит добросовестным ПЕРЕСКАЗОМ чужого письма чужой моделью, и текстовым
+      // фильтром этот путь не закрывается вовсе. Здесь чистятся невидимые символы и
+      // отвергаются секреты — две вещи, измеримые числом. Не читать это как «вход
+      // проверен».
+      const kanarejka = filtr_ispraven();
+      if (!kanarejka.ispraven) {
+        // Несимметрия намеренная: по Unicode фильтр fail-open, но СЛОМАННЫЙ фильтр —
+        // fail-closed. Иначе поломка молча открывает ворота.
+        zhurnal?.otmetit({
+          agent, klass: zapis.klass, ishod: 'otkloneno', priroda: 'filtr-vhoda-neispraven',
+          pochemu: 'фильтр входа неисправен, запись остановлена: ' + kanarejka.pochemu,
+          istochnik: zapis.istochnik ?? null,
+        });
+        const e = new Error('dsh-pamyat: фильтр входа неисправен (' + kanarejka.pochemu +
+                            '), запись НЕ произведена');
+        e.code = 'PAMYAT_FILTR_NEISPRAVEN';
+        throw e;
+      }
+      // Служебные поля: НОРМАЛИЗАЦИЯ и ОТКАЗ, а не чистка. Невидимый знак в `klass`
+      // не совпал бы с перечнем классов — запись ушла бы «вне перечня», громко и
+      // законно, а знание в долговременную память не поехало бы: тихая потеря под
+      // видом штатного отказа.
+      for (const pole of ['klass', 'istochnik']) {
+        const beda = proverit_sluzhebnoe(pole, zapis[pole]);
+        if (beda) {
+          zhurnal?.otmetit({
+            agent, klass: 'sluzhebnoe-pole', ishod: 'otkloneno', priroda: 'nevidimoe-v-sluzhebnom',
+            pochemu: 'в служебном поле «' + beda.pole + '» невидимые знаки класса «' +
+                     beda.klass + '»: чистить нельзя, такое поле не совпадёт с перечнем ' +
+                     'и даст тихую потерю под видом штатного отказа',
+            istochnik: null,
+          });
+          const e = new Error('dsh-pamyat: невидимые знаки в служебном поле «' + beda.pole + '»');
+          e.code = 'PAMYAT_NEVIDIMOE_V_SLUZHEBNOM';
+          throw e;
+        }
+      }
+      zapis = { ...zapis, klass: normalizovat(zapis.klass), istochnik: normalizovat(zapis.istochnik) };
+      const sekret = najti_sekret(String(zapis.soderzhim ?? ''));
+      if (sekret) {
+        // В журнал идут КЛАСС и ПОЗИЦИЯ, никогда значение и никогда фрагмент: фильтр
+        // секретов, печатающий найденное, становится их публикатором.
+        zhurnal?.otmetit({
+          agent, klass: zapis.klass, ishod: 'otkloneno', priroda: 'sekret-na-vhode',
+          pochemu: 'в тексте найден секрет класса «' + sekret.klass + '» на позиции ' +
+                   sekret.pozicia + '; значение не печатается. Знание восстановимо по ' +
+                   'источнику: срез журнала append-only',
+          istochnik: zapis.istochnik ?? null,
+        });
+        const e = new Error('dsh-pamyat: в тексте найден секрет (' + sekret.klass +
+                            '), запись отклонена');
+        e.code = 'PAMYAT_SEKRET_NA_VHODE';
+        throw e;
+      }
+      const chistka = ochistit(String(zapis.soderzhim ?? ''));
+      if (chistka.ochistka) {
+        zapis = { ...zapis, soderzhim: chistka.tekst, ochistka: chistka.ochistka };
+        if (trevozhno(chistka.ochistka)) {
+          zhurnal?.otmetit({
+            agent, klass: zapis.klass, ishod: 'zapisano', priroda: 'ochistka-trevozhnaya',
+            pochemu: 'вычищено ' + chistka.ochistka.bylo_udaleno + ' невидимых знаков из ' +
+                     chistka.ochistka.dlina_do + ' (классы: ' + chistka.ochistka.klassy.join(', ') +
+                     ') — это конструкция, а не мусор копипасты',
+            istochnik: zapis.istochnik ?? null,
+          });
+        }
+      }
       // 🔴 ДОЛГОВРЕМЕННЫЙ СЛОЙ — «ВЫСТРЕЛИЛ И ЗАБЫЛ», НО НЕ МОЛЧА.
       //
       // Развилка (разбор Э3, 03.09.2026): `zapisat` синхронный, `sohranit` асинхронный. Выбран
