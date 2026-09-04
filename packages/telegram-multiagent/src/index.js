@@ -1470,11 +1470,63 @@ export function apply(ctx, config = {}) {
               let m;
               try { m = schetchik.measure(sess); }
               catch (e) { return { kind: 'error', text: `Измеритель отказал: ${String(e?.message ?? e).slice(0, 160)}` }; }
+              // 🔴 СВЕЖЕСТЬ ОПОРЫ. baseline.kind различает ПРОИСХОЖДЕНИЕ опоры и НЕ различает
+              // её СВЕЖЕСТЬ: при surface-replace (compaction/summary|prune) поверхность
+              // пересчитывается, а якорь остаётся прежним и тащит свой kind='usage'
+              // (token-meter :507 baseline = anchor.baseline; :588 якорь только на
+              // assistant/message). Значит после компакта строка «числа провайдера» говорит
+              // правду про источник и ложь про актуальность — ровно там, где на неё смотрят.
+              // Флаг не отсутствует, он ПРИСУТСТВУЕТ И УСПОКАИВАЕТ; это хуже отсутствия.
+              //
+              // ⚠️ ИНТЕРФЕЙС ОПРЕДЕЛЯЕМ ПО ФАКТУ, НЕ ПО ВЕРСИИ: в 0.1.1-rc.2 у сессии массив
+              // `events`, в 0.1.2-rc.1 и master — `eventAt()` + `seq`. Версия на диске может
+              // отставать от кода; проверяем наличие, а не номер.
+              //
+              // 🔴 И ГЛАВНОЕ: не сумели снять — говорим «НЕ МОГУ», а НЕ «свежо». Молчаливое
+              // «свежо» при пропавшем интерфейсе — зелёное, которое не может покраснеть.
+              const svezhest = (() => {
+                let poslednijKompakt = -1;
+                let poslednijYakor = -1;
+                const uchest = (ev, seq) => {
+                  const t = ev?.type;
+                  if (t === 'compaction/summary' || t === 'compaction/prune') {
+                    if (seq > poslednijKompakt) poslednijKompakt = seq;
+                  } else if (t === 'assistant/message' && ev?.data?.usage !== undefined) {
+                    if (seq > poslednijYakor) poslednijYakor = seq;
+                  }
+                };
+                try {
+                  if (Array.isArray(sess.events)) {
+                    for (const ev of sess.events) uchest(ev, Number(ev?.seq ?? -1));
+                  } else if (typeof sess.eventAt === 'function' && sess.seq !== undefined) {
+                    const granica = Number(sess.seq);
+                    if (!Number.isFinite(granica)) return { kind: 'ne-znayu', pochemu: 'session.seq не число' };
+                    for (let i = 0; i < granica; i++) {
+                      const ev = sess.eventAt(i);
+                      if (ev === undefined) return { kind: 'ne-znayu', pochemu: 'eventAt вернул undefined — иная сигнатура' };
+                      uchest(ev, i);
+                    }
+                  } else {
+                    return { kind: 'ne-znayu', pochemu: 'у сессии нет ни events, ни eventAt+seq' };
+                  }
+                } catch (e) {
+                  return { kind: 'ne-znayu', pochemu: `обход событий отказал: ${String(e?.message ?? e).slice(0, 90)}` };
+                }
+                if (poslednijKompakt < 0) return { kind: 'svezhaya', kompaktov: 0 };
+                if (poslednijYakor > poslednijKompakt) return { kind: 'svezhaya', kompaktov: 1 };
+                return { kind: 'ustarela', kompakt: poslednijKompakt, yakor: poslednijYakor };
+              })();
               const stroki = [
                 `Контекст: занято ${m.totalTokens} токенов.`,
                 `Источник — платформенный tokenMeter.measure: то же число, которым платформа решает, пора ли сжимать.`,
                 `Опора замера: ${m.baseline?.kind ?? '?'}` +
-                  (m.baseline?.kind === 'usage' ? ' (числа провайдера)' : ' (оценка по эвристике)') +
+                  (m.baseline?.kind === 'usage'
+                    ? (svezhest.kind === 'ustarela'
+                        ? ' 🔴 ЧИСЛА ПРОВАЙДЕРА СНЯТЫ ДО КОМПАКТА И С ТЕХ ПОР НЕ ОБНОВЛЯЛИСЬ'
+                        : svezhest.kind === 'ne-znayu'
+                          ? ` ⚠️ свежесть опоры снять НЕ МОГУ (${svezhest.pochemu})`
+                          : ' (числа провайдера)')
+                    : ' (оценка по эвристике)') +
                   `, прочитано событий журнала: ${m.logRevision}.`,
               ];
               // Порог платформы: contextWindow × thresholdRatio (умолчание 0.8).
@@ -1525,14 +1577,25 @@ export function apply(ctx, config = {}) {
               }
               if (okno !== undefined) {
                 const porog = Math.floor(okno * 0.8);
-                stroki.push(`Порог сжатия ~${porog} (окно ${okno} × 0.8 — умолчание платформы), до него ${porog - m.totalTokens}.`);
+                if (svezhest.kind === 'svezhaya') {
+                  stroki.push(`Порог сжатия ~${porog} (окно ${okno} × 0.8 — умолчание платформы), до него ${porog - m.totalTokens}.`);
+                } else if (svezhest.kind === 'ustarela') {
+                  // Расстояние до порога от устаревшей опоры — не «примерно», а НЕИЗВЕСТНО:
+                  // вырезанное вычтено по эвристической цене (4 знака = 1 токен), а она на
+                  // не-латинице занижена в разы (замер 04.09: ×9 на живом компакте).
+                  stroki.push(`Порог сжатия ~${porog} (окно ${okno} × 0.8). 🔴 Расстояние до него сказать НЕ МОГУ:`);
+                  stroki.push(`опора снята ДО компакта, вырезанное вычтено по эвристике (4 знака = 1 токен), она занижает на кириллице.`);
+                  stroki.push(`Верное число появится после первого же ответа модели — тогда якорь переставится.`);
+                } else {
+                  stroki.push(`Порог сжатия ~${porog} (окно ${okno} × 0.8). ⚠️ До него — не считаю: свежесть опоры не снята.`);
+                }
               } else {
                 // Умолчание сюда не подставляется намеренно: выдуманное окно выглядит
                 // как замер и врёт ровно там, где на него посмотрят. Отказ называет
                 // ПРИЧИНУ — иначе «не могу» неотличимо от «не пробовала».
                 stroki.push(`🔴 Окно контекста недоступно (${pochemuNet}) — расстояние до порога сказать НЕ МОГУ.`);
               }
-              log(`[статус] ${m.totalTokens} токенов, опора ${m.baseline?.kind ?? '?'}`);
+              log(`[статус] ${m.totalTokens} токенов, опора ${m.baseline?.kind ?? '?'}/${svezhest.kind}`);
               return { kind: 'success', text: stroki.join('\n') };
             },
           });
