@@ -5,7 +5,8 @@
  *  им не закрывается вовсе (см. шапку src/filtr-vhoda.js). Зелёный стенд говорит только
  *  о двух названных вещах.
  */
-import { ochistit, najti_sekret, filtr_ispraven, trevozhno, proverit_sluzhebnoe, normalizovat } from '../src/filtr-vhoda.js';
+import { ochistit, najti_sekret, filtr_ispraven, trevozhno, proverit_sluzhebnoe, normalizovat, rezhim } from '../src/filtr-vhoda.js';
+import { readFileSync } from 'node:fs';
 
 let ok = 0, bed = 0;
 const t = (imya, f) => { try { f(); ok++; console.log('  ok   ' + imya); }
@@ -595,6 +596,25 @@ t('П22-бис прямое объявление по-прежнему ЗАПИ�
 // П13 получали «attempt to write a readonly database»: снаружи это выглядело как
 // дефект предмета, а был снесён каталог под ним.
 rmSync(kat, { recursive: true, force: true });
+
+// ── П23: ТАБЛИЦА РЕЖИМОВ ЗНАЕТ ВСЕ КЛАССЫ, КОТОРЫЕ ФИЛЬТР УМЕЕТ ВОЗВРАЩАТЬ ────
+// 🔴 ЗАЧЕМ. rezhim() отдаёт наружу знание ядра, и у него есть третий ответ —
+// «neizvesten». Он честен для чужого класса и ОПАСЕН для своего: появится новый
+// класс в najti_sekret, в таблицу его не впишут — и потребитель, работающий
+// fail-closed, начнёт молча задерживать записи, а виноватым будет выглядеть он.
+// Проба читает перечень классов ИЗ ИСХОДНИКА фильтра, а не держит свой список.
+// ⚠️ ГРАНИЦА: перечень снимается маской по тексту. Класс, собранный из переменных,
+// маска не увидит — это признак полноты, а не доказательство.
+t('П23 таблица режимов знает все классы, которые возвращает фильтр', () => {
+  const ishodnik = readFileSync(new URL('../src/filtr-vhoda.js', import.meta.url), 'utf8');
+  const najdeny = new Set();
+  for (const m of ishodnik.matchAll(/klass:\s*'([a-z][a-z0-9:_-]*)'/gi)) najdeny.add(m[1]);
+  for (const m of ishodnik.matchAll(/'(strukturnyj|slabyj):'\s*\+/g)) najdeny.add(m[1] + ':obrazec');
+  if (najdeny.size === 0) throw new Error('перечень классов не снялся — маска ничего не нашла');
+  const neizvestnye = [...najdeny].filter((k) => rezhim(k) === 'neizvesten');
+  if (neizvestnye.length) throw new Error('таблица не знает своих же классов: ' + neizvestnye.join(', '));
+  console.log('       (классов проверено: ' + najdeny.size + ')');
+});
 
 console.log(`итог: ${ok} из ${ok + bed}`);
 process.exit(bed === 0 ? 0 : 1);
