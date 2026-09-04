@@ -11,10 +11,10 @@
   "sostav": [
     {
       "paket": "dsh-pamyat-core",
-      "versiya": "0.1.0-alpha.15",
-      "predmet": "8756f4f48d2b9e0a",
-      "faylov": 16,
-      "prob": 88
+      "versiya": "0.1.0-alpha.16",
+      "predmet": "65f403e6dff5e26d",
+      "faylov": 18,
+      "prob": 104
     },
     {
       "paket": "dsh-pamyat-omega",
