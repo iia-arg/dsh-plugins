@@ -62,7 +62,7 @@ the same as the `latest` tag in the registry — see §7.
 | `dsh-pamyat-omega` | 0.1.0-alpha.9 | optional long-term layer over external storage via MCP |
 | `dsh-pamyat` | 0.1.0-alpha.27 | the name for the set: which six, in exactly which versions, were checked together |
 | `a2a-bus` | no version (not an npm package) | mailboxes, postman, timer |
-| `telegram-multiagent` (`dsh-telegram-multiagent`) | 1.4.3 (1.5.1 in the registry, accepted; §6.3 describes 1.5.x) | Telegram channel; in this document — only its A2A part and the context commands |
+| `telegram-multiagent` (`dsh-telegram-multiagent`) | 1.4.3 (acceptance 2026-09-04: 1.5.1 → 1.5.3 → 1.5.4 → **1.5.5 accepted 21:13** (sum `a0df8c9d3bdb0c5f`, version line at startup); 1.5.2 rejected; `latest` per acceptance — 1.5.5; live at Iskra 1.5.4; §6.3 describes 1.5.x) | Telegram channel; in this document — only its A2A part and the context commands |
 
 ---
 
