@@ -16,6 +16,28 @@
  */
 
 /** Разобрать поток событий: ищем первую строку с полезной нагрузкой. */
+/**
+ * Читаемая причина отказа из объекта ошибки (долг 100).
+ *
+ * 🔴 НЕ `e?.message ?? String(e)`: `??` реагирует только на null и undefined, а пустая строка
+ * для него — найденное значение. Этот модуль ходит ПО СЕТИ, и `AggregateError` с пустым
+ * `message` (fetch перебрал адреса) здесь не гипотеза, а обычный исход. Строка «связь не
+ * состоялась: » печаталась с пустотой — а пустое поле хуже отсутствующего: оно читается как
+ * «причину узнали, она пустая», и вопрос гаснет.
+ * ⚠️ Местная НАМЕРЕННО: общей на пакеты не заводим, межпакетная зависимость ради десяти строк
+ * дороже дублирования. Расхождение ловит проба в стенде, а не памятка.
+ */
+function prichina_stroka(e) {
+  const tekst = String(e?.message ?? '').trim();
+  const kod   = e?.code ? String(e.code) : '';
+  const imya  = e?.name ?? e?.constructor?.name ?? typeof e;
+  const hvost = [tekst, kod && '[' + kod + ']'].filter(Boolean).join(' ');
+  const vnutri = Array.isArray(e?.errors) && e.errors.length
+    ? ' ← ' + e.errors.slice(0, 3).map((v) => String(v?.message ?? v).trim()).filter(Boolean).join('; ')
+    : '';
+  return (imya + ': ' + (hvost || '(без пояснения)') + vnutri).slice(0, 200);
+}
+
 export function razobratPotok(tekst) {
   if (typeof tekst !== 'string' || tekst.trim() === '') return null;
   for (const stroka of tekst.split('\n')) {
@@ -79,7 +101,7 @@ export function sozdatSvyaz({ adres, tajmautMs = 10000, otpravka } = {}) {
       } catch (prichina) {
         return {
           udalos: false, tekst: null,
-          pochemu: 'связь с хранилищем не состоялась: ' + (prichina?.message ?? String(prichina)) +
+          pochemu: 'связь с хранилищем не состоялась: ' + prichina_stroka(prichina) +
                    '. Результат НЕИЗВЕСТЕН — это не отрицательный ответ.',
         };
       }

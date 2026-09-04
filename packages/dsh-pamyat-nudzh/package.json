@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat-nudzh",
-  "version": "0.1.0-alpha.10",
+  "version": "0.1.0-alpha.11",
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -14,7 +14,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "test": "node test/stend-scheta.mjs && node test/stend-porogov.mjs && node test/stend-readme.mjs && node test/stend-krik-zvuchit.mjs"
+    "test": "r=0; for f in test/stend-*.mjs; do node \"$f\"; c=$?; if [ $c -eq 1 ]; then r=1; elif [ $c -eq 2 ] && [ $r -ne 1 ]; then r=2; elif [ $c -ne 0 ] && [ $c -ne 2 ] && [ $r -ne 1 ]; then r=$c; fi; done; exit $r"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

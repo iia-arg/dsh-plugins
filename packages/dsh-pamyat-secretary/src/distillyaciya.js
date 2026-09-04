@@ -23,6 +23,29 @@
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 
+/**
+ * Читаемая причина отказа из объекта ошибки (долг 100).
+ *
+ * 🔴 ЧТО ЗДЕСЬ БЫЛО НЕ ТАК, И ЭТО ДВА РАЗНЫХ ПРОМАХА ОДНОГО КЛАССА:
+ *   `e?.code ?? e?.message`  — при пустом `code` возвращалась пустота, а message терялся,
+ *                              хотя он НЕПУСТ. Приоритет отдан менее содержательному полю.
+ *   `(e?.message ?? e).toString()` — при пустом message печаталась пустая строка.
+ * Оператор `??` реагирует только на null и undefined; пустая строка для него — найденное
+ * значение. Модуль ходит к провайдеру дистилляции ПО СЕТИ, где `AggregateError` с пустым
+ * `message` — обычный исход, а не редкость.
+ * ⚠️ Местная НАМЕРЕННО: общей на пакеты не заводим (долг 100). Расхождение ловит проба.
+ */
+function prichina_stroka(e) {
+  const tekst = String(e?.message ?? '').trim();
+  const kod   = e?.code ? String(e.code) : '';
+  const imya  = e?.name ?? e?.constructor?.name ?? typeof e;
+  const hvost = [tekst, kod && '[' + kod + ']'].filter(Boolean).join(' ');
+  const vnutri = Array.isArray(e?.errors) && e.errors.length
+    ? ' ← ' + e.errors.slice(0, 3).map((v) => String(v?.message ?? v).trim()).filter(Boolean).join('; ')
+    : '';
+  return (imya + ': ' + (hvost || '(без пояснения)') + vnutri).slice(0, 200);
+}
+
 export const ADRES = 'https://api.deepseek.com/anthropic/v1/messages';
 
 /**
@@ -42,7 +65,7 @@ export function vzyat_klyuch({ fajlKlyucha = null, zapisPass = null,
       if (k) return { klyuch: k, otkuda: 'файл ' + fajlKlyucha };
       return { klyuch: null, pochemu: 'файл ключа пуст: ' + fajlKlyucha };
     } catch (e) {
-      return { klyuch: null, pochemu: 'файл ключа не прочитан (' + (e?.code ?? e?.message) + '): ' + fajlKlyucha };
+      return { klyuch: null, pochemu: 'файл ключа не прочитан (' + prichina_stroka(e) + '): ' + fajlKlyucha };
     }
   }
   if (zapisPass) {
@@ -52,7 +75,7 @@ export function vzyat_klyuch({ fajlKlyucha = null, zapisPass = null,
       if (k) return { klyuch: k, otkuda: 'pass ' + zapisPass };
       return { klyuch: null, pochemu: 'запись pass пуста: ' + zapisPass };
     } catch (e) {
-      return { klyuch: null, pochemu: 'pass не отдал ключ (' + (e?.message ?? e).toString().slice(0, 80) + '): ' + zapisPass };
+      return { klyuch: null, pochemu: 'pass не отдал ключ (' + prichina_stroka(e).slice(0, 80) + '): ' + zapisPass };
     }
   }
   // 🔴 ТРЕТИЙ ИСТОЧНИК — ОКРУЖЕНИЕ ПРОЦЕССА (04.09.2026). Заведён потому, что у узла

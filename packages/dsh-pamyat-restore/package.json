@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat-restore",
-  "version": "0.1.0-alpha.16",
+  "version": "0.1.0-alpha.17",
   "type": "module",
   "main": "src/index.js",
   "files": [
@@ -21,7 +21,7 @@
     "@deepseek-ai/cordis": "4.0.1"
   },
   "scripts": {
-    "test": "node test/stend-restore.mjs && node test/stend-readme.mjs && node test/stend-krik-zvuchit.mjs"
+    "test": "r=0; for f in test/stend-*.mjs; do node \"$f\"; c=$?; if [ $c -eq 1 ]; then r=1; elif [ $c -eq 2 ] && [ $r -ne 1 ]; then r=2; elif [ $c -ne 0 ] && [ $c -ne 2 ] && [ $r -ne 1 ]; then r=$c; fi; done; exit $r"
   },
   "repository": {
     "type": "git",

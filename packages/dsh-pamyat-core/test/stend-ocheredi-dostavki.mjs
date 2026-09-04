@@ -62,7 +62,12 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
     const o = ocheredIzBazy();
     if (o.length !== 0) throw new Error('в очереди ' + o.length + ', ждали 0');
   });
-  t('[0] отчёт о пустой очереди — ЧИСЛО, а не молчание', async () => {
+  // 🔴 БЕЗ `async` НАМЕРЕННО. Прогонщик `t` синхронный: он зовёт f() и не ждёт. Асинхронное
+  // тело возвращало бы промис, проба засчитывалась бы пройденной МГНОВЕННО, а брошенное
+  // внутри уходило в unhandled rejection — то есть проба была зелёной, что бы в ней ни
+  // случилось. Зелёное, которое не может покраснеть, хуже отсутствующей пробы: оно занимает
+  // её место в счёте.
+  t('[0] отчёт о пустой очереди — ЧИСЛО, а не молчание', () => {
     if (typeof k.pamyat.dostavitOtlozhennoe !== 'function') throw new Error('метода нет');
   });
   const otchet = await k.pamyat.dostavitOtlozhennoe();

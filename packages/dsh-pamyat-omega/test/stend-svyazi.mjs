@@ -27,10 +27,18 @@ try {
 }
 
 let vsego = 0, proshlo = 0;
-const proba = async (imya, f) => {
+// 🔴 ХОДЫ КОПЯТСЯ И ДОЖИДАЮТСЯ ПЕРЕД ИТОГОМ (04.09.2026). Прежде пробы запускались и не
+// ожидались: `vsego` рос сразу, а тело выполнялось потом. Пока каждая проба разрешалась в
+// микрозадаче, итог случайно совпадал; первая же проба, уходящая за макрозадачу, не успевала
+// напечататься вовсе — ни ✅, ни ❌, только «7 из 8». Стенд, печатающий итог раньше своих
+// проб, показывает НЕ результат, а то, что успело.
+const hody = [];
+const proba = (imya, f) => {
   vsego++;
-  try { await f(); proshlo++; console.log('  ✅ ' + imya); }
-  catch (e) { console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 140)); }
+  hody.push((async () => {
+    try { await f(); proshlo++; console.log('  ✅ ' + imya); }
+    catch (e) { console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 140)); }
+  })());
 };
 const ZHIVOJ = 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"Stored mem-abc123def456"}]}}';
 
@@ -80,5 +88,24 @@ await proba('ПОРЧА: отказ службы отличается от об�
   if (!/отказало/.test(r.pochemu)) throw new Error('отказ службы не назван: ' + r.pochemu);
 });
 
+// 🔴 ПРИЧИНА ОТКАЗА НЕ ДОЛЖНА БЫТЬ ПУСТОЙ, даже когда у ошибки пустой message (долг 100).
+// Этот модуль ходит по сети: AggregateError с пустым собственным message — обычный исход
+// fetch, перебравшего адреса, а не редкость. `??` его не спасает: пустая строка для него —
+// найденное значение, и строка «связь не состоялась: » печаталась с пустотой.
+proba('причина отказа непуста при пустом message (AggregateError от сети)', async () => {
+  const s = sozdatSvyaz({
+    adres: 'http://x/',
+    otpravka: async () => { throw new AggregateError([new Error('ECONNREFUSED на всех адресах')], ''); },
+  });
+  const r = await s.pozvat('omega_store', {});
+  if (r.udalos !== false) throw new Error('отказ принят за успех');
+  const hvost = String(r.pochemu).split('не состоялась:')[1] ?? '';
+  if (!hvost.replace(/^[\s.]+|Результат[\s\S]*$/g, '').trim())
+    throw new Error('причина пуста — нулевое слияние вернулось: ' + r.pochemu);
+  if (!/AggregateError/.test(r.pochemu)) throw new Error('класс ошибки потерян: ' + r.pochemu);
+  if (!/ECONNREFUSED/.test(r.pochemu)) throw new Error('внутренняя причина потеряна: ' + r.pochemu);
+});
+
+await Promise.all(hody);
 console.log('  итог: ' + proshlo + ' из ' + vsego);
 process.exit(proshlo === vsego ? 0 : 1);

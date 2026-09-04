@@ -151,6 +151,18 @@ await proba('E2. файл ключа ПУСТ → отказ, и это не «�
   } finally { try { unlinkSync(f); } catch { /* */ } }
 });
 
+// 🔴 ПРИЧИНА НАЗЫВАЕТ И КОД, И ТЕКСТ — прежде выбирала одно из двух (долг 100).
+// Было `e?.code ?? e?.message`: `??` берёт первое не-null, то есть при непустом коде текст
+// терялся ЦЕЛИКОМ, а при пустом коде («» — найденное значение для `??`) терялось всё.
+// Читающему отказ нужны оба: код говорит, ЧТО за отказ, текст — про какой предмет.
+await proba('E-причина. чтение ключа несёт И код, И текст (не одно из двух)', async () => {
+  const r = vzyat_klyuch({ fajlKlyucha: tmpdir() });   // каталог вместо файла → EISDIR
+  if (r.klyuch) throw new Error('каталог отдал ключ');
+  if (!/EISDIR/.test(r.pochemu)) throw new Error('код отказа потерян: ' + r.pochemu);
+  if (!/illegal operation|directory|каталог/i.test(r.pochemu))
+    throw new Error('текст отказа потерян, остался только код: ' + r.pochemu);
+});
+
 await proba('E3. источник ключа не задан вовсе → отказ, а не молчание', async () => {
   const r = vzyat_klyuch({});
   if (r.klyuch || !r.pochemu) throw new Error('молчаливый исход');

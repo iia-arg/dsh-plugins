@@ -20,6 +20,34 @@ import { createRequire } from 'node:module';
 const trebuj = createRequire(import.meta.url);
 
 /**
+ * Собрать ЧИТАЕМУЮ причину отказа из объекта ошибки.
+ *
+ * 🔴 ЗАЧЕМ, А НЕ `e?.message ?? String(e)`. Оператор `??` реагирует только на null и
+ * undefined; пустая строка для него — найденное значение. У `AggregateError`, которую
+ * кладёт fetch, перебрав адреса, собственный `message` как раз ПУСТОЙ — и строка
+ * «Причина: » печаталась с пустотой. Замер 04.09.2026 в соседнем пакете: 125 таких строк
+ * в живом журнале за три часа.
+ * Пустое поле ХУЖЕ отсутствующего: «причина: » читается как «причину узнали, она пустая»
+ * и гасит вопрос, тогда как отсутствие поля заставило бы спросить, чем узнавать.
+ *
+ * ГДЕ НЕ ПРИМЕНЯЕТСЯ: это не сериализация ошибки и не замена стека — только одна строка
+ * для человека, читающего отказ. Длина обрезана: причина едет в текст исключения, а его
+ * читают глазами.
+ * ⚠️ Функция НАМЕРЕННО местная, а не общая на пакеты (долг 100): межпакетная зависимость
+ * ради десяти строк дороже дублирования. Расхождение ловит проба в стенде, не памятка.
+ */
+function prichina_stroka(e) {
+  const tekst = String(e?.message ?? '').trim();
+  const kod   = e?.code ? String(e.code) : '';
+  const imya  = e?.name ?? e?.constructor?.name ?? typeof e;
+  const hvost = [tekst, kod && '[' + kod + ']'].filter(Boolean).join(' ');
+  const vnutri = Array.isArray(e?.errors) && e.errors.length
+    ? ' ← ' + e.errors.slice(0, 3).map((v) => String(v?.message ?? v).trim()).filter(Boolean).join('; ')
+    : '';
+  return (imya + ': ' + (hvost || '(без пояснения)') + vnutri).slice(0, 200);
+}
+
+/**
  * Загрузить драйвер SQLite.
  *
  * 🔴 ОТСУТСТВИЕ МОДУЛЯ — ОТКАЗ, А НЕ ТИХАЯ ДЕГРАДАЦИЯ. Класс ошибки, ради
@@ -41,7 +69,7 @@ export function zagruzitDrajver(imyaModulya = 'node:sqlite') {
       'dsh-pamyat: хранилище недоступно — встроенный модуль node:sqlite не загрузился. ' +
       'Нужен Node >= 22, сейчас ' + versiya + '. ' +
       'Память НЕ РАБОТАЕТ: записи не сохраняются и не читаются. ' +
-      'Это отказ, а не пустая память. Причина: ' + (prichina?.message ?? String(prichina))
+      'Это отказ, а не пустая память. Причина: ' + prichina_stroka(prichina)
     );
     e.code = 'PAMYAT_NET_HRANILISHCHA';
     throw e;
@@ -180,7 +208,7 @@ export function otkrytHranilishche(putK, { drajver } = {}) {
     const e = new Error(
       'dsh-pamyat: база памяти не открылась по пути ' + putK + '. ' +
       'Память НЕ РАБОТАЕТ — это отказ, а не пустая память. Причина: ' +
-      (prichina?.message ?? String(prichina))
+      prichina_stroka(prichina)
     );
     e.code = 'PAMYAT_BAZA_NE_OTKRYLAS';
     throw e;

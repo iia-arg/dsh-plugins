@@ -162,6 +162,28 @@ proba('🔴 ЗАПИСЬ ПЕРЕЖИВАЕТ ПЕРЕОТКРЫТИЕ ХРАН�
   if (!zh) throw new Error('журнал не поднялся на переоткрытой базе');
 });
 
+// 🔴 ПРИЧИНА ОТКАЗА НЕ ДОЛЖНА БЫТЬ ПУСТОЙ, даже когда у ошибки пустой message.
+// Класс (долг 100): `??` реагирует только на null и undefined, пустая строка для него —
+// найденное значение. У AggregateError, которую кладёт fetch, перебрав адреса, свой message
+// как раз пустой — и строка «Причина: » печаталась с пустотой. Пустое поле хуже
+// отсутствующего: оно читается как «причину узнали, она пустая», и вопрос гаснет.
+// Проба подсовывает ИМЕННО такую ошибку через подставной драйвер — иначе ветку не достать.
+proba('причина отказа непуста даже при пустом message (AggregateError)', () => {
+  const drajver_s_pustym_message = {
+    DatabaseSync: function () { throw new AggregateError([new Error('соединение отвергнуто')], ''); },
+  };
+  let brosheno = null;
+  try { otkrytHranilishche(join(katalog, 'proba.db'), { drajver: drajver_s_pustym_message }); }
+  catch (e) { brosheno = e; }
+  if (!brosheno) throw new Error('отказа не случилось — проба не достала ветку');
+  if (brosheno.code !== 'PAMYAT_BAZA_NE_OTKRYLAS') throw new Error('чужой код: ' + brosheno.code);
+  const hvost = String(brosheno.message).split('Причина:')[1] ?? '';
+  if (!hvost.trim()) throw new Error('«Причина:» с пустотой — нулевое слияние вернулось');
+  if (!hvost.includes('AggregateError')) throw new Error('класс ошибки потерян: ' + hvost.trim());
+  if (!hvost.includes('соединение отвергнуто'))
+    throw new Error('внутренняя причина потеряна: ' + hvost.trim());
+});
+
 rmSync(katalog, { recursive: true, force: true });
 console.log('  итог: ' + proshlo + ' из ' + vsego);
 process.exit(proshlo === vsego ? 0 : 1);
