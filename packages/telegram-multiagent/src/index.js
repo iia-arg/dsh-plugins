@@ -1392,8 +1392,11 @@ export function apply(ctx, config = {}) {
   function prichina(e) {
     const tekst = String(e?.message ?? (typeof e === 'object' ? '' : (e ?? ''))).trim();
     const kod = e?.code ? String(e.code) : '';
-    const hvost = [kod, tekst].filter(Boolean).join(' ') || '(без пояснения)';
-    return ((e?.name ?? typeof e) + ': ' + hvost).slice(0, 90);
+    // Текст ПЕРВЫМ, код в скобках уточнением — так читается лучше при полном исключении.
+    // «(без пояснения)» только когда нет НИ ТОГО, НИ ДРУГОГО: иначе строка сама себе
+    // противоречит — «(без пояснения) [ECONNRESET]» говорит «пояснения нет» и тут же его даёт.
+    const hvost = tekst || (kod ? '' : '(без пояснения)');
+    return ((e?.name ?? typeof e) + ': ' + [hvost, kod && '[' + kod + ']'].filter(Boolean).join(' ')).slice(0, 90);
   }
 
   function errDetail(e) {
