@@ -59,6 +59,14 @@ still reach the harness's own tools (`tool-bridge`); and if you then let the age
 own wake-ups, put a ceiling on it (`schedule-guard`). Design notes for all three, traps included,
 are in [`docs/DESIGN.md`](docs/DESIGN.md).
 
+## Documentation
+
+- [`docs/MEMORY-AND-A2A.md`](docs/MEMORY-AND-A2A.md) — the memory pipeline `dsh-pamyat` and
+  agent-to-agent mail (A2A) as one system: seams, services, settings, refusals, the input filter,
+  release and acceptance order, stands. Russian original: [`docs/MEMORY-AND-A2A.ru.md`](docs/MEMORY-AND-A2A.ru.md).
+- [`docs/DESIGN.md`](docs/DESIGN.md) — design notes for the tool bridge, self-waking and the
+  subscription route.
+
 More will land here as we build them. One repository, several packages — a separate repo per plugin
 is not worth the overhead.
 
