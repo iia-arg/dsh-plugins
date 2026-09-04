@@ -16,12 +16,29 @@ const proba = (imya, f) => { vsego++; try { f(); proshlo++; console.log('  ✅ '
 proba('стенд годен: оба README на месте и непусты', () => {
   if (ru.length < 1000 || en.length < 1000) throw new Error('README подозрительно короткие');
 });
-proba('все три состояния доставки названы в обоих', () => {
-  for (const s of ['dostavleno', 'ne-najdeno', 'ne-udalos-proverit']) {
+proba('все ПЯТЬ состояний доставки названы в обоих', () => {
+  // 🔴 04.09.2026: было три. Перечень здесь не украшение — по нему потребитель
+  // решает, можно ли повторять записью; отсутствие состояния в описании значит,
+  // что читающий про этот случай не узнает и повторит вслепую.
+  for (const s of ['dostavleno', 'ne-najdeno', 'ne-otpravleno', 'moglo-dojti-id-est', 'moglo-dojti-bez-id']) {
     if (!ru.includes(s)) throw new Error('в русском нет ' + s);
     if (!en.includes(s)) throw new Error('в английском нет ' + s);
   }
 });
+proba('проверка без записи названа в обоих, с её тремя исходами', () => {
+  for (const t of ['proverit', 'ne-proveryali']) {
+    if (!ru.includes(t)) throw new Error('в русском нет ' + t);
+    if (!en.includes(t)) throw new Error('в английском нет ' + t);
+  }
+});
+
+proba('🔴 обязательность образца содержимого объяснена, а не просто упомянута', () => {
+  // Без объяснения следующий вызовет proverit(id) без образца и получит вечное
+  // «не проверяли», приняв его за недоступность хранилища.
+  if (!/образца/.test(ru) || !/никогда/.test(ru)) throw new Error('в русском нет объяснения');
+  if (!/sample/.test(en) || !/never/.test(en)) throw new Error('в английском нет объяснения');
+});
+
 proba('все ключи настройки описаны в обоих', () => {
   for (const k of ['adres', 'tajmautMs']) {
     if (!ru.includes(k)) throw new Error('в русском нет ' + k);

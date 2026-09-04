@@ -85,6 +85,37 @@ CREATE TABLE IF NOT EXISTS zapisi (
 );
 CREATE INDEX IF NOT EXISTS idx_zapisi_agent_klass ON zapisi(agent, klass);
 CREATE INDEX IF NOT EXISTS idx_zapisi_sozdano ON zapisi(sozdano);
+
+-- 🔴 ОЧЕРЕДЬ НЕДОСТАВЛЕННОГО — ОТДЕЛЬНАЯ ТАБЛИЦА, А НЕ ПОЛЕ В ЖУРНАЛЕ.
+-- Довод: журнал отвечает на вопрос «что происходило», очередь — «что осталось
+-- сделать». Записи журнала неизменяемы (событие случилось), записи очереди
+-- меняются (попытка, успех, снятие). Смешаешь — получишь таблицу, которая разом
+-- история и состояние, и через месяц никто не скажет, что в ней правда.
+-- И вторая причина, замеренная: в журнале НЕТ опознавателя записи знания, то
+-- есть по нему нельзя узнать, ЧТО повторять. Восстанавливать по (agent, klass,
+-- время) значило бы угадывать.
+CREATE TABLE IF NOT EXISTS ochered_dolgovremennogo (
+  -- Один экземпляр на запись: повторная постановка обновляет, а не множит.
+  zapis_id   INTEGER PRIMARY KEY,
+  agent      TEXT NOT NULL,
+  klass      TEXT NOT NULL,
+  -- 🔴 ПРИРОДА РЕШАЕТ, ЧТО ДЕЛАТЬ, и потому хранится, а не выводится:
+  --   ne-otpravleno      связи не было до вызова     -> повтор ЗАПИСЬЮ безопасен
+  --   ne-najdeno         спросили, записи нет        -> повтор ЗАПИСЬЮ безопасен
+  --   moglo-dojti-id-est опознаватель есть           -> сперва ПРОВЕРКА чтением
+  --   moglo-dojti-bez-id отправка была, id нет       -> разбор РУКОЙ
+  priroda    TEXT NOT NULL,
+  -- Только для moglo-dojti-id-est: по нему и спрашиваем, легло ли.
+  mem_id     TEXT,
+  postavleno INTEGER NOT NULL,
+  popytok    INTEGER NOT NULL DEFAULT 0,
+  poslednyaya_prichina TEXT,
+  kogda_poslednyaya    INTEGER,
+  -- 🔴 Исчерпание НЕ удаляет запись. Удалить молча значит потерять знание и не
+  -- узнать об этом — худший исход из возможных. Флаг гасит только повторный крик.
+  ischerpano INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_ochered_agent ON ochered_dolgovremennogo(agent);
 `;
 
 /**
@@ -167,6 +198,57 @@ export function otkrytHranilishche(putK, { drajver } = {}) {
       const args = klass ? [agent, klass, skolko] : [agent, skolko];
       return baza.prepare(sql).all(...args);
     },
+    /**
+     * Прочитать одну запись по опознавателю. Нужна для повтора доставки: чтобы
+     * спросить хранилище «легло ли», нужен ОБРАЗЕЦ содержимого, а он живёт здесь.
+     * Возвращает undefined, если записи нет, — это не отказ, а ответ.
+     */
+    poId(id) {
+      return baza.prepare('SELECT * FROM zapisi WHERE id = ?').get(id);
+    },
+
+    /** Поставить запись в очередь доставки. Повторная постановка ОБНОВЛЯЕТ строку. */
+    vOchered({ zapis_id, agent, klass, priroda, mem_id = null, prichina = null }) {
+      baza.prepare(
+        'INSERT INTO ochered_dolgovremennogo ' +
+        '(zapis_id, agent, klass, priroda, mem_id, postavleno, popytok, poslednyaya_prichina, kogda_poslednyaya) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?) ' +
+        'ON CONFLICT(zapis_id) DO UPDATE SET priroda = excluded.priroda, mem_id = excluded.mem_id, ' +
+        'poslednyaya_prichina = excluded.poslednyaya_prichina, kogda_poslednyaya = excluded.kogda_poslednyaya'
+      ).run(zapis_id, agent, klass, priroda, mem_id, Date.now(), prichina, Date.now());
+    },
+
+    /** Что ждёт доставки. Пустой массив = очередь пуста (база жива). */
+    ochered({ agent = null, vklyuchayaIscherpannye = true } = {}) {
+      const usloviya = [];
+      const args = [];
+      if (agent) { usloviya.push('agent = ?'); args.push(agent); }
+      if (!vklyuchayaIscherpannye) usloviya.push('ischerpano = 0');
+      const gde = usloviya.length ? ' WHERE ' + usloviya.join(' AND ') : '';
+      return baza.prepare('SELECT * FROM ochered_dolgovremennogo' + gde + ' ORDER BY postavleno').all(...args);
+    },
+
+    /** Снять с очереди — доставка подтверждена. */
+    snyatSOcheredi(zapis_id) {
+      baza.prepare('DELETE FROM ochered_dolgovremennogo WHERE zapis_id = ?').run(zapis_id);
+    },
+
+    /**
+     * Засчитать ПОПЫТКУ и вернуть, случилось ли исчерпание ИМЕННО СЕЙЧАС.
+     * 🔴 Возвращает переход, а не состояние: крик об исчерпании должен звучать
+     * ОДИН раз, а не на каждом ночном проходе. Состояние читается из очереди.
+     */
+    otmetitPopytku({ zapis_id, prichina = null, predel = 5 }) {
+      const bylo = baza.prepare('SELECT popytok, ischerpano FROM ochered_dolgovremennogo WHERE zapis_id = ?').get(zapis_id);
+      if (!bylo) return { est: false, ischerpalos: false, popytok: 0 };
+      const stalo = Number(bylo.popytok) + 1;
+      const ischerpalos = Number(bylo.ischerpano) === 0 && stalo >= predel;
+      baza.prepare(
+        'UPDATE ochered_dolgovremennogo SET popytok = ?, poslednyaya_prichina = ?, kogda_poslednyaya = ?, ischerpano = ? WHERE zapis_id = ?'
+      ).run(stalo, prichina, Date.now(), (Number(bylo.ischerpano) === 1 || ischerpalos) ? 1 : 0, zapis_id);
+      return { est: true, ischerpalos, popytok: stalo };
+    },
+
     /** Сколько записей у агента — для наблюдаемости и стендов. */
     skolkoZapisej(agent) {
       return Number(baza.prepare('SELECT count(*) AS n FROM zapisi WHERE agent = ?').get(agent).n);

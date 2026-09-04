@@ -49,11 +49,34 @@ await proba('ПОРЧА: адрес без слэша → сервис ЕСТЬ,
   if (ctx.oshibki.length !== 0) throw new Error('пакет писал в ctx.logger — это НЕМОЙ путь, развилка вернулась');
 });
 
-await proba('ГЛАВНОЕ: недоступный слой возвращает «не знаю», а не «не доставлено»', async () => {
+await proba('ГЛАВНОЕ: недоступный слой → «не отправлено», а не «не доставлено»', async () => {
   const ctx = podelnyjCtx();
   apply(ctx, { adres: 'http://127.0.0.1:8377/mcp' });
   const r = await ctx.servisy.pamyatDolgovremennaya.sohranit({ soderzhim: 'знание' });
-  if (r.sostoyanie !== 'ne-udalos-proverit') throw new Error('получено ' + r.sostoyanie);
+  // 🔴 04.09.2026: было `ne-udalos-proverit`. Требование не изменилось — незнание
+  // по-прежнему нельзя подавать отрицательным фактом, — но ответ стал точнее:
+  // связи не было ДО вызова, значит отправки не случилось вовсе, и повтор
+  // записью безопасен. Прежнее состояние этого не говорило, и потребитель не
+  // мог отличить безопасный повтор от такого, что заведёт дубль.
+  if (r.sostoyanie !== 'ne-otpravleno') throw new Error('получено ' + r.sostoyanie);
+  if (r.id !== null) throw new Error('опознаватель взялся ниоткуда: ' + r.id);
+});
+
+await proba('ПРОВЕРКА без образца содержимого НЕ МОЖЕТ сказать «есть» — и говорит это вслух', async () => {
+  const ctx = podelnyjCtx();
+  apply(ctx, { adres: 'http://127.0.0.1:8377/mcp' });
+  const r = await ctx.servisy.pamyatDolgovremennaya.proverit({ id: 'mem-dfc9d0754cc9' });
+  if (r.sostoyanie !== 'ne-proveryali') throw new Error('получено ' + r.sostoyanie);
+  if (!/образца содержимого/.test(r.pochemu)) throw new Error('причина не называет нехватку образца: ' + r.pochemu);
+});
+
+await proba('ПРОВЕРКА при мёртвой связи → «не спрашивали», а не «нет записи»', async () => {
+  const ctx = podelnyjCtx();
+  apply(ctx, { adres: 'http://127.0.0.1:8377/mcp' });
+  const r = await ctx.servisy.pamyatDolgovremennaya.proverit({ id: 'mem-dfc9d0754cc9', obrazec: 'знание' });
+  // Схлопни это в «net» — и недоступность хранилища начала бы молча плодить
+  // дубли: потребитель прочёл бы «записи нет» и повторил запись.
+  if (r.sostoyanie !== 'ne-proveryali') throw new Error('получено ' + r.sostoyanie);
 });
 
 await proba('схема настройки объявлена и содержит адрес', () => {

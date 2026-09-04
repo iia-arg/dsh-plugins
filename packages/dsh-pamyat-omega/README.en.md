@@ -16,13 +16,33 @@ record by its identifier** and only then speaks of delivery.
 | state | what happened | what to do |
 |---|---|---|
 | `dostavleno` | record found, content matches | nothing |
-| `ne-najdeno` | the store says there is no such record | write again |
-| `ne-udalos-proverit` | link, parsing or service failure — **we do not know** | fix the link and re-check |
+| `ne-najdeno` | we asked — the store says there is no such record | write again, no duplicate |
+| `ne-otpravleno` | no link **before** the call: the send never happened | write again, no duplicate |
+| `moglo-dojti-id-est` | id received, confirmation read failed | **call `proverit`**, do not write |
+| `moglo-dojti-bez-id` | the call started, no id | **human review**: not decidable by machine |
 
-🔴 **Three states, not two.** The earlier draft funnelled every error into "not
-confirmed". That collapsed "the link dropped" and "the record is absent" — two
-problems with different fixes — and lied on top: with a broken link we do not
-know whether delivery happened.
+🔴 **Five states, not three.** The earlier edition collapsed four different cases
+into `ne-udalos-proverit`, leaving the caller unable to decide the one thing that
+matters: **may this be retried by writing?** Retrying after "no link" is safe;
+retrying after "the call started" creates a second copy of the knowledge — and
+that duplicate is invisible, because it looks like knowledge and dissolves into
+search. A missing delivery is visible in the queue; a duplicate is visible nowhere.
+
+⚠️ **Boundary of `ne-otpravleno`.** It is set only where there was no link before
+the call. Once the call has started the state is `moglo-dojti-*`, even on an
+instant error: what reached the store is no longer known.
+
+### `proverit({ id, obrazec })` — ask without writing
+
+Returns `est` | `net` | `ne-proveryali`. The third outcome is mandatory: "could
+not ask" and "no such record" have opposite cures — the first keeps the record in
+the queue, the second permits a rewrite.
+
+🔴 **The content sample is required, and this is not a formality.** Ids in replies
+are truncated to eight characters, and the store may merge our record with a
+similar one and return someone else's id. Without a sample the check **can never
+answer `est`**, however many times it is called — so a missing sample is a named
+refusal of its own, not a quiet "not checked".
 
 ## Three traps taken from the live service
 

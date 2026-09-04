@@ -28,6 +28,26 @@ const proba = (imya, f) => {
 const PRIRODY = ['otkazano-chelovekom', 'otmeneno', 'net-kanala', 'net-sluzhby', 'net-agenta', 'ne-predyavleno'];
 const KLYUCHI = ['putBazy', 'agent', 'sprashivat', 'chtenieSkolko', 'zhurnalSkolko', 'otvechayushchegoNet'];
 
+proba('🔴 ЧЕТЫРЕ ПРИРОДЫ ОЧЕРЕДИ НАЗВАНЫ В ОБОИХ README', () => {
+  // По природе читающий решает, можно ли повторять записью. Пропусти одну — и он
+  // повторит вслепую там, где повтор заводит второй экземпляр знания.
+  for (const n of ['ne-otpravleno', 'ne-najdeno', 'moglo-dojti-id-est', 'moglo-dojti-bez-id']) {
+    if (!ru.includes(n)) throw new Error('в русском нет ' + n);
+    if (!en.includes(n)) throw new Error('в английском нет ' + n);
+  }
+});
+
+proba('неразрешимость «без опознавателя» ОБЪЯСНЕНА, а не просто объявлена', () => {
+  // Без объяснения следующий увидит «ничего не делаем» и прочтёт как недоделку,
+  // а первым же «улучшением» заведёт автоповтор и с ним невидимый дубль.
+  // 🔴 Ищем по СКЛЕЕННОМУ тексту: в README строки переносятся по ширине, и фраза
+  // из двух слов рвётся переносом. Проба, ищущая в сыром тексте, краснела бы на
+  // верной правке — то есть стерегла бы РАСКЛАДКУ СТРОК вместо смысла.
+  const slitno = (x) => x.replace(/\s+/g, ' ');
+  if (!/неразрешим/.test(slitno(ru))) throw new Error('в русском нет объяснения неразрешимости');
+  if (!/not decidable by machine/.test(slitno(en))) throw new Error('в английском нет объяснения');
+});
+
 proba('стенд годен: оба README на месте и непусты', () => {
   if (ru.length < 1000 || en.length < 1000) throw new Error('README подозрительно короткие');
 });

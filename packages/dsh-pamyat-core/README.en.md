@@ -195,6 +195,40 @@ the version installed on the stand.
 that is the second acceptance step); `ctx.logger` behaviour (stubbed in the fake
 ctx); that `ctx.provide` in 0.1.1-rc.2 behaves as in the reference.
 
+## Delivery queue to the long-term layer
+
+Undelivered knowledge is not lost: the record stays in the operational layer and
+enters a queue. A nightly pass (or a hand) calls `dostavitOtlozhennoe()` and gets
+a report **in numbers**, not prose.
+
+🔴 **The nature of the failure decides what to do, and is therefore stored.**
+
+| nature | what happened | what the retry does |
+|---|---|---|
+| `ne-otpravleno` | no link before the call | writes again, no duplicate |
+| `ne-najdeno` | we asked, no such record | writes again, no duplicate |
+| `moglo-dojti-id-est` | id received, read failed | **asks**, does not write |
+| `moglo-dojti-bez-id` | send happened, no id | **left alone entirely** |
+
+🔴 **Why the last row is not an omission.** The send happened, there is no id, and
+the store has no lookup by source — so "did it land?" is **not decidable by
+machine**. Any automatic retry either loses the knowledge or creates a second
+copy. The duplicate is worse: a missing delivery is visible in the queue and in
+the report, a duplicate dissolves into search and looks like knowledge. Such
+records wait for a human and are **counted separately** — otherwise "we do
+nothing" reads as forgetfulness.
+
+⚠️ **Attempts are not spent when we did not ask.** Layer unavailability and a
+failed read do not increment the counter: otherwise the limit would burn out
+during one night of someone else's downtime.
+
+⚠️ **Exhaustion does not delete the record.** At the limit (5 by default) retries
+stop, the flag is set and the shout sounds **once** — the record stays in the
+queue. Deleting silently would lose the knowledge without anyone learning of it.
+
+⚠️ **On a node without the long-term layer no queue is created at all.** The layer
+is optional; a queue that can never empty stops being read.
+
 ## Limits
 
 * Requires **Node >= 22**: `node:sqlite` is marked experimental.

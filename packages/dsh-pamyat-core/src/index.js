@@ -274,14 +274,35 @@ export function apply(ctx, config = {}) {
             pochemu: 'служба pamyatDolgovremennaya не предоставлена — знание осталось только в оперативном слое',
             istochnik: zapis.istochnik ?? null,
           });
+          // 🔴 В ОЧЕРЕДЬ ЗДЕСЬ НЕ СТАВИМ, И ЭТО РЕШЕНИЕ, А НЕ ПРОПУСК.
+          // Долговременный слой объявлен НЕОБЯЗАТЕЛЬНЫМ: у части установок его нет
+          // вовсе. Ставь мы в очередь и там, она росла бы вечно и без потребителя —
+          // механизм, который не может опустеть, перестают читать, и он скрывает
+          // настоящие задержки. Отличие от ветки ниже: там слой смонтирован и
+          // временно недоступен, здесь его нет по устройству узла.
           return id;
         }
         if (!dolgo.dostupna()) {
           zhurnal?.otmetit({
-            agent, klass: zapis.klass, ishod: 'ne-udalos-proverit',
+            agent, klass: zapis.klass, ishod: 'ne-otpravleno',
             priroda: 'dolgovremennyj-sloj-nedostupen', pochemu: dolgo.pochemuNedostupna(),
             istochnik: zapis.istochnik ?? null,
           });
+          // Слой смонтирован, но связи нет — беда временная, знание ждёт в очереди.
+          // Повтор здесь БЕЗОПАСЕН записью: вызова не было вовсе.
+          try {
+            hranilishche.vOchered({
+              zapis_id: id, agent, klass: zapis.klass,
+              priroda: 'ne-otpravleno', prichina: dolgo.pochemuNedostupna(),
+            });
+          } catch (e) {
+            zhurnal?.otmetit({
+              agent, klass: zapis.klass, ishod: 'ne-udalos-proverit', priroda: 'ochered-ne-prinyala',
+              pochemu: 'знание не удалось поставить в очередь доставки: ' + (e?.message ?? String(e)) +
+                       '. Оно осталось в оперативном слое и БЕЗ ПОВТОРА.',
+              istochnik: zapis.istochnik ?? null,
+            });
+          }
           return id;
         }
         void dolgo.sohranit({
@@ -303,11 +324,45 @@ export function apply(ctx, config = {}) {
             agent, klass: zapis.klass, ishod: r.sostoyanie, priroda: 'dolgovremennyj-sloj',
             pochemu: r.pochemu ?? ('id ' + r.id), istochnik: zapis.istochnik ?? null,
           });
+          if (r.sostoyanie === 'dostavleno') return;
+          // 🔴 ПРИРОДА ЕДЕТ В ОЧЕРЕДЬ КАК ЕСТЬ — она и решает, что делать ночью:
+          // повторять записью, спрашивать чтением или ждать руки. Схлопни её тут
+          // в «не доставлено» — и ночной проход снова начнёт гадать.
+          try {
+            hranilishche.vOchered({
+              zapis_id: id, agent, klass: zapis.klass,
+              priroda: r.sostoyanie, mem_id: r.id ?? null, prichina: r.pochemu ?? null,
+            });
+          } catch (e) {
+            zhurnal?.otmetit({
+              agent, klass: zapis.klass, ishod: 'ne-udalos-proverit', priroda: 'ochered-ne-prinyala',
+              pochemu: 'знание не удалось поставить в очередь доставки: ' + (e?.message ?? String(e)),
+              istochnik: zapis.istochnik ?? null,
+            });
+          }
         }).catch((e) => {
           zhurnal?.otmetit({
-            agent, klass: zapis.klass, ishod: 'ne-udalos-proverit', priroda: 'dolgovremennyj-sloj',
-            pochemu: e?.message ?? String(e), istochnik: zapis.istochnik ?? null,
+            agent, klass: zapis.klass, ishod: 'moglo-dojti-bez-id', priroda: 'dolgovremennyj-sloj',
+            pochemu: 'шов доставки бросил исключение: ' + (e?.message ?? String(e)) +
+                     '. Дошло знание или нет — неизвестно, опознавателя нет.',
+            istochnik: zapis.istochnik ?? null,
           });
+          // 🔴 Самое осторожное из возможных: исключение НЕ доказывает, что вызова
+          // не было. Ставим как «могло дойти без опознавателя» — то есть под разбор
+          // рукой, а не под автоповтор. Дубль знания хуже видимой очереди: очередь
+          // мы считаем, а дубль растворяется в поиске и выглядит знанием.
+          try {
+            hranilishche.vOchered({
+              zapis_id: id, agent, klass: zapis.klass,
+              priroda: 'moglo-dojti-bez-id', prichina: e?.message ?? String(e),
+            });
+          } catch (e2) {
+            zhurnal?.otmetit({
+              agent, klass: zapis.klass, ishod: 'ne-udalos-proverit', priroda: 'ochered-ne-prinyala',
+              pochemu: 'знание не удалось поставить в очередь доставки: ' + (e2?.message ?? String(e2)),
+              istochnik: zapis.istochnik ?? null,
+            });
+          }
         });
         return id;
       };
@@ -371,6 +426,127 @@ export function apply(ctx, config = {}) {
     svodka() {
       if (!zhurnal) otkaz();
       return zhurnal.svodka(agent);
+    },
+
+    /** Что ждёт доставки в долговременный слой. Пустой массив — очередь пуста. */
+    ocheredDostavki(vopros = {}) {
+      if (!hranilishche) otkaz();
+      return hranilishche.ochered({ agent, ...vopros });
+    },
+
+    /**
+     * Повторить доставку отложенного. Зовётся ночным проходом либо рукой.
+     * Возвращает отчёт числами; НИЧЕГО не печатает сам — печать за вызывающим.
+     *
+     * 🔴 ТРИ ВЕТКИ, ПО ОДНОЙ НА ПРИРОДУ, И ОНИ НЕ ВЗАИМОЗАМЕНИМЫ:
+     *   ne-otpravleno / ne-najdeno  повтор ЗАПИСЬЮ: дубля не будет, это проверено
+     *   moglo-dojti-id-est          сперва ПРОВЕРКА чтением по опознавателю
+     *   moglo-dojti-bez-id          НЕ ТРОГАЕМ вовсе — см. ниже
+     *
+     * 🔴 ПОЧЕМУ `moglo-dojti-bez-id` НЕ БЕРЁТСЯ АВТОМАТОМ (это не недоделка).
+     * Отправка была, опознавателя нет, поиска по источнику у хранилища нет —
+     * значит вопрос «легло ли» машинно НЕРАЗРЕШИМ. Любой автоповтор здесь либо
+     * теряет знание, либо заводит второй экземпляр. Дубль хуже: недоставку видно
+     * по очереди и по числу в отчёте, а дубль растворяется в поиске и выглядит
+     * знанием. Поэтому такие записи ждут человека и СЧИТАЮТСЯ ОТДЕЛЬНО.
+     *
+     * 🔴 ПОПЫТКИ НЕ ТРАТИМ, ЕСЛИ НЕ СПРАШИВАЛИ. Недоступность слоя и неудача
+     * чтения не увеличивают счётчик: иначе предел выгорел бы за одну ночь чужого
+     * простоя и живое знание было бы объявлено исчерпанным.
+     */
+    async dostavitOtlozhennoe({ predelPopytok = 5 } = {}) {
+      if (!hranilishche) otkaz();
+      const otchet = {
+        vsego: 0, dostavleno: 0, podtverzhdeno: 0, ostalos: 0,
+        zhdutRuki: 0, ischerpannyh: 0, novyhIscherpanij: 0,
+        sloyDostupen: false, pochemuNet: null,
+      };
+      const ochered = hranilishche.ochered({ agent });
+      otchet.vsego = ochered.length;
+      otchet.zhdutRuki = ochered.filter((z) => z.priroda === 'moglo-dojti-bez-id').length;
+      otchet.ischerpannyh = ochered.filter((z) => Number(z.ischerpano) === 1).length;
+
+      const dolgo = ctx.get?.('pamyatDolgovremennaya');
+      if (!dolgo || !dolgo.dostupna()) {
+        otchet.pochemuNet = dolgo ? dolgo.pochemuNedostupna() : 'служба pamyatDolgovremennaya не смонтирована';
+        otchet.ostalos = otchet.vsego;
+        return otchet;
+      }
+      otchet.sloyDostupen = true;
+
+      for (const stroka of ochered) {
+        if (stroka.priroda === 'moglo-dojti-bez-id') continue;
+        if (Number(stroka.ischerpano) === 1) continue;
+        const zapis = hranilishche.poId(stroka.zapis_id);
+        if (!zapis) {
+          // Запись исчезла из оперативного слоя — повторять нечего и незачем.
+          hranilishche.snyatSOcheredi(stroka.zapis_id);
+          zhurnal?.otmetit({
+            agent, klass: stroka.klass, ishod: 'snyato-s-ocheredi', priroda: 'zapisi-net-v-operativnom',
+            pochemu: 'запись ' + stroka.zapis_id + ' исчезла из оперативного слоя — доставлять нечего',
+          });
+          continue;
+        }
+
+        if (stroka.priroda === 'moglo-dojti-id-est') {
+          const p = await dolgo.proverit({ id: stroka.mem_id, obrazec: zapis.soderzhim });
+          if (p.sostoyanie === 'est') {
+            hranilishche.snyatSOcheredi(stroka.zapis_id);
+            otchet.podtverzhdeno += 1;
+            zhurnal?.otmetit({
+              agent, klass: stroka.klass, ishod: 'dostavleno', priroda: 'podtverzhdeno-chteniem',
+              pochemu: 'запись ' + stroka.mem_id + ' нашлась при повторном чтении: ' + p.pochemu,
+              istochnik: zapis.istochnik ?? null,
+            });
+            continue;
+          }
+          if (p.sostoyanie === 'ne-proveryali') {
+            // 🔴 Попытку НЕ засчитываем: мы не получили отказ, мы не смогли спросить.
+            otchet.ostalos += 1;
+            continue;
+          }
+          // p.sostoyanie === 'net' — чтение подтвердило отсутствие, писать безопасно.
+        }
+
+        const r = await dolgo.sohranit({
+          soderzhim: zapis.soderzhim,
+          tip: stroka.klass,
+          kto: config.koren ?? agent,
+          metadannye: {
+            source_uri: zapis.istochnik ?? null,
+            klass: stroka.klass,
+            bezPodtverzhdeniya: Boolean(zapis.bez_podtverzhdeniya),
+            povtorDostavki: true,
+          },
+        });
+        zhurnal?.otmetit({
+          agent, klass: stroka.klass, ishod: r.sostoyanie, priroda: 'povtor-dostavki',
+          pochemu: r.pochemu ?? ('id ' + r.id), istochnik: zapis.istochnik ?? null,
+        });
+        if (r.sostoyanie === 'dostavleno') {
+          hranilishche.snyatSOcheredi(stroka.zapis_id);
+          otchet.dostavleno += 1;
+          continue;
+        }
+        const itog = hranilishche.otmetitPopytku({
+          zapis_id: stroka.zapis_id, prichina: r.pochemu ?? null, predel: predelPopytok,
+        });
+        hranilishche.vOchered({
+          zapis_id: stroka.zapis_id, agent, klass: stroka.klass,
+          priroda: r.sostoyanie, mem_id: r.id ?? stroka.mem_id ?? null, prichina: r.pochemu ?? null,
+        });
+        otchet.ostalos += 1;
+        if (itog.ischerpalos) {
+          otchet.novyhIscherpanij += 1;
+          otchet.ischerpannyh += 1;
+          // 🔴 Крик ОДИН раз — при переходе флага, а не на каждом проходе. Запись
+          // при этом НЕ удаляется: молча потерять знание хуже, чем держать в очереди.
+          krik('доставка знания исчерпала попытки (' + predelPopytok + '): запись ' +
+               stroka.zapis_id + ', класс «' + stroka.klass + '». Она ОСТАЁТСЯ в очереди, ' +
+               'но повторяться больше не будет. Причина последней попытки: ' + (r.pochemu ?? '—'));
+        }
+      }
+      return otchet;
     },
   });
 

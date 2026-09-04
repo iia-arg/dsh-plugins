@@ -86,12 +86,31 @@ export function apply(ctx, config = {}) {
 
     /**
      * Сохранить знание и вернуть исход ДОСТАВКИ, а не отправки.
-     * Возвращает { sostoyanie, id, pochemu }, где sostoyanie —
-     * dostavleno | ne-najdeno | ne-udalos-proverit.
+     * Возвращает { sostoyanie, id, pochemu }, где sostoyanie одно из пяти:
+     *
+     *   dostavleno          запись найдена по опознавателю, содержимое сходится
+     *   ne-najdeno          спросили — хранилище отвечает, что записи нет
+     *   ne-otpravleno       связи не было ДО вызова: отправки не случилось
+     *   moglo-dojti-bez-id  вызов начался, опознавателя нет — проверить нечем
+     *   moglo-dojti-id-est  опознаватель есть, подтвердить чтением не вышло
+     *
+     * 🔴 ПОЧЕМУ ПЯТЬ, А НЕ ТРИ (правка 04.09.2026). Прежде четыре разных случая
+     * возвращали `ne-udalos-proverit`, и потребитель не мог решить главного:
+     * МОЖНО ЛИ ПОВТОРЯТЬ ЗАПИСЬЮ. Повтор при «связи не было» безопасен, повтор
+     * при «вызов начался» создаёт второй экземпляр знания — и этот дубль
+     * невидим: он выглядит как знание и растворяется в поиске. Состояние теперь
+     * называет не только незнание, но и способ его разрешить.
      */
     async sohranit({ soderzhim, tip = 'memory', metadannye = {}, kto = null }) {
+      // 🔴 `ne-otpravleno` ставится ТОЛЬКО здесь — когда связи не было ДО вызова.
+      // Стоит вызову начаться, состояние становится `moglo-dojti-*`, даже при
+      // мгновенной ошибке: мы уже не знаем, что успело дойти до хранилища.
+      // Разница не косметическая: `ne-otpravleno` РАЗРЕШАЕТ повтор записью,
+      // `moglo-dojti-*` его запрещает. Спутать — значит завести невидимый дубль
+      // знания, а дубль хуже недоставки: недоставку видно по очереди, дубль
+      // выглядит как знание.
       if (prichinaOtkaza) {
-        return { sostoyanie: 'ne-udalos-proverit', id: null, pochemu: prichinaOtkaza.message };
+        return { sostoyanie: 'ne-otpravleno', id: null, pochemu: prichinaOtkaza.message };
       }
       if (!soderzhim) {
         const e = new Error('dsh-pamyat-omega: нечего сохранять — пустое содержимое');
@@ -103,12 +122,18 @@ export function apply(ctx, config = {}) {
         ...(kto ? { entity_id: kto } : {}),
       });
       if (!zapis.udalos) {
-        return { sostoyanie: 'ne-udalos-proverit', id: null, pochemu: zapis.pochemu };
+        // Вызов НАЧАЛСЯ и оборвался: запись могла лечь до обрыва. Опознавателя нет,
+        // значит проверить нечем и повторять записью НЕЛЬЗЯ.
+        return {
+          sostoyanie: 'moglo-dojti-bez-id', id: null,
+          pochemu: 'вызов начался и оборвался: ' + zapis.pochemu +
+                   '. Запись могла лечь до обрыва, опознавателя нет — повтор записью создал бы дубль.',
+        };
       }
       const najden = String(zapis.tekst).match(/mem-[0-9a-f]+/);
       if (!najden) {
         return {
-          sostoyanie: 'ne-udalos-proverit', id: null,
+          sostoyanie: 'moglo-dojti-bez-id', id: null,
           pochemu: 'хранилище ответило без опознавателя записи — проверить доставку нечем. Ответ: ' +
                    String(zapis.tekst).slice(0, 150),
         };
@@ -121,10 +146,65 @@ export function apply(ctx, config = {}) {
         tool: 'omega_memory', args: { action: 'similar', memory_id: id },
       });
       if (!chtenie.udalos) {
-        return { sostoyanie: 'ne-udalos-proverit', id, pochemu: chtenie.pochemu };
+        // Опознаватель ЕСТЬ — значит вопрос «легло ли» разрешим чтением, а не
+        // второй записью. Это и есть дешёвый выход: повторяем ПРОВЕРКОЙ.
+        return {
+          sostoyanie: 'moglo-dojti-id-est', id,
+          pochemu: 'запись отправлена и опознаватель получен, но подтвердить чтением не вышло: ' +
+                   chtenie.pochemu + '. Повторять записью нельзя — сперва спросить по опознавателю.',
+        };
       }
       const itog = istolkovatOtvet(chtenie.tekst, id, soderzhim);
+      // 🔴 Толкование даёт три исхода, и «не знаю» здесь означает не то же, что до
+      // отправки: опознаватель уже на руках. Переводим его в состояние, которое
+      // говорит, ЧТО ДЕЛАТЬ, а не только чего мы не знаем.
+      if (itog.sostoyanie === 'ne-udalos-proverit') {
+        return { sostoyanie: 'moglo-dojti-id-est', id, pochemu: itog.pochemu };
+      }
       return { sostoyanie: itog.sostoyanie, id, pochemu: itog.pochemu };
+    },
+
+    /**
+     * Спросить хранилище, легла ли запись — БЕЗ повторной записи.
+     * Возвращает { sostoyanie, pochemu }: est | net | ne-proveryali.
+     *
+     * 🔴 ТРЕТИЙ ИСХОД ОБЯЗАТЕЛЕН. «Не смогли спросить» и «записи нет» — разные
+     * ответы с противоположным лечением: первый оставляет запись в очереди,
+     * второй разрешает повтор записью. Схлопни их в `net` — и недоступность
+     * хранилища начнёт молча плодить дубли.
+     *
+     * 🔴 ОБРАЗЕЦ СОДЕРЖИМОГО ОБЯЗАТЕЛЕН, И ЭТО НЕ ФОРМАЛЬНОСТЬ. Опознаватель в
+     * ответе усечён до восьми знаков, а восемь шестнадцатеричных знаков —
+     * конечное множество: при росте базы префиксы совпадут. Плюс хранилище
+     * умеет слить нашу запись с похожей и вернуть опознаватель ЧУЖОЙ. Без
+     * образца толкование ответа честно отвечает «не знаю» — то есть проверка,
+     * вызванная без него, НЕ МОЖЕТ сказать «est» никогда, сколько её ни зови.
+     * Поэтому отсутствие образца — отдельный отказ, а не тихое «ne-proveryali».
+     */
+    async proverit({ id, obrazec = null } = {}) {
+      if (!id) {
+        return { sostoyanie: 'ne-proveryali', pochemu: 'проверка вызвана без опознавателя записи' };
+      }
+      if (!obrazec) {
+        return {
+          sostoyanie: 'ne-proveryali',
+          pochemu: 'проверка вызвана без образца содержимого: сверить, наша ли это запись, нечем. ' +
+                   'Опознаватель в ответе усечён, одного совпадения по нему мало.',
+        };
+      }
+      if (prichinaOtkaza) {
+        return { sostoyanie: 'ne-proveryali', pochemu: prichinaOtkaza.message };
+      }
+      const chtenie = await svyaz.pozvat('omega_call', {
+        tool: 'omega_memory', args: { action: 'similar', memory_id: id },
+      });
+      if (!chtenie.udalos) {
+        return { sostoyanie: 'ne-proveryali', pochemu: chtenie.pochemu };
+      }
+      const itog = istolkovatOtvet(chtenie.tekst, id, obrazec);
+      if (itog.sostoyanie === 'dostavleno') return { sostoyanie: 'est', pochemu: itog.pochemu };
+      if (itog.sostoyanie === 'ne-najdeno') return { sostoyanie: 'net', pochemu: itog.pochemu };
+      return { sostoyanie: 'ne-proveryali', pochemu: itog.pochemu };
     },
   });
 }
