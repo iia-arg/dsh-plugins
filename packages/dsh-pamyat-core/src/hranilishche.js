@@ -128,6 +128,15 @@ CREATE INDEX IF NOT EXISTS idx_ochered_agent ON ochered_dolgovremennogo(agent);
  * кодом, а не «пустая память». Отличать «не смог открыть» от «открыл, там
  * пусто» обязан вызывающий, поэтому мы не возвращаем в обоих случаях ноль.
  */
+/** Разобрать составные поля записи. Возвращает НОВЫЙ объект, исходный не трогает. */
+function razobrat_polya (z) {
+  const razobrat = (v) => {
+    if (typeof v !== 'string') return v;
+    try { return JSON.parse(v); } catch { return v; }
+  };
+  return { ...z, ochistka: razobrat(z.ochistka), podozrenie: razobrat(z.podozrenie) };
+}
+
 export function otkrytHranilishche(putK, { drajver } = {}) {
   if (!putK || typeof putK !== 'string') {
     const e = new Error('dsh-pamyat: не задан путь к базе памяти (ожидалась строка)');
@@ -154,6 +163,14 @@ export function otkrytHranilishche(putK, { drajver } = {}) {
       // «отметка пустая» обязаны различаться.
       baza.exec('ALTER TABLE zapisi ADD COLUMN ochistka TEXT DEFAULT NULL');
     }
+    if (!stolbcy.includes('podozrenie')) {
+      // Подозрение на секрет — В САМОЙ ЗАПИСИ, отдельным полем от `ochistka`:
+      // там что ИЗМЕНИЛИ, здесь в чём ПОДОЗРЕНИЕ. Разные вопросы — разные поля.
+      // Ставится правилом энтропии, которое судит по ВИДУ строки и потому не запирает
+      // запись: на больших корпусах знаний оно даёт ложные (замер соседнего узла —
+      // 2–16% из 3560 записей). NULL значит «правило не срабатывало».
+      baza.exec('ALTER TABLE zapisi ADD COLUMN podozrenie TEXT DEFAULT NULL');
+    }
     if (!stolbcy.includes('vera')) {
       // Старым строкам вера НЕ проставляется: они её не имели, и приписывать им
       // задним числом любое число значило бы выдумать измерение.
@@ -176,7 +193,7 @@ export function otkrytHranilishche(putK, { drajver } = {}) {
      */
     baza,
     /** Записать знание. Возвращает id — доказательство записи, а не «успех». */
-    zapisat({ agent, klass, soderzhim, istochnik = null, sozdano = Date.now(), bezPodtverzhdeniya = false, vera = null, ochistka = null }) {
+    zapisat({ agent, klass, soderzhim, istochnik = null, sozdano = Date.now(), bezPodtverzhdeniya = false, vera = null, ochistka = null, podozrenie = null }) {
       if (!agent || !klass || !soderzhim) {
         const e = new Error('dsh-pamyat: запись без обязательных полей (agent, klass, soderzhim)');
         e.code = 'PAMYAT_NEPOLNAYA_ZAPIS';
@@ -196,18 +213,25 @@ export function otkrytHranilishche(putK, { drajver } = {}) {
       // Отметка о чистке: NULL значит «текст не менялся». Пустой объект не пишем —
       // «нет отметки» и «отметка пустая» обязаны различаться.
       const ochistkaZnach = ochistka ? JSON.stringify(ochistka) : null;
+      const podozrenieZnach = podozrenie ? JSON.stringify(podozrenie) : null;
       const r = baza.prepare(
-        'INSERT INTO zapisi (agent, klass, soderzhim, istochnik, sozdano, bez_podtverzhdeniya, vera, ochistka) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(agent, klass, soderzhim, istochnik, sozdano, bezPodtverzhdeniya ? 1 : 0, veraZnach, ochistkaZnach);
+        'INSERT INTO zapisi (agent, klass, soderzhim, istochnik, sozdano, bez_podtverzhdeniya, vera, ochistka, podozrenie) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(agent, klass, soderzhim, istochnik, sozdano, bezPodtverzhdeniya ? 1 : 0, veraZnach, ochistkaZnach, podozrenieZnach);
       return Number(r.lastInsertRowid);
     },
     /** Прочитать последние записи агента. Пустой массив = записей нет (база жива). */
+    // 🔴 РАЗБОР СОСТАВНЫХ ПОЛЕЙ ПРИ ЧТЕНИИ. `ochistka` и `podozrenie` лежат в базе
+    // строкой JSON. Без разбора потребитель получает СТРОКУ, у которой `.klassy` и
+    // `.klass` — undefined: чтение «получилось», а поле молча пустое. Замер 04.09.2026:
+    // проба на пометку упала именно так, и по виду это был дефект записи, а не чтения.
+    // Негодный JSON НЕ роняет чтение и НЕ подменяется пустотой: возвращается как есть,
+    // чтобы «поле испорчено» отличалось от «поля не было».
     prochitat({ agent, klass = null, skolko = 20 }) {
       const sql = klass
         ? 'SELECT * FROM zapisi WHERE agent = ? AND klass = ? ORDER BY sozdano DESC LIMIT ?'
         : 'SELECT * FROM zapisi WHERE agent = ? ORDER BY sozdano DESC LIMIT ?';
       const args = klass ? [agent, klass, skolko] : [agent, skolko];
-      return baza.prepare(sql).all(...args);
+      return baza.prepare(sql).all(...args).map(razobrat_polya);
     },
     /**
      * Прочитать одну запись по опознавателю. Нужна для повтора доставки: чтобы
@@ -215,7 +239,8 @@ export function otkrytHranilishche(putK, { drajver } = {}) {
      * Возвращает undefined, если записи нет, — это не отказ, а ответ.
      */
     poId(id) {
-      return baza.prepare('SELECT * FROM zapisi WHERE id = ?').get(id);
+      const z = baza.prepare('SELECT * FROM zapisi WHERE id = ?').get(id);
+      return z ? razobrat_polya(z) : z;
     },
 
     /** Поставить запись в очередь доставки. Повторная постановка ОБНОВЛЯЕТ строку. */

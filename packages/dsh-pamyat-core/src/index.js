@@ -292,19 +292,55 @@ export function apply(ctx, config = {}) {
       zapis = { ...zapis, klass: normalizovat(zapis.klass), istochnik: normalizovat(zapis.istochnik) };
       const sekret = najti_sekret(String(zapis.soderzhim ?? ''));
       if (sekret) {
+        // 🔴 РЕЖИМ ОТКАЗА НАЗНАЧАЕТСЯ КАЖДОМУ ПРАВИЛУ ОТДЕЛЬНО, ПО ЕГО ДОЛЕ ЛОЖНЫХ
+        // НА ЖИВОМ КОРПУСЕ (решение автора замысла 04.09.2026, правка его же исходного
+        // «fail-closed на все секреты»).
+        //
+        //   (а) ОБЪЯВЛЕННЫЙ и СТРУКТУРНЫЕ  → fail-CLOSED, запись отвергается.
+        //       Ложных почти нет по построению: форма сама себя называет, а объявление
+        //       требует разделителя вплотную.
+        //   (б) ЭНТРОПИЯ                    → ПОМЕТКА, запись ПРОХОДИТ.
+        //       Правило судит по виду строки, а не по её роли, и на больших корпусах
+        //       знаний режет настоящие записи: замер соседней машины по 3560 записям —
+        //       2–16% при любом алфавите. Запирать такое значит завести системную течь
+        //       памяти под видом защиты: цена дешева для ОДНОЙ записи и не дешева
+        //       для каждой сороковой.
+        //
+        // ⚠️ РАСХОЖДЕНИЕ КОРПУСОВ НАЗЫВАЮ, А НЕ СГЛАЖИВАЮ: на моём корпусе (510 записей
+        // знаний OMEGA этого узла) исправленный алфавит даёт 0 ложных, а не 2–16%.
+        // Кто из нас прав — решается прогоном ЕЁ корпуса МОИМ алфавитом, и до этого
+        // прогона разница остаётся неразобранной. Пометка безопасна в обоих исходах:
+        // при 0% она ничего не стоит, при 16% — спасает знания. Потому и выбрана.
+        const strogo = sekret.klass === 'obyavlennyj' ||
+                       sekret.klass === 'uuid-obyavlennyj' ||
+                       sekret.klass === 'hex-bez-obyavleniya' ||
+                       String(sekret.klass).startsWith('strukturnyj:');
         // В журнал идут КЛАСС и ПОЗИЦИЯ, никогда значение и никогда фрагмент: фильтр
         // секретов, печатающий найденное, становится их публикатором.
+        if (strogo) {
+          zhurnal?.otmetit({
+            agent, klass: zapis.klass, ishod: 'otkloneno', priroda: 'sekret-na-vhode',
+            pochemu: 'в тексте найден секрет класса «' + sekret.klass + '» на позиции ' +
+                     sekret.pozicia + '; значение не печатается. Знание восстановимо по ' +
+                     'источнику: срез журнала append-only',
+            istochnik: zapis.istochnik ?? null,
+          });
+          const e = new Error('dsh-pamyat: в тексте найден секрет (' + sekret.klass +
+                              '), запись отклонена');
+          e.code = 'PAMYAT_SEKRET_NA_VHODE';
+          throw e;
+        }
+        // Пометка едет В САМОЙ ЗАПИСИ, а не только в журнале: журнал живёт короче знания,
+        // и через месяц «почему это помечено» ответить будет нечем. Поле отдельное от
+        // `ochistka`: там что ИЗМЕНИЛИ, здесь в чём ПОДОЗРЕНИЕ — разные вопросы.
+        zapis = { ...zapis, podozrenie: { klass: sekret.klass, pozicia: sekret.pozicia } };
         zhurnal?.otmetit({
-          agent, klass: zapis.klass, ishod: 'otkloneno', priroda: 'sekret-na-vhode',
-          pochemu: 'в тексте найден секрет класса «' + sekret.klass + '» на позиции ' +
-                   sekret.pozicia + '; значение не печатается. Знание восстановимо по ' +
-                   'источнику: срез журнала append-only',
+          agent, klass: zapis.klass, ishod: 'zapisano', priroda: 'podozrenie-na-sekret',
+          pochemu: 'правило «' + sekret.klass + '» сработало на позиции ' + sekret.pozicia +
+                   '; запись ПРОПУЩЕНА с пометкой, потому что это правило судит по виду ' +
+                   'строки и на больших корпусах даёт ложные. Значение не печатается',
           istochnik: zapis.istochnik ?? null,
         });
-        const e = new Error('dsh-pamyat: в тексте найден секрет (' + sekret.klass +
-                            '), запись отклонена');
-        e.code = 'PAMYAT_SEKRET_NA_VHODE';
-        throw e;
       }
       const chistka = ochistit(String(zapis.soderzhim ?? ''));
       if (chistka.ochistka) {
