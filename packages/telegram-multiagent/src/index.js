@@ -1364,10 +1364,33 @@ export function apply(ctx, config = {}) {
   // «причины нет», и это та же слепота, что и раньше).
   // Перенесено из второй живой копии модуля 01.09.2026 ДОСЛОВНО: своя редакция
   // того же лечения развела бы копии по логике при сверке.
+  // 🔴 `??` ПРОПУСКАЕТ ПУСТУЮ СТРОКУ КАК ЗАДАННОЕ ЗНАЧЕНИЕ (замер 04.09.2026).
+  // Было `c?.message ?? c?.code ?? String(c)`. Нулевое слияние реагирует только на
+  // null и undefined, а `message` у AggregateError (её кладёт fetch, перебрав адреса)
+  // бывает ПУСТОЙ СТРОКОЙ — и она «найдена», до `code` дело не доходит.
+  // В журнале это дало 125 строк за три часа вида «причина: » с пустотой после
+  // двоеточия. Хуже отсутствия поля: «причина:» с пустотой читается как «причину
+  // узнали, она пустая», а её просто не достали.
+  // Воспроизведено: errDetail(cause с message='') -> '', errDetail(AggregateError) -> ''.
   function errDetail(e) {
     const c = e?.cause;
     if (!c) return 'не указана';
-    return c?.message ?? c?.code ?? String(c);
+    const chasti = [];
+    // Класс ошибки называем всегда: AggregateError и Error лечатся по-разному, а по
+    // тексту они неотличимы.
+    if (c?.constructor?.name) chasti.push(c.constructor.name);
+    if (c?.code) chasti.push(String(c.code));
+    if (c?.message) chasti.push(String(c.message));
+    // У AggregateError настоящие причины лежат в errors, а собственный message пуст.
+    if (Array.isArray(c?.errors) && c.errors.length) {
+      const vnutri = c.errors.slice(0, 3)
+        .map((x) => [x?.code, x?.message].filter(Boolean).join(' ') || String(x))
+        .filter(Boolean);
+      if (vnutri.length) chasti.push('внутри: ' + vnutri.join('; '));
+    }
+    // Пустой перечень — это НЕ пустая причина, а «объект есть, а сказать про него
+    // нечего». Разные состояния, разные слова.
+    return chasti.length ? chasti.join(' ') : `объект ${typeof c}, полей с описанием нет`;
   }
 
   async function loop(run) {
@@ -1397,7 +1420,10 @@ export function apply(ctx, config = {}) {
         }
       } catch (e) {
         // Сеть моргнула или Telegram ответил ошибкой — ждём и продолжаем.
-        log(`опрос не удался: ${e?.message ?? e} | причина: ${errDetail(e)}`);
+        // ЧТО именно опрашивалось — называем: в цикле три опроса подряд (a2a, ящик,
+        // телеграм), и без имени отказ читается как «всё сломалось», хотя стоять может
+        // одно из трёх.
+        log(`опрос не удался (a2a+ящик+telegram): ${e?.message ?? e} | причина: ${errDetail(e)}`);
         await new Promise((r) => setTimeout(r, 3000));
       }
     }
