@@ -25,7 +25,7 @@ import { createRequire } from 'node:module';
 import { otkrytHranilishche } from './hranilishche.js';
 import { zavestiZhurnal } from './zhurnal.js';
 import { reshitPoKlassu, istolkovatPodtverzhdenie } from './politika.js';
-import { filtr_ispraven, najti_sekret, ochistit, trevozhno, proverit_sluzhebnoe, normalizovat } from './filtr-vhoda.js';
+import { filtr_ispraven, najti_sekret, ochistit, trevozhno, proverit_sluzhebnoe, normalizovat, zapiraet } from './filtr-vhoda.js';
 import z from '@deepseek-ai/schemastery';
 
 export const name = 'dsh-pamyat-core';
@@ -326,9 +326,9 @@ export function apply(ctx, config = {}) {
         // (класс живой, границы 24–39 с исключением 32). Ноль предмета НЕ делает основание
         // верным — он означает лишь, что цена ошибки сегодня нулевая. Режим по «ложных нет»
         // не выбирают: завтра предмет появится, а решение останется.
-        const strogo = sekret.klass === 'obyavlennyj' ||
-                       sekret.klass === 'uuid-obyavlennyj' ||
-                       String(sekret.klass).startsWith('strukturnyj:');
+        // Решение о режиме — ОДНО на всех, читается из фильтра, а не повторяется здесь.
+        // Список, повторённый в потребителе, разошёлся у соседа 3 из 4 (замер 04.09.2026).
+        const strogo = zapiraet(sekret.klass);
         // В журнал идут КЛАСС и ПОЗИЦИЯ, никогда значение и никогда фрагмент: фильтр
         // секретов, печатающий найденное, становится их публикатором.
         if (strogo) {
