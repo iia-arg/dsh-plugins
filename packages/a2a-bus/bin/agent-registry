@@ -1,0 +1,573 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""agent-registry — читатель реестра агентов машины.
+
+  list     показать намерение по агентам
+  sluzhby  напечатать службы агентов и их зависимостей — для потребителей,
+           чтобы им не заводить свой список
+  pole     agent-registry pole <агент> <поле> [--json] — одно поле намерения.
+           --json даёт машинную форму: оболочка берёт jq и не разбирает
+           вывод регулярками. Вложенности через точку НЕТ намеренно —
+           причина в теле cmd_pole, там же замер.
+           🔴 В конвейере код возврата берите через PIPESTATUS или
+           set -o pipefail: `... --json | jq ...` отдаёт код jq, а тот
+           на пустом входе равен 0. Отказ инструмента при этом не
+           виден вовсе — измеряется не та команда.
+  mashina  agent-registry mashina [--json] — свойства самой машины: путь ключа
+           GPG, путь хранилища секретов, куда и куда локально едет копия, канал
+           тревог. Только ПУТИ — значений секретов в реестре нет и не будет,
+           раздел безопасно печатать целиком.
+           🔴 Заведено 25.08 по находке при установке приёмки копии: путь ключа
+           жил в реестре КОММЕНТАРИЕМ, то есть был виден человеку и невидим
+           машине, и потребитель завёл его своей переменной у себя.
+  obshchee agent-registry obshchee [--json] — общемашинное: пути, которые нужны
+           для восстановления ЛЮБОГО агента и не принадлежат ни одному.
+           🔴 Заведено 24.08 по находке при установке сторожа покрытия: раздела
+           не было видно ни одной подкомандой, и потребителю пришлось завести
+           свой список внутри кода — ровно то, против чего реестр и заводился.
+           Причина оказалась не в небрежности потребителя, а в немоте читателя.
+  pokrytie agent-registry pokrytie [--json] — ВСЯ рамка покрытия копии одним
+           вызовом: корни обхода, дома, общемашинное в копию и не в копию,
+           разметка комнат по каждому агенту. Заведено для сторожа покрытия,
+           чтобы у него не осталось ни одного своего списка — включая рамку
+           собственного обхода. Любого раздела нет — ОТКАЗ 3, не пустота.
+  fakt     снять с машины то, что снимаемо ЭТОЙ рукой
+  verify   сверить намерение с фактом. Расхождение => 1, слепота => 2
+
+🔴 ГРАНИЦЫ — читать до того, как положиться:
+  * Инструмент НИЧЕГО не меняет. Ни одна подкоманда не правит файлы и не
+    перезапускает служб.
+  * Он не угадывает. Нет поля в реестре — громкий отказ и ненулевой код,
+    а не умолчание. Имя службы, порт, дом и место модели берутся только из
+    явных полей: на этой машине шаблон по имени агента уже ложен.
+  * verify отвечает на вопрос «совпадает ли намерение с машиной», а НЕ
+    «здоров ли агент». Живость — отдельная проверка, поле kak_proverit_zhiv.
+  * 🔴 verify различает ТРИ исхода, а не два. «Не смогла проверить» — это не
+    «сошлось». Известная граница (поле помечено snimaet: root, а рука иная)
+    печатается как «граница» и код не поднимает: это записанное состояние,
+    а не событие. НЕИЗВЕСТНАЯ слепота — поле помечено снимаемым этой рукой,
+    а снять не вышло — даёт код 2. Иначе ежедневная тревога о заведомо
+    непроверяемом приучит владельца не читать тревоги.
+  * Тариф (подписка или поштучно) машиной не снимается вовсе: это уговор с
+    поставщиком, а не свойство файловой системы. verify его не проверяет и
+    честно говорит об этом, а не молчит.
+  * Дом соседа из-под <agent> не читается. Это не поломка и не расхождение.
+"""
+import json
+import os
+import subprocess
+import sys
+
+try:
+    import yaml
+except Exception as e:                                     # pragma: no cover
+    print(f"agent-registry: нет python3-yaml — {e}", file=sys.stderr)
+    sys.exit(2)
+
+REESTR = os.environ.get("AGENTS_REGISTRY", "/etc/agent-registry/agents.yaml")
+WATCHDOG_CONF = os.environ.get("WATCHDOG_CONF", "/etc/agent-watchdog/watchdog.conf")
+
+OK, RASH, SLEP = "ok", "расхождение", "СЛЕПОТА"
+
+
+def zagruzit():
+    try:
+        with open(REESTR, encoding="utf-8") as f:
+            d = yaml.safe_load(f)
+    except FileNotFoundError:
+        print(f"agent-registry: реестра нет — {REESTR}", file=sys.stderr)
+        sys.exit(2)
+    except Exception as e:
+        print(f"agent-registry: реестр не разбирается — {e}", file=sys.stderr)
+        sys.exit(2)
+    if not isinstance(d, dict) or not isinstance(d.get("agenty"), list) or not d["agenty"]:
+        print(f"agent-registry: в {REESTR} нет непустого списка agenty", file=sys.stderr)
+        sys.exit(2)
+    return d
+
+
+def sh(cmd, timeout=15):
+    """Вернуть (код, вывод). Отказ запуска — код 127, а не исключение."""
+    try:
+        p = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=timeout)
+        return p.returncode, (p.stdout + p.stderr).strip()
+    except subprocess.TimeoutExpired:
+        return 124, "таймаут"
+    except Exception as e:
+        return 127, str(e)
+
+
+def pokazatel(unit, prop):
+    _, out = sh(f"systemctl show {unit!r} -p {prop} --value")
+    return out.strip()
+
+
+def moya_ruka():
+    """Кто спрашивает — по ДЕЙСТВУЮЩЕМУ пользователю процесса.
+
+    🔴 Не из $USER: переменную окружения подставляет запускающий, и тогда
+    инструмент назовёт руку, которой не является. Субъект проверки обязан
+    браться из самой проверки, а не из окружения.
+    """
+    import pwd
+    return pwd.getpwuid(os.geteuid()).pw_name
+
+
+# ── чтение поля намерения ───────────────────────────────────────────────────
+def namerenie(a):
+    n = a.get("namerenie")
+    if not isinstance(n, dict):
+        print(f"agent-registry: у агента {a.get('imya')!r} нет блока namerenie", file=sys.stderr)
+        sys.exit(2)
+    return n
+
+
+def obyazatelnoe(n, imya, klyuch):
+    """Нет поля — отказ, а не умолчание."""
+    if klyuch not in n:
+        print(f"agent-registry: у агента {imya!r} нет поля {klyuch!r} — "
+              f"выводить его по шаблону запрещено, дополните реестр", file=sys.stderr)
+        sys.exit(3)
+    return n[klyuch]
+
+
+# ── подкоманды ──────────────────────────────────────────────────────────────
+def cmd_list(d):
+    for a in d["agenty"]:
+        n = namerenie(a)
+        print(f"{a['imya']}  ({a.get('rol','?')})")
+        for k in ("sluzhba", "polzovatel", "dom", "port", "provider", "model",
+                  "reasoning", "tarif", "instrukciya", "kto_perezapuskaet"):
+            if k in n:
+                print(f"    {k:<18} {n[k] if n[k] is not None else '—'}")
+        if n.get("zavisit_ot"):
+            print(f"    {'zavisit_ot':<18} {' '.join(n['zavisit_ot'])}")
+    return 0
+
+
+def sluzhby_reestra(d):
+    out = []
+    for a in d["agenty"]:
+        n = namerenie(a)
+        out.append(obyazatelnoe(n, a["imya"], "sluzhba"))
+        out += list(n.get("zavisit_ot") or [])
+    # порядок сохраняем, дубли убираем
+    vid, res = set(), []
+    for s in out:
+        if s not in vid:
+            vid.add(s)
+            res.append(s)
+    return res
+
+
+def cmd_sluzhby(d):
+    print(" ".join(sluzhby_reestra(d)))
+    return 0
+
+
+def ramka(d):
+    """Собрать рамку покрытия. Единственное место, где она собирается.
+
+    🔴 Раздела нет — отказ, а не пустой ответ. Ни один из этих списков не бывает
+    пуст на живой машине: нет корней обхода — нечего обходить; нет общемашинного
+    — значит его не описали. Потребитель, получивший пустоту, промолчит и будет
+    выглядеть исправным.
+    """
+    r = {}
+    for klyuch, chelovecheski in (("korni_obhoda", "корни обхода"),
+                                  ("obshchee", "общемашинное в копию"),
+                                  ("obshchee_ne_v_kopiyu", "общемашинное не в копию")):
+        v = d.get(klyuch)
+        if not v:
+            print(f"agent-registry: в реестре нет непустого раздела {klyuch!r} "
+                  f"({chelovecheski}). Это ОТКАЗ, а не «его нет»: пустым он не "
+                  f"бывает. Дополните {REESTR}", file=sys.stderr)
+            sys.exit(3)
+        r[klyuch] = v
+    doma, komnaty = {}, {}
+    for a in d["agenty"]:
+        imya = a["imya"]
+        n = namerenie(a)
+        doma[imya] = obyazatelnoe(n, imya, "dom")
+        k = n.get("kopiya")
+        if not isinstance(k, dict):
+            print(f"agent-registry: у агента {imya!r} нет раздела kopiya — состав "
+                  f"копии неизвестен. Это отказ: «неизвестно» не равно «ничего "
+                  f"не нужно»", file=sys.stderr)
+            sys.exit(3)
+        komnaty[imya] = {"klast": list(k.get("klast") or []),
+                         "ne_klast": dict(k.get("ne_klast_prichina") or {})}
+    r["doma"] = doma
+    r["komnaty"] = komnaty
+    return r
+
+
+def cmd_pokrytie(d, argv):
+    r = ramka(d)
+    if "--json" in argv:
+        json.dump(r, sys.stdout, ensure_ascii=False, sort_keys=True)
+        sys.stdout.write("\n")
+        return 0
+    print("корни обхода:")
+    for x in r["korni_obhoda"]:
+        m = ",".join(x.get("maski") or []) or "без маски"
+        print(f"  {x.get('put')}   [{m}]   {x.get('zachem','')}")
+    print("дома:")
+    for i, dm in r["doma"].items():
+        k = r["komnaty"][i]
+        print(f"  {i:<12} {dm}   klast {len(k['klast'])}, не класть {len(k['ne_klast'])}")
+    print(f"общемашинное в копию: {len(r['obshchee'])}")
+    print(f"общемашинное НЕ в копию: {len(r['obshchee_ne_v_kopiyu'])}")
+    return 0
+
+
+def cmd_obshchee(d, argv):
+    """Общемашинное: путь + зачем. --json — машинная форма.
+
+    🔴 Пустой раздел — ОТКАЗ, а не пустой список. Общемашинное на этой машине
+    есть заведомо (реестры, сторожа, полка скиллов); ответ «ничего нет» здесь
+    означает не факт о машине, а то, что читать было нечего. Потребитель,
+    получивший пустоту, решит «покрывать нечего» и промолчит — тихий ноль.
+    """
+    kak_json = "--json" in argv
+    # Через ramka(), а не своим чтением: два места сборки одного списка
+    # разошлись бы молча — ровно то, от чего заведён сам реестр.
+    lst = ramka(d)["obshchee"]
+    if kak_json:
+        json.dump(lst, sys.stdout, ensure_ascii=False, sort_keys=True)
+        sys.stdout.write("\n")
+        return 0
+    for x in lst:
+        put = x.get("put", "?") if isinstance(x, dict) else str(x)
+        zachem = x.get("zachem", "") if isinstance(x, dict) else ""
+        print(f"{put}")
+        if zachem:
+            print(f"    {zachem}")
+    return 0
+
+
+def cmd_mashina(d, argv):
+    """Свойства САМОЙ машины: где ключ, где хранилище секретов, куда едет копия.
+
+    Заведено 25.08.2026 по находке при установке приёмки копии: путь ключа
+    существовал в реестре только КОММЕНТАРИЕМ рядом с hranilishche_sekretov,
+    то есть был записан для человека и невидим машине. Потребитель
+    (proverka-kopii.sh) из-за этого держал оба пути своими переменными внутри
+    себя и честно назвал это своим списком. Тот же случай был 24.08 с obshchee:
+    причина не в небрежности потребителя, а в НЕМОТЕ читателя.
+
+    🔴 Два ключа обязательны: klyuch_gpg и hranilishche_sekretov. Их отсутствие —
+    ОТКАЗ 3, а не пустой ответ. Приёмка копии, получив пустоту, проверила бы
+    несуществующие пути и сказала «ключа в копии нет» — вердикт о копии по
+    дефекту реестра, то есть красивый неверный ответ вместо отказа.
+
+    🔴 ЧЕГО ЗДЕСЬ НЕТ: значений секретов. В реестре только пути, и так будет
+    всегда. Раздел безопасно печатать целиком и класть в отчёт.
+    """
+    kak_json = "--json" in argv
+    m = d.get("mashina")
+    if not isinstance(m, dict) or not m:
+        print("agent-registry: в реестре нет непустого раздела 'mashina'. Это ОТКАЗ, "
+              f"а не «его нет»: пустым он не бывает. Дополните {REESTR}", file=sys.stderr)
+        return 3
+    net = [k for k in ("klyuch_gpg", "hranilishche_sekretov") if not m.get(k)]
+    if net:
+        print(f"agent-registry: в разделе 'mashina' нет обязательных полей: "
+              f"{', '.join(net)}. Без них приёмку копии не выполнить: хранилище "
+              f"без ключа — мёртвый груз, ключ без хранилища — нечего открывать. "
+              f"Дополните {REESTR}", file=sys.stderr)
+        return 3
+    if kak_json:
+        json.dump(m, sys.stdout, ensure_ascii=False, sort_keys=True)
+        sys.stdout.write("\n")
+        return 0
+    for k, v in m.items():
+        if isinstance(v, dict):
+            print(f"{k}")
+            for a, b in v.items():
+                print(f"    {a:22} {b}")
+        elif isinstance(v, list):
+            print(f"{k}")
+            for x in v:
+                print(f"    {x}")
+        else:
+            print(f"{k:24} {v}")
+    return 0
+
+
+def cmd_pole(d, argv):
+    """Отдать одно поле намерения. --json — машинная форма для оболочки.
+
+    🔴 ВЛОЖЕННОСТЬ ЧЕРЕЗ ТОЧКУ ЗДЕСЬ НЕ ДЕЛАЕТСЯ, И ЭТО РЕШЕНИЕ, А НЕ ПРОПУСК.
+    Напрашивается `pole <agent> kopiya.klast`, и на большинстве данных это
+    работало бы. Но в ЭТОМ реестре уже есть ключи, содержащие точку в самом
+    имени: `app.rc8-20260821`, `.npm/.cache`, `.claude/projects`, `.cache/.npm`.
+    Разбор по точке пойдёт искать в них ключ `app`, не найдёт — и отдаст
+    «у агента нет такого поля». То есть на СУЩЕСТВУЮЩЕЕ поле придёт отказ,
+    неотличимый от штатного отказа реестра: правдоподобный неверный ответ,
+    а не громкая ошибка. Замерено на настоящих данных 24.08.2026.
+    Годный путь — `--json | jq '.ne_klast_prichina["app.rc8-20260821"]'`:
+    jq берёт ключ с точкой явными скобками, а `jq -e` держит границу
+    «нет ключа => ненулевой код». Свой разбор путей был бы хуже jq.
+    """
+    argv = list(argv)
+    kak_json = False
+    for flag in ("--json",):
+        while flag in argv:
+            argv.remove(flag)
+            kak_json = True
+    if len(argv) != 2:
+        print("agent-registry pole <агент> <поле> [--json]", file=sys.stderr)
+        return 3
+    imya, klyuch = argv
+    for a in d["agenty"]:
+        if a["imya"] == imya:
+            if "." in klyuch and klyuch not in namerenie(a):
+                # 🔴 Без этой подсказки отказ был бы неотличим от штатного
+                # «нет такого поля», и спросивший решил бы, что дополнять надо
+                # реестр, а дополнять надо вызов. Отказ обязан называть свою
+                # настоящую причину, иначе он уводит в сторону вежливо.
+                print(f"agent-registry: в имени поля {klyuch!r} есть точка. "
+                      f"Вложенность через точку НЕ поддерживается намеренно: "
+                      f"в этом реестре точка встречается внутри самих имён "
+                      f"ключей, и разбор по ней отказал бы на существующем "
+                      f"поле. Возьмите: agent-registry pole {imya} "
+                      f"{klyuch.split('.')[0]} --json | jq ...", file=sys.stderr)
+                return 3
+            # obyazatelnoe сам отказывает и выходит с кодом 3, если поля нет.
+            # 🔴 Граница сохраняется и в --json: отсутствующее поле НЕ
+            # превращается в null. null означает «поле есть, значение пусто» —
+            # это разные вещи, и сливать их значит вернуть молчаливую пустоту.
+            v = obyazatelnoe(namerenie(a), imya, klyuch)
+            if kak_json:
+                json.dump(v, sys.stdout, ensure_ascii=False, sort_keys=True)
+                sys.stdout.write("\n")
+            else:
+                # Человеческая форма. Для скаляра — голое значение; для списка
+                # и словаря — питоновский литерал: он для ГЛАЗ, не для разбора.
+                # Машине разбирать его регулярками не надо, есть --json.
+                print("" if v is None else v)
+            return 0
+    print(f"agent-registry: агента {imya!r} в реестре НЕТ. Свой список заводить "
+          f"нельзя — либо запись в {REESTR}, либо отказ.", file=sys.stderr)
+    return 3
+
+
+def snyat_fakt(a):
+    """Что снимаемо этой рукой. Возвращает словарь поле -> (значение, беда)."""
+    n = namerenie(a)
+    imya = a["imya"]
+    f = {}
+    sluzhba = obyazatelnoe(n, imya, "sluzhba")
+    f["sluzhba_load"] = (pokazatel(sluzhba, "LoadState"), None)
+    f["sluzhba_active"] = (pokazatel(sluzhba, "ActiveState"), None)
+    f["polzovatel"] = (pokazatel(sluzhba, "User"), None)
+    f["execstart"] = (pokazatel(sluzhba, "ExecStart"), None)
+    f["mainpid"] = (pokazatel(sluzhba, "MainPID"), None)
+    dom = obyazatelnoe(n, imya, "dom")
+    f["dom_est"] = ("да" if os.path.isdir(dom) else "нет", None)
+    zav = []
+    for u in (n.get("zavisit_ot") or []):
+        zav.append(f"{u}={pokazatel(u, 'ActiveState') or 'нет-юнита'}")
+    f["zavisimosti"] = (" ".join(zav) if zav else "—", None)
+    # модель — только если рука вправе читать источник
+    ist = n.get("istochnik_modeli") or {}
+    put = ist.get("fajl")
+    if put and os.access(put, os.R_OK):
+        kod, out = sh(f"python3 - <<'EOF'\n"
+                      f"import yaml,sys\n"
+                      f"d=yaml.safe_load(open({put!r},encoding='utf-8'))\n"
+                      f"v=[x for x in (d or []) if isinstance(x,dict) and x.get('id')=={ist.get('id')!r}]\n"
+                      f"c=(v[0].get('config') or {{}}) if v else {{}}\n"
+                      f"print(c.get('provider',''),c.get('model',''))\n"
+                      f"EOF")
+        f["model_v_faile"] = ((out if kod == 0 else ""), None if kod == 0 else out)
+    else:
+        f["model_v_faile"] = (None, f"источник не читается этой рукой: {put}")
+    return f
+
+
+def cmd_kto(d, argv):
+    """По СИСТЕМНОМУ пользователю отдать имя агента. --json — машинная форма.
+
+    ЗАЧЕМ ОТДЕЛЬНАЯ ПОДКОМАНДА. Шине A2A нужен обратный путь: почтальон
+    видит владельца письма как uid, а владельцу в чат надо написать
+    «письмо от Искры», а не «от uid=1001». Без этого потребитель завёл бы
+    у себя свой перечень «пользователь → имя», и он разошёлся бы с реестром
+    молча в тот день, когда заведут одиннадцатого агента.
+
+    Пользователь, которого в реестре нет, — отказ 3, а не пустая строка:
+    пустота в чате читалась бы как «письмо ни от кого».
+    """
+    argv = list(argv)
+    kak_json = "--json" in argv
+    while "--json" in argv:
+        argv.remove("--json")
+    if len(argv) != 1:
+        print("agent-registry kto <системный-пользователь> [--json]", file=sys.stderr)
+        return 3
+    polzovatel = argv[0]
+    for a in d["agenty"]:
+        # Поле живёт в блоке namerenie, а не в корне записи. Берём тем же
+        # путём, каким его берёт cmd_pole: два разных пути к одному полю
+        # разошлись бы молча.
+        if namerenie(a).get("polzovatel") == polzovatel:
+            imya = a["imya"]
+            print(json.dumps(imya, ensure_ascii=False) if kak_json else imya)
+            return 0
+    print(
+        f"agent-registry: пользователь {polzovatel!r} не значится ни за одним агентом",
+        file=sys.stderr,
+    )
+    return 3
+
+
+def cmd_fakt(d):
+    ruka = moya_ruka()
+    print(f"снято рукой: {ruka}")
+    for a in d["agenty"]:
+        print(f"\n{a['imya']}:")
+        for k, (v, beda) in snyat_fakt(a).items():
+            print(f"    {k:<16} {v if v is not None else '(не снято: ' + str(beda) + ')'}")
+    return 0
+
+
+def sverit(a, ruka, stroki):
+    """Одна запись. Возвращает (расхождений, неизвестной_слепоты)."""
+    n = namerenie(a)
+    imya = a["imya"]
+    f = snyat_fakt(a)
+    rash = slep = 0
+
+    def sud(pole, verdikt, ozhid, fakt):
+        stroki.append(f"  {imya:<10} {pole:<16} {verdikt:<12} ждали={ozhid} машина={fakt}")
+
+    if f["sluzhba_load"][0] != "loaded":
+        sud("служба", RASH, "loaded", f["sluzhba_load"][0] or "(пусто)"); rash += 1
+    elif f["sluzhba_active"][0] != "active":
+        sud("служба", RASH, "active", f["sluzhba_active"][0]); rash += 1
+    else:
+        sud("служба", OK, n["sluzhba"], f"loaded/active pid={f['mainpid'][0]}")
+
+    ozh_u = obyazatelnoe(n, imya, "polzovatel")
+    if f["polzovatel"][0] != ozh_u:
+        sud("пользователь", RASH, ozh_u, f["polzovatel"][0] or "(пусто)"); rash += 1
+    else:
+        sud("пользователь", OK, ozh_u, f["polzovatel"][0])
+
+    dom = n["dom"]
+    if f["dom_est"][0] != "да":
+        sud("дом", RASH, dom, "каталога нет"); rash += 1
+    elif dom not in f["execstart"][0]:
+        # связь намерения с тем, ЧТО ИМЕННО запущено, а не просто «каталог есть»
+        sud("дом", RASH, f"{dom} в ExecStart", f["execstart"][0][:70]); rash += 1
+    else:
+        sud("дом", OK, dom, "есть и назван в ExecStart")
+
+    for z in (f["zavisimosti"][0].split() if f["zavisimosti"][0] != "—" else []):
+        if not z.endswith("=active"):
+            sud("зависимость", RASH, "active", z); rash += 1
+        else:
+            sud("зависимость", OK, z.split("=")[0], "active")
+
+    # живость: команда взята из реестра целиком, не собирается по шаблону
+    if "kak_proverit_zhiv" in n and n["kak_proverit_zhiv"]:
+        kod, out = sh(n["kak_proverit_zhiv"])
+        if kod == 0:
+            sud("живость", OK, f"порт {n.get('port','?')}", "платформа отвечает 200")
+        else:
+            sud("живость", RASH, "ответ 200", f"код {kod} {out[:40]}"); rash += 1
+    else:
+        sud("живость", SLEP, "команда в реестре", "поля нет"); slep += 1
+
+    # модель и провайдер
+    ist = n.get("istochnik_modeli") or {}
+    snimaet = ist.get("snimaet")
+    znach, beda = f["model_v_faile"]
+    ozh = f"{n.get('provider')} {n.get('model')}"
+    if znach is None:
+        if snimaet and snimaet != ruka:
+            sud("модель", "граница", ozh, f"снимаемо рукой {snimaet}, я {ruka}")
+        else:
+            sud("модель", SLEP, ozh, beda or "не снято"); slep += 1
+    elif znach.strip() != ozh.strip():
+        sud("модель", RASH, ozh, znach or "(пусто)"); rash += 1
+    else:
+        sud("модель", OK, ozh, znach)
+
+    # тариф машиной не снимается вовсе — говорим это, а не молчим
+    sud("тариф", "не снимаемо", n.get("tarif", "—"), "уговор с поставщиком, не свойство машины")
+    return rash, slep
+
+
+def sverit_potrebitelya(d, stroki):
+    """Свойство приёмки: сторож машины не должен иметь СВОЕГО списка агентов."""
+    nuzhno = sluzhby_reestra(d)
+    try:
+        with open(WATCHDOG_CONF, encoding="utf-8") as fh:
+            text = fh.read()
+    except Exception as e:
+        stroki.append(f"  потребитель  сторож машины   {SLEP}      {WATCHDOG_CONF}: {e}")
+        return 0, 1
+    net = [s for s in nuzhno if s not in text]
+    if net:
+        stroki.append(f"  потребитель  сторож машины   {RASH}  нет в наблюдении: {' '.join(net)}")
+        return 1, 0
+    stroki.append(f"  потребитель  сторож машины   {OK}           все {len(nuzhno)} службы реестра под наблюдением")
+    return 0, 0
+
+
+def cmd_verify(d):
+    ruka = moya_ruka()
+    stroki = [f"реестр: {REESTR}   рука: {ruka}", ""]
+    rash = slep = 0
+    for a in d["agenty"]:
+        r, s = sverit(a, ruka, stroki)
+        rash += r
+        slep += s
+    r, s = sverit_potrebitelya(d, stroki)
+    rash += r
+    slep += s
+    print("\n".join(stroki))
+    print()
+    if rash:
+        print(f"🔴 РАСХОЖДЕНИЙ: {rash}" + (f", НЕ ПРОВЕРЕНО: {slep}" if slep else ""))
+        return 1
+    if slep:
+        print(f"⚠️  НЕ ПРОВЕРЕНО: {slep} — это не «сошлось»")
+        return 2
+    print(f"намерение совпадает с машиной; агентов: {len(d['agenty'])}")
+    return 0
+
+
+def main():
+    argv = sys.argv[1:]
+    cmd = argv[0] if argv else "list"
+    if cmd in ("-h", "--help", "help"):
+        print(__doc__)
+        return 0
+    d = zagruzit()
+    if cmd == "list":
+        return cmd_list(d)
+    if cmd == "sluzhby":
+        return cmd_sluzhby(d)
+    if cmd == "pole":
+        return cmd_pole(d, argv[1:])
+    if cmd == "mashina":
+        return cmd_mashina(d, argv[1:])
+    if cmd == "obshchee":
+        return cmd_obshchee(d, argv[1:])
+    if cmd == "pokrytie":
+        return cmd_pokrytie(d, argv[1:])
+    if cmd == "kto":
+        return cmd_kto(d, argv[1:])
+    if cmd == "fakt":
+        return cmd_fakt(d)
+    if cmd == "verify":
+        return cmd_verify(d)
+    print(f"agent-registry: нет такой подкоманды — {cmd!r}", file=sys.stderr)
+    return 3
+
+
+if __name__ == "__main__":
+    sys.exit(main())

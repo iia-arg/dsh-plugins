@@ -3,7 +3,7 @@
 > **The original is Russian** — [`MEMORY-AND-A2A.ru.md`](MEMORY-AND-A2A.ru.md); this file is a
 > translation from Russian. Edits are made **in pairs**: change one file, change the other in the
 > same commit.
-> **Document version: 2026-09-04.** Written from the repository code as of that date; package
+> **Document version: 2026-09-04 (rev. 2 — §6.1 sender side, §5.1.6 alpha.25).** Written from the repository code as of that date; package
 > versions are in table §1.3. Anything that depends on the state of the npm registry (`latest` /
 > `alpha` tags) is **not** treated as stable in this document — see §7 "Installing" and §8
 > "Release order".
@@ -62,7 +62,7 @@ the same as the `latest` tag in the registry — see §7.
 | `dsh-pamyat-omega` | 0.1.0-alpha.9 | optional long-term layer over external storage via MCP |
 | `dsh-pamyat` | 0.1.0-alpha.27 | the name for the set: which six, in exactly which versions, were checked together |
 | `a2a-bus` | no version (not an npm package) | mailboxes, postman, timer |
-| `telegram-multiagent` (`dsh-telegram-multiagent`) | 1.4.3 | Telegram channel; in this document — only its A2A part and the context commands |
+| `telegram-multiagent` (`dsh-telegram-multiagent`) | 1.4.3 (1.5.1 in the registry, accepted; §6.3 describes 1.5.x) | Telegram channel; in this document — only its A2A part and the context commands |
 
 ---
 
@@ -352,10 +352,14 @@ so that a reader understands how the versions differ and does not install by tag
 | alpha.21 | `key` in the list | no left boundary: `monkey=`, `hotkey=`, `отключ=` — false refusals |
 | alpha.22, alpha.23 | left boundary; all nine stands in `npm test` | **the exclusion class includes `_`** — every `NAME_API_KEY=`, `NAME_TOKEN=`, `NAME_SECRET=` is lost |
 | alpha.24 | boundary without `_` | no `preshared` in the list (`PresharedKey=` → mark/miss); words glued to a prefix (`cftoken=`, `authtoken=`, `dbpassword=`) → miss |
-| next | `preshared[-_ ]?key`; selective boundary; hex → marks; the reasoning for the modes — into the code | — |
+| alpha.25 | `preshared[-_ ]?key` in the list; the boundary **selectively** (only before `key`/`api-key`/`apikey`/`privkey`/`private-key`/`preshared-key` and the four Russian words; no boundary before `token`/`secret`/`password`/…); quote after the word (JSON); a table of three boundary editions with numbers — in the code comment. **Accepted for the `latest` tag** | the variable name (`BITRIX24_CLIENT_SECRET=`) itself becomes an entropy candidate before the declaration rule → mark instead of lock; hex still locks |
+| alpha.26 (planned) | skip the name after the declaration check; hex → marks; the reasoning for the modes — into the code next to `strogo`; three new rules **in marking mode** (inflected forms `токена=`/`пароля:`, `bearer`/`authorization`, a dash separator) — in locking mode they would cost 2.9 % of records on the implementer's corpus; a direct declaration (word + `:`/`=`) stays locking. The mode is assigned **per rule** by its false-positive share on a live corpus, not to the mechanism as a whole | — |
 
-On the document date the core's `latest` tag points at alpha.24, and the `dsh-pamyat` set
-alpha.28 pulls alpha.24. **A tag is not fitness** — see §7.
+On the document date the core's `latest` tag points at alpha.25 — the only version that day whose
+tag was set **after** acceptance rather than before. The `dsh-pamyat` set alpha.28 pulls alpha.24.
+Observed on the same date: the `latest` tag moves **by itself** on publish — the rule "the tag is set
+by acceptance" works only after the publish wrapper is changed (publish under a separate tag).
+**A tag is not fitness** — see §7.
 
 #### 5.1.7. Refusals
 
@@ -692,8 +696,9 @@ the pair does.
 ### 6.1. `a2a-bus` — mailboxes, postman, timer
 
 **What it is.** Not an npm package and not a plugin: a spool directory per agent, a postman running
-as `root`, and a systemd timer. Six files: `sbin/a2a-pochtalon.py`, `sbin/a2a-zavesti`,
-`sbin/a2a-proba-novichka`, `systemd/a2a-pochtalon.service`, `systemd/a2a-pochtalon.timer`, README.
+as `root`, and a systemd timer. Nine files: `sbin/a2a-pochtalon.py`, `sbin/a2a-zavesti`,
+`sbin/a2a-proba-novichka`, `bin/a2a-send`, `bin/tell-owner`, `bin/agent-registry`,
+`systemd/a2a-pochtalon.service`, `systemd/a2a-pochtalon.timer`, README.
 Installed by hand (`install -m 0755 …`). Strictly one machine: the bus has no transport between
 hosts.
 
@@ -757,12 +762,25 @@ A binary letter is not shown in chat (`(двоичное вложение, N Б)
 bus protects you from other people's curiosity, not from your own carelessness: a file the owner
 makes world-readable will be read by the whole group.
 
-**The sender side is outside the repository.** The command with which an agent drops a letter into
-someone else's mailbox (`A2A_SEND_BIN` in the acceptance, default `/usr/local/bin/a2a-send`) **is
-not** in the repository: every fleet has its own wrapper. What any such wrapper must do: write with
-`umask 077` so the window before the transfer is closed; not pass the letter text as a process
-argument; not exceed `A2A_PREDEL_BAJT`. Long texts are best put in a file and passed as a file
-rather than a command-line string — this also sidesteps the shell's argument length limit.
+**The sender side — `bin/a2a-send`, `bin/tell-owner`, `bin/agent-registry`** (published
+2026-09-04 as they run in production; before that the README pointed at them as external).
+`a2a-send <recipient> ["text"]` puts the letter into the mailbox under a dot-name and renames it
+atomically (the postman skips dot-files, so it never picks up a half-written letter), sets
+`umask 077` only around the write, and shows the owner a "→ to whom" line through `tell-owner`.
+**Private text goes on stdin, not as an argument:** an argument is visible to every user of the
+machine in `/proc/<pid>/cmdline`; text longer than `A2A_PREDEL_ARGV` (500) as an argument is
+refused; there is no `-f` flag on purpose. **If your instructions mention `-f` or a 3,500-character
+limit — that is a different courier under the same name** (a fleet's own tool on another machine):
+same name, same path, different machines, different interfaces. Name and path do not identify the
+tool — the content does (size, checksum, presence of the flag). Exit codes: `0` delivered and the owner saw it · `1`
+not delivered · `3` bad call/recipient · `4` delivered, visibility did not go out; `--bez-kopii`
+— no owner copy. `tell-owner` writes to the owner from the agent's **own** bot: the bot is chosen
+by the calling system user (`/etc/agent-tell/<user>.conf`: `TOKEN_FILE`, `CHAT_ID`), so writing in
+someone else's name is impossible even by accident; no config — exit `1` and a loud line.
+`agent-registry` is a read-only reader of the machine's agent registry; it changes nothing and
+guesses nothing (a missing field is a loud refusal, not a default); sub-commands `list`,
+`sluzhby`, `pole`, `mashina` (paths only, never secret values), `obshchee`, `pokrytie`, `fakt`,
+`verify` (mismatch → `1`, blindness → `2`).
 
 ### 6.2. The reading side in `telegram-multiagent`
 
@@ -823,10 +841,15 @@ the sake of the `command/run` event. The trailing anchor `(\s|$)` in the pattern
 without it `/compactstatus` would match `/compact` and silently compact the history.
 
 `/compact-status` prints: `Контекст: занято <N> токенов.` ("Context: N tokens used"; the source is
-`tokenMeter.measure` — the same number the platform uses to decide whether to compact); `Опора
-замера: <baseline.kind>` ("measurement basis") — `usage` = provider numbers, otherwise a heuristic
-estimate; `прочитано событий журнала: <logRevision>` ("journal events read") — the freshness sign;
-`Порог сжатия ~<window × 0.8>, до него <…>` ("compaction threshold ~…, … to go"). The window comes
+`tokenMeter.measure` — the same number the platform uses to decide whether to compact); the
+measurement basis in **three** states (since 1.5.0): basis fresh — `(числа провайдера)` ("provider
+numbers"), the distance to the threshold is printed; basis stale — `🔴 ЧИСЛА СНЯТЫ ДО КОМПАКТА`
+("NUMBERS TAKEN BEFORE THE COMPACTION"), the distance is **not** printed at all (the cut-out part was
+subtracted by the heuristic "4 characters = 1 token", which underestimates Cyrillic several-fold — the
+distance is not "approximate" but unknown); freshness could not be determined — `⚠️ свежесть снять НЕ
+МОГУ (причина)`. Freshness is determined from the session journal events (`session.events` or
+`eventAt()` + `seq` — whichever the installed platform has; an unknown signature → "don't know"), not
+from `baseline.kind`: that one speaks about the **source** of the basis, not its currency. The window comes
 from `llm.resolveModelInfo(provider, model).context.contextWindow`; if there is no window, **no
 default is substituted** — it prints `🔴 Окно контекста недоступно (<reason>) — расстояние до
 порога сказать НЕ МОГУ` ("context window unavailable — CANNOT say the distance to the threshold").
@@ -843,10 +866,11 @@ date the core was released nine times in one day, and the tag twice pointed at a
 known filter defect (§5.1.6). Therefore:
 
 1. Install **by explicit number**, not by tag. The set — one line with a number:
-   `npm i dsh-pamyat@0.1.0-alpha.26` (core alpha.21: no boundary defect, with false refusals on
-   `key` homonyms) or `dsh-pamyat@0.1.0-alpha.28` (core alpha.24: no false refusals, with misses on
-   `PresharedKey=` and glued names). Which of these is fit **for you** — by §5.1.6 and by your own
-   live name forms; the next core version closes both lists.
+   `npm i dsh-pamyat@0.1.0-alpha.29` (core alpha.25 — accepted; what remains is a mark instead of a
+   lock on names like `NAME_SECRET=`, see §5.1.6). Older sets, if needed for comparison: alpha.26
+   (core alpha.21: false refusals on `key` homonyms), alpha.28 (core alpha.24: misses on
+   `PresharedKey=` and glued names). What is fit **for you** — by §5.1.6 and by your own live name
+   forms.
 2. Check the tag state yourselves, by command, not by this document:
    `npm view dsh-pamyat-core dist-tags --json` and `npm view dsh-pamyat dist-tags --json`.
    **A tag is not fitness.** A tag is moved by acceptance, not by release (§8), but between a
