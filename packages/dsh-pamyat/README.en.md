@@ -4,7 +4,7 @@
 memory packages were built and checked TOGETHER, at which exact versions, and by
 what means that was verified.
 
-    dsh-pamyat-core      0.1.0-alpha.14   store, journal, write policy
+    dsh-pamyat-core      0.1.0-alpha.15   store, journal, write policy
     dsh-pamyat-omega     0.1.0-alpha.9    long-term memory provider
     dsh-pamyat-secretary 0.1.0-alpha.11    compaction summaries → records
     dsh-pamyat-byudzhet  0.1.0-alpha.6    incoming budget: what to lift back
