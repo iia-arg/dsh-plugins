@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat",
-  "version": "0.1.0-alpha.21",
+  "version": "0.1.0-alpha.22",
   "description": "Память агента: имя для набора из шести пакетов, собранных и проверенных вместе",
   "type": "module",
   "files": [
@@ -15,7 +15,7 @@
     "test": "node test/stend-sostava.mjs"
   },
   "dependencies": {
-    "dsh-pamyat-core": "0.1.0-alpha.18",
+    "dsh-pamyat-core": "0.1.0-alpha.19",
     "dsh-pamyat-omega": "0.1.0-alpha.9",
     "dsh-pamyat-secretary": "0.1.0-alpha.14",
     "dsh-pamyat-byudzhet": "0.1.0-alpha.6",

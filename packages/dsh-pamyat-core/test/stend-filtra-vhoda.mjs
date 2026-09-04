@@ -213,5 +213,45 @@ t('П11-бис обе формы дают ОДИН ответ — иначе р�
     throw new Error('формы расходятся: «:» ' + Boolean(dvoetochie) + ', «=» ' + Boolean(ravno));
 });
 
+// ── П12: СИНТЕТИЧЕСКИЕ КЛЮЧИ ПО ФОРМЕ ЖИВЫХ, КАЖДЫЙ СВОИМ ПРИЗНАКОМ ──────────
+// 🔴 ЗАЧЕМ ИМЕННО ТАК. Замер соседней машины 04.09.2026 по четырём живым ключам фермы:
+// два ловятся ТОЛЬКО энтропией, два ТОЛЬКО структурным признаком. Правила не дублируют
+// друг друга — снимешь одно, и часть ключей пройдёт молча, а стенд останется зелёным,
+// потому что остальные ловятся соседним правилом.
+// Поэтому проба требует не «отвергнут», а «отвергнут СВОИМ признаком» и печатает каким.
+// Значения синтетические: ни один настоящий ключ в стенд не попадает.
+t('П12 каждая форма ключа отвергается СВОИМ признаком', () => {
+  const obrazcy = [
+    ['длинный без приставки (форма oauth-токена)', 'aB3xK9mQ2wZ7pL4vN8tR6yH1jF5sD0gW7cX2bV9nM4kP', 'entropiya'],
+    ['sk- (форма ключа провайдера)',               'sk-' + 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6', 'strukturnyj:sk-'],
+    ['gh*_ (форма ключа хранилища кода)',          'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8', 'strukturnyj:github'],
+    ['JWT (форма долгоживущего токена)',           'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+                                                   'strukturnyj:JWT'],
+    ['PEM (закрытый ключ)',                        '-----BEGIN OPENSSH PRIVATE KEY-----', 'strukturnyj:PEM'],
+    ['объявленный короткий',                       'pwd: Hunter22xy', 'obyavlennyj'],
+    ['объявленный через равно',                    'api_key=abc123XY', 'obyavlennyj'],
+    ['uuid после слова-признака',                  'token: 3f2504e0-4f89-11d3-9a0c-0305e82c3301', 'uuid-obyavlennyj'],
+  ];
+  const bed = [];
+  for (const [imya, obrazec, zhdyom] of obrazcy) {
+    const r = najti_sekret('в тексте ' + obrazec + ' и дальше проза');
+    if (!r) { bed.push(`${imya}: ПРОПУЩЕН (ждали ${zhdyom})`); continue; }
+    if (r.klass !== zhdyom) bed.push(`${imya}: отвергнут ЧУЖИМ признаком «${r.klass}», ждали «${zhdyom}»`);
+  }
+  if (bed.length) throw new Error(bed.join(' | '));
+});
+
+t('П12-бис проза того же вида НЕ отвергается (ложного нет)', () => {
+  // формы, которые в нашем корпусе давали ложные до правок алфавита
+  for (const s of ['таймер с OnBootSec+OnUnitActiveSec уходит',
+                   'путь /opt/agent/workspace/dorabotki/nashi-dorabotki.sh',
+                   'имя dsh-pamyat-restore-0.1.0-alpha.14',
+                   'вызов byudzhetPamyati.otobrat вернул',
+                   'запись mem-59dad1ad402a найдена']) {
+    const r = najti_sekret(s);
+    if (r) throw new Error(`ложный отказ [${r.klass}] на: ${s.slice(0, 40)}`);
+  }
+});
+
 console.log(`итог: ${ok} из ${ok + bed}`);
 process.exit(bed === 0 ? 0 : 1);
