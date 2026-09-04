@@ -67,7 +67,7 @@ export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, k
   const adres = nastrojka.adres || undefined;
   const s1 = await sprosit({ klyuch: k.klyuch, model: nastrojka.model, system: VYBOR_TEM,
                              tekst: transkript, maxTokens: nastrojka.maxTokenovTem, ...(adres ? { adres } : {}) });
-  if (s1.ishod !== 'ok') { krik('выбор тем не состоялся [' + s1.ishod + ']: ' + s1.pochemu); return { ishod: s1.ishod }; }
+  if (s1.ishod !== 'ok') { krik('выбор тем не состоялся [' + s1.ishod + ']: ' + s1.pochemu); return { ishod: s1.ishod, rashod }; }
   const m = razobrat_massiv(s1.tekst);
   if (!m.godno) { krik('темы не разобраны: ' + m.pochemu); return { ishod: 'temy-ne-razobrany' }; }
 
@@ -111,7 +111,21 @@ export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, k
                                tekst: `${transkript}\n\nТЕМА: ${t.theme}`, maxTokens: nastrojka.maxTokenovStati,
                                ...(adres ? { adres } : {}) });
     uchest(s2.usage);   // до разбора исхода: оплачен и отказ
-    if (s2.ishod !== 'ok') { itog.otkazov++; krik(`статья «${t.theme}» не написана [${s2.ishod}]: ${s2.pochemu}`); continue; }
+    if (s2.ishod !== 'ok') {
+      itog.otkazov++;
+      krik(`статья «${t.theme}» не написана [${s2.ishod}]: ${s2.pochemu}`);
+      // 🔴 ОКОНЧАТЕЛЬНЫЙ ОТКАЗ ОБРЫВАЕТ ЗАХОД. Нет денег или не принят ключ — повторится на
+      // каждой из оставшихся тем: двенадцать одинаковых отказов вместо одного внятного.
+      // Признак ставит провайдер, а не мы: гадать по тексту причины — значит разойтись с ним
+      // при первой же смене формулировки.
+      if (s2.okonchatelno) {
+        itog.ishod = s2.ishod;
+        itog.oborvano = temy.length - temy.indexOf(t) - 1;
+        krik(`заход ОБОРВАН: ${s2.ishod} — повтор не поможет. Не обработано тем: ${itog.oborvano}`);
+        break;
+      }
+      continue;
+    }
     if (s2.tekst.trim() === NET_RELEVANTNOGO) { itog.pusto++; continue; }
     try {
       zapisat({ klass, soderzhim: s2.tekst.trim(), istochnik });

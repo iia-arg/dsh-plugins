@@ -4,12 +4,12 @@
 memory packages were built and checked TOGETHER, at which exact versions, and by
 what means that was verified.
 
-    dsh-pamyat-core      0.1.0-alpha.11   store, journal, write policy
+    dsh-pamyat-core      0.1.0-alpha.13   store, journal, write policy
     dsh-pamyat-omega     0.1.0-alpha.8    long-term memory provider
-    dsh-pamyat-secretary 0.1.0-alpha.5    compaction summaries → records
+    dsh-pamyat-secretary 0.1.0-alpha.9    compaction summaries → records
     dsh-pamyat-byudzhet  0.1.0-alpha.6    incoming budget: what to lift back
     dsh-pamyat-nudzh     0.1.0-alpha.9    spend accounting: time to compact?
-    dsh-pamyat-restore   0.1.0-alpha.14   knowledge back into context: post-compaction summary and briefing
+    dsh-pamyat-restore   0.1.0-alpha.15   knowledge back into context: post-compaction summary and briefing
 
 ## 🔴 Exact versions, no ranges
 

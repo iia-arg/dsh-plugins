@@ -125,14 +125,27 @@ export function apply(ctx, config = {}) {
   {
     const d = config.distillyaciya === true;
     const zhurnalEst = Boolean(config.putZhurnala);
-    const klyuchNazvan = Boolean(config.klyuch?.fajlKlyucha || config.klyuch?.zapisPass);
+    // 🔴 ЧИТАЕМ ТЕ ЖЕ ПОЛЯ, ЧТО И ПОТРЕБИТЕЛЬ. Прежде здесь стояло config.klyuch?.fajlKlyucha —
+    // вложенный объект, которого в схеме НЕТ ВОВСЕ: схема объявляет klyuchFajl и klyuchPass
+    // плоско, а вызов (ниже) читает именно их. То есть проверка и потребитель читали одно
+    // поле разными путями, и признак говорил «НЕ ГОТОВА» при исправном механизме.
+    //
+    // Два дурных исхода, оба вероятны: пойти чинить работающее — или успокоиться «не
+    // включилось», пока заходы идут и счёт капает. Второй хуже: механизм работает молча
+    // при выключенном по приборам состоянии.
+    //
+    // 🔴 И ЛОЖНАЯ ПОДСКАЗКА УЖЕ СТОИЛА ОШИБКИ: строка ниже советовала завести
+    // «klyuch.zapisPass», и профиль 04.09.2026 был написан по ней — вложенным полем,
+    // которого схема не принимает. Подсказка, называющая несуществующее поле, не просто
+    // бесполезна: она учит писать неверно.
+    const klyuchNazvan = Boolean(config.klyuchFajl || config.klyuchPass);
     const gotova = d && zhurnalEst && klyuchNazvan;
     krik('подъём: класс «' + (config.klass ?? 'svodka-kompakcii') + '», дистилляция ' +
          (!d ? 'ВЫКЛЮЧЕНА настройкой (сводки пишутся, знания не извлекаются)'
              : gotova ? 'взведена: модель ' + (config.model ?? '—') + ', журнал задан, ключ назван'
              : 'ВКЛЮЧЕНА, НО НЕ ГОТОВА — заход не начнётся: ' +
                (zhurnalEst ? '' : 'не задан putZhurnala; ') +
-               (klyuchNazvan ? '' : 'не назван источник ключа (klyuch.zapisPass или fajlKlyucha)')));
+               (klyuchNazvan ? '' : 'не назван источник ключа (klyuchFajl или klyuchPass)')));
   }
 
   ctx.on('session/event', (session, event) => {
