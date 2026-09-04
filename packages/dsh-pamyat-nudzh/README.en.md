@@ -135,7 +135,7 @@ process under a real `Context` and waits for the line on its `stderr`.
 
     npm test
 
-Five stands, 50 probes; the first probe of each runs against a known-good
+Five stands, 52 probes; the first probe of each runs against a known-good
 subject — if it is red, the stand is broken, not the package.
 
 ## What it was tested against
