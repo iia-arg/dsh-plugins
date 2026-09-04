@@ -61,7 +61,7 @@ silently. Under a service, stdout lands in the system journal, so nothing is los
 | `vklyuchen` | `true` | switching off is legitimate — but LOUD |
 | `distillyaciya` | `false` | extract KNOWLEDGE with a separate model (see below) |
 | `putZhurnala` | `''` | session journal the shadowed slice is read from |
-| `klyuchFajl` / `klyuchPass` | `''` | API key: a 0600 file, or a `pass` entry |
+| `klyuchFajl` / `klyuchPass` / `klyuchOkruzhenie` | `''` | API key: a 0600 file, a `pass` entry, or the NAME of an environment variable. That order is deliberate; the environment comes last because a variable may be inherited. A source that is set but unreadable is NOT silently replaced by the next one: otherwise a missing file would look like healthy work |
 | `model` | `deepseek-v4-flash` | the cheap model used for distillation |
 | `maxTokenovTem` | `32000` | budget for the topic-selection call |
 | `maxTokenovStati` | `4000` | budget for one article |

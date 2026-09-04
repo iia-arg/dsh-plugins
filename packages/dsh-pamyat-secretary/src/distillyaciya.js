@@ -30,7 +30,12 @@ export const ADRES = 'https://api.deepseek.com/anthropic/v1/messages';
  * в /proc любому на машине. Два источника, оба без argv: файл 0600 либо `pass`
  * (значение приходит в stdout дочернего процесса, а имя записи — не секрет).
  */
-export function vzyat_klyuch({ fajlKlyucha = null, zapisPass = null } = {}) {
+export function vzyat_klyuch({ fajlKlyucha = null, zapisPass = null,
+                               peremennayaOkruzheniya = null } = {}) {
+  // ПОРЯДОК ИСТОЧНИКОВ: файл → pass → окружение. Окружение ПОСЛЕДНЕЕ намеренно:
+  // файл и запись pass заводят под эту задачу, а переменная может достаться
+  // процессу по наследству и оказаться чужой. Выбор молча не делается — при
+  // нескольких заданных источниках подъём говорит, какой взят (index.js).
   if (fajlKlyucha) {
     try {
       const k = readFileSync(fajlKlyucha, 'utf-8').trim();
@@ -50,7 +55,24 @@ export function vzyat_klyuch({ fajlKlyucha = null, zapisPass = null } = {}) {
       return { klyuch: null, pochemu: 'pass не отдал ключ (' + (e?.message ?? e).toString().slice(0, 80) + '): ' + zapisPass };
     }
   }
-  return { klyuch: null, pochemu: 'источник ключа не задан: нужен fajlKlyucha или zapisPass' };
+  // 🔴 ТРЕТИЙ ИСТОЧНИК — ОКРУЖЕНИЕ ПРОЦЕССА (04.09.2026). Заведён потому, что у узла
+  // может не быть ни `pass`, ни файла-ключа, а ключ провайдера у него УЖЕ ЕСТЬ: замер
+  // на соседнем узле показал `pass` не заведённым вовсе, а ключ — в настройках его
+  // платформы. Заводить файл-копию значило бы создать второе место, где секрет живёт
+  // и о котором надо помнить при отзыве.
+  // ПОЧЕМУ ИМЕННО ОКРУЖЕНИЕ, А НЕ РАЗБОР НАСТРОЕК ПЛАТФОРМЫ: платформа сама умеет брать
+  // ключ провайдера так же — поле `apiKeyEnv` у pi-ai. Мы следуем её соглашению, а не
+  // изобретаем своё; разбор её `settings.yaml` привязал бы нас к ЧУЖОМУ формату, и смена
+  // структуры сломала бы чтение молча.
+  // ГДЕ НЕ ПРИМЕНЯЕТСЯ: переменная видна всему процессу и его потомкам — это не строже
+  // файла 0600, а иначе. И в argv она по-прежнему не попадает.
+  if (peremennayaOkruzheniya) {
+    const k = (process.env[peremennayaOkruzheniya] ?? '').trim();
+    if (k) return { klyuch: k, otkuda: 'окружение ' + peremennayaOkruzheniya };
+    return { klyuch: null,
+             pochemu: 'переменная окружения пуста или не задана: ' + peremennayaOkruzheniya };
+  }
+  return { klyuch: null, pochemu: 'источник ключа не задан: нужен fajlKlyucha, zapisPass или peremennayaOkruzheniya' };
 }
 
 /**

@@ -5,8 +5,19 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 const koren = join(dirname(fileURLToPath(import.meta.url)), '..');
-const ru = readFileSync(join(koren, 'README.md'), 'utf8');
-const en = readFileSync(join(koren, 'README.en.md'), 'utf8');
+// 🔴 ОТСУТСТВИЕ ПРЕДМЕТА — СЛЕПОТА (код 2), А НЕ КРУШЕНИЕ. Прежде стенд падал
+// необработанным ENOENT: у получателя это читается как «пакет сломан», хотя верное
+// известие — «проверять нечем». Поймано 04.09.2026 прогоном в мастерской, где README
+// не лежит: стенд рухнул стеком вместо одной внятной строки.
+let ru, en;
+try {
+  ru = readFileSync(join(koren, 'README.md'), 'utf8');
+  en = readFileSync(join(koren, 'README.en.md'), 'utf8');
+} catch (e) {
+  console.log('СЛЕПОТА: README не прочитан (' + (e?.code ?? e?.message) + '). ' +
+              'Проверять нечем — это не отказ пакета. Ждём README.md и README.en.md в ' + koren);
+  process.exit(2);
+}
 let vsego = 0, proshlo = 0;
 const proba = (i, f) => { vsego++; try { f(); proshlo++; console.log('  ✅ ' + i); } catch (e) { console.log('  ❌ ' + i + ' — ' + e.message.slice(0,120)); } };
 

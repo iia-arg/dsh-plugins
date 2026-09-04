@@ -156,6 +156,41 @@ await proba('E3. источник ключа не задан вовсе → от
   if (r.klyuch || !r.pochemu) throw new Error('молчаливый исход');
 });
 
+await proba('E4. ключ из ОКРУЖЕНИЯ: взят, и источник назван', async () => {
+  process.env.PROBA_KLYUCHA_E4 = 'sk-podstavnoj-e4';
+  try {
+    const r = vzyat_klyuch({ peremennayaOkruzheniya: 'PROBA_KLYUCHA_E4' });
+    if (!r.klyuch) throw new Error('не взялся: ' + r.pochemu);
+    if (!/окружение PROBA_KLYUCHA_E4/.test(r.otkuda || '')) throw new Error('источник не назван: ' + r.otkuda);
+  } finally { delete process.env.PROBA_KLYUCHA_E4; }
+});
+
+await proba('E5. переменная не задана → отказ с ИМЕНЕМ переменной, а не молчание', async () => {
+  const r = vzyat_klyuch({ peremennayaOkruzheniya: 'NET_TAKOJ_PEREMENNOJ_E5' });
+  if (r.klyuch) throw new Error('ключ взялся из пустоты');
+  if (!/NET_TAKOJ_PEREMENNOJ_E5/.test(r.pochemu)) throw new Error('имя не названо: ' + r.pochemu);
+});
+
+// 🔴 ПОРЯДОК ИСТОЧНИКОВ ПРОВЕРЯЕТСЯ ДЕЙСТВИЕМ, а не чтением: заданный файл, который не
+// читается, НЕ должен молча подменяться окружением — иначе пропажа файла маскируется
+// и выглядит исправной работой.
+await proba('E6. заданный файл не читается → отказ, окружение его НЕ подменяет', async () => {
+  process.env.PROBA_KLYUCHA_E6 = 'sk-podstavnoj-e6';
+  try {
+    const r = vzyat_klyuch({ fajlKlyucha: '/net/takogo/fajla', peremennayaOkruzheniya: 'PROBA_KLYUCHA_E6' });
+    if (r.klyuch) throw new Error('окружение подменило заданный файл: ' + r.otkuda);
+    if (!/net\/takogo/.test(r.pochemu)) throw new Error('причина не про файл: ' + r.pochemu);
+  } finally { delete process.env.PROBA_KLYUCHA_E6; }
+});
+
+await proba('E7. значение ключа НЕ попадает в текст об источнике', async () => {
+  process.env.PROBA_KLYUCHA_E7 = 'sk-sekret-ne-pokazyvat';
+  try {
+    const r = vzyat_klyuch({ peremennayaOkruzheniya: 'PROBA_KLYUCHA_E7' });
+    if ((r.otkuda || '').includes('sk-sekret')) throw new Error('значение утекло в otkuda');
+  } finally { delete process.env.PROBA_KLYUCHA_E7; }
+});
+
 server.close();
 console.log(`итог: ${proshlo} из ${vsego}`);
 process.exit(proshlo === vsego ? 0 : 1);

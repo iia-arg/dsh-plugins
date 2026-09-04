@@ -60,6 +60,8 @@ export const Config = z.object({
   /** Ключ: файл 0600 либо запись pass. Никогда не аргумент команды. */
   klyuchFajl: z.string().default(''),
   klyuchPass: z.string().default(''),
+  /** Имя переменной окружения с ключом — по соглашению платформы (apiKeyEnv у pi-ai). */
+  klyuchOkruzhenie: z.string().default(''),
   model: z.string().default('deepseek-v4-flash'),
   // 🔴 Числа с запасом: модель ДУМАЮЩАЯ, рассуждение съедает бюджет. Замер на живом
   // диапазоне: 8000 не хватило (stop_reason=max_tokens, блока text нет), 32000 хватило.
@@ -138,14 +140,33 @@ export function apply(ctx, config = {}) {
     // «klyuch.zapisPass», и профиль 04.09.2026 был написан по ней — вложенным полем,
     // которого схема не принимает. Подсказка, называющая несуществующее поле, не просто
     // бесполезна: она учит писать неверно.
-    const klyuchNazvan = Boolean(config.klyuchFajl || config.klyuchPass);
+    const klyuchNazvan = Boolean(config.klyuchFajl || config.klyuchPass || config.klyuchOkruzhenie);
     const gotova = d && zhurnalEst && klyuchNazvan;
+    // 🔴 ПРИБОР НАЗЫВАЕТ ИСТОЧНИК, А НЕ ТОЛЬКО ФАКТ. «Ключ назван» не отвечает на вопрос
+    // «откуда он взят», а источников теперь три, и ведут они себя по-разному: файл может
+    // исчезнуть, `pass` требует своего хранилища, окружение живёт только у этого процесса.
+    // Разбирающему отказ важно знать, ГДЕ смотреть. Печатается ИМЯ источника — значение
+    // ключа не печатается никогда и нигде.
+    // 🔴 НЕСКОЛЬКО ИСТОЧНИКОВ — НЕ МОЛЧАТЬ. Порядок задан (файл → pass → окружение), но
+    // молчаливый выбор одного из двух заданных читался бы как «взято то, что я имел в виду».
+    const zadano = [config.klyuchFajl && 'klyuchFajl', config.klyuchPass && 'klyuchPass',
+                    config.klyuchOkruzhenie && 'klyuchOkruzhenie'].filter(Boolean);
+    if (zadano.length > 1) {
+      krik('источников ключа задано несколько (' + zadano.join(', ') +
+           '); порядок файл → pass → окружение, будет взят ПЕРВЫЙ из заданных. ' +
+           'Это не отказ, но лишний источник стоит убрать: он выглядит действующим');
+    }
+    const istochnikKlyucha = config.klyuchFajl ? 'файл ' + config.klyuchFajl
+      : config.klyuchPass ? 'pass ' + config.klyuchPass
+      : config.klyuchOkruzhenie ? 'окружение ' + config.klyuchOkruzhenie
+      : null;
     krik('подъём: класс «' + (config.klass ?? 'svodka-kompakcii') + '», дистилляция ' +
          (!d ? 'ВЫКЛЮЧЕНА настройкой (сводки пишутся, знания не извлекаются)'
-             : gotova ? 'взведена: модель ' + (config.model ?? '—') + ', журнал задан, ключ назван'
+             : gotova ? 'взведена: модель ' + (config.model ?? '—') + ', журнал задан, ключ из '
+                          + istochnikKlyucha
              : 'ВКЛЮЧЕНА, НО НЕ ГОТОВА — заход не начнётся: ' +
                (zhurnalEst ? '' : 'не задан putZhurnala; ') +
-               (klyuchNazvan ? '' : 'не назван источник ключа (klyuchFajl или klyuchPass)')));
+               (klyuchNazvan ? '' : 'не назван источник ключа (klyuchFajl, klyuchPass или klyuchOkruzhenie)')));
   }
 
   ctx.on('session/event', (session, event) => {
@@ -189,7 +210,8 @@ export function apply(ctx, config = {}) {
             model: config.model, maxTokenovTem: config.maxTokenovTem,
             maxTokenovStati: config.maxTokenovStati, predelTem: config.predelTem,
             predelZnakov: config.predelZnakov, minTokenov: config.minTokenov,
-            klyuch: { fajlKlyucha: config.klyuchFajl || null, zapisPass: config.klyuchPass || null },
+            klyuch: { fajlKlyucha: config.klyuchFajl || null, zapisPass: config.klyuchPass || null,
+                      peremennayaOkruzheniya: config.klyuchOkruzhenie || null },
           },
           krik,
           zapisat: (zn) => pamyat.zapisat(zn),
