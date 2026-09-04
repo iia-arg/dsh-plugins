@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat-secretary",
-  "version": "0.1.0-alpha.10",
+  "version": "0.1.0-alpha.11",
   "description": "Секретарь компакции для DSH: снимает сводку затираемой истории и кладёт её в память с verbatim-ссылкой на затенённый диапазон.",
   "type": "module",
   "main": "src/index.js",
