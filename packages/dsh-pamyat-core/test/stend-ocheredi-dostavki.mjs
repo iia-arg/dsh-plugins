@@ -211,6 +211,34 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   });
 }
 
+// ─── [I] СОСЕД СТАРШЕ НАС: слой без proverit → сказать, а не упасть ───
+{
+  const sloj = podstavnojSloj({ sohranitOtvet: { sostoyanie: 'moglo-dojti-id-est', id: 'mem-3333cccc4444' } });
+  const k = await podnyat({ dolgo: sloj });
+  k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание I', istochnik: 's#1-2' });
+  await new Promise((r) => setTimeout(r, 40));
+  // 🔴 Версии пакетов независимы: ядро новое, слой прежний — законное состояние узла,
+  // а не поломка. Без ветки вызов бросил бы TypeError, и механизм против тихой потери
+  // сам упал бы вместо того, чтобы назвать причину и лечение.
+  const staryj = {
+    dostupna: () => true, pochemuNedostupna: () => null,
+    sohranit: async () => { throw new Error('не должны были писать вслепую'); },
+    // proverit НЕТ ВОВСЕ — так выглядит dsh-pamyat-omega до alpha.9
+  };
+  k.pamyatDolgovremennaya = staryj;
+  let brosil = null, otchet = null;
+  try { otchet = await k.pamyat.dostavitOtlozhennoe(); } catch (e) { brosil = e; }
+  t('[I] 🔴 слой без proverit → НЕ падаем', () => {
+    if (brosil) throw new Error('бросило: ' + brosil.message +
+      (/not a function/.test(brosil.message) ? ' — ветки «сосед старше» нет' : ''));
+  });
+  t('[I] запись осталась в очереди и вслепую НЕ переписана', () => {
+    const o = ocheredIzBazy();
+    if (o.length !== 1) throw new Error('в очереди ' + o.length);
+    if (otchet?.ostalos !== 1) throw new Error('ostalos ' + otchet?.ostalos);
+  });
+}
+
 // ─── [E] очередь пуста → это СОСТОЯНИЕ, а не тишина ───
 {
   const sloj = podstavnojSloj({ sohranitOtvet: { sostoyanie: 'dostavleno', id: 'mem-0000' } });

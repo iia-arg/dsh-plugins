@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat-omega",
-  "version": "0.1.0-alpha.8",
+  "version": "0.1.0-alpha.9",
   "description": "Долговременный слой памяти агента для DSH: запись знаний во внешнее хранилище по MCP с ПОДТВЕРЖДЕНИЕМ доставки, а не с отчётом об отправке.",
   "type": "module",
   "main": "src/index.js",

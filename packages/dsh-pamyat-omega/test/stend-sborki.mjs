@@ -2,9 +2,10 @@
  * Стенд сборки провайдера: связь подменена, проверяется поведение пакета целиком.
  * Живая служба намеренно не трогается — это общая машина, а не наш стенд.
  */
-let apply, name, Config
+let apply, name, Config, readFileSync
 try {
   ;({ apply, name, Config } = await import('../src/index.js'))
+  ;({ readFileSync } = await import('node:fs'))
 } catch (e) {
   const net = e?.code === 'ERR_MODULE_NOT_FOUND'
   console.log(`СЛЕПОТА: предмет не загрузился — ${net ? 'не установлены зависимости пакета' : String(e?.message ?? e).slice(0, 160)}`)
@@ -77,6 +78,19 @@ await proba('ПРОВЕРКА при мёртвой связи → «не спр
   // Схлопни это в «net» — и недоступность хранилища начала бы молча плодить
   // дубли: потребитель прочёл бы «записи нет» и повторил запись.
   if (r.sostoyanie !== 'ne-proveryali') throw new Error('получено ' + r.sostoyanie);
+});
+
+await proba('🔴 СТРОКА ПОДЪЁМА НЕСЁТ ИМЯ И ВЕРСИЮ, версия — ИЗ МАНИФЕСТА', async () => {
+  const ctx = podelnyjCtx();
+  apply(ctx, { adres: 'http://127.0.0.1:8377/mcp' });
+  const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
+  const podyom = nastoyashchiyKrik.filter((s) => /подъ[её]м/.test(s));
+  if (!podyom.length) throw new Error('безусловной строки подъёма нет — при исправной работе пакет неотличим от несмонтированного');
+  // Сверяем С МАНИФЕСТОМ, а не с образцом текста: иначе проба стережёт форму строки,
+  // а порча «версия константой» пройдёт мимо неё незамеченной.
+  for (const s of nastoyashchiyKrik) {
+    if (!s.includes(version)) throw new Error('строка без версии из манифеста: ' + s.slice(0, 90));
+  }
 });
 
 await proba('схема настройки объявлена и содержит адрес', () => {

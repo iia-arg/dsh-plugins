@@ -489,6 +489,24 @@ export function apply(ctx, config = {}) {
         }
 
         if (stroka.priroda === 'moglo-dojti-id-est') {
+          // 🔴 СОСЕД МОЖЕТ БЫТЬ СТАРШЕ НАС. `proverit` появился в долговременном слое
+          // одновременно с этой очередью, но версии пакетов независимы: на узле легко
+          // окажется ядро новое, а слой прежний. Без этой ветки вызов бросил бы
+          // TypeError — то есть механизм, заведённый против тихой потери знания, сам
+          // упал бы вместо того, чтобы назвать причину. Ровно тот класс, что стоил нам
+          // сегодня ветки отказа по деньгам: путь отказа непроверен, пока условия нет.
+          if (typeof dolgo.proverit !== 'function') {
+            otchet.ostalos += 1;
+            zhurnal?.otmetit({
+              agent, klass: stroka.klass, ishod: 'ne-udalos-proverit',
+              priroda: 'sloj-ne-umeet-proveryat',
+              pochemu: 'долговременный слой старше ядра: в нём нет метода proverit. ' +
+                       'Повторять записью нельзя — создали бы второй экземпляр знания. ' +
+                       'Лечится обновлением пакета dsh-pamyat-omega.',
+              istochnik: zapis.istochnik ?? null,
+            });
+            continue;
+          }
           const p = await dolgo.proverit({ id: stroka.mem_id, obrazec: zapis.soderzhim });
           if (p.sostoyanie === 'est') {
             hranilishche.snyatSOcheredi(stroka.zapis_id);

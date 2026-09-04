@@ -19,11 +19,21 @@
  * ЧТО ЗДЕСЬ ЕСТЬ: связь с хранилищем и подтверждение доставки. Политики записи,
  * дистилляции и инъекции контекста здесь нет — это другие пакеты семейства.
  */
+import { createRequire } from 'node:module';
 import z from '@deepseek-ai/schemastery';
 import { sozdatSvyaz } from './svyaz.js';
 import { istolkovatOtvet } from './podtverzhdenie.js';
 
 export const name = 'dsh-pamyat-omega';
+
+// 🔴 Версия читается ИЗ СВОЕГО package.json, а не пишется константой: константа при
+// следующем выпуске утверждала бы номер, которому предмет уже не соответствует —
+// прибор, врущий уверенно. Правило фермы 03.09.2026: каждая строка модуля несёт
+// имя И версию, иначе редакцию, которую держит процесс, приходится угадывать.
+function versiyaPaketa() {
+  try { return createRequire(import.meta.url)('../package.json').version ?? 'версия неизвестна' }
+  catch { return 'версия неизвестна' }
+}
 
 export const Config = z.object({
   /**
@@ -77,8 +87,16 @@ export function apply(ctx, config = {}) {
     // («долговременная память недоступна») в бою был НЕМЫМ.
     // Правка от двойной печати была верна, а причина к ней — выдумана; ложная
     // причина и укрыла настоящий дефект. Замер сделан на воротах 03.09.
-    console.error('[dsh-pamyat-omega] ' + e.message);
+    console.error('[' + name + ' ' + versiyaPaketa() + '] ' + e.message);
   }
+
+  // 🔴 БЕЗУСЛОВНЫЙ СЛЕД ПОДЪЁМА. Прежде пакет говорил ТОЛЬКО при беде — то есть при
+  // исправной работе был неотличим от несмонтированного, и «громкость, привязанная к
+  // беде, исчезала вместе с бедой». Строка называет и адрес: без него «слой доступен»
+  // не отвечает на вопрос, к какому хранилищу.
+  console.error('[' + name + ' ' + versiyaPaketa() + '] подъём: адрес ' +
+    (config.adres ?? 'НЕ ЗАДАН') + ', предел ожидания ' + (config.tajmautMs ?? 10000) + ' мс' +
+    (prichinaOtkaza ? ' — связь НЕ создана, см. строку выше' : ''));
 
   ctx.provide('pamyatDolgovremennaya', {
     dostupna() { return prichinaOtkaza === null; },
