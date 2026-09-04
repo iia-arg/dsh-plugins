@@ -5,7 +5,7 @@
 
     dsh-pamyat-core      0.1.0-alpha.15   хранилище, журнал решений, политика записи
     dsh-pamyat-omega     0.1.0-alpha.9    долговременная память (провайдер поверх MCP)
-    dsh-pamyat-secretary 0.1.0-alpha.11    сводки компакции → записи
+    dsh-pamyat-secretary 0.1.0-alpha.13    сводки компакции → записи
     dsh-pamyat-byudzhet  0.1.0-alpha.6    входящий бюджет: что поднимать обратно
     dsh-pamyat-nudzh     0.1.0-alpha.9    расходный учёт: не пора ли компактить
     dsh-pamyat-restore   0.1.0-alpha.15   возврат знания в контекст: сводка после компакта и брифинг
