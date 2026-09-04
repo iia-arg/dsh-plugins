@@ -869,8 +869,10 @@ date the core was released nine times in one day, and the tag twice pointed at a
 known filter defect (§5.1.6). Therefore:
 
 1. Install **by explicit number**, not by tag. The set — one line with a number:
-   `npm i dsh-pamyat@0.1.0-alpha.29` (core alpha.25 — accepted; what remains is a mark instead of a
-   lock on names like `NAME_SECRET=`, see §5.1.6). Older sets, if needed for comparison: alpha.26
+   `npm i dsh-pamyat@0.1.0-alpha.29` (core alpha.25 — accepted; registry `latest` is alpha.28, see §5.1.6. The remainder on names was measured on 2026-09-04: the literal form
+   `NAME_SECRET=` is locked; what passes are forms where the declaration word is NOT adjacent to the separator (`NAME_SECRET_2=`, `SECRET_KEY_ID=`,
+   `PIN_CODE=`) — not fixable by a name list (on two corpora 27 of 28 and ~176 such names are not secrets: `secretary`, `maxTokens`, `ping`);
+   the fix is by the value on the right, together with the symbol-value hole, alpha.29). Older sets, if needed for comparison: alpha.26
    (core alpha.21: false refusals on `key` homonyms), alpha.28 (core alpha.24: misses on
    `PresharedKey=` and glued names). What is fit **for you** — by §5.1.6 and by your own live name
    forms.
