@@ -1,6 +1,6 @@
 {
   "name": "subscription-gateway",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Subscription gateway for DeepSeek Harness — runs the model loop through the vendor's official agent SDK, so the platform works on a subscription seat instead of a metered API key, with the token kept in one place on the machine.",
   "type": "module",
   "main": "gateway.mjs",
