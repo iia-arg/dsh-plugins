@@ -3,7 +3,7 @@
 > **The original is Russian** — [`MEMORY-AND-A2A.ru.md`](MEMORY-AND-A2A.ru.md); this file is a
 > translation from Russian. Edits are made **in pairs**: change one file, change the other in the
 > same commit.
-> **Document version: 2026-09-04.** Written from the repository code as of that date; package
+> **Document version: 2026-09-04 (rev. 2 — §6.1 sender side).** Written from the repository code as of that date; package
 > versions are in table §1.3. Anything that depends on the state of the npm registry (`latest` /
 > `alpha` tags) is **not** treated as stable in this document — see §7 "Installing" and §8
 > "Release order".
@@ -692,8 +692,9 @@ the pair does.
 ### 6.1. `a2a-bus` — mailboxes, postman, timer
 
 **What it is.** Not an npm package and not a plugin: a spool directory per agent, a postman running
-as `root`, and a systemd timer. Six files: `sbin/a2a-pochtalon.py`, `sbin/a2a-zavesti`,
-`sbin/a2a-proba-novichka`, `systemd/a2a-pochtalon.service`, `systemd/a2a-pochtalon.timer`, README.
+as `root`, and a systemd timer. Nine files: `sbin/a2a-pochtalon.py`, `sbin/a2a-zavesti`,
+`sbin/a2a-proba-novichka`, `bin/a2a-send`, `bin/tell-owner`, `bin/agent-registry`,
+`systemd/a2a-pochtalon.service`, `systemd/a2a-pochtalon.timer`, README.
 Installed by hand (`install -m 0755 …`). Strictly one machine: the bus has no transport between
 hosts.
 
@@ -757,12 +758,25 @@ A binary letter is not shown in chat (`(двоичное вложение, N Б)
 bus protects you from other people's curiosity, not from your own carelessness: a file the owner
 makes world-readable will be read by the whole group.
 
-**The sender side is outside the repository.** The command with which an agent drops a letter into
-someone else's mailbox (`A2A_SEND_BIN` in the acceptance, default `/usr/local/bin/a2a-send`) **is
-not** in the repository: every fleet has its own wrapper. What any such wrapper must do: write with
-`umask 077` so the window before the transfer is closed; not pass the letter text as a process
-argument; not exceed `A2A_PREDEL_BAJT`. Long texts are best put in a file and passed as a file
-rather than a command-line string — this also sidesteps the shell's argument length limit.
+**The sender side — `bin/a2a-send`, `bin/tell-owner`, `bin/agent-registry`** (published
+2026-09-04 as they run in production; before that the README pointed at them as external).
+`a2a-send <recipient> ["text"]` puts the letter into the mailbox under a dot-name and renames it
+atomically (the postman skips dot-files, so it never picks up a half-written letter), sets
+`umask 077` only around the write, and shows the owner a "→ to whom" line through `tell-owner`.
+**Private text goes on stdin, not as an argument:** an argument is visible to every user of the
+machine in `/proc/<pid>/cmdline`; text longer than `A2A_PREDEL_ARGV` (500) as an argument is
+refused; there is no `-f` flag on purpose. **If your instructions mention `-f` or a 3,500-character
+limit — that is a different courier under the same name** (a fleet's own tool on another machine):
+same name, same path, different machines, different interfaces. Name and path do not identify the
+tool — the content does (size, checksum, presence of the flag). Exit codes: `0` delivered and the owner saw it · `1`
+not delivered · `3` bad call/recipient · `4` delivered, visibility did not go out; `--bez-kopii`
+— no owner copy. `tell-owner` writes to the owner from the agent's **own** bot: the bot is chosen
+by the calling system user (`/etc/agent-tell/<user>.conf`: `TOKEN_FILE`, `CHAT_ID`), so writing in
+someone else's name is impossible even by accident; no config — exit `1` and a loud line.
+`agent-registry` is a read-only reader of the machine's agent registry; it changes nothing and
+guesses nothing (a missing field is a loud refusal, not a default); sub-commands `list`,
+`sluzhby`, `pole`, `mashina` (paths only, never secret values), `obshchee`, `pokrytie`, `fakt`,
+`verify` (mismatch → `1`, blindness → `2`).
 
 ### 6.2. The reading side in `telegram-multiagent`
 
