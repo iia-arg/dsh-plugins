@@ -288,11 +288,29 @@ export function apply(ctx, config) {
     const decision = await next()
     if (decision.kind === 'reject' || signal.aborted) return decision
 
-    const inject = (text) => ({
+    // 🔴 ОПОЗНАВАТЕЛИ ПОДНЯТЫХ ЗАПИСЕЙ ЕДУТ В `sections`, А НЕ ОТДЕЛЬНЫМ ПОЛЕМ.
+    // Наследование уровня происхождения (Э5.3) требует знать, КАКИЕ записи памяти
+    // попали в срез. Замер по боевому журналу 04.09.2026: у вставки нет ни одного
+    // поля с опознавателем записи — `data.id` это id СООБЩЕНИЯ (uuid), не записи.
+    // Класть своё поле в `source` нельзя: контракт (dsh-llm/message.d.ts:99) объявляет
+    // `{kind,plugin} & ContextFormed`, лишнее поле может быть срезано молча, и тогда
+    // «объявлено, но не доехало» — хуже, чем не объявлено вовсе.
+    // `sections` — документированный массив {name,text}, и он доезжает дословно
+    // (проверено в журнале: sections вставки видны целиком). Имя секции несёт id.
+    // Записей нет — секция одна, общая: пустой список опознавателей и ОТСУТСТВИЕ
+    // списка должны различаться, поэтому имя тогда без «#».
+    const inject = (text, ids = []) => ({
       kind: 'enter',
       messages: [...decision.messages, createUserMessage({
         content: [{ type: 'text', text }],
-        source: { kind: 'plugin', plugin: name, form: 'snapshot', sections: [{ name, text }] },
+        source: {
+          kind: 'plugin',
+          plugin: name,
+          form: 'snapshot',
+          sections: ids.length
+            ? ids.map((id) => ({ name: `${name}#zapis-${id}`, text }))
+            : [{ name, text }],
+        },
       })],
     })
 
@@ -309,7 +327,7 @@ export function apply(ctx, config) {
       const summary = records[0]
       if (summary) {
         say(`восстановление после компакта вставлено в сессию ${sid}: запись ${summary.id ?? '?'}, ${String(summary.soderzhim).length} знаков`)
-        return inject(`Восстановление после компакта:\n${summary.soderzhim}`)
+        return inject(`Восстановление после компакта:\n${summary.soderzhim}`, [summary.id].filter((v) => v !== undefined && v !== null))
       }
       // 🔴 Событие было, а вставлять нечего. Ветка ТИХО проваливалась, и потраченное
       // взведение выглядело снаружи как «событие не приходило». Говорим вслух.
@@ -357,8 +375,10 @@ export function apply(ctx, config) {
       const otobrannye = otobratPodPredel(ctx, records)
       const briefing = renderWelcome(otobrannye, config)
       if (briefing) {
-        say(`welcome-брифинг вставлен: ${briefing.split('\n').length - 1} записей, ${briefing.length} знаков`)
-        return inject(briefing)
+        const idsB = otobrannye.map((z) => z.id).filter((v) => v !== undefined && v !== null)
+        say(`welcome-брифинг вставлен: ${briefing.split('\n').length - 1} записей, ${briefing.length} знаков, ` +
+            `опознаватели: ${idsB.length ? idsB.join(',') : 'НЕТ — наследование уровня по ним неисполнимо'}`)
+        return inject(briefing, idsB)
       }
     }
 
