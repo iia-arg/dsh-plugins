@@ -57,6 +57,15 @@ async function shag(handlers, { kind = 'enter', messages = [] } = {}) {
   } finally { console.error = prezhnij }
 }
 
+/** Позвать что-либо, перехватив крики: они идут в stderr вне водопада. */
+async function slushaya(f) {
+  const prezhnij = console.error
+  const kriki = []
+  console.error = (...a) => kriki.push(a.join(' '))
+  try { await f() } finally { console.error = prezhnij }
+  return kriki
+}
+
 /** Подать расход одним вызовом: занятость = вход последнего вызова. */
 function raskhod(ctx, zanyato) {
   ctx.nudzhPamyati.uchest({ inputTokens: zanyato, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 })
@@ -86,6 +95,42 @@ await proba('A. порог перейдён → одна вставка, на с
   if (!a.kriki.some((k) => /напоминание вставлено/.test(k))) throw new Error('следа в stderr нет')
   const b = await shag(handlers)
   if (vstavok(b.d) !== 0) throw new Error('второй шаг: вставок ' + vstavok(b.d) + ', ждали 0')
+})
+
+// ── A-бис. СЧЁТЧИК ШАГОВ между тревогой и снятием (долг 93) ──────────────────
+// 🔴 Проба ПАРНАЯ к самой правке: она проверяет не «есть ли строка», а НАЗЫВАЕТ ЛИ
+// прибор верное число. Строка без числа прошла бы проверку «есть ли счётчик» и
+// осталась бы украшением — у нас это уже случалось с полем «чем проверять».
+await proba('A-бис. три шага между тревогой и возвратом → в крике число 3', async () => {
+  const { handlers, ctx } = podnyat({ predel: 1000, dolyaTrevogi: 0.8 })
+  raskhod(ctx, 900)
+  const a = await shag(handlers)          // шаг 1: вставка
+  await shag(handlers)                    // шаг 2
+  await shag(handlers)                    // шаг 3
+  // 🔴 Крик о возврате под порог идёт в ЗАМЕРЕ, а не в водопаде — то есть вне shag.
+  // Первая редакция пробы его не ловила и краснела на исправном предмете.
+  const vse = a.kriki.concat(await slushaya(() => raskhod(ctx, 100)))
+  const stroka = vse.find((k) => /Шагов между тревогой/.test(k))
+  if (!stroka) throw new Error('строки о числе шагов нет вовсе')
+  if (!/Шагов между тревогой и этим мигом: 3\b/.test(stroka)) {
+    throw new Error('число не то: ' + stroka.slice(0, 140))
+  }
+})
+
+// ── A-трет. ПРИБОР НЕ ДОЛЖЕН ЗАМИРАТЬ НА ЕДИНИЦЕ ─────────────────────────────
+// Счёт ведётся, пока подана ТРЕВОГА, а не пока взведена вставка: вставка гасится на
+// первом же шаге. Считай мы по ней — прибор всегда показывал бы 1, то есть собственное
+// устройство вместо предмета. Проба ловит именно эту подмену.
+await proba('A-трет. счёт идёт после гашения вставки, а не замирает на 1', async () => {
+  const { handlers, ctx } = podnyat({ predel: 1000, dolyaTrevogi: 0.8 })
+  raskhod(ctx, 900)
+  const a = await shag(handlers)
+  for (let i = 0; i < 5; i++) await shag(handlers)
+  const vse = a.kriki.concat(await slushaya(() => raskhod(ctx, 100)))
+  const stroka = vse.find((k) => /Шагов между тревогой/.test(k)) ?? ''
+  const m = stroka.match(/Шагов между тревогой и этим мигом: (\d+)/)
+  if (!m) throw new Error('числа нет: ' + stroka.slice(0, 120))
+  if (Number(m[1]) <= 1) throw new Error('прибор замер на ' + m[1] + ' — считает вставки, а не шаги')
 })
 
 // ── B. новый цикл после возврата под порог ────────────────────────────────────
