@@ -364,6 +364,18 @@ Observed on the same date: the `latest` tag moves **by itself** on publish — t
 by acceptance" works only after the publish wrapper is changed (publish under a separate tag).
 **A tag is not fitness** — see §7.
 
+**Acceptor's addendum (2026-09-05, 00:05–01:00 MSK; written 10:1x MSK — until then the verdicts went out only as letters and the sums file, the repository was not fed).** All verdicts from REGISTRY tarballs, `summa-predmeta` canon, full stand run with declared dependencies; canon of the accepted — `shared/a2a-inbox/prinyatye-summy-sadik-iskra.txt` (copy on sadik: `/home/claude/ot-veniamina/`).
+
+| subject | sum | verdict |
+|---|---|---|
+| core alpha.29 | `efa3dab950b6cef0` (20 files) | **accepted for latest** (00:05 MSK): the `key: sk-ant-oat01-…` hole closed (first-chunk length threshold), filter contract under a probe |
+| core alpha.30 | `c039e291034e7b26` (20 files) | **accepted for latest** (00:56 MSK): a29→a30 diff is `test/` + manifest only; the runner catches awaiting probe bodies (async-body corruption → red); with accepted secretary a15 beside — 10/10 stands, 141 probes, blindness 0 |
+| nudzh alpha.12 | `e1ee86550f7389e1` | **accepted for latest** (23:53 MSK 09-04): step counter between alarm and compact (lower bound named in the output) |
+| byudzhet a8 · omega a10 · restore a17 · secretary a15 | `08a2d50ef06c4e5a` · `b03fa2a7057f37a1` · `d53435da9fae83c3` · `b48094484c13d5a8` | **accepted for latest** (00:16 MSK): full run with dependencies 39/41/59/88 probes, 0 mismatches; omega/secretary — `prichina_stroka` (empty message ≠ a found value), byudzhet/restore — manifest only (stand list → mask walk) |
+| subscription-gateway 0.1.5 | `cc6a30332de8db35` (10 files) | **accepted for latest** (00:45 MSK): caret ranges → exact 0.3.258/4.4.3, stand 10/10 |
+
+Open on the addendum date: values with special characters after a declaration (`password = Xk9#mQ2$vL8p` → null in a28 and a30; Iskra 22:45Z) — the candidate is sought as a contiguous `[A-Za-z0-9_]{6,}`, the value breaks into short chunks; the a29/a30 acceptance did not cover this class. Iskra's proposal — a separate direct pass `<declaration> [:=] <non-space value>`; the value threshold is the acceptor's, from the corpus. The two `prichina_stroka` copies (omega, secretary) are identical but there is no identity probe.
+
 #### 5.1.7. Refusals
 
 Format: `[dsh-pamyat-core <version>] <message>` to `stderr`. The start-up line is always printed:
