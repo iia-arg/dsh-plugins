@@ -62,7 +62,7 @@ the same as the `latest` tag in the registry — see §7.
 | `dsh-pamyat-omega` | 0.1.0-alpha.9 | optional long-term layer over external storage via MCP |
 | `dsh-pamyat` | 0.1.0-alpha.27 | the name for the set: which six, in exactly which versions, were checked together |
 | `a2a-bus` | no version (not an npm package) | mailboxes, postman, timer |
-| `telegram-multiagent` (`dsh-telegram-multiagent`) | 1.4.3 | Telegram channel; in this document — only its A2A part and the context commands |
+| `telegram-multiagent` (`dsh-telegram-multiagent`) | 1.4.3 (1.5.1 in the registry, accepted; §6.3 describes 1.5.x) | Telegram channel; in this document — only its A2A part and the context commands |
 
 ---
 
@@ -841,10 +841,15 @@ the sake of the `command/run` event. The trailing anchor `(\s|$)` in the pattern
 without it `/compactstatus` would match `/compact` and silently compact the history.
 
 `/compact-status` prints: `Контекст: занято <N> токенов.` ("Context: N tokens used"; the source is
-`tokenMeter.measure` — the same number the platform uses to decide whether to compact); `Опора
-замера: <baseline.kind>` ("measurement basis") — `usage` = provider numbers, otherwise a heuristic
-estimate; `прочитано событий журнала: <logRevision>` ("journal events read") — the freshness sign;
-`Порог сжатия ~<window × 0.8>, до него <…>` ("compaction threshold ~…, … to go"). The window comes
+`tokenMeter.measure` — the same number the platform uses to decide whether to compact); the
+measurement basis in **three** states (since 1.5.0): basis fresh — `(числа провайдера)` ("provider
+numbers"), the distance to the threshold is printed; basis stale — `🔴 ЧИСЛА СНЯТЫ ДО КОМПАКТА`
+("NUMBERS TAKEN BEFORE THE COMPACTION"), the distance is **not** printed at all (the cut-out part was
+subtracted by the heuristic "4 characters = 1 token", which underestimates Cyrillic several-fold — the
+distance is not "approximate" but unknown); freshness could not be determined — `⚠️ свежесть снять НЕ
+МОГУ (причина)`. Freshness is determined from the session journal events (`session.events` or
+`eventAt()` + `seq` — whichever the installed platform has; an unknown signature → "don't know"), not
+from `baseline.kind`: that one speaks about the **source** of the basis, not its currency. The window comes
 from `llm.resolveModelInfo(provider, model).context.contextWindow`; if there is no window, **no
 default is substituted** — it prints `🔴 Окно контекста недоступно (<reason>) — расстояние до
 порога сказать НЕ МОГУ` ("context window unavailable — CANNOT say the distance to the threshold").
