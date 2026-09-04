@@ -69,5 +69,47 @@ t('cause без единого поля → сказано, что описан�
   nePusto(r, 'пустой объект')
 })
 
+// ── ДВЕ ОСИ ПРИЁМКИ ДЛЯ prichina(). ────────────────────────────────────────
+// 🔴 ОСИ, А НЕ «ЕЩЁ ПРОБЫ». Ось — это другой ВОПРОС к тому же предмету, и пробы одной
+// оси слепы к дефекту другой, сколько бы их ни было.
+//   ось 1 — пустое исключение   -> строка НЕ пуста
+//   ось 2 — брошенный ПРИМИТИВ  -> текст СОХРАНЁН
+// Первая присланная редакция закрывала ось 1 и ломала ось 2 (`throw 'текст'` давала
+// «string: (без пояснения)»): пустоту закрыли, потерю открыли рядом. Нашлось это не
+// чтением кода, а второй осью.
+const mP = text.match(/function prichina\(e\) \{[\s\S]*?\n  \}/)
+if (!mP) { console.log('СЛЕПОТА: функция prichina в предмете не найдена'); process.exit(2) }
+let prichina
+try { prichina = new Function(mP[0] + '; return prichina;')() }
+catch (e) { console.log(`СЛЕПОТА: prichina не собирается: ${e?.message ?? e}`); process.exit(2) }
+
+t('ОСЬ 1: пустые исключения дают НЕпустую строку', () => {
+  const bed = []
+  for (const [imya, v] of [['Error с пустым message', new Error('')],
+                           ['AggregateError пустой', new AggregateError([], '')],
+                           ['throw null', null], ['throw undefined', undefined],
+                           ['объект пустой', {}]]) {
+    const r = prichina(v)
+    if (typeof r !== 'string' || r.trim() === '' || /^(undefined|null):?\s*$/.test(r.trim()))
+      bed.push(`${imya}: «${r}»`)
+  }
+  if (bed.length) throw new Error(bed.join(' | '))
+})
+
+t('ОСЬ 2: брошенный примитив — текст СОХРАНЁН, не заменён пояснением', () => {
+  const bed = []
+  for (const [v, chto] of [['сессия не открыта', 'сессия не открыта'], [42, '42'],
+                           [{ message: 'своё' }, 'своё'], [new Error('сеть'), 'сеть']]) {
+    const r = prichina(v)
+    if (!r.includes(chto)) bed.push(`потерян текст «${chto}»: «${r}»`)
+  }
+  if (bed.length) throw new Error(bed.join(' | '))
+})
+
+t('код ошибки попадает в причину, когда message пуст', () => {
+  const r = prichina(Object.assign(new Error(''), { code: 'ECONNRESET' }))
+  if (!/ECONNRESET/.test(r)) throw new Error(`код потерян: «${r}»`)
+})
+
 console.log(`итог: ${ok} из ${ok + bed}`)
 process.exit(bed === 0 ? 0 : 1)

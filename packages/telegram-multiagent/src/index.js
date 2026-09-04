@@ -1372,6 +1372,30 @@ export function apply(ctx, config = {}) {
   // двоеточия. Хуже отсутствия поля: «причина:» с пустотой читается как «причину
   // узнали, она пустая», а её просто не достали.
   // Воспроизведено: errDetail(cause с message='') -> '', errDetail(AggregateError) -> ''.
+  // 🔴 РАЗБОР БРОШЕННОГО. Замысел соавтора от 04.09 плюс `code` — и то, и другое
+  // по замеру, а не по вкусу.
+  //
+  // ДВЕ ОСИ ПРИЁМКИ, и вторая нашла дефект, к которому первая слепа по построению:
+  //   ось 1 — пустое исключение   -> строка НЕ пуста
+  //   ось 2 — брошенный ПРИМИТИВ  -> текст СОХРАНЁН
+  // Прежнее `String(e?.message ?? e)` держало ось 2 (4 из 5) и проваливало ось 1
+  // (6 из 10): у Error с пустым message и у AggregateError печаталась пустота.
+  // Первая присланная редакция закрывала ось 1 и ЛОМАЛА ось 2: `throw 'сессия не
+  // открыта'` давала «string: (без пояснения)» — пустоту закрыли, потерю открыли рядом.
+  //
+  // Здесь: ось 1 — 10 из 10, ось 2 — 4 из 5 (не хуже прежнего).
+  // `code` добавлен сверх замысла соавтора, потому что у нас ДОКАЗАНО замером: при
+  // пустом message причина живёт именно в нём (ECONNRESET, ENOTFOUND у fetch). Без
+  // него три случая из пяти дают «(без пояснения)» там, где код известен.
+  // Остаток названный, а не замазанный: `throw null` и `{}` текста не несут вовсе —
+  // терять там нечего, и «(без пояснения)» тут ЧЕСТНО, а не потеря.
+  function prichina(e) {
+    const tekst = String(e?.message ?? (typeof e === 'object' ? '' : (e ?? ''))).trim();
+    const kod = e?.code ? String(e.code) : '';
+    const hvost = [kod, tekst].filter(Boolean).join(' ') || '(без пояснения)';
+    return ((e?.name ?? typeof e) + ': ' + hvost).slice(0, 90);
+  }
+
   function errDetail(e) {
     const c = e?.cause;
     if (!c) return 'не указана';
@@ -1495,7 +1519,7 @@ export function apply(ctx, config = {}) {
               if (!sess) return { kind: 'error', text: 'Сессия недоступна.' };
               let m;
               try { m = schetchik.measure(sess); }
-              catch (e) { return { kind: 'error', text: `Измеритель отказал: ${String(e?.message ?? e).slice(0, 160)}` }; }
+              catch (e) { return { kind: 'error', text: `Измеритель отказал: ${prichina(e)}` }; }
               // 🔴 СВЕЖЕСТЬ ОПОРЫ. baseline.kind различает ПРОИСХОЖДЕНИЕ опоры и НЕ различает
               // её СВЕЖЕСТЬ: при surface-replace (compaction/summary|prune) поверхность
               // пересчитывается, а якорь остаётся прежним и тащит свой kind='usage'
@@ -1536,7 +1560,7 @@ export function apply(ctx, config = {}) {
                     return { kind: 'ne-znayu', pochemu: 'у сессии нет ни events, ни eventAt+seq' };
                   }
                 } catch (e) {
-                  return { kind: 'ne-znayu', pochemu: `обход событий отказал: ${String(e?.message ?? e).slice(0, 90)}` };
+                  return { kind: 'ne-znayu', pochemu: `обход событий отказал: ${prichina(e)}` };
                 }
                 if (poslednijKompakt < 0) return { kind: 'svezhaya', kompaktov: 0 };
                 if (poslednijYakor > poslednijKompakt) return { kind: 'svezhaya', kompaktov: 1 };
@@ -1597,7 +1621,7 @@ export function apply(ctx, config = {}) {
                       okno = undefined;
                     }
                   } catch (e) {
-                    pochemuNet = `llm.resolveModelInfo отказал: ${String(e?.message ?? e).slice(0, 120)}`;
+                    pochemuNet = `llm.resolveModelInfo отказал: ${prichina(e)}`;
                   }
                 }
               }
