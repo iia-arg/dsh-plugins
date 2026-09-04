@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat-core",
-  "version": "0.1.0-alpha.22",
+  "version": "0.1.0-alpha.23",
   "description": "Оперативная память агента для DSH: локальное хранилище, журнал решений и политика записи по классам. Ноль внешних зависимостей.",
   "type": "module",
   "main": "src/index.js",
@@ -12,7 +12,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "test": "node test/stend-dolgovremennoj.mjs && node test/stend-filtra-vhoda.mjs && node test/stend-hranilishcha.mjs && node test/stend-krik-zvuchit.mjs && node test/stend-ocheredi-dostavki.mjs && node test/stend-politiki.mjs && node test/stend-readme.mjs && node test/stend-sborki.mjs && node test/stend-zhurnala.mjs"
+    "test": "node test/vse-stendy.mjs"
   },
   "engines": {
     "node": ">=22"
