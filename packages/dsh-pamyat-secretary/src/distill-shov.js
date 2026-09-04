@@ -65,27 +65,20 @@ export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, k
   // двух умолчаний быть не должно, иначе они разойдутся молча. Потребитель настройки —
   // стенд шва: без неё проверить учёт расхода можно лишь платным вызовом к провайдеру.
   const adres = nastrojka.adres || undefined;
-  const s1 = await sprosit({ klyuch: k.klyuch, model: nastrojka.model, system: VYBOR_TEM,
-                             tekst: transkript, maxTokens: nastrojka.maxTokenovTem, ...(adres ? { adres } : {}) });
-  if (s1.ishod !== 'ok') { krik('выбор тем не состоялся [' + s1.ishod + ']: ' + s1.pochemu); return { ishod: s1.ishod, rashod }; }
-  const m = razobrat_massiv(s1.tekst);
-  if (!m.godno) { krik('темы не разобраны: ' + m.pochemu); return { ishod: 'temy-ne-razobrany' }; }
 
-  const vsegoTem = m.spisok.length;
-  if (vsegoTem === 0) { krik('дистилляция: тем не выбрано — по этому срезу знаний нет'); return { ishod: 'temy-pusty', tem: 0 }; }
-  const temy = m.spisok.slice(0, nastrojka.predelTem);
-  if (vsegoTem > temy.length) {
-    krik(`тем выбрано ${vsegoTem}, берём ${temy.length} (предел predelTem) — ` +
-         'остальные НЕ записаны, и это не «их не было»');
-  }
-
-  const istochnik = `${seansId}#${Math.min(...seqs)}-${Math.max(...seqs)}`;
   // 🔴 РАСХОД СЧИТАЕТСЯ, А НЕ ОЦЕНИВАЕТСЯ. Заход ходит к платному чужому API, и до
   // 03.09.2026 механизм тратил деньги, НЕ считая их: цену приходилось прикидывать по
   // знакам транскрипта, а прикидка расходится с настоящим счётом молча.
   // 🔴 ОТКАЗЫ ВХОДЯТ В РАСХОД. Вызов, кончившийся на stop_reason=max_tokens, статьи не
   // дал, но оплачен полностью. Считать только удавшиеся значит занижать цену ровно на
   // ту часть, которая и есть беда.
+  //
+  // 🔴 ОБЪЯВЛЕНО ДО ПЕРВОГО ВЫЗОВА, И ЭТО ПРАВКА ПО БОЕВОМУ ЗАМЕРУ 04.09.2026.
+  // Прежде блок стоял НИЖЕ, а ветка отказа первой ступени уже возвращала `rashod` —
+  // то есть при любом отказе провайдера шов падал с ReferenceError вместо того, чтобы
+  // назвать причину. Ветка отказа была написана верно и НЕ ИСПОЛНЯЛАСЬ ни разу:
+  // проверить её было нечем, пока у провайдера были деньги. Нашлось только тогда,
+  // когда баланс ушёл в минус и появился настоящий 402.
   const rashod = { vyzovov: 0, vhod: 0, vyhod: 0, keshChtenie: 0, keshZapis: 0 };
   const uchest = (u) => {
     rashod.vyzovov++;
@@ -95,7 +88,30 @@ export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, k
     rashod.keshChtenie += Number(u.cache_read_input_tokens ?? 0);
     rashod.keshZapis += Number(u.cache_creation_input_tokens ?? 0);
   };
+
+  const s1 = await sprosit({ klyuch: k.klyuch, model: nastrojka.model, system: VYBOR_TEM,
+                             tekst: transkript, maxTokens: nastrojka.maxTokenovTem, ...(adres ? { adres } : {}) });
+  // 🔴 ПОСЛЕ ПЕРВОГО ВЫЗОВА ЛЮБОЙ РАННИЙ ВОЗВРАТ НЕСЁТ РАСХОД. Вызов состоялся и
+  // оплачен, чем бы он ни кончился; вернуть исход без расхода значит показать заход
+  // бесплатным ровно там, где деньги потрачены впустую.
+  if (s1.ishod !== 'ok') {
+    uchest(s1.usage);
+    krik('выбор тем не состоялся [' + s1.ishod + ']: ' + s1.pochemu);
+    return { ishod: s1.ishod, okonchatelno: Boolean(s1.okonchatelno), rashod };
+  }
   uchest(s1.usage);
+  const m = razobrat_massiv(s1.tekst);
+  if (!m.godno) { krik('темы не разобраны: ' + m.pochemu); return { ishod: 'temy-ne-razobrany', rashod }; }
+
+  const vsegoTem = m.spisok.length;
+  if (vsegoTem === 0) { krik('дистилляция: тем не выбрано — по этому срезу знаний нет'); return { ishod: 'temy-pusty', tem: 0, rashod }; }
+  const temy = m.spisok.slice(0, nastrojka.predelTem);
+  if (vsegoTem > temy.length) {
+    krik(`тем выбрано ${vsegoTem}, берём ${temy.length} (предел predelTem) — ` +
+         'остальные НЕ записаны, и это не «их не было»');
+  }
+
+  const istochnik = `${seansId}#${Math.min(...seqs)}-${Math.max(...seqs)}`;
   const itog = { ishod: 'ok', tem: temy.length, zapisano: 0, pusto: 0, otkazov: 0, chuzhoiKlass: 0 };
   for (const t of temy) {
     const klass = KLASSY.includes(t?.kind) ? t.kind : null;

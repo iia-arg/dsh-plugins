@@ -108,6 +108,70 @@ t('расход НЕ переводится в деньги внутри пак�
     throw new Error('в шве найдена ставка или валюта — цена зашита в код и устареет молча');
   }
 });
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 ОТКАЗ ПРОВАЙДЕРА НА ПЕРВОЙ СТУПЕНИ — ШОВ ЦЕЛИКОМ, А НЕ ОДНА ФУНКЦИЯ.
+// Пробы на 401/402 были и в стенде дистилляции — но они проверяют `sprosit`,
+// то есть ЗВЕНО. Дефект 04.09.2026 сидел в СОЕДИНЕНИИ звеньев: ветка отказа
+// возвращала `rashod`, объявленный ниже по телу, и шов падал с ReferenceError
+// вместо того, чтобы назвать причину. Пока у провайдера были деньги, эта ветка
+// не исполнялась ни разу — нашлась только на живом пустом балансе.
+// Отсюда правило пробы: проверять ту единицу, которая уезжает к получателю.
+async function zahodSOtkazom(kod, telo) {
+  let vyzovov = 0;
+  const srv = createServer((req, res) => {
+    req.on('data', () => {}); req.on('end', () => {});
+    vyzovov++;
+    res.writeHead(kod, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(telo));
+  });
+  await new Promise((g) => srv.listen(0, '127.0.0.1', g));
+  const a = `http://127.0.0.1:${srv.address().port}/v1/messages`;
+  const zapisi = [];
+  let brosil = null, r = null;
+  try {
+    r = await distillirovat({
+      putZhurnala: zhurnal,
+      dannye: { shadowedSeqs: [10, 11], shadowedTokenCount: 5000 },
+      seansId: 'proba',
+      nastrojka: { klyuch: { fajlKlyucha: klyuchFajl }, model: 'proba-model', adres: a,
+                   maxTokenovTem: 1000, maxTokenovStati: 1000, predelTem: 5, minTokenovSreza: 1 },
+      krik: () => {},
+      zapisat: (z) => zapisi.push(z),
+    });
+  } catch (e) { brosil = e; }
+  srv.close();
+  return { r, brosil, zapisi, vyzovov };
+}
+
+{
+  const { r, brosil, zapisi } = await zahodSOtkazom(402, { error: { message: 'Insufficient Balance' } });
+  t('🔴 402 НА ПЕРВОЙ СТУПЕНИ: шов НЕ БРОСАЕТ, а возвращает исход', () => {
+    if (brosil) throw new Error('шов бросил: ' + brosil.message +
+      (/before initialization/.test(brosil.message) ? ' — расход объявлен ниже своей ветки' : ''));
+    if (!r) throw new Error('шов вернул пустоту');
+  });
+  t('402 → исход net-deneg и он ОКОНЧАТЕЛЬНЫЙ', () => {
+    if (r?.ishod !== 'net-deneg') throw new Error('исход ' + r?.ishod);
+    if (r?.okonchatelno !== true) throw new Error('окончательность не объявлена: заход бился бы о 402 на каждой теме');
+  });
+  t('402 → расход ВЕРНУЛСЯ: вызов был и оплачен, показывать заход бесплатным нельзя', () => {
+    if (!r?.rashod) throw new Error('поля rashod нет — заход выглядит бесплатным');
+    if (r.rashod.vyzovov !== 1) throw new Error('вызовов ' + r.rashod.vyzovov + ', ждали 1');
+  });
+  t('402 → знания НЕ потеряны молча: записей ноль, причина названа исходом', () => {
+    if (zapisi.length !== 0) throw new Error('записано ' + zapisi.length + ' при отказе провайдера');
+  });
+}
+
+{
+  const { r, brosil } = await zahodSOtkazom(401, { error: { message: 'Authentication Fails' } });
+  t('🔴 401 И 402 НЕ СХЛОПЫВАЮТСЯ: неверный ключ — не «не заплатили»', () => {
+    if (brosil) throw new Error('шов бросил: ' + brosil.message);
+    if (r?.ishod !== 'klyuch-ne-prinyat') throw new Error('исход ' + r?.ishod +
+      ' — лечится другим: 402 пополнением счёта, 401 заменой ключа');
+  });
+}
+
 rmSync(kat, { recursive: true, force: true });
 console.log('ИТОГО: сошлось ' + ok + ', расхождений ' + bed);
 process.exit(bed ? 1 : 0);
