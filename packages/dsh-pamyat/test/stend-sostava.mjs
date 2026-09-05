@@ -183,17 +183,50 @@ proba('🔴 СУММЫ ПРЕДМЕТОВ совпадают с тем, что �
   if (slepye.length) throw new Error('СЛЕПОТА (не расхождение), спросить не удалось: ' + slepye.join('; '));
 }, true);
 
-proba('версия каждого пакета на диске совпадает с заявленной', () => {
+/**
+ * Номер предвыпускной версии: 0.1.0-alpha.36 → 36. Нужен, чтобы отличить «диск впереди»
+ * от «диск позади»: строковое сравнение здесь врёт (alpha.9 > alpha.36 по алфавиту).
+ * Не разобрался — возвращаем null, и проба говорит «сравнить нечем», а не гадает.
+ */
+function nomerAlfa(v) {
+  const m = String(v).match(/-alpha\.(\d+)$/);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * 🔴 ПРОВЕРЯЕТСЯ «ДИСК НЕ ПОЗАДИ», А НЕ «ДИСК РАВЕН» (правка 05.09.2026).
+ *
+ * Прежняя редакция требовала точного равенства — и стала ложно-красной ПО ПОСТРОЕНИЮ,
+ * когда мы ввели порядок «метку раздачи двигает приёмка». Между выпуском и вердиктом диск
+ * ЗАКОННО идёт впереди: набор закрепляет ПРИНЯТОЕ, а в дереве лежит последнее выпущенное.
+ * Тот же случай, что со сверщиком публикаций в тот же день: прибор не менялся — изменился
+ * порядок вокруг него, и постоянное красное обесценило бы сигнал.
+ *
+ * Что осталось расхождением: диск ПОЗАДИ состава. Тогда набор закрепляет то, чего в дереве
+ * нет вовсе, и собран он не из того, что мы проверяли.
+ */
+proba('версия на диске НЕ ПОЗАДИ заявленной (впереди — законно, ждёт приёмки)', () => {
   trebuetDereva();
   const plohie = [];
+  const vperedi = [];
   for (const p of sostav.sostav) {
     const putP = najtiPaket(p.paket);
     if (!putP) { plohie.push(p.paket + ': каталога нет ни в packages/, ни рядом'); continue; }
-    const pj = join(putP, 'package.json');
-    const v = JSON.parse(readFileSync(pj, 'utf8')).version;
-    if (v !== p.versiya) plohie.push(p.paket + ': на диске ' + v + ', заявлено ' + p.versiya);
+    const v = JSON.parse(readFileSync(join(putP, 'package.json'), 'utf8')).version;
+    if (v === p.versiya) continue;
+    const nd = nomerAlfa(v);
+    const ns = nomerAlfa(p.versiya);
+    if (nd === null || ns === null) {
+      plohie.push(p.paket + ': на диске ' + v + ', заявлено ' + p.versiya + ' — сравнить нечем');
+    } else if (nd < ns) {
+      plohie.push(p.paket + ': на диске ' + v + ' ПОЗАДИ заявленного ' + p.versiya +
+                  ' — набор закрепляет то, чего в дереве нет');
+    } else {
+      vperedi.push(p.paket + ': диск ' + v + ' впереди состава ' + p.versiya);
+    }
   }
   if (plohie.length) throw new Error(plohie.join('; '));
+  if (vperedi.length) console.log('     (законно, ждёт приёмки: ' + vperedi.join('; ') + ')');
 }, true);
 
 proba('состав называет СПОСОБ, а не только числа', () => {
