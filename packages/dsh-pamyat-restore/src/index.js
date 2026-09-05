@@ -412,7 +412,12 @@ export function apply(ctx, config) {
           telo = (telo ? telo + '\n\n' : '')
             + `Последняя сводка компакта (поднята ЦЕЛИКОМ, вне бюджета — ${znakov} знаков):\n`
             + String(svodkaCelikom.soderzhim ?? '')
-          if (svodkaCelikom.id !== undefined && svodkaCelikom.id !== null) idsB.push(svodkaCelikom.id)
+          // Сводка добавляется ОТДЕЛЬНО от отбора и может оказаться среди отобранных.
+          // Дубль в списке опознавателей врал бы читающему («записей 9», а разных 8) и
+          // грел бы запись дважды за один ход. Ядро с alpha.45 дедуплицирует и само —
+          // здесь это стоит потому, что строку журнала читают люди, а не только ядро.
+          if (svodkaCelikom.id !== undefined && svodkaCelikom.id !== null
+              && !idsB.includes(svodkaCelikom.id)) idsB.push(svodkaCelikom.id)
           // Названо вслух: иначе объём брифинга сверх предела читался бы как поломка предела.
           say(`welcome: последняя сводка компакта id=${svodkaCelikom.id} поднята ЦЕЛИКОМ вне бюджета ` +
               `(${znakov} знаков при пределе брифинга ${config.welcomeBudget}). Это решение, а не сбой предела.`)

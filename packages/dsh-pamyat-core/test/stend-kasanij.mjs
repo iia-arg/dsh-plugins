@@ -128,6 +128,29 @@ proba('В2 пустой список — НЕ отказ и не ошибка', 
   if (itog.otkaz !== null) return 'пустой отбор объявлен отказом: ' + JSON.stringify(itog.otkaz);
 });
 
+proba('В2 повтор id В ОДНОМ ходе греет ОДИН раз, а не вдвое', () => {
+  const put = svezhaya('v2d'); const h = otkrytHranilishche(put);
+  const id = h.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'предмет' });
+  // Так выглядит живой случай: сводка компакта добавляется к отобранным отдельно и может
+  // совпасть с одной из них. Список приходит с дублем, ход при этом ОДИН.
+  const itog = h.otmetitKasanie({ ids: [id, id, id], povod: 'vydacha-agentu' });
+  const r = h.baza.prepare('SELECT kasanij k FROM zapisi WHERE id = ?').get(id);
+  h.zakryt();
+  if (Number(r.k) !== 1) return 'касаний ' + r.k + ' при трёх вхождениях одного id в одном ходе, ожидалось 1';
+  if (itog.otmecheno !== 1) return 'отмечено ' + itog.otmecheno + ', ожидалась 1 (по числу РАЗНЫХ записей)';
+});
+
+proba('В2 разные записи в одном ходе греются каждая', () => {
+  const put = svezhaya('v2e'); const h = otkrytHranilishche(put);
+  const a = h.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'первая' });
+  const b = h.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'вторая' });
+  const itog = h.otmetitKasanie({ ids: [a, b, a], povod: 'vydacha-agentu' });
+  const sum = h.baza.prepare('SELECT SUM(kasanij) s FROM zapisi').get().s;
+  h.zakryt();
+  if (itog.otmecheno !== 2) return 'отмечено ' + itog.otmecheno + ', ожидалось 2 разных записи';
+  if (Number(sum) !== 2) return 'сумма касаний ' + sum + ', ожидалось 2 — дедупликация съела не тот дубль';
+});
+
 // ═══ В3: отказ записи не ломает выдачу ═══
 proba('В3 база только на чтение: метод НЕ бросает, называет отказ', () => {
   const put = svezhaya('v3'); const h = otkrytHranilishche(put);
