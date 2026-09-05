@@ -44,8 +44,9 @@ export const VERSIYA_PAKETA = (() => {
  * @param {string} [o.fajl]    куда писать; без него файл не создаётся — только отчёт
  * @param {string} [o.otkuda]  имя узла-источника, попадёт в заголовок
  * @param {string} [o.yadro]   путь к модулю фильтра (для стендов)
+ * @param {object} [o.otbor]   что брать: {agent, klass, s, po} — время в мс epoch
  */
-export async function vyvezti({ baza, fajl, otkuda = 'неизвестно', yadro, krik = console.error }) {
+export async function vyvezti({ baza, fajl, otkuda = 'неизвестно', yadro, otbor = {}, krik = console.error }) {
   // Договор проверяется ДО открытия базы: не смогли — файла не будет вовсе.
   const filtr = await vzyat_filtr(yadro);
 
@@ -57,7 +58,29 @@ export async function vyvezti({ baza, fajl, otkuda = 'неизвестно', yad
     // Поля, которых в этой базе нет, называются вслух: молчаливая потеря при переносе
     // неотличима от «этого поля и не было».
     const net = POLYA.filter((p) => !est.includes(p));
-    zapisi = db.prepare(`SELECT id, ${berem.join(', ')} FROM zapisi ORDER BY id`).all();
+    // 🔴 ОТБОР — ЧАСТЬ ВЫВОЗА, А НЕ ДЕЛО ВЫЗЫВАЮЩЕГО. Отобрать «потом, в отчёте» нельзя:
+    // фильтр секретов и сумма содержимого считаются по ТОМУ ЖЕ набору, что уезжает,
+    // и отбор после них сделал бы сумму ложной, а число задержанных — не про этот файл.
+    // Пустой отбор значит «всё», и это НЕ то же самое, что «отбор не сработал»:
+    // применённые условия печатаются в отчёте и кладутся в заголовок файла.
+    const uslov = [], znach = [];
+    if (otbor.agent != null)  { uslov.push('agent IS ?');    znach.push(otbor.agent); }
+    if (otbor.klass != null)  { uslov.push('klass IS ?');    znach.push(otbor.klass); }
+    if (otbor.s != null)      { uslov.push('sozdano >= ?');  znach.push(otbor.s); }
+    if (otbor.po != null)     { uslov.push('sozdano <= ?');  znach.push(otbor.po); }
+    // Условие по полю, которого в базе нет, — ОТКАЗ, а не молчаливый пропуск условия:
+    // «отобрал по агенту» и «взял всё, потому что поля agent нет» дают разные файлы.
+    for (const [pole, zadano] of [['agent', otbor.agent], ['klass', otbor.klass],
+                                  ['sozdano', otbor.s ?? otbor.po]]) {
+      if (zadano != null && !est.includes(pole)) {
+        const e = new Error(`отбор задан по полю «${pole}», которого в этой базе НЕТ. `
+          + 'Пропустить условие молча нельзя: вывезлось бы больше, чем просили');
+        e.code = 'VYVOZ_OTBOR_NET_POLYA';
+        throw e;
+      }
+    }
+    const gde = uslov.length ? ` WHERE ${uslov.join(' AND ')}` : '';
+    zapisi = db.prepare(`SELECT id, ${berem.join(', ')} FROM zapisi${gde} ORDER BY id`).all(...znach);
     zapisi.nety_polya = net;
     // Зеркальная проверка: поля, которые в базе ЕСТЬ, а вывоз о них не знает вовсе.
     zapisi.neznakomye_polya = neznakomye_polya(est);
@@ -108,6 +131,7 @@ export async function vyvezti({ baza, fajl, otkuda = 'неизвестно', yad
       summa: summa_soderzhimogo(stroki_zapisej),
       neizvestnye,
     }),
+    ...(Object.keys(otbor).length ? { otbor } : {}),
     chem_vyvezeno: `dsh-pamyat-vyvoz ${VERSIYA_PAKETA}`,
   };
   if (fajl) {
@@ -150,6 +174,7 @@ export async function vyvezti({ baza, fajl, otkuda = 'неизвестно', yad
     zaderzhannye,
     polya_kotoryh_net: zapisi.nety_polya ?? [],
     polya_neizvestnye_vyvozu: neizvestnye,
+    otbor,
     filtr_otkuda: filtr.otkuda,
     uzel: hostname(),
     summa: shapka.summa,
@@ -166,6 +191,12 @@ export function otchyot(it) {
   const s = [];
   s.push(`[dsh-pamyat-vyvoz ${VERSIYA_PAKETA}] всего ${it.vsego}, вывезено ${it.vyvezeno}, задержано ${it.zaderzhano}`);
   s.push(`  фильтр взят из: ${it.filtr_otkuda}`);
+  // 🔴 ОТБОР ПЕЧАТАЕТСЯ ВСЕГДА, В ТОМ ЧИСЛЕ ПУСТОЙ. «Взято всё» и «отбор не применился»
+  // дают одинаковый файл и разные новости; молчание здесь читалось бы как первое.
+  const usloviya = Object.entries(it.otbor ?? {}).filter(([, v]) => v != null);
+  s.push(usloviya.length
+    ? `  отбор: ${usloviya.map(([k, v]) => `${k}=${v}`).join(', ')} — вывезено ТОЛЬКО подходящее`
+    : '  отбор: НЕ ЗАДАН — вывезена вся база (за вычетом задержанного фильтром)');
   if (it.polya_kotoryh_net.length) {
     s.push(`  ⚠️ полей нет в этой базе: ${it.polya_kotoryh_net.join(', ')} — они не перенесены`);
   }

@@ -491,5 +491,77 @@ await proba('В8: таблицы журнала нет → операция ид
     || `отказ журнала проглочен молча: ${stroki.join(' | ').slice(0, 200)}`;
 });
 
+console.log('\n═══ В9: ОТБОР И ОБЁРТКА ПОД РУКУ ═══');
+
+await proba('В9: отбор берёт ТОЛЬКО подходящее, и условия видны в отчёте', async () => {
+  const b = baza('otbor', [
+    { agent: 'iskra', klass: 'zametka', soderzhim: 'знание Искры', sozdano: 100 },
+    { agent: 'petrovich', klass: 'zametka', soderzhim: 'знание Петровича', sozdano: 200 },
+    { agent: 'iskra', klass: 'svodka', soderzhim: 'сводка Искры', sozdano: 300 },
+  ]);
+  const it = await vyvezti({ baza: b, otkuda: 'proba', yadro: YADRO, otbor: { agent: 'iskra' }, krik: () => {} });
+  if (it.vsego !== 2) return `взято ${it.vsego}, ждали 2 — отбор по агенту не применился`;
+  const o = otchyot(it);
+  if (!o.includes('отбор: agent=iskra')) return 'условия отбора не названы в отчёте';
+  const bez = await vyvezti({ baza: b, otkuda: 'proba', yadro: YADRO, krik: () => {} });
+  if (bez.vsego !== 3) return `без отбора взято ${bez.vsego}, ждали 3`;
+  // Пустой отбор ОБЪЯВЛЯЕТСЯ: «взято всё» и «отбор не сработал» дают одинаковый файл
+  // и разные новости — молчание читалось бы как первое.
+  return otchyot(bez).includes('отбор: НЕ ЗАДАН')
+    || 'пустой отбор не назван — «взято всё» неотличимо от «отбор не применился»';
+});
+
+await proba('В9: отбор по времени берёт границы включительно', async () => {
+  const b = baza('otbor-vremya', [
+    { soderzhim: 'раньше', sozdano: 100 },
+    { soderzhim: 'внутри', sozdano: 200 },
+    { soderzhim: 'позже', sozdano: 300 },
+  ]);
+  const it = await vyvezti({ baza: b, otkuda: 'proba', yadro: YADRO, otbor: { s: 200, po: 300 }, krik: () => {} });
+  return it.vsego === 2 || `взято ${it.vsego}, ждали 2 (границы включительно)`;
+});
+
+await proba('🔴 В9: отбор по полю, которого в базе НЕТ → отказ, а не тихий пропуск условия', async () => {
+  const b = put('bez-polya.db');
+  const db = new DatabaseSync(b);
+  db.exec('CREATE TABLE zapisi (id INTEGER PRIMARY KEY AUTOINCREMENT, klass TEXT, soderzhim TEXT, istochnik TEXT, sozdano INTEGER)');
+  db.prepare('INSERT INTO zapisi (klass,soderzhim,istochnik,sozdano) VALUES (?,?,?,?)').run('z', 'знание', 's#1', 1);
+  db.close();
+  // Тихий пропуск условия вывез бы БОЛЬШЕ, чем просили, и отчёт сказал бы «отбор: agent=…»
+  return await dolzhnoUpast('VYVOZ_OTBOR_NET_POLYA',
+    () => vyvezti({ baza: b, fajl: put('ne-dolzhen.jsonl'), otkuda: 'proba', yadro: YADRO, otbor: { agent: 'iskra' }, krik: () => {} }));
+});
+
+await proba('🔴 В9: обёртка разводит КОДАМИ отказ по предмету (1) и слепоту (2)', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const skript = join(zdes, '..', 'bin', 'vyvoz-pamyati.mjs');
+  if (!existsSync(skript)) return 'обёртки bin/vyvoz-pamyati.mjs нет — В9 не закрыт';
+  const kod = (args) => {
+    try { execFileSync('node', [skript, ...args], { encoding: 'utf8', stdio: 'pipe' }); return 0; }
+    catch (e) { return e.status; }
+  };
+  const b = baza('obertka', [{ soderzhim: 'знание' }]);
+  const norma = kod(['--baza', b, '--yadro', YADRO]);
+  if (norma !== 0) return `исправный вызов дал код ${norma}, ждали 0`;
+  // неразобранное время: пустой отбор был бы неотличим от «подходящего нет»
+  const slepota = kod(['--baza', b, '--yadro', YADRO, '--s', 'вчера']);
+  if (slepota !== 2) return `неразобранное время дало код ${slepota}, ждали 2 (слепота)`;
+  const bez_bazy = kod(['--yadro', YADRO]);
+  if (bez_bazy !== 2) return `вызов без --baza дал код ${bez_bazy}, ждали 2`;
+  const dvazhdy = kod(['--baza', b, '--baza', b, '--yadro', YADRO]);
+  if (dvazhdy !== 2) return `ключ дважды дал код ${dvazhdy}, ждали 2 — молчаливый выбор одного из двух`;
+  return true;
+});
+
+await proba('В9: без --fajl обёртка НИЧЕГО не создаёт и говорит, что это была проба', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const skript = join(zdes, '..', 'bin', 'vyvoz-pamyati.mjs');
+  const b = baza('proba-suhaya', [{ soderzhim: 'знание' }]);
+  const bylo = readdirSync(katalog).length;
+  const out = execFileSync('node', [skript, '--baza', b, '--yadro', YADRO], { encoding: 'utf8' });
+  if (readdirSync(katalog).length !== bylo) return 'без --fajl что-то создано в каталоге';
+  return out.includes('это была ПРОБА') || `нет строки о пробе: ${out.slice(0, 200)}`;
+});
+
 console.log(`\n  итог: ${proshlo} из ${vsego}`);
 process.exit(proshlo === vsego ? 0 : 1);

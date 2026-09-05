@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat-vyvoz",
-  "version": "0.1.0-alpha.6",
+  "version": "0.1.0-alpha.7",
   "type": "module",
   "description": "Вывоз и ввоз памяти агента: перенос СМЫСЛА между базами, а не копия файла",
   "main": "src/index.js",
@@ -12,7 +12,8 @@
     "test",
     "README.md",
     "README.en.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "bin"
   ],
   "scripts": {
     "test": "node test/vse-stendy.mjs"
@@ -25,5 +26,8 @@
     "type": "git",
     "url": "git+https://github.com/iia-arg/dsh-plugins.git",
     "directory": "packages/dsh-pamyat-vyvoz"
+  },
+  "bin": {
+    "vyvoz-pamyati": "bin/vyvoz-pamyati.mjs"
   }
 }
