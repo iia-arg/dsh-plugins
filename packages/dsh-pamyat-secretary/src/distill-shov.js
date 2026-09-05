@@ -38,7 +38,7 @@ export function zatenennye(dannye) {
 const zahody_po_srezu = new Map();
 const PAMYAT_SREZOV = 20;   // помним последние; иначе счёт рос бы весь век процесса
 
-export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, krik, zapisat }) {
+export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, krik, zapisat, zadanie }) {
   const { seqs, tokenov } = zatenennye(dannye);
   const kluch_sreza = seqs.length ? `${seansId}#${seqs[0]}-${seqs[seqs.length - 1]}` : null;
   if (kluch_sreza) {
@@ -169,6 +169,21 @@ export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, k
     if (s2.ishod !== 'ok') {
       itog.otkazov++;
       krik(`статья «${t.theme}» не написана [${s2.ishod}]: ${s2.pochemu}`);
+      // 🔴 ЗАДАНИЕ НА ПОВТОР КЛАДЁТСЯ СРАЗУ (долг 119). Спасать тут нечего — текста нет
+      // вовсе, — а повтор по тому же срезу не даётся: zahody_po_srezu пропускает один
+      // заход, событие компакта одноразово. Без задания тема исчезает из виду совсем:
+      // отказ виден в журнале ровно один раз, а журнал ротируется.
+      // ⚠️ Отсутствие записывателя заданий НЕ рушит заход и НЕ молчит: старый монтаж
+      // (index без sozdatZadanie) обязан быть виден как «задание не положено», а не как
+      // «заданий не было».
+      if (typeof zadanie === 'function') {
+        try { zadanie({ tema: t.theme, kluchSreza: kluch_sreza, prichina: s2.pochemu, ishod: s2.ishod }); }
+        catch (e) { krik(`задание на повтор не положено: ${e?.message ?? e}`); }
+        itog.zadanij = (itog.zadanij ?? 0) + 1;
+      } else {
+        krik('задание на повтор НЕ положено: записыватель заданий не передан '
+           + '(секретарь старше alpha.19). Тема останется только в журнале.');
+      }
       // 🔴 ОКОНЧАТЕЛЬНЫЙ ОТКАЗ ОБРЫВАЕТ ЗАХОД. Нет денег или не принят ключ — повторится на
       // каждой из оставшихся тем: двенадцать одинаковых отказов вместо одного внятного.
       // Признак ставит провайдер, а не мы: гадать по тексту причины — значит разойтись с ним
@@ -198,7 +213,8 @@ export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, k
     } catch (e) { itog.otkazov++; krik(`статья «${t.theme}» НЕ записана: ${e?.message ?? e}`); }
   }
   krik(`дистилляция: тем ${itog.tem}, записано знаний ${itog.zapisano}, ` +
-       `пусто по теме ${itog.pusto}, отказов ${itog.otkazov}, чужой класс ${itog.chuzhoiKlass}; источник ${istochnik}`);
+       `пусто по теме ${itog.pusto}, отказов ${itog.otkazov}, заданий на повтор ${itog.zadanij ?? 0}, ` +
+       `чужой класс ${itog.chuzhoiKlass}; источник ${istochnik}`);
   itog.rashod = rashod;
   // Печатаем ТОКЕНАМИ, а не деньгами: ставка живёт у провайдера и меняется без нас,
   // а зашитая цена устареет молча и будет выглядеть замером. Деньги считает тот, кто

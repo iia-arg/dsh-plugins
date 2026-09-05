@@ -84,6 +84,39 @@ function sohranitOtklonennoe(kat, prefiks, tekst) {
 //
 // Исключение ПРОБРАСЫВАЕТСЯ намеренно: счёт отказов ведёт заход дистилляции, и
 // проглоти мы его здесь — «записано» стало бы неотличимо от «спасено в файл».
+// 🔴 ЗАДАНИЕ НА ПОВТОР — НЕ ТЕКСТ, А ПОРУЧЕНИЕ (долг 119, замер 05.09.2026).
+// Отказ модели без блока text отличается от отказа фильтра тем, что спасать НЕЧЕГО:
+// текста нет вовсе. А повторить заход по тому же срезу нельзя — `zahody_po_srezu` не
+// даёт второго, и событие компакта одноразовое. То есть знание по теме не появится
+// НИКОГДА, если не сходить рукой; отказ виден в журнале ровно один раз и никуда не копится.
+// Здесь складывается ЗАДАНИЕ: тема, ключ среза, причина, время — чтобы повтор рукой не
+// требовал чтения журнала и разбора прозы.
+// ⚠️ ГДЕ НЕ ПРИМЕНЯЕТСЯ: задание НИЧЕГО НЕ ПОВТОРЯЕТ САМО. Порога «сколько повторять» нет
+// намеренно — за сутки такой отказ случился один раз, а одна точка не ряд. Автоповтор без
+// замера стал бы механизмом без условия остановки.
+export function sozdatZadanie(config, krik) {
+  return ({ tema, kluchSreza, prichina, ishod }) => {
+    const telo = JSON.stringify({
+      chto: 'povtorit-distillyaciyu-po-teme',
+      tema: tema ?? null,
+      srez: kluchSreza ?? null,
+      ishod: ishod ?? null,
+      prichina: String(prichina ?? '').slice(0, 500),
+      kogda: new Date().toISOString(),
+      kak: 'заход по этому срезу повторно не даётся: нужен ручной прогон дистилляции по seq среза',
+    }, null, 1);
+    try {
+      const imya = sohranitOtklonennoe(config.putOtklonennyh, 'zadanie', telo);
+      krik('задание на повтор сохранено: ' + imya + ' — тема «' + (tema ?? '?') + '» не потеряна из виду.');
+      return imya;
+    } catch (e) {
+      krik('🔴 задание на повтор НЕ сохранено (' + (e?.message ?? e)
+         + '): тема «' + (tema ?? '?') + '» останется только в журнале, а он ротируется.');
+      return null;
+    }
+  };
+}
+
 export function sozdatZapisatel(pamyat, config, krik) {
   return (zn) => {
     try {
@@ -369,6 +402,7 @@ export function apply(ctx, config = {}) {
           },
           krik,
           zapisat: sozdatZapisatel(pamyat, config, krik),
+          zadanie: sozdatZadanie(config, krik),
         }).catch((e) => krik('дистилляция оборвалась: ' + (e?.message ?? e)));
       }
     } catch (e) {
