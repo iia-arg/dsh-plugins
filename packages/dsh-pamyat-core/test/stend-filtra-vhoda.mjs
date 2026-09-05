@@ -90,11 +90,25 @@ t('чистый текст → отметки НЕТ вовсе (пустой о
 // 🔴 Не грепом по коду: греп стережёт раскладку, а нужен ответ «пройдёт ли грязный
 // текст мимо фильтра по ВТОРОЙ ветке» — той, где класс требует подтверждения, а
 // отвечающего на узле нет. Именно эта ветка возвращается раньше общего пути.
-const { Context } = await import('@deepseek-ai/cordis');
-const { apply, name, Config } = await import('../src/index.js');
-const { mkdtempSync, rmSync } = await import('node:fs');
-const { tmpdir } = await import('node:os');
-const { join } = await import('node:path');
+// 🔴 ПЛАТФОРМЫ МОЖЕТ НЕ БЫТЬ У ПОЛУЧАТЕЛЯ — И ЭТО СЛЕПОТА, А НЕ РАСХОЖДЕНИЕ (05.09.2026,
+// замечание приёмки). Прежде отсутствие cordis роняло стенд наружу с кодом 1: получатель
+// чистой установки читал «стенды провалились, пакет сломан», хотя проверить было просто
+// нечем. Код 1 у нас важнее слепоты, поэтому и весь `npm test` уходил в красное.
+// Пройденное до этой точки НЕ теряется: оно названо числом перед выходом.
+let Context, apply, name, Config, mkdtempSync, rmSync, tmpdir, join;
+try {
+  ;({ Context } = await import('@deepseek-ai/cordis'));
+  ;({ apply, name, Config } = await import('../src/index.js'));
+  ;({ mkdtempSync, rmSync } = await import('node:fs'));
+  ;({ tmpdir } = await import('node:os'));
+  ;({ join } = await import('node:path'));
+} catch (e) {
+  const net = e?.code === 'ERR_MODULE_NOT_FOUND';
+  console.log(`\nСЛЕПОТА на поведенческой части: ${net ? 'платформа (@deepseek-ai/cordis) не установлена' : String(e?.message ?? e).slice(0, 160)}`);
+  console.log(`  До этой точки пройдено проб: ${ok} из ${ok + bed} — они настоящие, слепота только на том, что дальше.`);
+  if (net) console.log('  Выполните `npm install` в каталоге пакета и повторите.');
+  process.exit(bed === 0 ? 2 : 1);
+}
 
 const kat = mkdtempSync(join(tmpdir(), 'stend-filtra-'));
 async function podnyat() {

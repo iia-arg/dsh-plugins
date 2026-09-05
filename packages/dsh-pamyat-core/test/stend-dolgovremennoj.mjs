@@ -4,8 +4,20 @@
 // и «позвал, но не подтвердилось» лечатся по-разному: первое — установкой, второе — правкой
 // профиля, третье — разбором на стороне провайдера. Схлопни их в один «не удалось» — и
 // пришедший по журналу пойдёт чинить не то.
-import { Context } from '@deepseek-ai/cordis';
-import { apply, name, Config } from '../src/index.js';
+// 🔴 ПЛАТФОРМЫ МОЖЕТ НЕ БЫТЬ У ПОЛУЧАТЕЛЯ — ЭТО СЛЕПОТА, А НЕ РАСХОЖДЕНИЕ (05.09.2026,
+// замечание приёмки). Статический импорт падал ДО входа в код, с кодом 1: получатель
+// чистой установки читал «стенды провалились, пакет сломан», хотя проверить было нечем.
+// Код 1 у нас важнее слепоты, поэтому весь `npm test` уходил в красное на исправном пакете.
+let Context, apply, name, Config;
+try {
+  ;({ Context } = await import('@deepseek-ai/cordis'));
+  ;({ apply, name, Config } = await import('../src/index.js'));
+} catch (e) {
+  const net = e?.code === 'ERR_MODULE_NOT_FOUND';
+  console.log(`СЛЕПОТА: предмет не загрузился — ${net ? 'платформа (@deepseek-ai/cordis) не установлена' : String(e?.message ?? e).slice(0, 160)}`);
+  if (net) console.log('  Выполните `npm install` в каталоге пакета и повторите.');
+  process.exit(2);
+}
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
