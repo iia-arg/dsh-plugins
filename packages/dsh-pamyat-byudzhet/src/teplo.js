@@ -51,7 +51,17 @@ export const VES_KASANIYA = 0;
  * Тот же довод, что для веры: пустота — не ноль.
  */
 export function teplo(zapis, teper = Date.now()) {
-  const sozdano = Number(zapis?.sozdano);
+  // 🔴 ДВА ИМЕНИ ОДНОГО ПОЛЯ НА ГРАНИЦЕ ПАКЕТОВ (найдено замером 05.09.2026).
+  // Ядро называет время рождения `sozdano`, а слой восстановления, отдавая записи сюда,
+  // переименовывает его в `kogda` (его decide читает именно так). Прибор тепла читал
+  // только `sozdano` — и в бою печатал «измерено 0, не измерено 10».
+  // 🔴 ЧЕМ ЭТО ХУЖЕ ПРОСТО ОШИБКИ: число выглядело свойством ДАННЫХ («у записей нет даты»),
+  // а было свойством ПРИБОРА. Прибор, заведённый копить наклон для будущего порога, не
+  // измерил ни одной записи с самого своего появления — и молчал об этом, потому что
+  // «не измерено» у него законный третий исход.
+  // ⚠️ ГРАНИЦА: синоним принимается ЗДЕСЬ, в одном месте, и называется в коде. Плодить
+  // его дальше нельзя: третье имя того же поля мы уже не заметим.
+  const sozdano = Number(zapis?.sozdano ?? zapis?.kogda);
   if (!Number.isFinite(sozdano) || sozdano <= 0) return null;
   const vozrast = teper - sozdano;
   if (!(vozrast >= 0)) return 1;             // из будущего — считаем свежайшей, а не отрицательной
@@ -68,11 +78,31 @@ export function raspredelenie(zapisi, teper = Date.now()) {
     const t = teplo(z, teper);
     if (t === null) neizmereno++; else znacheniya.push(t);
   }
+  // 🔴 ТРИ ВХОДА ТЕПЛА СЧИТАЮТСЯ ПОРОЗНЬ (ворота В6 приёмки). Пока вход один — возраст, —
+  // «тепло» есть свежесть под другим именем, и назвать его теплом значит соврать словом.
+  // Числа абсолютные: сколько записей ИМЕЮТ счётчик касаний, сколько касались хоть раз,
+  // когда касались в последний раз. Доля не печатается: знаменатель растёт, и доля тем
+  // благополучнее, чем дольше не чинишь.
+  // ⚠️ ГРАНИЦА: касания на тепло НЕ ВЛИЯЮТ, пока вес равен нулю (VES_KASANIYA). Эти три
+  // числа — наблюдение, а не вход в формулу; когда вес включат, здесь появится и он.
+  let s_polem = 0, kasalis = 0, poslednee = null;
+  for (const z of zapisi ?? []) {
+    const k = z?.kasanij;
+    if (k === null || k === undefined) continue;
+    s_polem++;
+    if (Number(k) > 0) kasalis++;
+    const p = Number(z?.poslednee_kasanie);
+    if (Number.isFinite(p) && p > 0 && (poslednee === null || p > poslednee)) poslednee = p;
+  }
   znacheniya.sort((a, b) => a - b);
   const n = znacheniya.length;
   return {
     izmereno: n,
     neizmereno,
+    kasanij_pole_est: s_polem,
+    kasalis_hot_raz: kasalis,
+    poslednee_kasanie: poslednee,
+    ves_kasaniya: VES_KASANIYA,
     min: n ? znacheniya[0] : null,
     mediana: n ? znacheniya[n >> 1] : null,
     max: n ? znacheniya[n - 1] : null,

@@ -10,8 +10,24 @@ try {
 }
 
 let vsego = 0, proshlo = 0;
-const proba = (imya, f) => { vsego++; try { f(); proshlo++; console.log('  ✅ ' + imya); }
-  catch (e) { console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 200)); } };
+// 🔴 ВОЗВРАТ ТЕЛА УЧИТЫВАЕТСЯ (05.09.2026, третий пакет с этой бедой за сутки).
+// Обёртка краснела ТОЛЬКО на исключении, а возвращённое значение выбрасывала. Я дописала
+// сюда четыре пробы в стиле «вернуть строку с причиной» — идиому перенесла из ядра, где
+// обёртка её понимает, — и все четыре были ЗЕЛЁНЫМИ при заведомо испорченном предмете.
+// Поймала порчей, не чтением: предмет отвечал null, а стенд говорил 18 из 18.
+// Ожидающее тело тоже отвергается: синхронный прогонщик молча пропустил бы async-пробу.
+const proba = (imya, f) => {
+  vsego++;
+  try {
+    const vernulos = f();
+    if (vernulos && typeof vernulos.then === 'function') {
+      throw new Error('тело пробы ОЖИДАЮЩЕЕ, а прогонщик синхронный: вынеси ожидание наружу');
+    }
+    if (typeof vernulos === 'string') throw new Error(vernulos);
+    if (vernulos === false) throw new Error('тело пробы вернуло false без причины');
+    proshlo++; console.log('  ✅ ' + imya);
+  } catch (e) { console.log('  ❌ ' + imya + ' — ' + String(e.message).slice(0, 200)); }
+};
 
 const z = (soderzhim, extra = {}) => ({ soderzhim, sozdano: 1000, vera: null, ...extra });
 
@@ -148,6 +164,44 @@ proba('предел ноль: поднято ничего, и это ОБЪЯС�
   const r = otobrat({ zapisi: [z('текст')], predel: 0 });
   if (r.podnyato.length !== 0) throw new Error('при нулевом пределе что-то поднялось');
   if (r.svodka.prichiny.length === 0) throw new Error('нулевой предел не объяснён');
+});
+
+// ═══ Э8.3 П1: ТРИ ВХОДА ТЕПЛА (ворота В6) ═══
+proba('🔴 тепло считается и по имени kogda, не только sozdano', () => {
+  // Замер 05.09.2026 на живом: прибор печатал «измерено 0, не измерено 10». Ядро зовёт
+  // поле sozdano, слой восстановления переименовывает его в kogda — и прибор не измерил
+  // НИ ОДНОЙ записи с самого появления, а число выглядело свойством данных.
+  const r = otobrat({ zapisi: [{ soderzhim: 'а'.repeat(100), kogda: Date.now() - 3600000 }], predel: 4000 });
+  const t = r.svodka.teplo;
+  if (t.izmereno !== 1) return 'запись с полем kogda не измерена: ' + JSON.stringify(t);
+  if (t.neizmereno !== 0) return 'та же запись отнесена к «не измерялось»';
+});
+
+proba('три входа считаются порознь и абсолютными числами', () => {
+  const teper = Date.now();
+  const r = otobrat({ zapisi: [
+    { soderzhim: 'а'.repeat(50), kogda: teper - 1000, kasanij: 2, poslednee_kasanie: teper - 500 },
+    { soderzhim: 'б'.repeat(50), kogda: teper - 2000, kasanij: 0, poslednee_kasanie: null },
+    { soderzhim: 'в'.repeat(50), kogda: teper - 3000 },
+  ], predel: 4000 });
+  const t = r.svodka.teplo;
+  if (t.kasanij_pole_est !== 2) return 'поле касаний насчитано у ' + t.kasanij_pole_est + ', ожидалось 2';
+  if (t.kasalis_hot_raz !== 1) return 'касавшихся ' + t.kasalis_hot_raz + ', ожидалась 1';
+  if (t.poslednee_kasanie !== teper - 500) return 'последнее касание ' + t.poslednee_kasanie;
+});
+
+proba('запись БЕЗ поля касаний не считается «не касавшейся»', () => {
+  // Разные вещи: «ядро старше alpha.43, поля нет» и «поле есть, касаний ноль».
+  const r = otobrat({ zapisi: [{ soderzhim: 'а'.repeat(50), kogda: Date.now() }], predel: 4000 });
+  const t = r.svodka.teplo;
+  if (t.kasanij_pole_est !== 0) return 'запись без поля попала в счёт имеющих поле';
+  if (t.kasalis_hot_raz !== 0) return 'запись без поля сочтена касавшейся';
+});
+
+proba('вес прибавки за касание — НОЛЬ и печатается числом', () => {
+  const r = otobrat({ zapisi: [{ soderzhim: 'а'.repeat(50), kogda: Date.now(), kasanij: 5 }], predel: 4000 });
+  if (r.svodka.teplo.ves_kasaniya !== 0) return 'вес не ноль: ' + r.svodka.teplo.ves_kasaniya;
+  if (r.svodka.teplo.vliyaet_na_otbor !== false) return 'сводка утверждает, что тепло влияет на отбор';
 });
 
 console.log('  итог: ' + proshlo + ' из ' + vsego);
