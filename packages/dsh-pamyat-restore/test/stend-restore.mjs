@@ -30,7 +30,12 @@ const ZAPISI = [
 ]
 let sluzhbaZhiva = true
 let posledniyVopros = null
+// 🔴 ШПИОН КАСАНИЙ. Записывает, ЧЕМ его позвали: проверять надо не «позвали ли», а
+// «позвали ли с тем поводом и теми записями». Повод — половина предмета ворот В2.
+let kasaniyaZvali = []
+let kasanieOtvet = () => ({ otmecheno: 0, otkaz: null })
 const pamyat = {
+  otmetitKasanie(vopros = {}) { kasaniyaZvali.push(vopros); return kasanieOtvet(vopros) },
   dostupna: () => sluzhbaZhiva,
   pochemuNedostupna: () => (sluzhbaZhiva ? null : 'проба: база закрыта'),
   prochitat(vopros = {}) {
@@ -532,10 +537,55 @@ await stendSvodkiVneByudzheta()
 // 🔴 КАНАРЕЙКА ТОЧНОГО ЧИСЛА. Без неё вырезанный раздел проходит кодом 0:
 // выпотрошенный стенд отчитывается успехом. Число точное, а не «не меньше»:
 // порог слеп к убыли ровно того размера, который умещается в запас.
+// ═══ Э8.3 П1: КАСАНИЕ ОТМЕЧАЕТСЯ НА ВЫДАЧЕ (ворота В2/В3) ═══
+// Перехват вывода нужен потому, что часть предмета — СТРОКА, а не возврат: молчание о
+// неотмеченных касаниях и есть та беда, ради которой ветки заведены.
+// 🔴 ПЕРЕХВАТЫВАЕТСЯ stderr, А НЕ console.log — И ЭТО НЕ МЕЛОЧЬ.
+// Первая редакция ловила console.log и молчала при РАБОТАЮЩЕЙ правке: пакет печатает
+// через process.stderr.write. Проба отвечала про свой канал, а не про предмет; поверь я
+// ей — пошла бы чинить исправное. Тот же класс поймал меня сутками раньше на секретаре.
+// Годный способ один: спросить, чем печатает ПРЕДМЕТ, и слушать ровно этот путь.
+const perehvat = async (f) => {
+  const bylo = process.stderr.write.bind(process.stderr); const stroki = []
+  process.stderr.write = (ch, ...ost) => { stroki.push(String(ch)); return true }
+  try { return { itog: await f(), vyvod: stroki.join('') } } finally { process.stderr.write = bylo }
+}
+
+kasaniyaZvali = []; kasanieOtvet = () => ({ otmecheno: 3, otkaz: null })
+const kas1 = await perehvat(() => call(1, 1, 'sess-kasanie-1'))
+t('касание: служба позвана РОВНО ОДИН раз при welcome', kasaniyaZvali.length === 1, JSON.stringify(kasaniyaZvali))
+t('касание: повод «vydacha-agentu», а не какой-нибудь',
+  kasaniyaZvali[0]?.povod === 'vydacha-agentu', JSON.stringify(kasaniyaZvali[0]?.povod))
+t('касание: переданы ИМЕННО выданные записи (непустой список чисел)',
+  Array.isArray(kasaniyaZvali[0]?.ids) && kasaniyaZvali[0].ids.length > 0
+    && kasaniyaZvali[0].ids.every((n) => Number.isFinite(Number(n))),
+  JSON.stringify(kasaniyaZvali[0]?.ids))
+t('касание: число отмеченных названо в выводе', /касания отмечены: 3 из/.test(kas1.vyvod), kas1.vyvod.slice(-200))
+
+kasaniyaZvali = []; kasanieOtvet = () => ({ otmecheno: 0, otkaz: { code: 'PAMYAT_KASANIE_NE_ZAPISANO', pochemu: 'проба: база только на чтение' } })
+const kas2 = await perehvat(() => call(1, 1, 'sess-kasanie-2'))
+t('В3 отказ касания НЕ отменяет выдачу', kas2.itog.messages.length === 1, JSON.stringify(kas2.itog.messages.length))
+t('В3 отказ касания НАЗВАН вслух, а не проглочен',
+  /касания НЕ записаны \(PAMYAT_KASANIE_NE_ZAPISANO\)/.test(kas2.vyvod), kas2.vyvod.slice(-200))
+
+kasaniyaZvali = []
+const byloOtmetit = pamyat.otmetitKasanie
+delete pamyat.otmetitKasanie
+const kas3 = await perehvat(() => call(1, 1, 'sess-kasanie-3'))
+pamyat.otmetitKasanie = byloOtmetit
+t('старое ядро без метода: выдача есть', kas3.itog.messages.length === 1, JSON.stringify(kas3.itog.messages.length))
+t('старое ядро без метода: сказано, что нули значат «некому отмечать»',
+  /касания НЕ отмечаются.*ядро старше alpha\.44/.test(kas3.vyvod), kas3.vyvod.slice(-200))
+
+kasaniyaZvali = []; kasanieOtvet = () => { throw new Error('проба: метод бросил') }
+const kas4 = await perehvat(() => call(1, 1, 'sess-kasanie-4'))
+t('брошенное исключение касания не рушит выдачу', kas4.itog.messages.length === 1, JSON.stringify(kas4.itog.messages.length))
+kasanieOtvet = () => ({ otmecheno: 0, otkaz: null })
+
 // Меняли стенд намеренно? Поправьте число и скажите, почему.
 // 02.09.2026: 11 -> 16 при передаче владения, 16 -> 20 после монтажа (следы срабатывания) (подписка через session/event,
 // чужой тип события, ошибка компакта, чужая сессия).
-const ZHDYOM = 81  // 05.09.2026: 74 -> 81, семь проб Э8.6 (сводка целиком вне бюджета + зеркальная сторона «сводки нет»)
+const ZHDYOM = 90  // 05.09.2026: 74 -> 81, семь проб Э8.6; 81 -> 90, девять проб Э8.3 П1 (касание на выдаче: повод, состав, число, отказ, старое ядро, исключение) (сводка целиком вне бюджета + зеркальная сторона «сводки нет»)
 // 🔴 РАСХОЖДЕНИЕ ВАЖНЕЕ СЛЕПОТЫ, поэтому оно проверяется ПЕРВЫМ. Первая редакция
 // сначала сверяла число проверок — и на порче отвечала кодом 2 «часть не состоялась»,
 // пряча пять настоящих провалов за слепотой по недоступному пути. Читающий код увидел

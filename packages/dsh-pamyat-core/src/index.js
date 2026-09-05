@@ -590,6 +590,16 @@ export function apply(ctx, config = {}) {
       if (!hranilishche) otkaz();
       return hranilishche.prochitat({ agent, skolko: config.chtenieSkolko ?? 20, ...vopros });
     },
+    /**
+     * Отметить касание записей — их ВЫДАЛИ агенту (Э8.3 П1, ворота В2).
+     * Прокидывает в хранилище как есть: повод сверяется там, единым словарём, чтобы
+     * у службы и у хранилища не завелось двух разных представлений о том, что считать
+     * касанием. Возвращает { otmecheno, otkaz } — отказ записи выдачу НЕ отменяет.
+     */
+    otmetitKasanie(vopros = {}) {
+      if (!hranilishche) otkaz();
+      return hranilishche.otmetitKasanie(vopros);
+    },
     /** Сводка журнала: отвечает на вопрос «почему память пуста». */
     svodka() {
       if (!zhurnal) otkaz();
