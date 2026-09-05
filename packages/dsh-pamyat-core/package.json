@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat-core",
-  "version": "0.1.0-alpha.37",
+  "version": "0.1.0-alpha.38",
   "description": "Оперативная память агента для DSH: локальное хранилище, журнал решений и политика записи по классам. Ноль внешних зависимостей.",
   "type": "module",
   "main": "src/index.js",
