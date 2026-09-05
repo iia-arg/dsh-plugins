@@ -297,5 +297,61 @@ await proba('🔴 ПЛОСКАЯ форма (наша прежняя догад�
   if (itog.bezChisla !== 1) throw new Error('плоское событие должно попасть в «без числа»');
 });
 
+
+// ═══ ОТМЕТКИ ПУТИ (05.09.2026) ═══════════════════════════════════════════════
+// 🔴 Они про НАБЛЮДЕНИЕ, а не про решение: пакет ведёт себя точно так же, отметки
+// только печатаются. Поэтому проб две пары — что печатаются и что НЕ влияют.
+
+await proba('отметки пути: печатаются по одной на пересечённую, в порядке пути', async () => {
+  const s = slushat()
+  try {
+    const k = await podnyat({ predel: 1000, dolyaTrevogi: 0.9, otmetkiPuti: [0.7, 0.5, 0.6] })
+    k.nudzhPamyati.uchest({ inputTokens: 650 })
+    const stroki = s.kriki.filter((x) => x.includes('отметка пути'))
+    if (stroki.length !== 2) throw new Error(`отметок ${stroki.length}, ожидалось 2: ${stroki.join(' | ')}`)
+    if (!stroki[0].includes('50%') || !stroki[1].includes('60%')) {
+      throw new Error(`порядок не по пути: ${stroki.join(' | ')}`)
+    }
+    if (!stroki[0].includes('НАБЛЮДЕНИЕ')) throw new Error('строка не называет себя наблюдением')
+  } finally { s.vernut() }
+})
+
+await proba('отметки пути: каждая печатается ОДИН раз за цикл', async () => {
+  const s = slushat()
+  try {
+    const k = await podnyat({ predel: 1000, dolyaTrevogi: 0.9, otmetkiPuti: [0.5] })
+    k.nudzhPamyati.uchest({ inputTokens: 600 })
+    k.nudzhPamyati.uchest({ inputTokens: 700 })
+    const n = s.kriki.filter((x) => x.includes('отметка пути')).length
+    if (n !== 1) throw new Error(`отметка напечатана ${n} раз(а), ожидался 1`)
+  } finally { s.vernut() }
+})
+
+await proba('🔴 отметки НЕ влияют на тревогу: тот же порог, тот же исход', async () => {
+  const bez = slushat(); let krikiBez
+  try {
+    const k = await podnyat({ predel: 1000, dolyaTrevogi: 0.8 })
+    k.nudzhPamyati.uchest({ inputTokens: 900 })
+    krikiBez = bez.kriki.filter((x) => x.includes('пора подтолкнуть')).length
+  } finally { bez.vernut() }
+  const s = slushat()
+  try {
+    const k = await podnyat({ predel: 1000, dolyaTrevogi: 0.8, otmetkiPuti: [0.5, 0.7] })
+    k.nudzhPamyati.uchest({ inputTokens: 900 })
+    const s1 = s.kriki.filter((x) => x.includes('пора подтолкнуть')).length
+    if (s1 !== krikiBez) throw new Error(`с отметками тревог ${s1}, без — ${krikiBez}`)
+  } finally { s.vernut() }
+})
+
+await proba('отметки пути: пустой список → ни одной строки (прежнее поведение)', async () => {
+  const s = slushat()
+  try {
+    const k = await podnyat({ predel: 1000, dolyaTrevogi: 0.9 })
+    k.nudzhPamyati.uchest({ inputTokens: 800 })
+    const n = s.kriki.filter((x) => x.includes('отметка пути')).length
+    if (n !== 0) throw new Error(`при пустом списке напечатано ${n} отметок`)
+  } finally { s.vernut() }
+})
+
 console.log('  итог: ' + proshlo + ' из ' + vsego);
 process.exit(proshlo === vsego ? 0 : 1);
