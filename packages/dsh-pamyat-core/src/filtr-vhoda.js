@@ -265,6 +265,30 @@ export function rezhim(klass) {
   return 'neizvesten';
 }
 
+/**
+ * ОБРАЩЕНИЕ К ПОЛЮ: `process.env.MY_TOKEN`, `config.token`, `this.secret.value`.
+ *
+ * 🔴 ОДИН ПРЕДИКАТ НА ВЕСЬ ФАЙЛ (Р2, замечание приёмки 05.09.2026). Прежде признак был
+ * записан ДВАЖДЫ и по-разному: один проход брал широкое `[A-Za-z0-9_.-]*`, другой —
+ * сегменты через точку. Два определения одного признака в одном файле — ловушка на
+ * следующей правке: чинишь одно, второе остаётся, и поведение расходится молча.
+ *
+ * 🔴 «БЕЗ ЦИФР» — НЕ УКРАШЕНИЕ, А ИСПРАВЛЕНИЕ РЕГРЕССИИ Р1 (a37, моя). Прежний признак
+ * описывал «идентификатор с точками», а не обращение к полю, и потому ОБЪЯВЛЕННЫЕ СЕКРЕТЫ
+ * с точками стали проходить молча:
+ *     password: Secret.Pass1 · api_key: v1.abc123.DEF456 · ключ: config.secretValue1
+ * Все три a36 запирала, a37–a39 пропускали. Нашла приёмка; моя пара проб была слепа к
+ * этому классу — в контрольном наборе не было НИ ОДНОГО значения с точкой.
+ *
+ * ГДЕ НЕ ПРИМЕНЯЕТСЯ: обращение к полю с цифрой в имени (`cfg.key2.value`) будет считаться
+ * секретом. Это осознанный перекос в сторону задержки: пропущенный секрет необратим,
+ * задержанная запись — нет, и она громкая.
+ */
+function obrashchenie_k_polyu(znachenie) {
+  if (/[0-9]/.test(znachenie)) return false;
+  return /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$/.test(znachenie);
+}
+
 export function najti_sekret(tekst) {
   for (const { imya, re } of STRUKTURNYE) {
     const m = re.exec(tekst);
@@ -368,7 +392,7 @@ export function najti_sekret(tekst) {
       // ГДЕ НЕ ПРИМЕНЯЕТСЯ: настоящие секреты почти всегда несут знак вне [A-Za-z0-9_.-]
       // (#, $, !, %), и под этот признак не подпадают. Чисто буквенно-цифровое значение
       // (abc123XYZ789) сюда тоже попадёт и уйдёт — но его ловит проход по алфавиту ниже.
-      const identifikator = /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(znachenie);
+      const identifikator = obrashchenie_k_polyu(znachenie);
       if (!put && !identifikator && klassovAlfavita(znachenie) >= 3) {
         return { klass: 'obyavlennyj', pozicia: m.index };
       }
@@ -423,8 +447,7 @@ export function najti_sekret(tekst) {
       const znach_do_probela = razdelitel >= 0
         ? (tekst.slice(razdelitel + 1).match(/^\s*["']?([^\s"']+)/)?.[1] ?? kandidat)
         : kandidat;
-      const obrashchenie_k_polyu = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$/.test(znach_do_probela);
-      if (!obrashchenie_k_polyu) return { klass: 'obyavlennyj', pozicia: m.index };
+      if (!obrashchenie_k_polyu(znach_do_probela)) return { klass: 'obyavlennyj', pozicia: m.index };
     }
     // Три признака ниже ПОМЕЧАЮТ: класс с приставкой «slabyj:» в список запирающих не входит.
     // Порядок внутри не важен — формы не пересекаются, проверено пробами.
