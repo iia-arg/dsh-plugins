@@ -271,6 +271,38 @@ export function otkrytHranilishche(putK, { drajver } = {}) {
         throw prichina;
       }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 🔴 МИГРАЦИЯ «СЧЁТЧИК КАСАНИЙ» (Э8.3 П1, ворота В1 приёмки) — СВОЕЙ ТРАНЗАКЦИЕЙ.
+    //
+    // ЗАЧЕМ. Замысел предмета: две записи равной веры, одну трогали вчера, другую месяц
+    // назад — свежая касанием должна стоять выше. Сегодня «тепло» считается ТОЛЬКО по
+    // возрасту записи, то есть это свежесть под другим именем: запись, к которой
+    // обращаются каждый день, стареет ровно так же, как забытая.
+    //
+    // ⚠️ ЧТО ЗНАЧИТ НОЛЬ У СТАРЫХ ЗАПИСЕЙ, И ЧЕГО ОН НЕ ЗНАЧИТ. Ноль здесь — «касаний НЕ
+    // БЫЛО С ПОЯВЛЕНИЯ СЧЁТЧИКА», а не «к записи никогда не обращались»: до этой миграции
+    // касания не считались вовсе. Различить «не касались» и «касались до счётчика»
+    // ПО ЭТОМУ ПОЛЮ НЕЛЬЗЯ, и рубеж здесь не заводится намеренно — в отличие от
+    // происхождения, ноль касаний ничего не отнимает у записи, пока вес прибавки равен
+    // нулю (ворота В4). Единственный честный признак «счётчик к ней не применялся» —
+    // poslednee_kasanie IS NULL, и он читается именно так, а не как «касались в нуле».
+    //
+    // 🔴 ИДЕМПОТЕНТНОСТЬ: поля добавляются только если их нет. Повторная миграция не
+    // трогает числа — иначе второй прогон обнулил бы накопленные касания молча.
+    const nuzhno_kasanij = !stolbcy.includes('kasanij');
+    const nuzhno_posl_kasanie = !stolbcy.includes('poslednee_kasanie');
+    if (nuzhno_kasanij || nuzhno_posl_kasanie) {
+      baza.exec('BEGIN IMMEDIATE');
+      try {
+        if (nuzhno_kasanij) baza.exec('ALTER TABLE zapisi ADD COLUMN kasanij INTEGER NOT NULL DEFAULT 0');
+        if (nuzhno_posl_kasanie) baza.exec('ALTER TABLE zapisi ADD COLUMN poslednee_kasanie INTEGER DEFAULT NULL');
+        baza.exec('COMMIT');
+      } catch (prichina) {
+        try { baza.exec('ROLLBACK'); } catch { /* откат уже случился сам */ }
+        throw prichina;
+      }
+    }
   } catch (prichina) {
     const e = new Error(
       'dsh-pamyat: база памяти не открылась по пути ' + putK + '. ' +
@@ -527,6 +559,69 @@ export function otkrytHranilishche(putK, { drajver } = {}) {
       const r = baza.prepare('UPDATE zapisi SET proverka = ? WHERE id = ?')
         .run(JSON.stringify({ ishod, chem, kogda }), nomer);
       return Number(r.changes) === 1;
+    },
+
+    /**
+     * ОТМЕТИТЬ КАСАНИЕ — запись УШЛА В ВЫДАЧУ агенту (Э8.3 П1, ворота В2 приёмки).
+     *
+     * 🔴 ЧТО СЧИТАЕТСЯ КАСАНИЕМ — НАЗВАНО ЗДЕСЬ И ОДНО: запись попала в результат отбора,
+     * который ушёл в ход агента. НЕ считается: чтение поиском, просмотр прибором, вывоз,
+     * дистилляция, сторожа, стенды. Иначе приборы греют память сами, и «часто нужное»
+     * становится «часто осматриваемое» — величина поменяет смысл, не поменяв имени.
+     *
+     * 🔴 ПОВОД ОБЯЗАТЕЛЕН И СВЕРЯЕТСЯ СО СЛОВАРЁМ. Запретить прибору позвать этот метод
+     * нельзя, но можно сделать так, чтобы вызов «на всякий случай» ОТКАЗАЛ, а не оставил
+     * тихую отметку. Это тот же приём, что имя прибора в отметке сверки: обязательное поле
+     * превращает небрежность в отказ, который видно.
+     *
+     * 🔴 ОТКАЗ ЗАПИСИ НЕ ЛОМАЕТ ВЫДАЧУ (ворота В3). Касание — вторичный учёт: база занята
+     * или открыта только на чтение — выдача агенту уже состоялась, и рушить её из-за
+     * счётчика нельзя. Поэтому метод НЕ бросает при отказе UPDATE, а возвращает отказ и
+     * говорит о нём вслух. Молчать тоже нельзя: тогда «касаний ноль» будет означать разом
+     * и «не касались», и «не смогли записать».
+     *
+     * ⚠️ ГДЕ НЕ ПРИМЕНЯЕТСЯ: касание НЕ трогает proishozhdenie и proverka (ворота В9) —
+     * это UPDATE ровно двух полей. И оно ничего не решает: пока вес прибавки равен нулю
+     * (ворота В4), порядок выдачи от касаний не зависит вовсе.
+     *
+     * Возвращает { otmecheno, otkaz } — число изменённых строк, а не «успех».
+     */
+    otmetitKasanie({ ids, povod, kogda = Date.now() }) {
+      const POVOD_VYDACHA = 'vydacha-agentu';
+      if (povod !== POVOD_VYDACHA) {
+        const e = new Error('dsh-pamyat: касание отмечается только с поводом «' + POVOD_VYDACHA
+          + '»; получено ' + JSON.stringify(povod) + '. Чтение прибором, вывоз и стенды касанием НЕ являются');
+        e.code = 'PAMYAT_KASANIE_NE_TOT_POVOD';
+        throw e;
+      }
+      const spisok = (Array.isArray(ids) ? ids : [ids])
+        .map(Number).filter((n) => Number.isInteger(n) && n > 0);
+      // Пустой список — не отказ и не ошибка: отбор мог вернуть ноль записей.
+      if (spisok.length === 0) return { otmecheno: 0, otkaz: null };
+      try {
+        const st = baza.prepare('UPDATE zapisi SET kasanij = kasanij + 1, poslednee_kasanie = ? WHERE id = ?');
+        let n = 0;
+        for (const id of spisok) n += Number(st.run(kogda, id).changes);
+        return { otmecheno: n, otkaz: null };
+      } catch (prichina) {
+        const otkaz = {
+          code: 'PAMYAT_KASANIE_NE_ZAPISANO',
+          pochemu: prichina_stroka(prichina),
+          zaprosheno: spisok.length,
+        };
+        // Сказать вслух ОБЯЗАТЕЛЬНО, и двумя путями: журнал в той же базе может быть
+        // недоступен ровно по той же причине, по которой не прошёл UPDATE.
+        try {
+          baza.prepare('INSERT INTO zhurnal (kogda, agent, klass, ishod, priroda, pochemu, istochnik)'
+            + ' VALUES (?, ?, ?, ?, ?, ?, ?)')
+            .run(kogda, 'pamyat', 'kasanie', 'otkloneno', otkaz.code, otkaz.pochemu, null);
+        } catch { /* журнал в той же базе — если она не пишется, сюда тоже не запишется */ }
+        try {
+          console.error('[dsh-pamyat] касание НЕ записано (' + otkaz.code + '): ' + otkaz.pochemu
+            + '. Выдача агенту состоялась и не отменяется; счёт касаний за этот отбор потерян.');
+        } catch { /* печать не должна рушить выдачу */ }
+        return { otmecheno: 0, otkaz };
+      }
     },
 
     /** Сколько записей у агента — для наблюдаемости и стендов. */
