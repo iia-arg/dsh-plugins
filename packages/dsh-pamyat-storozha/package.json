@@ -1,0 +1,21 @@
+{
+  "name": "dsh-pamyat-storozha",
+  "version": "0.1.0-alpha.1",
+  "description": "Сторожа обслуживания памяти: оповещение о каждом сжатии и вторая ступень заполнения",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": { ".": "./src/index.js" },
+  "files": ["src", "test", "README.md", "CHANGELOG.md"],
+  "scripts": {
+    "test": "r=0; for f in test/stend-*.mjs; do node \"$f\"; c=$?; if [ $c -eq 1 ]; then r=1; elif [ $c -eq 2 ] && [ $r -ne 1 ]; then r=2; elif [ $c -ne 0 ] && [ $c -ne 2 ] && [ $r -ne 1 ]; then r=$c; fi; done; exit $r"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/schemastery": "3.18.1"
+  },
+  "license": "MIT"
+}
