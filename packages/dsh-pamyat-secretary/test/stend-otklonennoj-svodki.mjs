@@ -1,6 +1,6 @@
 /** Проба долга 114: отказ записи не теряет сводку и не обрывает дистилляцию. */
-import { apply } from '../src/index.js'
-import { existsSync, readFileSync, rmSync, readdirSync } from 'node:fs'
+import { apply, sozdatZapisatel } from '../src/index.js'
+import { existsSync, readFileSync, rmSync, readdirSync, mkdirSync, chmodSync, statSync } from 'node:fs'
 
 let vsego = 0, bed = 0
 const proba = (imya, telo) => {
@@ -96,6 +96,56 @@ proba('🔴 ключ НЕ задан → текст не сохранён, и э
   return (s.includes('НЕ СОХРАНЕНА') && s.includes('putOtklonennyh')
           && s.includes('Дистилляция продолжается'))
     || `строки: ${s.slice(0, 300)}`
+})
+
+// ─── п.114: права каталога проверяются ФАКТОМ ────────────────────────────────
+proba('🔴 существующий широкий каталог СУЖАЕТСЯ до владельца', () => {
+  rmSync(KAT, { recursive: true, force: true })
+  mkdirSync(KAT, { recursive: true })
+  chmodSync(KAT, 0o755)                       // как будто каталог завёл кто-то раньше
+  if ((statSync(KAT).mode & 0o777) !== 0o755) return 'порча не внесена: права не 755'
+  const t = stend({ zapisatBrosaet: true })
+  t.podat()
+  t.konec()
+  const prava = statSync(KAT).mode & 0o777
+  if (prava & 0o077) return `каталог остался открыт шире владельца: ${prava.toString(8)}`
+  return readdirSync(KAT).some((f) => f.startsWith('svodka-')) || 'текст не сохранён'
+})
+
+// ─── п.113: знание дистилляции спасается так же, как сводка ──────────────────
+proba('🔴 знание дистилляции отклонено → текст СОХРАНЁН, отказ ПРОБРОШЕН', () => {
+  rmSync(KAT, { recursive: true, force: true })
+  const stroki = []
+  const zapisatel = sozdatZapisatel(
+    { zapisat: () => { throw new Error('в тексте найден секрет (obyavlennyj)') } },
+    { putOtklonennyh: KAT },
+    (x) => stroki.push(x),
+  )
+  let brosilo = false
+  try { zapisatel({ klass: 'znanie', soderzhim: 'статья о пароле' }) }
+  catch { brosilo = true }
+  if (!brosilo) return 'отказ проглочен: заход посчитал бы статью записанной'
+  const fajly = readdirSync(KAT).filter((f) => f.startsWith('znanie-'))
+  if (fajly.length !== 1) return `файлов знания ${fajly.length}, ждали 1`
+  if (readFileSync(`${KAT}/${fajly[0]}`, 'utf8') !== 'статья о пароле') return 'текст не тот'
+  return stroki.join(' | ').includes('знание дистилляции ОТКЛОНЕНО')
+    || `отказ не назван вслух: ${stroki.join(' | ').slice(0, 200)}`
+})
+
+proba('контроль: знание записалось — файла нет, отказа нет', () => {
+  rmSync(KAT, { recursive: true, force: true })
+  const zapisatel = sozdatZapisatel({ zapisat: () => ({ id: 1 }) }, { putOtklonennyh: KAT }, () => {})
+  zapisatel({ klass: 'znanie', soderzhim: 'обычная статья' })
+  return !existsSync(KAT) || 'каталог отклонённых создан там, где отказа не было'
+})
+
+// ⚠️ ПРИЗНАК ПОЛНОТЫ, НЕ ДОКАЗАТЕЛЬСТВО. Что спасатель действительно передан в
+// дистилляцию, проверяется чтением исходника: подменить модуль distill-shov в ESM
+// нечем, а живой заход дистилляции ходит к провайдеру и в стенде недостижим.
+proba('спасатель ПЕРЕДАН в дистилляцию (признак по исходнику)', () => {
+  const src = readFileSync(new URL('../src/index.js', import.meta.url), 'utf8')
+  return /zapisat:\s*sozdatZapisatel\(/.test(src)
+    || 'в вызове distillirovat стоит не sozdatZapisatel — знание снова теряется молча'
 })
 
 rmSync(KAT, { recursive: true, force: true })

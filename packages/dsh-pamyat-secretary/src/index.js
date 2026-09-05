@@ -34,12 +34,73 @@ import { createRequire } from 'node:module';
 import z from '@deepseek-ai/schemastery';
 import { razobratSvodku } from './razbor-sobytiya.js';
 import { distillirovat } from './distill-shov.js';
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, chmodSync, statSync } from 'node:fs'
 import { zamaskirovat } from './maska-obrazcov.js';
 // 🔴 ФУНКЦИИ ЯДРА БЕРУТСЯ У ЯДРА, А НЕ ПОВТОРЯЮТСЯ ЗДЕСЬ. Договор объявлен ядром
 // (najti_sekret/rezhim/zapiraet) и проверяется его же стендом договора. Своя копия
 // правил разошлась бы с ядром в первый день — этот класс у нас уже стоил трёх
 // разошедшихся списков. Ядро — peer-зависимость: у получателя оно уже стоит.
+
+// 🔴 СОХРАНЕНИЕ ОТКЛОНЁННОГО — ОДНО МЕСТО ДЛЯ ДВУХ ПРЕДМЕТОВ (сводка и знание
+// дистилляции). Раньше сохранялась только сводка, а знание при отказе фильтра
+// пропадало молча: тот же фильтр, тот же отказ, но текст не сохранялся нигде
+// (п.113 приёмки). Два пути сохранения разошлись бы в первый же день.
+//
+// 🔴 ПРАВА КАТАЛОГА ПРОВЕРЯЮТСЯ ФАКТОМ, А НЕ НАМЕРЕНИЕМ (п.114 приёмки).
+// mkdirSync({mode}) применяет режим ТОЛЬКО к каталогам, которые он создаёт, и ещё
+// урезает его по umask. Замер: существующий каталог 755 после mkdirSync(0o700)
+// остаётся 755. То есть в тексте, ради узких прав и отправленном сюда, секрет лёг
+// бы в каталог, читаемый всеми, — а строка «сохранено» выглядела бы успехом.
+// Поэтому: chmod, затем ПЕРЕЧИТАТЬ права и сверить. Шире 0700 — отказ БЕЗ записи:
+// лучше сказать «текст потерян», чем положить секрет в открытый каталог и молчать.
+function sohranitOtklonennoe(kat, prefiks, tekst) {
+  if (!kat) {
+    throw new Error('путь не задан: задайте ключ putOtklonennyh — '
+      + 'умолчания нет намеренно, чтобы не писать в чужой каталог молча');
+  }
+  mkdirSync(kat, { recursive: true, mode: 0o700 });
+  try { chmodSync(kat, 0o700); } catch { /* причину назовёт сверка ниже */ }
+  const prava = statSync(kat).mode & 0o777;
+  if (prava & 0o077) {
+    throw new Error('каталог ' + kat + ' открыт шире владельца (права '
+      + prava.toString(8) + '): текст НЕ записан. Сузьте права — сюда попадает то, '
+      + 'что фильтр счёл секретом');
+  }
+  // 'wx' — не перезаписывать чужой файл молча: два отказа в одну миллисекунду
+  // редки, но перезапись уничтожила бы первый текст без единой строки.
+  const imya = `${kat}/${prefiks}-${Date.now()}-${process.pid}.txt`;
+  writeFileSync(imya, String(tekst ?? ''), { mode: 0o600, flag: 'wx' });
+  return imya;
+}
+
+// 🔴 ЗАПИСЬ ЗНАНИЯ ДИСТИЛЛЯЦИИ — ОТДЕЛЬНАЯ ФУНКЦИЯ, А НЕ ЗАМЫКАНИЕ НА МЕСТЕ.
+// Причина не в красоте: замыкание внутри вызова distillirovat недостижимо для пробы,
+// и всякая проба на него получалась бы зелёной при любом содержимом. Здесь предмет
+// пробы — ровно тот код, который уходит в дистилляцию.
+//
+// Раньше отклонённая фильтром СТАТЬЯ пропадала молча (п.113): дистилляция считала
+// отказ и шла дальше, текст не сохранялся нигде. Теперь она спасается тем же
+// способом, что и сводка, — одним местом на оба предмета.
+//
+// Исключение ПРОБРАСЫВАЕТСЯ намеренно: счёт отказов ведёт заход дистилляции, и
+// проглоти мы его здесь — «записано» стало бы неотличимо от «спасено в файл».
+export function sozdatZapisatel(pamyat, config, krik) {
+  return (zn) => {
+    try {
+      pamyat.zapisat(zn);
+    } catch (e) {
+      try {
+        const imya = sohranitOtklonennoe(config.putOtklonennyh, 'znanie', zn?.soderzhim);
+        krik('знание дистилляции ОТКЛОНЕНО фильтром (' + (e?.message ?? e)
+           + '). Текст сохранён вне памяти: ' + imya + ' — знание не потеряно.');
+      } catch (e2) {
+        krik('🔴 знание дистилляции отклонено (' + (e?.message ?? e)
+           + ') И НЕ СОХРАНЕНО (' + (e2?.message ?? e2) + ') — текст ПОТЕРЯН.');
+      }
+      throw e;
+    }
+  };
+}
 
 export const name = 'dsh-pamyat-secretary';
 
@@ -277,14 +338,7 @@ export function apply(ctx, config = {}) {
         // Ключ не задан — текст НЕ сохраняется, и это говорится вслух с именем ключа,
         // а не выглядит как «сохранили куда-то».
         try {
-          const kat = config.putOtklonennyh;
-          if (!kat) {
-            throw new Error('путь не задан: задайте ключ putOtklonennyh — '
-              + 'умолчания нет намеренно, чтобы не писать в чужой каталог молча');
-          }
-          mkdirSync(kat, { recursive: true, mode: 0o700 });
-          const imya = `${kat}/svodka-${Date.now()}.txt`;
-          writeFileSync(imya, String(z.soderzhim ?? ''), { mode: 0o600 });
+          const imya = sohranitOtklonennoe(config.putOtklonennyh, 'svodka', z.soderzhim);
           krik('сводка ОТКЛОНЕНА фильтром (' + (e?.message ?? e) + '). '
              + 'Текст сохранён вне памяти: ' + imya + ' — знание не потеряно, '
              + 'память не запачкана. Дистилляция ПРОДОЛЖАЕТСЯ.');
@@ -314,7 +368,7 @@ export function apply(ctx, config = {}) {
                       peremennayaOkruzheniya: config.klyuchOkruzhenie || null },
           },
           krik,
-          zapisat: (zn) => pamyat.zapisat(zn),
+          zapisat: sozdatZapisatel(pamyat, config, krik),
         }).catch((e) => krik('дистилляция оборвалась: ' + (e?.message ?? e)));
       }
     } catch (e) {
