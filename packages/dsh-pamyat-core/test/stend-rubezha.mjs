@@ -13,6 +13,7 @@
  *
  * Первая проба — на заведомо исправном: соврала она, значит сломан стенд, а не предмет.
  */
+import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -208,6 +209,31 @@ proba('В4-бис: блок миграции вошёл из-за НЕДОСТА
 });
 
 // ─── В6: ИМЯ ПОЛЯ ─────────────────────────────────────────────────────────────
+proba('В5-бис: база с ДЫРАМИ в номерах — рубеж по MAX(id), а не по числу записей', () => {
+  // 🔴 ЗАВЕДЕНА 05.09.2026 ПО ЗАМЕЧАНИЮ ПРИЁМКИ, и замечание подтверждено моей рукой:
+  // порча MAX(id) → COUNT(*) проходила стенд 15 из 15. Прежние пробы строили базу
+  // подряд идущими номерами, где обе величины СОВПАДАЮТ, — и потому не различали их.
+  // Цена дефекта настоящая: удалили записи — COUNT(*) стал меньше MAX(id), рубеж встал
+  // НИЖЕ последней записи, и часть старой памяти ушла бы в «после протокола», то есть
+  // получила ноль. Ровно тот вред, ради защиты от которого рубеж и заводился.
+  // 📌 Класс: величина, совпадающая с другой на всех проверенных данных, не проверена вовсе.
+  const put = svezhaya('v5bis');
+  bazaSoStarymiZapisyami(put, 10);
+  const db = new DatabaseSync(put);
+  db.exec('DELETE FROM zapisi WHERE id <= 6');   // осталось 4 записи, номера 7..10
+  const ostalos = db.prepare('SELECT COUNT(*) c FROM zapisi').get().c;
+  const maks = db.prepare('SELECT MAX(id) m FROM zapisi').get().m;
+  db.close();
+  if (ostalos === maks) throw new Error('проба негодна: дыр нет, COUNT=' + ostalos + ' и MAX=' + maks + ' совпали');
+  const h = otkrytHranilishche(put);
+  const rubezh = h.rubezhProishozhdeniya();
+  h.zakryt();
+  if (rubezh !== maks) {
+    throw new Error('рубеж ' + rubezh + ' при MAX(id)=' + maks + ' и записях ' + ostalos
+      + ' — записи выше рубежа ушли бы в «после протокола» и получили ноль');
+  }
+});
+
 proba('В6 порча: уровень, положенный в `vera`, ломает читателя — поле именно proishozhdenie', () => {
   const put = svezhaya('v6');
   bazaSoStarymiZapisyami(put, 3);
