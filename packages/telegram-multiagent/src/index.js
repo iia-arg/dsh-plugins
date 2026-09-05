@@ -1436,11 +1436,24 @@ export function apply(ctx, config = {}) {
   }
 
   async function loop(run) {
+    // 🔴 РАЗРЕЖЕННАЯ СТРОКА УСПЕХА (п.118). Отказ опроса логируется громко, успех — молча:
+    // «работает» и «ВСТАЛ» давали ОДИН след (пустоту), полная остановка выглядела как исправная
+    // тихая работа. Пишем редко: раз в 20 циклов (цикл успеха ≈ 25 с long poll → ≈ 8 минут,
+    // ~7 строк в час) и при смене состояния (отказ → успех). Порог 20 — ЧИСЛО, не «изредка».
+    let podryad = 0;    // успешных циклов подряд
+    let bylOtkaz = false;
     while (run.alive) {
       try {
         await pollA2A();
         await pollSpool();
         const updates = await tg.poll(25);
+        podryad += 1;
+        if (bylOtkaz) {
+          log(`опрос восстановился после отказа (успешных циклов подряд: ${podryad})`);
+          bylOtkaz = false;
+        } else if (podryad % 20 === 0) {
+          log(`опрос жив: ${podryad} циклов без отказа, обновлений в последнем: ${updates.length}`);
+        }
         for (const u of updates) {
           try { await handleUpdate(u); }
           catch (e) {
@@ -1461,6 +1474,8 @@ export function apply(ctx, config = {}) {
           }
         }
       } catch (e) {
+        bylOtkaz = true;
+        podryad = 0;
         // Сеть моргнула или Telegram ответил ошибкой — ждём и продолжаем.
         // ЧТО именно опрашивалось — называем: в цикле три опроса подряд (a2a, ящик,
         // телеграм), и без имени отказ читается как «всё сломалось», хотя стоять может
