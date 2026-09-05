@@ -33,7 +33,7 @@ let ok = 0, bed = 0;
 // под видом проверки. Замер 05.09: семь стендов ядра из десяти зеленели на подложенном
 // падении в ожидающем теле — действующих async-тел не было ни одного, беда была впереди.
 // Здесь она закрыта устройством: вернуло промис — это ОТКАЗ пробы, а не её успех.
-const t = (imya, f) => { try {
+const proba = (imya, f) => { try {
     const vernulos = f();
     if (vernulos && typeof vernulos.then === 'function') {
       throw new Error('тело пробы ОЖИДАЮЩЕЕ, а прогонщик синхронный — ждать не умеет. ' +
@@ -83,7 +83,7 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   const k = await podnyat({ dolgo: sloj });
   k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание', istochnik: 's#1-2' });
   await new Promise((r) => setTimeout(r, 40));
-  t('[0] доставленное в очередь НЕ попадает', () => {
+  proba('[0] доставленное в очередь НЕ попадает', () => {
     const o = ocheredIzBazy();
     if (o.length !== 0) throw new Error('в очереди ' + o.length + ', ждали 0');
   });
@@ -92,11 +92,11 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   // внутри уходило в unhandled rejection — то есть проба была зелёной, что бы в ней ни
   // случилось. Зелёное, которое не может покраснеть, хуже отсутствующей пробы: оно занимает
   // её место в счёте.
-  t('[0] отчёт о пустой очереди — ЧИСЛО, а не молчание', () => {
+  proba('[0] отчёт о пустой очереди — ЧИСЛО, а не молчание', () => {
     if (typeof k.pamyat.dostavitOtlozhennoe !== 'function') throw new Error('метода нет');
   });
   const otchet = await k.pamyat.dostavitOtlozhennoe();
-  t('[0] прогон по пустой очереди: vsego 0, слой доступен', () => {
+  proba('[0] прогон по пустой очереди: vsego 0, слой доступен', () => {
     if (otchet.vsego !== 0) throw new Error('vsego ' + otchet.vsego);
     if (otchet.sloyDostupen !== true) throw new Error('слой объявлен недоступным');
   });
@@ -108,19 +108,19 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   const k = await podnyat({ dolgo: sloj });
   k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание А', istochnik: 's#1-2' });
   await new Promise((r) => setTimeout(r, 40));
-  t('[A] недоступный слой ставит в очередь с природой ne-otpravleno, попыток 0', () => {
+  proba('[A] недоступный слой ставит в очередь с природой ne-otpravleno, попыток 0', () => {
     const o = ocheredIzBazy();
     if (o.length !== 1) throw new Error('в очереди ' + o.length);
     if (o[0].priroda !== 'ne-otpravleno') throw new Error('природа ' + o[0].priroda);
     if (Number(o[0].popytok) !== 0) throw new Error('попыток ' + o[0].popytok);
   });
-  t('[A] запись НЕ звала слой: sohranit не вызывался', () => {
+  proba('[A] запись НЕ звала слой: sohranit не вызывался', () => {
     if (sloj.schet.sohranit !== 0) throw new Error('звали ' + sloj.schet.sohranit + ' раз');
   });
 
   // ─── [B] проход при недоступном слое: попытки НЕ тратим ───
   const otchet = await k.pamyat.dostavitOtlozhennoe();
-  t('[B] проход при недоступном слое: попыток не прибавилось, причина названа', () => {
+  proba('[B] проход при недоступном слое: попыток не прибавилось, причина названа', () => {
     const o = ocheredIzBazy();
     if (Number(o[0].popytok) !== 0) throw new Error('попыток стало ' + o[0].popytok);
     if (otchet.sloyDostupen !== false) throw new Error('слой объявлен доступным');
@@ -139,7 +139,7 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   const zhivoj = podstavnojSloj({ sohranitOtvet: { sostoyanie: 'dostavleno', id: 'mem-cccc2222dddd' } });
   k.pamyatDolgovremennaya = zhivoj;
   const otchet = await k.pamyat.dostavitOtlozhennoe();
-  t('[C] ne-otpravleno → ЗАПИСАНО и снято с очереди', () => {
+  proba('[C] ne-otpravleno → ЗАПИСАНО и снято с очереди', () => {
     if (zhivoj.schet.sohranit !== 1) throw new Error('sohranit звали ' + zhivoj.schet.sohranit + ' раз, ждали 1');
     if (otchet.dostavleno !== 1) throw new Error('dostavleno ' + otchet.dostavleno);
     const o = ocheredIzBazy();
@@ -153,7 +153,7 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   const k = await podnyat({ dolgo: sloj });
   k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание G', istochnik: 's#1-2' });
   await new Promise((r) => setTimeout(r, 40));
-  t('[G] природа moglo-dojti-id-est попала в очередь вместе с опознавателем', () => {
+  proba('[G] природа moglo-dojti-id-est попала в очередь вместе с опознавателем', () => {
     const o = ocheredIzBazy();
     if (o.length !== 1) throw new Error('в очереди ' + o.length);
     if (o[0].priroda !== 'moglo-dojti-id-est') throw new Error('природа ' + o[0].priroda);
@@ -165,7 +165,7 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   });
   k.pamyatDolgovremennaya = zhivoj;
   const otchet = await k.pamyat.dostavitOtlozhennoe();
-  t('[G] 🔴 ДУБЛЯ НЕТ: спросили чтением, записи НЕ делали', () => {
+  proba('[G] 🔴 ДУБЛЯ НЕТ: спросили чтением, записи НЕ делали', () => {
     if (zhivoj.schet.proverit !== 1) throw new Error('proverit звали ' + zhivoj.schet.proverit + ' раз');
     if (zhivoj.schet.sohranit !== 0) throw new Error('ВТОРАЯ ЗАПИСЬ: sohranit звали ' + zhivoj.schet.sohranit + ' раз');
     if (otchet.podtverzhdeno !== 1) throw new Error('podtverzhdeno ' + otchet.podtverzhdeno);
@@ -185,7 +185,7 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   });
   k.pamyatDolgovremennaya = zhivoj;
   await k.pamyat.dostavitOtlozhennoe();
-  t('[H] 🔴 «не проверяли» НЕ съедает предел и НЕ пишет вслепую', () => {
+  proba('[H] 🔴 «не проверяли» НЕ съедает предел и НЕ пишет вслепую', () => {
     if (zhivoj.schet.sohranit !== 0) throw new Error('писали вслепую: sohranit ' + zhivoj.schet.sohranit);
     const o = ocheredIzBazy();
     if (o.length !== 1) throw new Error('запись пропала из очереди');
@@ -205,11 +205,11 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   });
   k.pamyatDolgovremennaya = zhivoj;
   const otchet = await k.pamyat.dostavitOtlozhennoe();
-  t('[F] 🔴 без опознавателя НЕ трогаем: ни записи, ни проверки', () => {
+  proba('[F] 🔴 без опознавателя НЕ трогаем: ни записи, ни проверки', () => {
     if (zhivoj.schet.sohranit !== 0) throw new Error('была запись: ' + zhivoj.schet.sohranit);
     if (zhivoj.schet.proverit !== 0) throw new Error('была проверка: ' + zhivoj.schet.proverit);
   });
-  t('[F] такие записи СЧИТАЮТСЯ ОТДЕЛЬНО — иначе «ничего не делаем» читается как недоделка', () => {
+  proba('[F] такие записи СЧИТАЮТСЯ ОТДЕЛЬНО — иначе «ничего не делаем» читается как недоделка', () => {
     if (otchet.zhdutRuki !== 1) throw new Error('zhdutRuki ' + otchet.zhdutRuki);
   });
 }
@@ -227,15 +227,15 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
     const o = await k.pamyat.dostavitOtlozhennoe({ predelPopytok: 2 });
     ischerpanij += o.novyhIscherpanij;
   }
-  t('[D] 🔴 исчерпание объявляется ОДИН раз, а не на каждом проходе', () => {
+  proba('[D] 🔴 исчерпание объявляется ОДИН раз, а не на каждом проходе', () => {
     if (ischerpanij !== 1) throw new Error('новых исчерпаний ' + ischerpanij + ', ждали 1');
   });
-  t('[D] исчерпанная запись ОСТАЁТСЯ в очереди — молча терять знание нельзя', () => {
+  proba('[D] исчерпанная запись ОСТАЁТСЯ в очереди — молча терять знание нельзя', () => {
     const o = ocheredIzBazy();
     if (o.length !== 1) throw new Error('записей ' + o.length);
     if (Number(o[0].ischerpano) !== 1) throw new Error('флаг исчерпания не выставлен');
   });
-  t('[D] после исчерпания повторов больше НЕТ', () => {
+  proba('[D] после исчерпания повторов больше НЕТ', () => {
     const bylo = upryamyj.schet.sohranit;
     if (bylo !== 2) throw new Error('записей было ' + bylo + ', ждали ровно 2 (предел)');
   });
@@ -258,11 +258,11 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   k.pamyatDolgovremennaya = staryj;
   let brosil = null, otchet = null;
   try { otchet = await k.pamyat.dostavitOtlozhennoe(); } catch (e) { brosil = e; }
-  t('[I] 🔴 слой без proverit → НЕ падаем', () => {
+  proba('[I] 🔴 слой без proverit → НЕ падаем', () => {
     if (brosil) throw new Error('бросило: ' + brosil.message +
       (/not a function/.test(brosil.message) ? ' — ветки «сосед старше» нет' : ''));
   });
-  t('[I] запись осталась в очереди и вслепую НЕ переписана', () => {
+  proba('[I] запись осталась в очереди и вслепую НЕ переписана', () => {
     const o = ocheredIzBazy();
     if (o.length !== 1) throw new Error('в очереди ' + o.length);
     if (otchet?.ostalos !== 1) throw new Error('ostalos ' + otchet?.ostalos);
@@ -274,12 +274,12 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   const sloj = podstavnojSloj({ sohranitOtvet: { sostoyanie: 'dostavleno', id: 'mem-0000' } });
   const k = await podnyat({ dolgo: sloj });
   const otchet = await k.pamyat.dostavitOtlozhennoe();
-  t('[E] пустая очередь отвечает числами, а не молчанием', () => {
+  proba('[E] пустая очередь отвечает числами, а не молчанием', () => {
     if (otchet.vsego !== 0) throw new Error('vsego ' + otchet.vsego);
     if (otchet.zhdutRuki !== 0) throw new Error('zhdutRuki ' + otchet.zhdutRuki);
     if (typeof otchet.ostalos !== 'number') throw new Error('ostalos не число');
   });
-  t('[E] очередь видна снаружи отдельным вызовом', () => {
+  proba('[E] очередь видна снаружи отдельным вызовом', () => {
     if (!Array.isArray(k.pamyat.ocheredDostavki())) throw new Error('ocheredDostavki не отдаёт список');
   });
 }
