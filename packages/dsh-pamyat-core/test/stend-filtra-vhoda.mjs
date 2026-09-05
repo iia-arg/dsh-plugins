@@ -9,8 +9,19 @@ import { ochistit, najti_sekret, filtr_ispraven, trevozhno, proverit_sluzhebnoe,
 import { readFileSync } from 'node:fs';
 
 let ok = 0, bed = 0;
-const t = (imya, f) => { try { f(); ok++; console.log('  ok   ' + imya); }
-  catch (e) { bed++; console.log('  FAIL ' + imya + ' — ' + e.message); } };
+// 🔴 ПРИРОДА ТЕЛА ПРОВЕРЯЕТСЯ, А НЕ ПОДРАЗУМЕВАЕТСЯ (05.09.2026, ворота приёмки).
+// Прогонщик синхронный — ждать не умеет. Ожидающее тело вернёт промис, try его НЕ поймает,
+// и проба зачтётся МГНОВЕННО, что бы внутри ни бросили: она станет зелёной при любом
+// содержимом. Единственный стенд ядра, где этой защиты не было, — закрыт.
+const t = (imya, f) => {
+  try {
+    const vernulos = f();
+    if (vernulos && typeof vernulos.then === 'function') {
+      throw new Error('тело пробы ОЖИДАЮЩЕЕ, а прогонщик синхронный: вынеси ожидание наружу');
+    }
+    ok++; console.log('  ok   ' + imya);
+  } catch (e) { bed++; console.log('  FAIL ' + imya + ' — ' + e.message); }
+};
 
 // ── П1: TAG-символы ───────────────────────────────────────────────────────────
 t('П1 текст с TAG-символами → вычищен, klassy=["tag"]', () => {
