@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat-vyvoz",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "type": "module",
   "description": "Вывоз и ввоз памяти агента: перенос СМЫСЛА между базами, а не копия файла",
   "main": "src/index.js",

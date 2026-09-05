@@ -18,6 +18,7 @@ const paket = join(zdes, '..', 'src');
 const { vyvezti, otchyot } = await import(join(paket, 'vyvoz.js'));
 const { vvezti } = await import(join(paket, 'vvoz.js'));
 const { NE_VYVOZITSYA, POLYA, VERSIYA_SHEMY } = await import(join(paket, 'shema.js'));
+const { vzyat_filtr } = await import(join(paket, 'yadro.js'));
 
 // Фильтр ядра берём ПО ПУТИ: пакет вывоза ставится рядом с ядром, а стенд гоняется
 // и в рабочем каталоге, где разрешения по имени может не быть.
@@ -320,6 +321,20 @@ await proba('СХЕМА УШЛА ВПЕРЁД: поле есть в базе, в
     throw new Error('шапка файла молчит о неизвестном поле: ' + JSON.stringify(shapka));
   }
 });
+
+await proba('🔴 путь к фильтру не строкой → отказ НАЗЫВАЕТ, что пришло', async () => {
+  // Поймано своей же пробой 05.09.2026: передала готовое ядро вместо пути, и отказ
+  // напечатал «ядро не загрузилось ([object Object])» — правдиво и бесполезно.
+  try {
+    await vzyat_filtr({ najti_sekret() {}, rezhim() {} });
+    throw new Error('отказа не было — объект принят за путь');
+  } catch (e) {
+    if (e.code !== 'VYVOZ_DOGOVOR_YADRA') throw new Error('не тот отказ: ' + e.message);
+    if (!/должен быть строкой/.test(e.message) || !/object/.test(e.message)) {
+      throw new Error('отказ не называет, ЧТО пришло: ' + e.message);
+    }
+  }
+})
 
 console.log(`\n  итог: ${proshlo} из ${vsego}`);
 process.exit(proshlo === vsego ? 0 : 1);

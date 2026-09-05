@@ -40,6 +40,17 @@ export class OtkazDogovora extends Error {
  * @returns {{najti_sekret: Function, rezhim: Function, otkuda: string}}
  */
 export async function vzyat_filtr(put) {
+  // 🔴 ТИП АРГУМЕНТА ПРОВЕРЯЕТСЯ ДО ЗАГРУЗКИ, И ОТКАЗ НАЗЫВАЕТ, ЧТО ПРИШЛО (05.09.2026).
+  // Поймано своей же пробой: я передала сюда ГОТОВОЕ ЯДРО вместо пути, и отказ напечатал
+  // «ядро не загрузилось ([object Object])». Строка правдива и бесполезна: читающий пойдёт
+  // искать несуществующий путь вместо того, чтобы посмотреть на свой вызов.
+  // Мелочь по коду и не мелочь по цене: отказ, не называющий СВОЕЙ причины, отправляет
+  // чинить не то.
+  if (put !== undefined && typeof put !== 'string') {
+    throw new OtkazDogovora(
+      `путь к фильтру должен быть строкой, а пришло ${put === null ? 'null' : typeof put}`
+      + ` — похоже, передали готовое ядро вместо пути к нему`);
+  }
   const adres = put ?? `${IMYA_YADRA}/src/filtr-vhoda.js`;
   let m;
   try {
