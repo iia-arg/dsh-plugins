@@ -374,11 +374,55 @@ export function apply(ctx, config) {
       // Крик здесь редкий по устройству: welcome бывает раз в сессию.
       const otobrannye = otobratPodPredel(ctx, records)
       const briefing = renderWelcome(otobrannye, config)
-      if (briefing) {
+
+      // ═══ Э8.6: ПОСЛЕДНЯЯ СВОДКА КОМПАКТА — ЦЕЛИКОМ И ВНЕ ВСЕХ ПРЕДЕЛОВ ═══
+      //
+      // 🔴 ЗАЧЕМ. При НОВОЙ сессии welcome — единственный путь, по которому память попадает
+      // в разговор. А сводку компакта не пропускают ТРИ отсечки разом, и замер 05.09.2026
+      // на живой базе показал каждую:
+      //   1. `skolko: 10` — среди десяти последних записей сводки НЕТ ВОВСЕ (её вытесняют
+      //      уроки), то есть до бюджета дело не доходит;
+      //   2. предел бюджета 2000 единиц — одна сводка занимает 5653, то есть 2,8 предела;
+      //   3. welcomeBudget 800 ЗНАКОВ — сводка 22611 знаков, в 28 раз больше.
+      // Правка одного места не помогла бы: режут трое, и обход нужен всем трём сразу.
+      //
+      // 🔴 ПОЧЕМУ ВНЕ БЮДЖЕТА, А НЕ «ПОДНЯТЬ ПРЕДЕЛ». Сводка — не одна из записей в ряду,
+      // а итог прошлого разговора: резать её по бюджету значит отменить сам смысл слоя,
+      // как уже решено для слоя B. Поднятие же предела до её размера сняло бы предел и
+      // для всего остального.
+      //
+      // ГДЕ НЕ ПРИМЕНЯЕТСЯ: только при welcome (новая сессия либо новый подъём, не чаще
+      // раза в welcomeInterval). На каждом ходу сводка НЕ поднимается — иначе она вытеснит
+      // собою разговор. И поднимается РОВНО ОДНА, последняя: их девять, и все вместе они
+      // весят 160 тысяч знаков.
+      let svodkaCelikom = null
+      try {
+        const najdeno = await readRecords(ctx, { klass: config.klassSvodki, skolko: 1 })
+        if (Array.isArray(najdeno) && najdeno.length) svodkaCelikom = najdeno[0]
+      } catch (e) {
+        say(`⚠️ последняя сводка компакта не прочитана (${String(e?.message ?? e).slice(0, 90)}) — ` +
+            'брифинг будет БЕЗ неё. Это слепота, а не «сводки нет».')
+      }
+
+      if (briefing || svodkaCelikom) {
         const idsB = otobrannye.map((z) => z.id).filter((v) => v !== undefined && v !== null)
-        say(`welcome-брифинг вставлен: ${briefing.split('\n').length - 1} записей, ${briefing.length} знаков, ` +
+        let telo = briefing ?? ''
+        if (svodkaCelikom) {
+          const znakov = String(svodkaCelikom.soderzhim ?? '').length
+          telo = (telo ? telo + '\n\n' : '')
+            + `Последняя сводка компакта (поднята ЦЕЛИКОМ, вне бюджета — ${znakov} знаков):\n`
+            + String(svodkaCelikom.soderzhim ?? '')
+          if (svodkaCelikom.id !== undefined && svodkaCelikom.id !== null) idsB.push(svodkaCelikom.id)
+          // Названо вслух: иначе объём брифинга сверх предела читался бы как поломка предела.
+          say(`welcome: последняя сводка компакта id=${svodkaCelikom.id} поднята ЦЕЛИКОМ вне бюджета ` +
+              `(${znakov} знаков при пределе брифинга ${config.welcomeBudget}). Это решение, а не сбой предела.`)
+        } else {
+          say('welcome: сводки компакта в памяти НЕТ — брифинг без неё. ' +
+              'Это «не нашлось», а не «решили не поднимать».')
+        }
+        say(`welcome-брифинг вставлен: ${telo.length} знаков, ` +
             `опознаватели: ${idsB.length ? idsB.join(',') : 'НЕТ — наследование уровня по ним неисполнимо'}`)
-        return inject(briefing, idsB)
+        return inject(telo, idsB)
       }
     }
 
