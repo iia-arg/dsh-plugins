@@ -1,6 +1,6 @@
 {
   "name": "dsh-tool-bridge",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "files": [
     "src/index.js",
     "src/paritet.json",
@@ -22,7 +22,7 @@
   ],
   "type": "module",
   "main": "src/index.js",
-  "description": "Мост инструментов платформы на движковый маршрут: делает инструменты плагинов платформы видимыми модели, которую ведёт сторонний движок",
+  "description": "Мост инструментов платформы на движковый маршрут (наш модуль)",
   "peerDependencies": {
     "@deepseek-ai/schemastery": "^3.18.1",
     "yaml": "^2.0.0"
@@ -31,9 +31,6 @@
     "node": ">=20"
   },
   "license": "MIT",
-  "devDependencies": {
-    "yaml": "2.9.0"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/iia-arg/dsh-plugins.git",
