@@ -117,6 +117,33 @@ export function sozdatZadanie(config, krik) {
   };
 }
 
+// 🔴 ОТБРОШЕННОЕ НАЧАЛО ТРАНСКРИПТА — ТРЕТИЙ ПРЕДМЕТ, СПАСАЕМЫЙ ТЕМ ЖЕ МЕСТОМ (долг 87).
+// Первые два: сводка, отклонённая фильтром, и статья дистилляции. Здесь беда иной природы —
+// текст не отклонён, а НЕ ВЛЕЗ в предел: transkript.slice(-predelZnakov) берёт хвост, а начало
+// уходит совсем. Замер 06.09.2026 по журналу за неделю: обрезка сработала 3 раза, наибольшая
+// потеря 412897 → 200000, то есть 52% среза.
+// ⚠️ ЧЕГО НЕ ДЕЛАЕТ: не отвечает на вопрос, что правильнее брать — хвост или начало. Это
+// отдельная гипотеза долга 87 и стоит двух платных заходов по одному срезу. Здесь только то,
+// что можно сделать даром: отброшенное перестаёт исчезать.
+// ⚠️ И РАЗМЕР: сюда ложатся сотни килобайт разговора, а в разговоре бывают секреты — поэтому
+// тот же каталог с правами 0700 и проверкой прав ФАКТОМ, что и у отклонённых. Чистки нет.
+export function sozdatOtbroshennoe(config, krik) {
+  return ({ tekst, kluchSreza, vsego, vzyato }) => {
+    const shapka = [
+      '# отброшенное НАЧАЛО транскрипта (обрезка по predelZnakov)',
+      '# срез: ' + (kluchSreza ?? '?'),
+      '# было знаков: ' + (vsego ?? '?') + ', взято хвостом: ' + (vzyato ?? '?'),
+      '# когда: ' + new Date().toISOString(),
+      '# знание отсюда в память НЕ попало: модель этот кусок не видела',
+      '', '',
+    ].join('\n');
+    const imya = sohranitOtklonennoe(config.putOtklonennyh, 'nachalo-sreza', shapka + String(tekst ?? ''));
+    krik('отброшенное начало сохранено: ' + imya + ' — ' + String(tekst ?? '').length
+       + ' знаков не потеряны, но и в память НЕ попали: разобрать рукой.');
+    return imya;
+  };
+}
+
 export function sozdatZapisatel(pamyat, config, krik) {
   return (zn) => {
     try {
@@ -403,6 +430,7 @@ export function apply(ctx, config = {}) {
           krik,
           zapisat: sozdatZapisatel(pamyat, config, krik),
           zadanie: sozdatZadanie(config, krik),
+          otbroshennoe: sozdatOtbroshennoe(config, krik),
         }).catch((e) => krik('дистилляция оборвалась: ' + (e?.message ?? e)));
       }
     } catch (e) {

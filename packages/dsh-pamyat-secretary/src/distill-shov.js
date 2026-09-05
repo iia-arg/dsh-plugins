@@ -38,7 +38,7 @@ export function zatenennye(dannye) {
 const zahody_po_srezu = new Map();
 const PAMYAT_SREZOV = 20;   // помним последние; иначе счёт рос бы весь век процесса
 
-export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, krik, zapisat, zadanie }) {
+export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, krik, zapisat, zadanie, otbroshennoe }) {
   const { seqs, tokenov } = zatenennye(dannye);
   const kluch_sreza = seqs.length ? `${seansId}#${seqs[0]}-${seqs[seqs.length - 1]}` : null;
   if (kluch_sreza) {
@@ -82,9 +82,29 @@ export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, k
   if (transkript.length > nastrojka.predelZnakov) {
     obrezan = transkript.length;
     // Берём ХВОСТ: свежее ближе к решению. И говорим об обрезке числом.
+    const nachalo = transkript.slice(0, transkript.length - nastrojka.predelZnakov);
     transkript = transkript.slice(-nastrojka.predelZnakov);
-    krik(`транскрипт обрезан: было ${obrezan} знаков, взято ${nastrojka.predelZnakov} (хвост). ` +
+    const dolya = Math.round((nachalo.length / obrezan) * 100);
+    krik(`транскрипт обрезан: было ${obrezan} знаков, взято ${nastrojka.predelZnakov} (хвост), ` +
+         `отброшено с НАЧАЛА ${nachalo.length} (${dolya}%). ` +
          'Предел настраивается ключом predelZnakov; молча обрезать нельзя — знания из начала не попадут');
+    // 🔴 ОТБРОШЕННОЕ НАЧАЛО СПАСАЕТСЯ, А НЕ ИСЧЕЗАЕТ (долг 87, замер 06.09.2026).
+    // За неделю обрезка сработала 3 раза, наибольшая потеря 412897 → 200000, то есть 52%
+    // среза — больше «трети» из заголовка долга. Механизм КРИЧАЛ о факте обрезки и терял
+    // текст: заход по срезу второй раз не даётся, событие компакта одноразовое, журнал
+    // ротируется. То есть отброшенное начало исчезало насовсем.
+    // ЧТО ЭТО НЕ РЕШАЕТ: выбор «хвост против начала» остаётся прежним и непроверенным
+    // (гипотеза долга 87 — хвост частично переживает компакт в самом контексте, а начало
+    // уходит совсем; проверяется двумя платными заходами по одному срезу). Здесь дешёвая
+    // половина: что бы мы ни выбрали, отброшенное больше не пропадает без следа.
+    // ⚠️ Каталог не чистится — как и у отклонённых сводок; рост назван, а не скрыт.
+    if (typeof otbroshennoe === 'function') {
+      try { otbroshennoe({ tekst: nachalo, kluchSreza: kluch_sreza, vsego: obrezan, vzyato: nastrojka.predelZnakov }); }
+      catch (e) { krik('🔴 отброшенное начало НЕ сохранено (' + (e?.message ?? e) + '): ' + nachalo.length + ' знаков потеряны насовсем.'); }
+    } else {
+      krik('⚠️ отброшенное начало НЕ сохранено: обработчик не передан (старый монтаж). ' +
+           'Это не «нечего было сохранять» — текст есть, и он потерян.');
+    }
   }
 
   const k = vzyat_klyuch(nastrojka.klyuch);
