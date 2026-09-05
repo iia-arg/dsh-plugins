@@ -88,7 +88,7 @@ await proba('все ЧЕТЫРЕ запирающих класса задерж�
   if (it.zaderzhano !== 3) throw new Error('задержано ' + it.zaderzhano + ' из трёх секретных; классы: ' + it.zaderzhannye.map((z) => z.klass).join(', '));
 });
 
-await proba('НЕЗНАКОМЫЙ класс задерживается (у ядра он «пропустить», у нас — утечка)', async () => {
+await proba('НЕЗНАКОМЫЙ класс ОСТАНАВЛИВАЕТ ВЕСЬ вывоз, файла нет', async () => {
   const podstavnoe = put('podstavnoe-yadro.mjs');
   writeFileSync(podstavnoe, `
     export function najti_sekret(t) { if (t.includes('ЧУЖОЕ')) return { klass: 'klass-iz-budushchego', pozicia: 0 };
@@ -96,9 +96,15 @@ await proba('НЕЗНАКОМЫЙ класс задерживается (у яд
     export function rezhim(k) { if (k === 'obyavlennyj') return 'zapiraet'; if (k === 'entropiya') return 'pomechaet'; return 'neizvesten'; }
   `);
   const b = baza('neizv', [{ soderzhim: 'тут ЧУЖОЕ слово' }, { soderzhim: 'чистая запись' }]);
-  const it = await vyvezti({ baza: b, fajl: put('neizv.jsonl'), yadro: podstavnoe });
-  if (it.zaderzhano !== 1) throw new Error('задержано ' + it.zaderzhano + ', ожидалась 1');
-  if (it.zaderzhannye[0].rezhim !== 'neizvesten') throw new Error('режим ' + it.zaderzhannye[0].rezhim);
+  const fajl = put('neizv.jsonl');
+  let upalo = null;
+  try { await vyvezti({ baza: b, fajl, yadro: podstavnoe }); }
+  catch (e) { upalo = e; }
+  if (!upalo) throw new Error('вывоз НЕ остановился на незнакомом классе — прошёл целиком');
+  if (upalo.code !== 'VYVOZ_NEZNAKOMYJ_KLASS') throw new Error('код отказа ' + upalo.code);
+  if (upalo.klass !== 'klass-iz-budushchego') throw new Error('класс не назван: ' + upalo.klass);
+  // Файла быть НЕ должно: остановка означает, что наружу не ушло ничего, включая чистые записи.
+  if (existsSync(fajl)) throw new Error('файл вывоза создан, хотя вывоз остановлен');
 });
 
 await proba('ПОМЕЧАЮЩИЙ класс ВЫВОЗИТСЯ (пометка ≠ запрет) и пометка названа', async () => {
