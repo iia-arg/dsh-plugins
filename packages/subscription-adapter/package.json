@@ -1,0 +1,18 @@
+{
+  "name": "dsh-subscription-adapter",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.js",
+  "description": "Адаптер провайдера Claude по подписке для платформы DSH (наш модуль, НЕ публикуется). Имя сменено 03.09.2026: прежде манифест носил имя subscription-gateway — имя ОПУБЛИКОВАННОГО ШЛЮЗА (/opt/claude-oauth, в npm 0.1.2). Это разные предметы: шлюз держит очередь и токен, адаптер объявляет провайдера платформе. Публикация под общим именем перезаписала бы чужой пакет у получателей.",
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": "^0.1.1-rc.2"
+  },
+  "scripts": {
+    "test": "node test/stend-predela.mjs"
+  },
+  "files": [
+    "src",
+    "test",
+    "README.md"
+  ]
+}
