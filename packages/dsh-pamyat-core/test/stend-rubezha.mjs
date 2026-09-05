@@ -290,6 +290,89 @@ proba('рубежа нет в базе → ОТКАЗ, а не «рубеж но
   h.zakryt();
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// СВЕРКА С ОПОРОЙ (Э8.1): ПОЛЕ proverka — ТРИ СОСТОЯНИЯ, ОТСУТСТВИЕ ≠ УТРАЧЕНА
+// ═══════════════════════════════════════════════════════════════════════════════
+
+proba('В6 сверка: отсутствие отметки = «не проверялось», а НЕ «утрачена»', () => {
+  const put = svezhaya('sv1');
+  bazaSoStarymiZapisyami(put, 3);
+  const h = otkrytHranilishche(put);
+  const z = h.poId(1);
+  const st = h.statusProverki(z);
+  h.zakryt();
+  if (st.status !== 'ne-proveryalos') throw new Error('статус ' + st.status + ' — пустое поле прочитано как суждение о предмете');
+  if (/утрач/i.test(st.stroka)) throw new Error('строка обвиняет запись: ' + st.stroka);
+});
+
+proba('В6 сверка: отметка «опора есть» читается своим статусом', () => {
+  const put = svezhaya('sv2');
+  bazaSoStarymiZapisyami(put, 3);
+  const h = otkrytHranilishche(put);
+  if (!h.otmetitProverku({ id: 2, ishod: 'est', chem: 'proverka-opory.mjs/внешний zstd' })) throw new Error('отметка не легла');
+  const st = h.statusProverki(h.poId(2));
+  h.zakryt();
+  if (st.status !== 'est') throw new Error('статус ' + st.status);
+  if (st.chem !== 'proverka-opory.mjs/внешний zstd') throw new Error('прибор не сохранён: ' + st.chem);
+});
+
+proba('В6 сверка: «утрачена» отличается от «не проверялось» СТАТУСОМ, а не оттенком', () => {
+  const put = svezhaya('sv3');
+  bazaSoStarymiZapisyami(put, 3);
+  const h = otkrytHranilishche(put);
+  h.otmetitProverku({ id: 1, ishod: 'utrachena', chem: 'proverka-opory.mjs' });
+  const utr = h.statusProverki(h.poId(1));
+  const net = h.statusProverki(h.poId(3));
+  h.zakryt();
+  if (utr.status === net.status) throw new Error('утраченная и непроверенная имеют один статус: ' + utr.status);
+  if (utr.status !== 'utrachena' || net.status !== 'ne-proveryalos') throw new Error(utr.status + ' / ' + net.status);
+});
+
+proba('🔴 ОТМЕТКА БЕЗ ИМЕНИ ПРИБОРА — ОТКАЗ: иначе пропажу не отличить от негодного чтения', () => {
+  const put = svezhaya('sv4');
+  bazaSoStarymiZapisyami(put, 2);
+  const h = otkrytHranilishche(put);
+  try {
+    dolzhnoUpast('PAMYAT_SVERKA_BEZ_PRIBORA', () => h.otmetitProverku({ id: 1, ishod: 'est' }));
+    dolzhnoUpast('PAMYAT_SVERKA_BEZ_PRIBORA', () => h.otmetitProverku({ id: 1, ishod: 'est', chem: '   ' }));
+  } finally { h.zakryt(); }
+});
+
+proba('«не проверялось» НЕ ЗАПИСЫВАЕТСЯ как исход — это отсутствие отметки', () => {
+  const put = svezhaya('sv5');
+  bazaSoStarymiZapisyami(put, 2);
+  const h = otkrytHranilishche(put);
+  try {
+    dolzhnoUpast('PAMYAT_ISHOD_SVERKI_NEGODEN', () => h.otmetitProverku({ id: 1, ishod: 'ne-proveryalos', chem: 'прибор' }));
+  } finally { h.zakryt(); }
+});
+
+proba('битая отметка НЕ выдаётся за «не проверялось» — у неё свой статус', () => {
+  const put = svezhaya('sv6');
+  bazaSoStarymiZapisyami(put, 2);
+  const h = otkrytHranilishche(put);
+  const st = h.statusProverki({ id: 1, proverka: 'не json вовсе' });
+  h.zakryt();
+  if (st.status !== 'otmetka-negodna') throw new Error('битая отметка прочитана как ' + st.status);
+});
+
+proba('сверка и происхождение — РАЗНЫЕ поля: отметка одного не трогает другое', () => {
+  const put = svezhaya('sv7');
+  bazaSoStarymiZapisyami(put, 3);
+  const h = otkrytHranilishche(put);
+  h.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'после рубежа', istochnik: 's#9' });
+  const nomer = h.poId(4) ? 4 : 3;
+  h.otmetitProverku({ id: nomer, ishod: 'est', chem: 'прибор' });
+  const z = h.poId(nomer);
+  const pr = h.statusProishozhdeniya(z);
+  h.zakryt();
+  if (pr.status === 'uroven') throw new Error('отметка сверки проставила происхождение — поля слиты');
+});
+
+// 🔴 УБОРКА — ПОСЛЕДНИМ ДЕЙСТВИЕМ, ПЕРЕД ИТОГОМ. 05.09.2026 она стояла в середине файла,
+// и семь проб, дописанных ниже, падали на «база не открылась»: каталог был уже удалён.
+// Проба, стоящая после уборки, отвечает не про предмет, а про порядок строк в стенде.
 rmSync(katalog, { recursive: true, force: true });
+
 console.log(`\nитог рубежа: ${proshlo}/${vsego}`);
 process.exit(proshlo === vsego ? 0 : 1);

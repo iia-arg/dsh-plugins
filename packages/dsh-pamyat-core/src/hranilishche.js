@@ -466,6 +466,69 @@ export function otkrytHranilishche(putK, { drajver } = {}) {
       return Number(r.changes) === 1;
     },
 
+    /**
+     * СТАТУС СВЕРКИ ЗАПИСИ С ОПОРОЙ В ЖУРНАЛЕ (Э8.1) — ТРИ СОСТОЯНИЯ, ТРИ РАЗНЫЕ СТРОКИ.
+     *
+     * 🔴 ТОТ ЖЕ ПРИЁМ, ЧТО У ПРОИСХОЖДЕНИЯ, И ПО ТОЙ ЖЕ ПРИЧИНЕ. Отсутствие отметки
+     * НИКОГДА не читается как «опора утрачена»: первое значит «мы не смотрели», второе —
+     * «смотрели и не нашли». Слить их одним полем значит объявить утраченной всю память,
+     * до которой не дошли руки, — и сделать это молча.
+     *
+     *   est            сверка была, опора найдена
+     *   utrachena      сверка была, опоры в журнале НЕТ — это про предмет
+     *   ne-proveryalos поля нет: до записи просто не дошли. Не упрёк и не тревога.
+     *
+     * ⚠️ ГРАНИЦА, КОТОРУЮ НЕЛЬЗЯ ЧИТАТЬ ШИРЕ НАПИСАННОГО: проверяется НАЛИЧИЕ опоры
+     * (границы seq найдены в журнале), а НЕ совпадение текста записи с источником.
+     * «Опора есть» отвечает на «свидетель жив», а не на «запись правдива».
+     */
+    statusProverki(zapis) {
+      const syroe = zapis?.proverka;
+      if (syroe === null || syroe === undefined || syroe === '') {
+        return { status: 'ne-proveryalos', kogda: null, stroka: 'сверка с опорой не проводилась' };
+      }
+      let r;
+      try { r = typeof syroe === 'string' ? JSON.parse(syroe) : syroe; } catch { r = null; }
+      if (!r || typeof r !== 'object' || !r.ishod) {
+        // Битая отметка — это НЕ «не проверялось»: кто-то писал и записал негодное.
+        return { status: 'otmetka-negodna', kogda: null, stroka: 'отметка сверки не разбирается — писавший ошибся' };
+      }
+      const podpis = r.ishod === 'est' ? 'опора найдена' : (r.ishod === 'utrachena' ? 'опора УТРАЧЕНА' : String(r.ishod));
+      return { status: r.ishod, kogda: r.kogda ?? null, chem: r.chem ?? null, stroka: podpis };
+    },
+
+    /**
+     * Проставить отметку сверки.
+     *
+     * 🔴 ЧЕМ СВЕРЯЛИ — ЧАСТЬ ОТМЕТКИ, А НЕ ПОЯСНЕНИЕ. Отметка без имени прибора не даёт
+     * перепроверить: через месяц «опора утрачена» может означать и настоящую пропажу,
+     * и то, что прибор читал журнал негодным способом. Мы это уже видели: встроенный
+     * разбор многокадрового журнала отдавал 126 байт из 32 миллионов БЕЗ ошибки и с кодом
+     * ноль — механизм, ищущий потерю свидетеля, при собственном отказе СФАБРИКОВАЛ бы её
+     * для всех записей разом. Поэтому `chem` обязателен.
+     * ГДЕ НЕ ПРИМЕНЯЕТСЯ: рубеж происхождения сюда не касается. Сверка отвечает про
+     * журнал сессии, а не про то, существовал ли протокол отметки.
+     */
+    otmetitProverku({ id, ishod, chem, kogda = Date.now() }) {
+      const nomer = Number(id);
+      const dopustimo = ['est', 'utrachena'];
+      if (!dopustimo.includes(ishod)) {
+        const e = new Error('dsh-pamyat: исход сверки должен быть одним из ' + dopustimo.join(' | ')
+          + '; получено ' + JSON.stringify(ishod) + '. «Не проверялось» НЕ пишется — это отсутствие отметки');
+        e.code = 'PAMYAT_ISHOD_SVERKI_NEGODEN';
+        throw e;
+      }
+      if (typeof chem !== 'string' || chem.trim() === '') {
+        const e = new Error('dsh-pamyat: не назван прибор сверки (chem). Отметка без имени прибора '
+          + 'не даёт отличить пропажу опоры от негодного чтения журнала');
+        e.code = 'PAMYAT_SVERKA_BEZ_PRIBORA';
+        throw e;
+      }
+      const r = baza.prepare('UPDATE zapisi SET proverka = ? WHERE id = ?')
+        .run(JSON.stringify({ ishod, chem, kogda }), nomer);
+      return Number(r.changes) === 1;
+    },
+
     /** Сколько записей у агента — для наблюдаемости и стендов. */
     skolkoZapisej(agent) {
       return Number(baza.prepare('SELECT count(*) AS n FROM zapisi WHERE agent = ?').get(agent).n);
