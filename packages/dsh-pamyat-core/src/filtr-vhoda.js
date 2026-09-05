@@ -349,7 +349,15 @@ export function najti_sekret(tekst) {
     if (m) {
       const znachenie = m[1];
       const put = znachenie.includes('/');
-      if (!put && klassovAlfavita(znachenie) >= 3) {
+      // 🔴 ЗНАЧЕНИЕ, ЦЕЛИКОМ ПОХОЖЕЕ НА ИДЕНТИФИКАТОР, — НЕ СЕКРЕТ (порог приёмки, корпус 3599).
+      // Найдено ЕЮ, не мной: на `token: process.env.MY_TOKEN` мой проход кричал «секрет», а это
+      // ссылка на переменную окружения. Мой корпус (68 записей) такой формы не содержал вовсе —
+      // ровно тот случай, когда порог, назначенный по своему корпусу, выглядит проверенным.
+      // ГДЕ НЕ ПРИМЕНЯЕТСЯ: настоящие секреты почти всегда несут знак вне [A-Za-z0-9_.-]
+      // (#, $, !, %), и под этот признак не подпадают. Чисто буквенно-цифровое значение
+      // (abc123XYZ789) сюда тоже попадёт и уйдёт — но его ловит проход по алфавиту ниже.
+      const identifikator = /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(znachenie);
+      if (!put && !identifikator && klassovAlfavita(znachenie) >= 3) {
         return { klass: 'obyavlennyj', pozicia: m.index };
       }
     }
@@ -383,7 +391,28 @@ export function najti_sekret(tekst) {
     const do_hvosta = hvost ? do_nego.slice(0, -hvost.length) : do_nego;
     if ((SLOVA_OBYAVLENIYA.test(do_nego) || SLOVA_OBYAVLENIYA.test(do_hvosta))
         && kandidat.length >= DLINA_OBYAVLENNOGO) {
-      return { klass: 'obyavlennyj', pozicia: m.index };
+      // 🔴 ЗНАЧЕНИЕ ЦЕЛИКОМ ПОХОЖЕЕ НА ИДЕНТИФИКАТОР — НЕ СЕКРЕТ (порог приёмки, корпус 3599).
+      // Найдено ЕЮ: `token: process.env.MY_TOKEN` — кандидатом становится «process», объявление
+      // стоит вплотную, и проход кричал «секрет» на ссылке к переменной окружения. Мой корпус
+      // (68 записей) такой формы не содержал вовсе — порог, назначенный по своему корпусу,
+      // выглядел проверенным и им не был.
+      // Смотрим не кандидат, а ВСЁ значение до пробела: секрет почти всегда несёт знак вне
+      // [A-Za-z0-9_.-] (#, $, !, %), идентификатор — нет.
+      // ⚠️ ГДЕ НЕ ПРИМЕНЯЕТСЯ: чисто буквенно-цифровое значение (abc123XYZ789) тоже уйдёт
+      // отсюда — его берут правила ниже (энтропия) и прямой проход выше.
+      // Признак СУЖЕН после порчи: первая редакция брала `[A-Za-z0-9_.-]*` целиком и отсекала
+      // НАСТОЯЩИЕ ключи — «pwd: Hunter22xy», «api_key=sk-ant-oat01-AbCdEf123456» (у них дефисы,
+      // но нет точек). Поймано парой проб в ту же минуту. Ловим ровно ОБРАЩЕНИЕ К ПОЛЮ:
+      // точки есть, дефисов нет — process.env.X, config.token, this.secret.
+      // Значение берём ОТ РАЗДЕЛИТЕЛЯ, а не от кандидата: кандидатом здесь становится ПОСЛЕДНИЙ
+      // кусок («MY_TOKEN» в «process.env.MY_TOKEN»), и по нему обращение к полю не опознать —
+      // первая редакция смотрела от кандидата и поэтому молчала. Поймано печатью позиции.
+      const razdelitel = Math.max(do_nego.lastIndexOf(':'), do_nego.lastIndexOf('='));
+      const znach_do_probela = razdelitel >= 0
+        ? (tekst.slice(razdelitel + 1).match(/^\s*["']?([^\s"']+)/)?.[1] ?? kandidat)
+        : kandidat;
+      const obrashchenie_k_polyu = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$/.test(znach_do_probela);
+      if (!obrashchenie_k_polyu) return { klass: 'obyavlennyj', pozicia: m.index };
     }
     // Три признака ниже ПОМЕЧАЮТ: класс с приставкой «slabyj:» в список запирающих не входит.
     // Порядок внутри не важен — формы не пересекаются, проверено пробами.
