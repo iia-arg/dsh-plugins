@@ -301,5 +301,25 @@ await proba('отчёт и файл называют РЕДАКЦИЮ пакет
   if (!readFileSync(f, 'utf8').includes('chem_vyvezeno')) throw new Error('файл вывоза не называет, чем вывезен');
 });
 
+await proba('СХЕМА УШЛА ВПЕРЁД: поле есть в базе, вывоз о нём не знает — сказано ГРОМКО', async () => {
+  const b = baza('novoe-pole', [{ soderzhim: 'обычная запись' }]);
+  // Поле, которого вывоз не знает НИ как вывозимое, НИ как непереносимое.
+  const db = new DatabaseSync(b);
+  db.exec('ALTER TABLE zapisi ADD COLUMN pole_iz_budushchego TEXT DEFAULT NULL');
+  db.close();
+  const fajl = put('novoe-pole.jsonl');
+  const it = await vyvezti({ baza: b, fajl, yadro: YADRO });
+  if (!(it.polya_neizvestnye_vyvozu ?? []).includes('pole_iz_budushchego')) {
+    throw new Error('поле не названо: ' + JSON.stringify(it.polya_neizvestnye_vyvozu));
+  }
+  const t = otchyot(it);
+  if (!t.includes('НЕ ЗНАЕТ')) throw new Error('в отчёте нет громкой строки:\n' + t);
+  // Принимающая сторона обязана увидеть это ИЗ ФАЙЛА, а не из нашего отчёта.
+  const shapka = JSON.parse(readFileSync(fajl, 'utf8').split('\n')[0]);
+  if (!(shapka.polya_neizvestnye_vyvozu ?? []).includes('pole_iz_budushchego')) {
+    throw new Error('шапка файла молчит о неизвестном поле: ' + JSON.stringify(shapka));
+  }
+});
+
 console.log(`\n  итог: ${proshlo} из ${vsego}`);
 process.exit(proshlo === vsego ? 0 : 1);

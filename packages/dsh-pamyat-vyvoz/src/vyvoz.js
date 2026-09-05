@@ -23,7 +23,7 @@ import { writeFileSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { vzyat_filtr, reshenie } from './yadro.js';
-import { POLYA, zagolovok } from './shema.js';
+import { POLYA, zagolovok, neznakomye_polya } from './shema.js';
 
 // 🔴 ВЕРСИЯ ЧИТАЕТСЯ ИЗ СВОЕГО МАНИФЕСТА, А НЕ ПИШЕТСЯ КОНСТАНТОЙ. Отчёт о вывозе
 // уезжает к тому, кто будет ввозить, и без редакции он не отвечает на вопрос «чем
@@ -57,6 +57,8 @@ export async function vyvezti({ baza, fajl, otkuda = 'неизвестно', yad
     const net = POLYA.filter((p) => !est.includes(p));
     zapisi = db.prepare(`SELECT id, ${berem.join(', ')} FROM zapisi ORDER BY id`).all();
     zapisi.nety_polya = net;
+    // Зеркальная проверка: поля, которые в базе ЕСТЬ, а вывоз о них не знает вовсе.
+    zapisi.neznakomye_polya = neznakomye_polya(est);
   } finally {
     db.close();
   }
@@ -93,7 +95,11 @@ export async function vyvezti({ baza, fajl, otkuda = 'неизвестно', yad
     vyvezennye.push(stroka);
   }
 
-  const shapka = { ...zagolovok({ otkuda, zapisej: vyvezennye.length }), chem_vyvezeno: `dsh-pamyat-vyvoz ${VERSIYA_PAKETA}` };
+  const neizvestnye = zapisi.neznakomye_polya ?? [];
+  const shapka = {
+    ...zagolovok({ otkuda, zapisej: vyvezennye.length, neizvestnye }),
+    chem_vyvezeno: `dsh-pamyat-vyvoz ${VERSIYA_PAKETA}`,
+  };
   if (fajl) {
     const telo = [JSON.stringify(shapka), ...vyvezennye.map((s) => JSON.stringify(s))].join('\n') + '\n';
     writeFileSync(fajl, telo, { mode: 0o600 });
@@ -105,6 +111,7 @@ export async function vyvezti({ baza, fajl, otkuda = 'неизвестно', yad
     zaderzhano: zaderzhannye.length,
     zaderzhannye,
     polya_kotoryh_net: zapisi.nety_polya ?? [],
+    polya_neizvestnye_vyvozu: neizvestnye,
     filtr_otkuda: filtr.otkuda,
     fajl: fajl ?? null,
   };
@@ -121,6 +128,15 @@ export function otchyot(it) {
   s.push(`  фильтр взят из: ${it.filtr_otkuda}`);
   if (it.polya_kotoryh_net.length) {
     s.push(`  ⚠️ полей нет в этой базе: ${it.polya_kotoryh_net.join(', ')} — они не перенесены`);
+  }
+  if ((it.polya_neizvestnye_vyvozu ?? []).length) {
+    // 🔴 ГРОМКО: это не «поля нет», это «поле ЕСТЬ, а мы о нём не знаем». Схема ушла
+    // вперёд, и без этой строки знание уехало бы молча: на той стороне поля просто не
+    // будет, и «не переносили» станет неотличимо от «не было».
+    s.push(`  🔴 полей в базе, о которых вывоз НЕ ЗНАЕТ: ${it.polya_neizvestnye_vyvozu.join(', ')}`);
+    s.push('     Они НЕ перенесены и не объявлены непереносимыми — схема базы ушла вперёд');
+    s.push('     вывоза. Решите про каждое: вывозить (в POLYA) либо не вывозить с причиной');
+    s.push('     (в NE_VYVOZITSYA). Список полей записан и в шапку файла вывоза.');
   }
   for (const z of it.zaderzhannye) {
     s.push(`  пропущена: запись ${z.id} — ${z.klass} (${z.rezhim}), ${z.znakov} знаков, содержимое НЕ показано`);
