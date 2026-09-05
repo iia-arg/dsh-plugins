@@ -6,7 +6,7 @@ what means that was verified.
 
     dsh-pamyat-core      0.1.0-alpha.40   store, journal, write policy
     dsh-pamyat-omega     0.1.0-alpha.10   long-term memory provider
-    dsh-pamyat-secretary 0.1.0-alpha.15    compaction summaries → records
+    dsh-pamyat-secretary 0.1.0-alpha.16    compaction summaries → records
     dsh-pamyat-byudzhet  0.1.0-alpha.8    incoming budget: what to lift back
     dsh-pamyat-nudzh     0.1.0-alpha.12    spend accounting: time to compact?
     dsh-pamyat-restore   0.1.0-alpha.18   knowledge back into context: post-compaction summary and briefing
