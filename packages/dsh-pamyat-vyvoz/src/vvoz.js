@@ -19,7 +19,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { vzyat_filtr, reshenie } from './yadro.js';
-import { POLYA, proverit_zagolovok, OtkazShemy } from './shema.js';
+import { POLYA, proverit_zagolovok, OtkazShemy, summa_soderzhimogo } from './shema.js';
+import { zapisat_v_zhurnal } from './zhurnal.js';
 import { VERSIYA_PAKETA } from './vyvoz.js';
 
 /** Класс, чьи записи с чужой машины ВСЕГДА ложатся неподтверждёнными (условие В5). */
@@ -31,7 +32,7 @@ const TREBUET_PODTVERZHDENIYA = 'ogranichenie';
  * @param {string} o.fajl    файл вывоза
  * @param {string} [o.yadro] путь к модулю фильтра (для стендов)
  */
-export async function vvezti({ baza, fajl, yadro }) {
+export async function vvezti({ baza, fajl, yadro, krik = console.error }) {
   const filtr = await vzyat_filtr(yadro);
 
   const stroki = readFileSync(fajl, 'utf8').split('\n').filter((s) => s.trim() !== '');
@@ -66,6 +67,24 @@ export async function vvezti({ baza, fajl, yadro }) {
     kandidaty.push(z);
   }
 
+  // 🔴 СУММА СОДЕРЖИМОГО СВЕРЯЕТСЯ ДО ПЕРВОЙ ЗАПИСИ В БАЗУ (ворота В1).
+  // Разбор всех строк говорит «файл читается», но не говорит «файл дошёл ЦЕЛИКОМ»:
+  // обрыв на границе строки даёт файл, который разбирается молча и не полностью.
+  // Суммы нет — это НЕ «сошлось»: файл старого вывоза, и сказать об этом надо вслух,
+  // иначе отсутствие проверки неотличимо от пройденной проверки.
+  const stroki_zapisej = stroki.slice(1);
+  if (shapka.summa) {
+    const nasha = summa_soderzhimogo(stroki_zapisej);
+    if (nasha !== shapka.summa) {
+      throw new OtkazShemy(
+        `сумма содержимого не сошлась: в заголовке ${shapka.summa}, посчитано ${nasha}. `
+        + `Записей в файле ${stroki_zapisej.length}, заголовок обещает ${shapka.zapisej}. `
+        + 'Файл дошёл не целиком либо правлен после вывоза. База НЕ тронута',
+        'VYVOZ_SUMMA_NE_SOSHLAS',
+      );
+    }
+  }
+
   const otkloneno = [];
   const k_vstavke = [];
   for (const [i, z] of kandidaty.entries()) {
@@ -80,13 +99,26 @@ export async function vvezti({ baza, fajl, yadro }) {
   const db = new DatabaseSync(baza);
   let vstavleno = 0;
   let uzhe_bylo = 0;
+  let tozhdestvo_bylo = 'agent+istochnik+sozdano';
   try {
     const est = db.prepare('PRAGMA table_info(zapisi)').all().map((rr) => rr.name);
     const polya = POLYA.filter((p) => est.includes(p));
     const est_bp = est.includes('bez_podtverzhdeniya');
-    // Тождество записи — ПАРА «источник + время создания», а не номер: номер у нас свой,
-    // и двойной ввоз без такой пары удвоил бы память молча.
-    const najti = db.prepare('SELECT COUNT(*) c FROM zapisi WHERE istochnik IS ? AND sozdano IS ?');
+    // 🔴 ТОЖДЕСТВО ЗАПИСИ — ТРОЙКА «агент + источник + время создания», а не номер:
+    // номер у нас свой, и двойной ввоз без такой тройки удвоил бы память молча.
+    // Агент добавлен по воротам В2: без него две записи РАЗНЫХ агентов с одним источником
+    // и одним временем схлопнулись бы в дубликат — редко, но это тождество памяти, и
+    // ошибка здесь необратима (вторая запись просто не ввозится и об этом молчат).
+    // Поля agent в принимающей базе может не быть — тогда тождество остаётся парой,
+    // и это ГОВОРИТСЯ ВСЛУХ ниже, а не подразумевается.
+    const est_agent = est.includes('agent');
+    if (!est_agent) tozhdestvo_bylo = 'istochnik+sozdano (поля agent в базе нет)';
+    const najti = est_agent
+      ? db.prepare('SELECT COUNT(*) c FROM zapisi WHERE agent IS ? AND istochnik IS ? AND sozdano IS ?')
+      : db.prepare('SELECT COUNT(*) c FROM zapisi WHERE istochnik IS ? AND sozdano IS ?');
+    const est_li = (z) => (est_agent
+      ? najti.get(z.agent ?? null, z.istochnik ?? null, z.sozdano ?? null)
+      : najti.get(z.istochnik ?? null, z.sozdano ?? null)).c > 0;
     // 🔴 ВСТАВЛЯЮТСЯ ТОЛЬКО ТЕ ПОЛЯ, КОТОРЫЕ В ЗАПИСИ ЕСТЬ. Первая редакция подставляла
     // NULL за отсутствующее — и ввоз падал на «NOT NULL constraint failed» ровно там, где
     // он и нужен: файл с ЧУЖОЙ машины, где поле не заполнялось. Отсутствующее поле — это
@@ -95,7 +127,7 @@ export async function vvezti({ baza, fajl, yadro }) {
     db.exec('BEGIN IMMEDIATE');
     try {
       for (const z of k_vstavke) {
-        if (najti.get(z.istochnik ?? null, z.sozdano ?? null).c > 0) { uzhe_bylo++; continue; }
+        if (est_li(z)) { uzhe_bylo++; continue; }
         const berem = polya.filter((p) => z[p] !== undefined || (p === 'bez_podtverzhdeniya' && z.klass === TREBUET_PODTVERZHDENIYA));
         const zn = berem.map((p) => {
           // Условие В5: чужое ограничение НЕ начинает действовать молча.
@@ -119,13 +151,40 @@ export async function vvezti({ baza, fajl, yadro }) {
     db.close();
   }
 
-  return { iz: shapka.otkuda, vsego: kandidaty.length, vstavleno, uzhe_bylo, otkloneno_filtrom: otkloneno.length, otkloneno };
+  // 🔴 СЛЕД В ЖУРНАЛЕ (В8). Ввоз меняет базу — без строки в журнале через неделю нечем
+  // будет ответить, пришла запись извне или родилась здесь.
+  const sled = zapisat_v_zhurnal({
+    baza, agent: 'dsh-pamyat-vyvoz', klass: 'vvoz-pamyati', ishod: 'vypolneno',
+    priroda: 'priyom-izvne',
+    pochemu: `из «${shapka.otkuda}»${shapka.uzel ? ` (узел ${shapka.uzel})` : ''}: `
+      + `вставлено ${vstavleno}, уже было ${uzhe_bylo}, отклонено фильтром ${otkloneno.length} `
+      + `из ${kandidaty.length}; тождество ${tozhdestvo_bylo}; `
+      + (shapka.summa ? 'сумма содержимого сверена' : 'суммы в заголовке НЕТ — целостность не проверена'),
+    istochnik: fajl,
+    krik,
+  });
+
+  return {
+    sled_v_zhurnale: sled,
+    iz: shapka.otkuda,
+    uzel_istochnika: shapka.uzel ?? null,
+    summa_sverena: Boolean(shapka.summa),
+    tozhdestvo: tozhdestvo_bylo,
+    vsego: kandidaty.length, vstavleno, uzhe_bylo,
+    otkloneno_filtrom: otkloneno.length, otkloneno,
+  };
 }
 
 /** Отчёт словами; числа абсолютные (условие В13). */
 export function otchyot_vvoza(it) {
   const s = [];
-  s.push(`[dsh-pamyat-vyvoz ${VERSIYA_PAKETA}] ввоз из «${it.iz}»: в файле ${it.vsego}, вставлено ${it.vstavleno}, уже было ${it.uzhe_bylo}, отклонено фильтром ${it.otkloneno_filtrom}`);
+  s.push(`[dsh-pamyat-vyvoz ${VERSIYA_PAKETA}] ввоз из «${it.iz}»${it.uzel_istochnika ? ` (узел ${it.uzel_istochnika})` : ''}: в файле ${it.vsego}, вставлено ${it.vstavleno}, уже было ${it.uzhe_bylo}, отклонено фильтром ${it.otkloneno_filtrom}`);
+  // 🔴 НЕПРОВЕРЕННОЕ НАЗЫВАЕТСЯ ВСЛУХ. Молчание о том, что суммы не было, читается как
+  // «сумма сошлась» — а это разные вещи: первое про наш инструмент, второе про предмет.
+  s.push(it.summa_sverena
+    ? '  сумма содержимого СВЕРЕНА — файл дошёл целиком'
+    : '  ⚠️ суммы в заголовке НЕТ (файл старого вывоза): целостность НЕ проверена, а не «сошлась»');
+  s.push(`  тождество записи: ${it.tozhdestvo}`);
   for (const o of it.otkloneno) {
     s.push(`  отклонена: строка ${o.stroka} — ${o.klass} (${o.rezhim}), содержимое НЕ показано`);
   }

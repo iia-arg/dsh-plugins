@@ -20,6 +20,9 @@
  * приёмка ядра на своём корпусе.
  */
 
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { dirname, join } from 'node:path';
+
 export const IMYA_YADRA = 'dsh-pamyat-core';
 
 /** Классы, на которых проверяется форма ответа rezhim(). Взяты из договора ядра. */
@@ -51,12 +54,36 @@ export async function vzyat_filtr(put) {
       `путь к фильтру должен быть строкой, а пришло ${put === null ? 'null' : typeof put}`
       + ` — похоже, передали готовое ядро вместо пути к нему`);
   }
-  const adres = put ?? `${IMYA_YADRA}/src/filtr-vhoda.js`;
-  let m;
-  try {
-    m = await import(adres);
-  } catch (e) {
-    throw new OtkazDogovora(`ядро не загрузилось (${adres}): ${e.code || e.message}`);
+  // 🔴 ЯДРО ИЩЕТСЯ ЦЕПОЧКОЙ, А НЕ ОДНИМ АДРЕСОМ (находка приёмки 05.09.2026).
+  // По имени пакета оно находится только там, где рядом есть node_modules. В боевом
+  // каталоге /opt/…/plugins/dsh-pamyat-vyvoz их нет, и пакет был неработоспособен
+  // «из коробки»: единственным рабочим путём оставался явный `put`, который в бою
+  // никто не передавал. Отказ при этом честный (fail-closed, вывоза без фильтра нет) —
+  // но честный отказ не заменяет работы.
+  // Порядок звеньев назван от общего к частному, и ВЫБРАННОЕ ЗВЕНО ПЕЧАТАЕТСЯ в отчёте
+  // (`filtr_otkuda`): без этого «фильтр взят» не отвечает на вопрос «какой именно».
+  const zdes = dirname(fileURLToPath(import.meta.url));
+  const cepochka = put
+    ? [{ kak: 'путь из вызова', adres: put }]
+    : [
+        { kak: 'по имени пакета', adres: `${IMYA_YADRA}/src/filtr-vhoda.js` },
+        { kak: 'соседний каталог', adres: pathToFileURL(join(zdes, '..', '..', IMYA_YADRA, 'src', 'filtr-vhoda.js')).href },
+        { kak: 'свой node_modules', adres: pathToFileURL(join(zdes, '..', 'node_modules', IMYA_YADRA, 'src', 'filtr-vhoda.js')).href },
+      ];
+  let m, otkuda_vzyato, otkazy = [];
+  for (const zveno of cepochka) {
+    try {
+      m = await import(zveno.adres);
+      otkuda_vzyato = `${zveno.kak}: ${zveno.adres}`;
+      break;
+    } catch (e) {
+      otkazy.push(`${zveno.kak} (${zveno.adres}): ${e.code || e.message}`);
+    }
+  }
+  if (!m) {
+    // 🔴 ПЕРЕЧИСЛЯЮТСЯ ВСЕ ЗВЕНЬЯ, А НЕ ПОСЛЕДНЕЕ. Одна причина из трёх отправила бы
+    // читающего чинить то звено, которое ему и не нужно.
+    throw new OtkazDogovora('ядро не загрузилось ни по одному пути:\n    ' + otkazy.join('\n    '));
   }
   for (const imya of ['najti_sekret', 'rezhim']) {
     if (typeof m[imya] !== 'function') {
@@ -79,7 +106,7 @@ export async function vzyat_filtr(put) {
   if (!najden || typeof najden.klass !== 'string' || typeof najden.pozicia !== 'number') {
     throw new OtkazDogovora(`najti_sekret() на объявленном секрете вернул ${JSON.stringify(najden)}, а договор обещает {klass, pozicia}`);
   }
-  return { najti_sekret: m.najti_sekret, rezhim: m.rezhim, otkuda: adres };
+  return { najti_sekret: m.najti_sekret, rezhim: m.rezhim, otkuda: otkuda_vzyato };
 }
 
 /**

@@ -10,6 +10,8 @@
  * могло не появиться, а поменять смысл. Догадка здесь молчалива, отказ — нет.
  */
 
+import { createHash } from 'node:crypto';
+
 export const VERSIYA_SHEMY = 1;
 
 /**
@@ -76,16 +78,39 @@ export function neznakomye_polya(estVBaze) {
  * Поле `polya_neizvestnye_vyvozu` кладётся В ФАЙЛ, а не только в наш отчёт: принимающая
  * сторона обязана видеть, ЧЕГО в этом файле нет по нашему незнанию, а не гадать.
  */
-export function zagolovok({ otkuda, kogda = Date.now(), zapisej, neizvestnye = [] }) {
+export function zagolovok({ otkuda, uzel, kogda = Date.now(), zapisej,
+                            zaderzhano = 0, summa, neizvestnye = [] }) {
   return {
     vyvoz: 'dsh-pamyat',
     versiya_shemy: VERSIYA_SHEMY,
     polya: POLYA,
     ...(neizvestnye.length ? { polya_neizvestnye_vyvozu: neizvestnye } : {}),
+    // 🔴 otkuda И uzel — РАЗНЫЕ ВЕЛИЧИНЫ, И РАЗВОДИТЬ ИХ ОБЯЗАТЕЛЬНО (ворота В1).
+    // otkuda — то, что назвал вызывающий: может быть чем угодно, вплоть до «неизвестно».
+    // uzel — имя машины, снятое ОС в момент вывоза. Если их слить, читающий на той
+    // стороне не отличит «файл сделан на машине X» от «кто-то написал в поле X».
     otkuda,
+    uzel,
     kogda,
     zapisej,
+    // 🔴 ЧИСЛО ЗАДЕРЖАННЫХ — В ЗАГОЛОВКЕ, А НЕ ТОЛЬКО В ОТЧЁТЕ (В1). Отчёт остаётся
+    // у вывозящего, а файл уезжает; без этого числа принимающая сторона не знает, что
+    // часть записей отсеяна фильтром, и «68 записей» читается как «вся память».
+    zaderzhano,
+    // 🔴 СУММА СОДЕРЖИМОГО — ЧТОБЫ ВВОЗ МОГ ПРОВЕРИТЬ, ЧТО ФАЙЛ ДОШЁЛ ЦЕЛИКОМ (В1).
+    // Считается по строкам записей БЕЗ заголовка: заголовок содержит саму сумму, и
+    // включить его значило бы считать сумму от суммы.
+    ...(summa ? { summa } : {}),
   };
+}
+
+/**
+ * Сумма содержимого файла вывоза: sha256 по строкам записей, без заголовка.
+ * 🔴 ФУНКЦИЯ ОДНА НА ОБЕ СТОРОНЫ. Две реализации «одного и того же» разошлись бы молча —
+ * этот класс у нас уже стоил трёх разошедшихся списков.
+ */
+export function summa_soderzhimogo(stroki) {
+  return 'sha256:' + createHash('sha256').update(stroki.join('\n'), 'utf8').digest('hex').slice(0, 32);
 }
 
 /**

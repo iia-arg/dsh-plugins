@@ -8,7 +8,7 @@
  * Обратная защита тоже стоит: проба, вернувшая не-промис, названа вслух.
  */
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +24,21 @@ const { vzyat_filtr } = await import(join(paket, 'yadro.js'));
 // и в рабочем каталоге, где разрешения по имени может не быть.
 const YADRO = join(zdes, '..', '..', 'dsh-pamyat-core', 'src', 'filtr-vhoda.js');
 
+// 🔴 НЕТ ЯДРА РЯДОМ — ЭТО СЛЕПОТА (код 2), А НЕ РАСХОЖДЕНИЕ (ворота В10).
+// Ядро — peer-зависимость: у получателя, распаковавшего тарбол в чистом месте, соседнего
+// каталога нет, и раньше стенд давал там 8 КРАСНЫХ проб с текстом «ядро не загрузилось».
+// Красное про исправный пакет неотличимо от красного про дефект — а это разные новости:
+// первая про раскладку у читающего, вторая про предмет. Разводим их КОДОМ ВОЗВРАТА.
+// Проверка идёт ДО первой пробы: узнать об этом на восьмой — значит уже наврать семь раз.
+if (!existsSync(YADRO)) {
+  console.log('\n⚠️  СЛЕПОТА: ядро dsh-pamyat-core рядом не найдено.');
+  console.log(`    искали: ${YADRO}`);
+  console.log('    Это НЕ дефект пакета: ядро — peer-зависимость, её ставит получатель.');
+  console.log('    Проверить нечем — поставьте ядро рядом либо в node_modules и повторите.');
+  console.log('\n  итог: СЛЕПОТА (проверок не проводилось)');
+  process.exit(2);
+}
+
 let vsego = 0, proshlo = 0;
 const proba = async (imya, f) => {
   vsego++;
@@ -32,7 +47,17 @@ const proba = async (imya, f) => {
     if (!(v && typeof v.then === 'function')) {
       console.log('  ⚠️  ' + imya + ' — тело пробы НЕ ожидающее; прогонщик асинхронный, это допустимо, но проверьте намерение');
     }
-    await v;
+    const r = await v;
+    // 🔴 ВОЗВРАТ ТЕЛА УЧИТЫВАЕТСЯ, А НЕ ВЫБРАСЫВАЕТСЯ (05.09.2026, поймано порчей).
+    // Прежняя обёртка считала пробу пройденной, если тело не БРОСИЛО исключение, —
+    // и всякая проба вида «вернуть true либо строку с причиной» была зелёной ВСЕГДА.
+    // Так я и написала девять новых проб, перенеся идиому из соседнего пакета:
+    // копирование идиомы переносит и её контекст. Порча (снять renameSync) дала
+    // 33 из 33 — вот чем это ловится, а не чтением.
+    // Строка в возврате = причина беды; false = беда без причины; всё прочее
+    // (undefined, true) — как раньше, чтобы старые пробы не сломались.
+    if (typeof r === 'string') throw new Error(r);
+    if (r === false) throw new Error('тело пробы вернуло false без причины');
     proshlo++; console.log('  ✅ ' + imya);
   } catch (e) { console.log('  ❌ ' + imya + ' — ' + String(e.message).slice(0, 200)); }
 };
@@ -335,6 +360,136 @@ await proba('🔴 путь к фильтру не строкой → отказ 
     }
   }
 })
+
+console.log('\n═══ ВОРОТА В1/В2/В6/В8: ЗАГОЛОВОК, ТОЖДЕСТВО, АТОМАРНОСТЬ, ЖУРНАЛ ═══');
+
+await proba('В1: заголовок несёт узел, число задержанных и сумму содержимого', async () => {
+  const b = baza('zag', [
+    { soderzhim: 'обычное знание' },
+    { soderzhim: 'password = Xk9#mQ2$vL8p' },
+  ]);
+  const f = put('zag.jsonl');
+  await vyvezti({ baza: b, fajl: f, otkuda: 'proba', yadro: YADRO, krik: () => {} });
+  const z = JSON.parse(readFileSync(f, 'utf8').split('\n')[0]);
+  if (!z.uzel) return 'нет поля uzel — «файл сделан на машине X» не отличить от «кто-то написал X»';
+  if (z.uzel === z.otkuda) return 'uzel совпал с otkuda — величины не разведены';
+  if (z.zaderzhano !== 1) return `zaderzhano=${JSON.stringify(z.zaderzhano)}, ждали 1: без него принимающий читает «1 запись» как всю память`;
+  if (!/^sha256:/.test(String(z.summa))) return `суммы содержимого нет: ${JSON.stringify(z.summa)}`;
+  return true;
+});
+
+await proba('В1: ввоз ЛОВИТ правку файла после вывоза (сумма не сошлась)', async () => {
+  const b = baza('sum-src', [{ soderzhim: 'знание раз' }, { soderzhim: 'знание два' }]);
+  const f = put('sum.jsonl');
+  await vyvezti({ baza: b, fajl: f, otkuda: 'proba', yadro: YADRO, krik: () => {} });
+  const stroki = readFileSync(f, 'utf8').trimEnd().split('\n');
+  const z = JSON.parse(stroki[1]); z.soderzhim = 'подменённое знание';
+  stroki[1] = JSON.stringify(z);
+  writeFileSync(f, stroki.join('\n') + '\n');
+  const cel = baza('sum-dst');
+  const bylo = schyot(cel);
+  const e = await dolzhnoUpast('VYVOZ_SUMMA_NE_SOSHLAS', () => vvezti({ baza: cel, fajl: f, yadro: YADRO, krik: () => {} }));
+  if (e !== true) return e;
+  return schyot(cel) === bylo || 'база тронута при несошедшейся сумме';
+});
+
+await proba('В1: суммы НЕТ → сказано «не проверена», а не молчание', async () => {
+  const b = baza('old-src', [{ soderzhim: 'знание' }]);
+  const f = put('old.jsonl');
+  await vyvezti({ baza: b, fajl: f, otkuda: 'proba', yadro: YADRO, krik: () => {} });
+  const stroki = readFileSync(f, 'utf8').trimEnd().split('\n');
+  const z = JSON.parse(stroki[0]); delete z.summa;      // файл старого вывоза
+  stroki[0] = JSON.stringify(z);
+  writeFileSync(f, stroki.join('\n') + '\n');
+  const cel = baza('old-dst');
+  const it = await vvezti({ baza: cel, fajl: f, yadro: YADRO, krik: () => {} });
+  if (it.summa_sverena !== false) return 'ввоз считает, что сумма сверена, хотя её не было';
+  const { otchyot_vvoza } = await import(join(paket, 'vvoz.js'));
+  return otchyot_vvoza(it).includes('НЕ проверена')
+    || 'отчёт молчит о непроверенной целостности — молчание читается как «сошлась»';
+});
+
+await proba('В2: две записи РАЗНЫХ агентов с одним источником и временем не схлопываются', async () => {
+  const b = baza('dva-agenta');
+  const db = new DatabaseSync(b);
+  db.prepare('INSERT INTO zapisi (agent, klass, soderzhim, istochnik, sozdano) VALUES (?,?,?,?,?)')
+    .run('iskra', 'zametka', 'знание Искры', 'sess#1', 5000);
+  db.prepare('INSERT INTO zapisi (agent, klass, soderzhim, istochnik, sozdano) VALUES (?,?,?,?,?)')
+    .run('petrovich', 'zametka', 'знание Петровича', 'sess#1', 5000);
+  db.close();
+  const f = put('dva.jsonl');
+  await vyvezti({ baza: b, fajl: f, otkuda: 'proba', yadro: YADRO, krik: () => {} });
+  const cel = baza('dva-dst');
+  const it = await vvezti({ baza: cel, fajl: f, yadro: YADRO, krik: () => {} });
+  if (it.vstavleno !== 2) return `вставлено ${it.vstavleno}, ждали 2: записи разных агентов схлопнулись в дубликат`;
+  return it.tozhdestvo.startsWith('agent+') || `тождество названо как ${it.tozhdestvo}`;
+});
+
+await proba('В2: тождество работает — ПОВТОРНЫЙ ввоз не удваивает память', async () => {
+  const b = baza('povtor-src', [{ soderzhim: 'знание раз' }, { soderzhim: 'знание два' }]);
+  const f = put('povtor.jsonl');
+  await vyvezti({ baza: b, fajl: f, otkuda: 'proba', yadro: YADRO, krik: () => {} });
+  const cel = baza('povtor-dst');
+  await vvezti({ baza: cel, fajl: f, yadro: YADRO, krik: () => {} });
+  const it2 = await vvezti({ baza: cel, fajl: f, yadro: YADRO, krik: () => {} });
+  if (schyot(cel) !== 2) return `в базе ${schyot(cel)} записей после двойного ввоза, ждали 2`;
+  return it2.uzhe_bylo === 2 || `«уже было» ${it2.uzhe_bylo}, ждали 2`;
+});
+
+await proba('В6: после вывоза НЕ остаётся временного полуфайла', async () => {
+  const b = baza('atom-vrem', [{ soderzhim: 'знание' }]);
+  const f = put('atom-vrem.jsonl');
+  await vyvezti({ baza: b, fajl: f, otkuda: 'proba', yadro: YADRO, krik: () => {} });
+  const lishnie = readdirSync(katalog).filter((n) => n.startsWith('atom-vrem.jsonl') && n !== 'atom-vrem.jsonl');
+  return lishnie.length === 0 || `остались временные файлы: ${lishnie.join(', ')}`;
+});
+
+await proba('В6: запись идёт НЕ по месту — файл появляется целиком', async () => {
+  // Признак атомарности по предмету: временное имя отличается от целевого, значит
+  // до переименования по целевому пути нет НИЧЕГО, а не полуфайл с верным заголовком.
+  const src = readFileSync(join(paket, 'vyvoz.js'), 'utf8');
+  if (!/renameSync\(/.test(src)) return 'renameSync нет — запись идёт по месту, обрыв оставит полуфайл';
+  const m = src.match(/writeFileSync\(([^,]+),/);
+  if (!m) return 'writeFileSync не найден';
+  return m[1].trim() === 'vrem' || `пишем сразу в ${m[1].trim()}, а не во временный файл`;
+});
+
+await proba('В8: вывоз и ввоз оставляют след в журнале операций', async () => {
+  const b = baza('zhur-src', [{ soderzhim: 'знание' }]);
+  const cel = baza('zhur-dst');
+  for (const p of [b, cel]) {
+    const db = new DatabaseSync(p);
+    db.exec(`CREATE TABLE zhurnal (id INTEGER PRIMARY KEY AUTOINCREMENT, kogda INTEGER NOT NULL,
+      agent TEXT NOT NULL, klass TEXT NOT NULL, ishod TEXT NOT NULL, priroda TEXT,
+      pochemu TEXT NOT NULL, istochnik TEXT)`);
+    db.close();
+  }
+  const f = put('zhur.jsonl');
+  const iv = await vyvezti({ baza: b, fajl: f, otkuda: 'proba', yadro: YADRO, krik: () => {} });
+  const ii = await vvezti({ baza: cel, fajl: f, yadro: YADRO, krik: () => {} });
+  if (!iv.sled_v_zhurnale) return 'вывоз не записал след';
+  if (!ii.sled_v_zhurnale) return 'ввоз не записал след';
+  const sled = (p, klass) => {
+    const db = new DatabaseSync(p, { readOnly: true });
+    const r = db.prepare('SELECT klass, ishod, pochemu FROM zhurnal WHERE klass = ?').get(klass);
+    db.close(); return r;
+  };
+  const a = sled(b, 'vyvoz-pamyati'), c = sled(cel, 'vvoz-pamyati');
+  if (!a || !c) return 'строки нужного класса в журнале нет';
+  return /вывезено 1/.test(a.pochemu) && /вставлено 1/.test(c.pochemu)
+    || `следы без чисел: ${a.pochemu} | ${c.pochemu}`;
+});
+
+await proba('В8: таблицы журнала нет → операция идёт, отказ НАЗВАН вслух', async () => {
+  const b = baza('bez-zhur', [{ soderzhim: 'знание' }]);   // таблицы zhurnal нет
+  const f = put('bez-zhur.jsonl');
+  const stroki = [];
+  const it = await vyvezti({ baza: b, fajl: f, otkuda: 'proba', yadro: YADRO, krik: (x) => stroki.push(x) });
+  if (it.vyvezeno !== 1) return 'вывоз не состоялся — отказ журнала не должен отменять операцию';
+  if (it.sled_v_zhurnale !== false) return 'вывоз считает, что след записан, хотя таблицы нет';
+  return stroki.join(' | ').includes('след в журнале НЕ записан')
+    || `отказ журнала проглочен молча: ${stroki.join(' | ').slice(0, 200)}`;
+});
 
 console.log(`\n  итог: ${proshlo} из ${vsego}`);
 process.exit(proshlo === vsego ? 0 : 1);

@@ -19,11 +19,13 @@
  *   · он не вывозит журнал и очередь (см. NE_VYVOZITSYA в shema.js) — это решение, не забывчивость.
  */
 import { DatabaseSync } from 'node:sqlite';
-import { writeFileSync, readFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { vzyat_filtr, reshenie } from './yadro.js';
-import { POLYA, zagolovok, neznakomye_polya } from './shema.js';
+import { POLYA, zagolovok, neznakomye_polya, summa_soderzhimogo } from './shema.js';
+import { zapisat_v_zhurnal } from './zhurnal.js';
 
 // 🔴 ВЕРСИЯ ЧИТАЕТСЯ ИЗ СВОЕГО МАНИФЕСТА, А НЕ ПИШЕТСЯ КОНСТАНТОЙ. Отчёт о вывозе
 // уезжает к тому, кто будет ввозить, и без редакции он не отвечает на вопрос «чем
@@ -43,7 +45,7 @@ export const VERSIYA_PAKETA = (() => {
  * @param {string} [o.otkuda]  имя узла-источника, попадёт в заголовок
  * @param {string} [o.yadro]   путь к модулю фильтра (для стендов)
  */
-export async function vyvezti({ baza, fajl, otkuda = 'неизвестно', yadro }) {
+export async function vyvezti({ baza, fajl, otkuda = 'неизвестно', yadro, krik = console.error }) {
   // Договор проверяется ДО открытия базы: не смогли — файла не будет вовсе.
   const filtr = await vzyat_filtr(yadro);
 
@@ -96,16 +98,52 @@ export async function vyvezti({ baza, fajl, otkuda = 'неизвестно', yad
   }
 
   const neizvestnye = zapisi.neznakomye_polya ?? [];
+  const stroki_zapisej = vyvezennye.map((s) => JSON.stringify(s));
   const shapka = {
-    ...zagolovok({ otkuda, zapisej: vyvezennye.length, neizvestnye }),
+    ...zagolovok({
+      otkuda,
+      uzel: hostname(),
+      zapisej: vyvezennye.length,
+      zaderzhano: zaderzhannye.length,
+      summa: summa_soderzhimogo(stroki_zapisej),
+      neizvestnye,
+    }),
     chem_vyvezeno: `dsh-pamyat-vyvoz ${VERSIYA_PAKETA}`,
   };
   if (fajl) {
-    const telo = [JSON.stringify(shapka), ...vyvezennye.map((s) => JSON.stringify(s))].join('\n') + '\n';
-    writeFileSync(fajl, telo, { mode: 0o600 });
+    const telo = [JSON.stringify(shapka), ...stroki_zapisej].join('\n') + '\n';
+    // 🔴 ЗАПИСЬ АТОМАРНАЯ: ВРЕМЕННЫЙ ФАЙЛ РЯДОМ, ЗАТЕМ ПЕРЕИМЕНОВАНИЕ (ворота В6).
+    // Прямая запись оставляла бы при обрыве ПОЛУФАЙЛ С ПРАВИЛЬНЫМ ЗАГОЛОВКОМ — то есть
+    // предмет, который выглядит целым и читается как целый. Ввоз откажет по битой
+    // строке, но это смягчение, а не защита: обрыв мог прийтись на границу строки,
+    // и тогда файл разберётся молча и не полностью.
+    // Временный файл — РЯДОМ, в том же каталоге: перенос через границу разделов
+    // атомарным не является.
+    const vrem = `${fajl}.chastichnyj-${process.pid}`;
+    try {
+      writeFileSync(vrem, telo, { mode: 0o600 });
+      renameSync(vrem, fajl);
+    } catch (e) {
+      try { unlinkSync(vrem); } catch { /* нечего убирать */ }
+      throw e;
+    }
   }
 
+  // 🔴 СЛЕД В ЖУРНАЛЕ — ПОСЛЕ ФАКТА, А НЕ ВМЕСТО НЕГО (В8). Пишем, когда файл уже лёг:
+  // строка «вывезено» до записи означала бы «собирались вывезти».
+  const sled = zapisat_v_zhurnal({
+    baza, agent: 'dsh-pamyat-vyvoz', klass: 'vyvoz-pamyati',
+    ishod: fajl ? 'vypolneno' : 'tolko-otchyot',
+    priroda: 'vynos-naruzhu',
+    pochemu: `вывезено ${vyvezennye.length}, задержано ${zaderzhannye.length} из ${zapisi.length}; `
+      + `узел ${hostname()}; фильтр из «${filtr.otkuda}»; сумма ${shapka.summa}`
+      + (fajl ? `; файл ${fajl}` : '; файла нет — только отчёт'),
+    istochnik: fajl ?? null,
+    krik,
+  });
+
   return {
+    sled_v_zhurnale: sled,
     vsego: zapisi.length,
     vyvezeno: vyvezennye.length,
     zaderzhano: zaderzhannye.length,
@@ -113,6 +151,8 @@ export async function vyvezti({ baza, fajl, otkuda = 'неизвестно', yad
     polya_kotoryh_net: zapisi.nety_polya ?? [],
     polya_neizvestnye_vyvozu: neizvestnye,
     filtr_otkuda: filtr.otkuda,
+    uzel: hostname(),
+    summa: shapka.summa,
     fajl: fajl ?? null,
   };
 }
