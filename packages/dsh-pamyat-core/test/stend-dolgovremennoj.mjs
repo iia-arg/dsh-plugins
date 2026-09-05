@@ -31,7 +31,7 @@ let ok = 0, bed = 0, slepot = 0;
 // под видом проверки. Замер 05.09: семь стендов ядра из десяти зеленели на подложенном
 // падении в ожидающем теле — действующих async-тел не было ни одного, беда была впереди.
 // Здесь она закрыта устройством: вернуло промис — это ОТКАЗ пробы, а не её успех.
-const t = (imya, f) => { try {
+const proba = (imya, f) => { try {
     const vernulos = f();
     if (vernulos && typeof vernulos.then === 'function') {
       throw new Error('тело пробы ОЖИДАЮЩЕЕ, а прогонщик синхронный — ждать не умеет. ' +
@@ -74,7 +74,7 @@ const zhurnalZapisi = (k) => {
     sohranit: async (z) => { zvali.push(z); return { sostoyanie: 'dostavleno', id: 'mem-1' }; } } });
   k.pamyat.zapisat({ klass: 'svodka-kompakcii', soderzhim: 'сводка', istochnik: 's#1-2' });
   await new Promise((r) => setTimeout(r, 40));
-  t('[0] сводка компакции в долговременную НЕ идёт (контроль на исправном)', () => {
+  proba('[0] сводка компакции в долговременную НЕ идёт (контроль на исправном)', () => {
     if (zvali.length !== 0) throw new Error('позвали ' + zvali.length + ' раз, ждали 0');
   });
 }
@@ -86,14 +86,14 @@ const zhurnalZapisi = (k) => {
     sohranit: async (z) => { zvali.push(z); return { sostoyanie: 'dostavleno', id: 'mem-77' }; } } });
   k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание', istochnik: 'telegram-a2a#10-20' });
   await new Promise((r) => setTimeout(r, 60));
-  t('[A] знание уходит в долговременную, source_uri = istochnik', () => {
+  proba('[A] знание уходит в долговременную, source_uri = istochnik', () => {
     if (zvali.length !== 1) throw new Error('позвали ' + zvali.length + ' раз');
     if (zvali[0].metadannye.source_uri !== 'telegram-a2a#10-20') {
       throw new Error('source_uri = ' + zvali[0].metadannye.source_uri);
     }
     if (zvali[0].tip !== 'urok') throw new Error('tip = ' + zvali[0].tip);
   });
-  t('[A] исход доставки попал в журнал с id', () => {
+  proba('[A] исход доставки попал в журнал с id', () => {
     const z = zhurnalZapisi(k).filter((x) => x.priroda === 'dolgovremennyj-sloj');
     if (!z.length) throw new Error('в журнале нет отметки долговременного слоя');
     if (z[0].ishod !== 'dostavleno') throw new Error('исход ' + z[0].ishod);
@@ -112,10 +112,10 @@ const zhurnalZapisi = (k) => {
     sohranit: async () => { throw new Error('не должны были звать'); } } });
   const id = k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание', istochnik: 's#1-2' });
   await new Promise((r) => setTimeout(r, 40));
-  t('[B] недоступный слой НЕ откатывает оперативную запись', () => {
+  proba('[B] недоступный слой НЕ откатывает оперативную запись', () => {
     if (!id) throw new Error('оперативная запись не сделана: id = ' + id);
   });
-  t('[B] природа отказа — «недоступен», с причиной от провайдера', () => {
+  proba('[B] природа отказа — «недоступен», с причиной от провайдера', () => {
     const z = zhurnalZapisi(k).filter((x) => String(x.priroda ?? '').startsWith('dolgovremennyj'));
     if (!z.length) throw new Error('отказ не отмечен в журнале — «выстрелил и забыл» стало молчанием');
     if (z[0].priroda !== 'dolgovremennyj-sloj-nedostupen') throw new Error('природа ' + z[0].priroda);
@@ -129,7 +129,7 @@ const zhurnalZapisi = (k) => {
     sohranit: async () => ({ sostoyanie: 'ne-najdeno', pochemu: 'записал, но чтением не подтвердилось' }) } });
   k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание', istochnik: 's#1-2' });
   await new Promise((r) => setTimeout(r, 60));
-  t('[C] «позвал, но не подтвердилось» отличается от «канала нет»', () => {
+  proba('[C] «позвал, но не подтвердилось» отличается от «канала нет»', () => {
     const z = zhurnalZapisi(k).filter((x) => String(x.priroda ?? '').startsWith('dolgovremennyj'));
     if (!z.length) throw new Error('исход не отмечен');
     if (z[0].ishod !== 'ne-najdeno') throw new Error('исход ' + z[0].ishod);
@@ -144,7 +144,7 @@ const zhurnalZapisi = (k) => {
   const k = await podnyat({ dolgo: null });
   k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание', istochnik: 's#1-2' });
   await new Promise((r) => setTimeout(r, 40));
-  t('[D] несмонтированная служба названа отдельно от недоступной', () => {
+  proba('[D] несмонтированная служба названа отдельно от недоступной', () => {
     const z = zhurnalZapisi(k).filter((x) => String(x.priroda ?? '').startsWith('dolgovremennyj'));
     if (!z.length) throw new Error('отсутствие службы не отмечено — тишина вместо причины');
     if (z[0].priroda !== 'dolgovremennyj-sloj-ne-smontirovan') throw new Error('природа ' + z[0].priroda);
@@ -160,7 +160,7 @@ const zhurnalZapisi = (k) => {
       sohranit: async (z) => { zvali.push(z); return { sostoyanie: 'dostavleno', id: 'mem-9' }; } } });
   k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание', istochnik: 's#1-2' });
   await new Promise((r) => setTimeout(r, 60));
-  t('[E] знание «без подтверждения» тоже уходит, и пометка едет с ним', () => {
+  proba('[E] знание «без подтверждения» тоже уходит, и пометка едет с ним', () => {
     if (zvali.length !== 1) throw new Error('позвали ' + zvali.length + ' раз — ветка без подтверждения не покрыта');
     if (zvali[0].metadannye.bezPodtverzhdeniya !== true) {
       throw new Error('пометка не доехала: ' + JSON.stringify(zvali[0].metadannye));
@@ -176,7 +176,7 @@ const zhurnalZapisi = (k) => {
     sohranit: async () => ({ sostoyanie: 'dostavleno', id: 'mem-x' }) } });
   k.pamyat.zapisat({ klass: 'svodka-kompakcii', soderzhim: 'сводка', istochnik: 's#1-2' });
   await new Promise((r) => setTimeout(r, 40));
-  t('[F] класс вне перечня — отдельный исход в журнале, а не тишина', () => {
+  proba('[F] класс вне перечня — отдельный исход в журнале, а не тишина', () => {
     const z = zhurnalZapisi(k).filter((x) => x.priroda === 'klass-vne-klassyZnaniy');
     if (!z.length) throw new Error('ветка «вне перечня» молчит — решение неотличимо от сбоя');
     if (z[0].ishod !== 'ostalos-v-operativnom') throw new Error('исход ' + z[0].ishod + ', ждали ostalos-v-operativnom');
@@ -203,7 +203,7 @@ const zhurnalZapisi = (k) => {
     console.log('    Это НЕ «сошлось»: проверка не состоялась. Поставьте dsh-pamyat-secretary рядом.');
   } else {
     const nashi = new Config({ putBazy: join(kat, 'x.db'), agent: 'proba' }).klassyZnaniy ?? [];
-    t('[G] все классы секретаря входят в klassyZnaniy ядра', () => {
+    proba('[G] все классы секретаря входят в klassyZnaniy ядра', () => {
       const lishnie = klassySecretarya.filter((x) => !nashi.includes(x));
       if (lishnie.length) {
         throw new Error('секретарь пишет классы, которых ядро не отправит в долговременную память: ' +
@@ -224,7 +224,7 @@ const zhurnalZapisi = (k) => {
 // ⚠️ Ожидание вынесено НАРУЖУ пробы: прогонщик синхронный и ждать не умеет — тело с
 // await он засчитал бы мгновенно, что бы внутри ни случилось. Поймал сам прогонщик.
 const kEdinstv = await podnyat();
-t('П-единственность: объявленный секрет ОТВЕРГАЕТСЯ через zapisat, не только фильтром', () => {
+proba('П-единственность: объявленный секрет ОТВЕРГАЕТСЯ через zapisat, не только фильтром', () => {
   let otkaz = null;
   try {
     kEdinstv.pamyat.zapisat({ klass: 'urok', soderzhim: 'password = Xk9#mQ2$vL8p', istochnik: 's#1-2' });
