@@ -45,6 +45,12 @@ const proba = (imya, f) => {
     if (vernulos && typeof vernulos.then === 'function') {
       throw new Error('тело пробы ОЖИДАЮЩЕЕ, а прогонщик синхронный: вынеси ожидание наружу');
     }
+    // 🔴 ВОЗВРАТ ТЕЛА УЧИТЫВАЕТСЯ (05.09.2026). Обёртка краснела только на ИСКЛЮЧЕНИИ,
+    // а возврат выбрасывала — проба вида «вернуть true либо строку с причиной» была
+    // зелёной при ЛЮБОМ содержимом. Замер фактом: вписала в каждый стенд ядра пробу,
+    // заведомо возвращающую строку, — ПЯТЬ стендов её не заметили.
+    if (typeof vernulos === 'string') throw new Error(vernulos);
+    if (vernulos === false) throw new Error('тело пробы вернуло false без причины');
     proshlo++; console.log('  ✅ ' + imya); }
   catch (e) { console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 120)); }
 };
