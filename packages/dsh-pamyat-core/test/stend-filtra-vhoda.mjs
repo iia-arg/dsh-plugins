@@ -7,6 +7,7 @@
  */
 import { ochistit, najti_sekret, filtr_ispraven, trevozhno, proverit_sluzhebnoe, normalizovat, rezhim } from '../src/filtr-vhoda.js';
 import { readFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 
 let ok = 0, bed = 0;
 // 🔴 ПРИРОДА ТЕЛА ПРОВЕРЯЕТСЯ, А НЕ ПОДРАЗУМЕВАЕТСЯ (05.09.2026, ворота приёмки).
@@ -143,6 +144,23 @@ t('П7 секрет отвергается и на ветке «класс тр�
   } catch (e) { broshено = e; }
   if (!broshено) throw new Error('секрет записан через ветку подтверждения — фильтр стоит не до развилки');
   if (broshено.code !== 'PAMYAT_SEKRET_NA_VHODE') throw new Error('иной отказ: ' + broshено.code);
+});
+
+t('🔴 П7-трет отказ НАЗЫВАЕТ ОТСЧЁТ: seq, а не байты (05.09.2026)', () => {
+  // Разбор настоящего отказа упёрся ровно здесь: читающий принял «#62067-70176» за
+  // БАЙТЫ, не нашёл их в сжатом файле и остановился; позиция 8822 в 8109 «байт» не
+  // помещалась. Единица в ссылке — номера событий, но строка об этом молчала.
+  // Обещание восстановимости без указания отсчёта читается как гарантия, а гарантии нет.
+  // Журнал внутренний: перехватить снаружи нечем, поэтому читаем ТАБЛИЦУ после отказа —
+  // то есть след на той стороне, а не ответ инструмента.
+  try { k.pamyat.zapisat({ klass: 'znanie', soderzhim: 'pwd=Hunter22xy в тексте' }); } catch { /* отказ и ожидается */ }
+  const db = new DatabaseSync(join(kat, 'p.db'), { readOnly: true });
+  const r = db.prepare("SELECT pochemu FROM zhurnal WHERE priroda = ? ORDER BY id DESC LIMIT 1").get('sekret-na-vhode');
+  if (!r) throw new Error('в журнале нет отметки sekret-na-vhode — проба не управляет предметом');
+  const p = String(r.pochemu ?? '');
+  if (!/seq/.test(p)) throw new Error('отсчёт не назван: в строке нет «seq» — ' + p.slice(0, 140));
+  if (!/ЗНАКАХ/.test(p)) throw new Error('единица позиции не названа (ожидались «ЗНАКАХ») — ' + p.slice(0, 140));
+  if (/Hunter22/.test(p)) throw new Error('🔴 в строку отказа попало ЗНАЧЕНИЕ');
 });
 
 t('П7-бис чистка работает и на той же ветке: отметка в записи', () => {
