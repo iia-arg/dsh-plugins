@@ -144,6 +144,16 @@ CREATE TABLE IF NOT EXISTS ochered_dolgovremennogo (
   ischerpano INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_ochered_agent ON ochered_dolgovremennogo(agent);
+
+-- 🔴 НАСТРОЙКИ СХЕМЫ — ДАННЫЕ В БАЗЕ, А НЕ КОНСТАНТЫ В ИСХОДНИКЕ (условие приёмки, В2).
+-- Здесь живёт РУБЕЖ ПРОИСХОЖДЕНИЯ: номер записи, на котором механизм отметки происхождения
+-- был заведён. Константа в коде разъехалась бы с базой при первом же восстановлении из копии:
+-- база уехала бы с одним числом, код — с другим, и никто бы не заметил.
+CREATE TABLE IF NOT EXISTS nastrojki (
+  kluch      TEXT PRIMARY KEY,
+  znachenie  TEXT NOT NULL,
+  postavleno INTEGER NOT NULL
+);
 `;
 
 /**
@@ -203,6 +213,63 @@ export function otkrytHranilishche(putK, { drajver } = {}) {
       // Старым строкам вера НЕ проставляется: они её не имели, и приписывать им
       // задним числом любое число значило бы выдумать измерение.
       baza.exec('ALTER TABLE zapisi ADD COLUMN vera REAL DEFAULT NULL');
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 🔴 МИГРАЦИЯ «РУБЕЖ ПРОИСХОЖДЕНИЯ» (Э5.3) — ОДНОЙ ТРАНЗАКЦИЕЙ НА ДВА ПОЛЯ.
+    //
+    // ЗАЧЕМ РУБЕЖ. Поля `proishozhdenie` и `proverka` заводятся на базе, где уже лежит
+    // накопленная память. Умолчание у нового поля обязано быть НЕЙТРАЛЬНЫМ: приписать
+    // старым записям ноль значило бы объявить недоверенным всё, что мы помним, — и
+    // сделать это молча, одним ALTER'ом. Ноль означает «механизм БЫЛ и не справился»,
+    // а к старым записям механизм не применялся вовсе. Это разные вещи, и различает их
+    // рубеж: записи с id ≤ рубежа — «до протокола», записи с id > рубежа и пустым полем —
+    // «происхождение не установлено». Решение предмета получено служебным каналом 04–05.09.2026.
+    //
+    // ⚠️ ОГРАНИЧЕНИЕ, БЕЗ КОТОРОГО РУБЕЖ ВРЁТ: он действителен, ПОКА РЯД id НАШ СОБСТВЕННЫЙ.
+    // ЗАПРЕЩЁН ВВОЗ С СОХРАНЕНИЕМ ЧУЖИХ id: чужая запись с малым номером легла бы ниже
+    // рубежа и получила привилегию нашей старой памяти — отмывание доверия через ввоз.
+    // Ввозимые записи получают НАШИ id и статус по номеру не наследуют. Тот, кто заведёт
+    // ввоз (Э8.5), увидит это же требование ОТКАЗОМ в коде ввоза, а не только здесь:
+    // предупреждение в соседнем файле упирающийся не прочтёт.
+    //
+    // 🔴 ПОЧЕМУ ОДНА ТРАНЗАКЦИЯ. Между снятием max(id) и добавлением столбца может лечь
+    // новая запись. Без транзакции она получила бы номер ниже рубежа, то есть статус
+    // «до протокола», хотя механизм к моменту её появления уже существовал. Окно узкое,
+    // ошибка молчаливая. BEGIN IMMEDIATE берёт запись сразу, а не при первой записи.
+    //
+    // 🔴 ИДЕМПОТЕНТНОСТЬ. Рубеж снимается ТОЛЬКО если его ещё нет. Второй прогон миграции
+    // с пересчётом max(id) тихо перевёл бы всю накопленную память в «после протокола» —
+    // ровно та беда, от которой уходим, только с другого конца.
+    //
+    // ГДЕ ЭТО НЕ ПРИМЕНЯЕТСЯ: рубеж НЕ судит о содержании записи и не измеряет доверие.
+    // Он отвечает на один вопрос — существовал ли механизм отметки, когда запись легла.
+    const nuzhno_proishozhdenie = !stolbcy.includes('proishozhdenie');
+    const nuzhno_proverka = !stolbcy.includes('proverka');
+    const rubezh_est = baza.prepare("SELECT znachenie FROM nastrojki WHERE kluch = 'rubezh_proishozhdeniya'").get();
+    if (nuzhno_proishozhdenie || nuzhno_proverka || !rubezh_est) {
+      baza.exec('BEGIN IMMEDIATE');
+      try {
+        if (!baza.prepare("SELECT znachenie FROM nastrojki WHERE kluch = 'rubezh_proishozhdeniya'").get()) {
+          const max = Number(baza.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM zapisi').get().m);
+          baza.prepare('INSERT INTO nastrojki (kluch, znachenie, postavleno) VALUES (?, ?, ?)')
+            .run('rubezh_proishozhdeniya', String(max), Date.now());
+        }
+        if (nuzhno_proishozhdenie) {
+          // Уровень происхождения. NULL значит «не проставлено», и у записи ниже рубежа
+          // это читается как «до протокола», а выше — как «не установлено».
+          baza.exec('ALTER TABLE zapisi ADD COLUMN proishozhdenie INTEGER DEFAULT NULL');
+        }
+        if (nuzhno_proverka) {
+          // Сверка записи с опорой в журнале (Э8.1): est / utrachena / NULL.
+          // NULL — «ещё не проверяли», и это НИКОГДА не читается как «утрачена».
+          baza.exec("ALTER TABLE zapisi ADD COLUMN proverka TEXT DEFAULT NULL");
+        }
+        baza.exec('COMMIT');
+      } catch (prichina) {
+        try { baza.exec('ROLLBACK'); } catch { /* откат уже случился сам */ }
+        throw prichina;
+      }
     }
   } catch (prichina) {
     const e = new Error(
@@ -311,6 +378,92 @@ export function otkrytHranilishche(putK, { drajver } = {}) {
         'UPDATE ochered_dolgovremennogo SET popytok = ?, poslednyaya_prichina = ?, kogda_poslednyaya = ?, ischerpano = ? WHERE zapis_id = ?'
       ).run(stalo, prichina, Date.now(), (Number(bylo.ischerpano) === 1 || ischerpalos) ? 1 : 0, zapis_id);
       return { est: true, ischerpalos, popytok: stalo };
+    },
+
+    /**
+     * Рубеж происхождения — номер записи, на котором механизм отметки был заведён.
+     * Читается ИЗ БАЗЫ при каждом вызове, а не запоминается: база может уехать на другую
+     * машину или откатиться из копии, и тогда число в памяти процесса разойдётся с данными.
+     */
+    rubezhProishozhdeniya() {
+      const r = baza.prepare("SELECT znachenie FROM nastrojki WHERE kluch = 'rubezh_proishozhdeniya'").get();
+      if (!r) {
+        // Рубежа нет — значит миграция не проходила. Это ОТКАЗ, а не «рубеж ноль»:
+        // ноль означал бы «все записи после протокола», то есть недоверие ко всей памяти.
+        const e = new Error('dsh-pamyat: рубеж происхождения не найден в настройках базы — миграция не проходила');
+        e.code = 'PAMYAT_NET_RUBEZHA';
+        throw e;
+      }
+      return Number(r.znachenie);
+    },
+
+    /**
+     * СТАТУС ПРОИСХОЖДЕНИЯ ЗАПИСИ — ТРИ РАЗНЫЕ СТРОКИ, А НЕ ТРИ ЧИСЛА.
+     *
+     * 🔴 Потребителю нельзя давать одно поле с тремя смыслами: он схлопнет их сравнением.
+     * Так уже вышло с верой (restore/index.js): `null < 0.7` дало verify, `undefined < 0.7`
+     * дало USE — два вида отсутствия привели к ПРОТИВОПОЛОЖНЫМ решениям, и одно из них
+     * объявило неизмеренную запись достоверной. Поэтому здесь возвращается СТАТУС словом.
+     *
+     *   do-protokola     id ≤ рубежа: механизма не было, когда запись легла. Не упрёк записи.
+     *   ne-ustanovleno   id > рубежа, поле пусто: механизм был, происхождение не проставлено.
+     *   uroven           поле проставлено: число говорит само за себя.
+     *
+     * ⚠️ ГРАНИЦА: статус НЕ измеряет достоверность содержимого. Он отвечает на вопрос
+     * «существовал ли протокол в момент записи», и ни на какой другой.
+     * ⚠️ И сортировка: «до протокола» сортируется НЕЙТРАЛЬНО — то есть выдача не меняет
+     * порядок из-за этого поля вовсе (ORDER BY sozdano как был). Иначе само введение поля
+     * молча переставило бы всю накопленную память.
+     */
+    statusProishozhdeniya(zapis, rubezh = null) {
+      const granica = rubezh === null ? this.rubezhProishozhdeniya() : Number(rubezh);
+      const id = Number(zapis?.id);
+      if (!Number.isFinite(id)) {
+        const e = new Error('dsh-pamyat: статус происхождения спрошен у записи без id');
+        e.code = 'PAMYAT_ZAPIS_BEZ_ID';
+        throw e;
+      }
+      const znach = zapis.proishozhdenie;
+      if (znach !== null && znach !== undefined) {
+        return { status: 'uroven', uroven: Number(znach), stroka: 'происхождение: уровень ' + Number(znach) };
+      }
+      if (id <= granica) {
+        return { status: 'do-protokola', uroven: null, stroka: 'до протокола (механизма отметки ещё не было)' };
+      }
+      return { status: 'ne-ustanovleno', uroven: null, stroka: 'происхождение не установлено' };
+    },
+
+    /**
+     * Проставить происхождение записи.
+     *
+     * 🔴 ЗАПИСЯМ НИЖЕ РУБЕЖА ПРОИСХОЖДЕНИЕ НЕ ПРОСТАВЛЯЕТСЯ — ОТКАЗ, НЕ ТИХИЙ ПРОПУСК.
+     * Довод (находка №1 по Э5.3 (служебный канал), «отмывание доверия»): если старая запись при
+     * перезаписи получает уровень, любая запись отмывается до доверенной, не покидая
+     * системы. «До протокола» — навсегда: рубеж по id неизменен, и это не строгость,
+     * а единственное, что делает рубеж защитой, а не украшением.
+     * ГДЕ НЕ ПРИМЕНЯЕТСЯ: записи ВЫШЕ рубежа проставляются свободно и переписываются тоже —
+     * там механизм существовал, и уровень есть измерение, а не привилегия.
+     */
+    otmetitProishozhdenie({ id, uroven }) {
+      const granica = this.rubezhProishozhdeniya();
+      const nomer = Number(id);
+      if (nomer <= granica) {
+        const e = new Error(
+          'dsh-pamyat: записи ' + nomer + ' происхождение не проставляется — она НИЖЕ рубежа ' +
+          granica + ' («до протокола»). Иначе старая запись отмывается до доверенной перезаписью.'
+        );
+        e.code = 'PAMYAT_ZAPIS_DO_PROTOKOLA';
+        throw e;
+      }
+      if (typeof uroven !== 'number' || Number.isNaN(uroven)) {
+        const e = new Error('dsh-pamyat: уровень происхождения должен быть числом; получено ' + JSON.stringify(uroven));
+        e.code = 'PAMYAT_UROVEN_NEGODEN';
+        throw e;
+      }
+      const r = baza.prepare('UPDATE zapisi SET proishozhdenie = ? WHERE id = ?').run(uroven, nomer);
+      // Число изменённых строк — доказательство, а не «успех вызова»: записи с таким
+      // номером может не быть вовсе, и молчаливый ноль читался бы как проставлено.
+      return Number(r.changes) === 1;
     },
 
     /** Сколько записей у агента — для наблюдаемости и стендов. */

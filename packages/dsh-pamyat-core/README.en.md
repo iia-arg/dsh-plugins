@@ -65,6 +65,41 @@ data corruption.
 Old databases migrate by adding a column; rows written before the field existed
 are **not** given a belief value — they never had one.
 
+
+## Record provenance: a boundary, not a zero default
+
+A record carries an optional `proishozhdenie` field plus a boundary — the record
+id at which the marking mechanism was introduced. The boundary lives **in the
+database** (table `nastrojki`), not as a constant in code: a database travels to
+another machine and gets restored from backup, and a number in the source would
+silently drift apart from the data.
+
+The status is asked for as a word, never derived by comparing a number —
+`statusProishozhdeniya(record)` returns three DISTINCT strings:
+
+| status | when | meaning |
+|---|---|---|
+| `do-protokola` | `id ≤ boundary` | no mechanism existed when the record landed — not a charge against it |
+| `ne-ustanovleno` | `id > boundary`, field empty | the mechanism existed, provenance was not set |
+| `uroven` | field set | a measurement; the number speaks for itself |
+
+🔴 **A zero default is refused on purpose.** Assigning `0` to old records would
+declare the entire accumulated memory untrusted — in one `ALTER`, silently. Zero
+means "the mechanism ran and failed"; to records below the boundary it never ran.
+
+🔴 **"Before the protocol" is permanent.** Setting a level on a record below the
+boundary is REFUSED. Otherwise any old record launders itself into a trusted one
+by a plain rewrite, without ever leaving the system.
+
+⚠️ **The constraint without which the boundary lies:** it holds only while the
+`id` sequence is ours. **Import preserving foreign `id`s is forbidden**: a
+foreign record with a small number would land below the boundary and inherit the
+privilege of our old memory. Imported records receive our `id`s and never
+inherit status by number.
+
+⚠️ Output ordering is **unchanged** by the field: "before the protocol" sorts
+neutrally — exactly as those records sorted before the field existed.
+
 ## The gate lives inside the service
 
 The policy is not an advisory the caller may skip: `zapisat` applies it itself.
