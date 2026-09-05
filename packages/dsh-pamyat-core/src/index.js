@@ -26,6 +26,7 @@ import { otkrytHranilishche } from './hranilishche.js';
 import { zavestiZhurnal } from './zhurnal.js';
 import { reshitPoKlassu, istolkovatPodtverzhdenie } from './politika.js';
 import { filtr_ispraven, najti_sekret, ochistit, trevozhno, proverit_sluzhebnoe, normalizovat, zapiraet } from './filtr-vhoda.js';
+import { postavitPrivratnika, itogPrivratnika } from './privratnik.js';
 import z from '@deepseek-ai/schemastery';
 
 export const name = 'dsh-pamyat-core';
@@ -89,6 +90,23 @@ export const Config = z.object({
    * становится частью ДАННЫХ — каждая такая запись несёт отметку о себе.
    */
   otvechayushchegoNet: z.boolean().default(false),
+  /**
+   * 🔴 ОТВЕЧАТЬ ЛИ НА СПРОС РАЗРЕШЕНИЯ. Умолчание — ВЫКЛЮЧЕНО, и это не
+   * осторожность, а принадлежность: отвечать за человека вправе только тот,
+   * кто сам решил, что человека рядом не будет. Включённый по умолчанию
+   * привратник раздавал бы разрешения на машинах, где о нём не просили, и
+   * делал бы это молча — спрос прошёл, ответ получен, никто не спрошен.
+   *
+   * Что даёт включение: инструменты, требующие подтверждения, перестают
+   * отказывать по причине «отвечающего нет вовсе». Права ОТКАЗЫВАТЬ ключ не
+   * даёт никому: ветки отказа в привратнике нет (см. privratnik.js).
+   *
+   * ⚠️ ЧЕГО КЛЮЧ НЕ ДЕЛАЕТ: он не отменяет политику сессии. При политике
+   * 'never' служба подтверждения возвращает 'rejected' ДО водопада, и наш
+   * привратник не зовётся вовсе — счётчик спросов останется пустым, а
+   * причина будет не в нём.
+   */
+  otvechatNaSprosRazresheniya: z.boolean().default(false),
   // 🔴 НАСТРОЕК ДОЛГОВРЕМЕННОГО СЛОЯ ЗДЕСЬ НЕТ НАМЕРЕННО (правка 02.09).
   // Они были — и это была ошибка принадлежности: ядро их описывало, но не
   // исполняло, потому что провайдер вынесен в отдельный пакет. Включённый
@@ -161,6 +179,7 @@ function krik(soobshchenie) {
 export function apply(ctx, config = {}) {
   const agent = config.agent;
   const put = config.putBazy;
+  const uchyotPrivratnika = postavitPrivratnika(ctx, config.otvechatNaSprosRazresheniya === true, krik);
   let hranilishche = null;
   let zhurnal = null;
   let prichinaOtkaza = null;
@@ -705,5 +724,11 @@ export function apply(ctx, config = {}) {
     },
   });
 
-  ctx.on?.('dispose', () => { try { hranilishche?.zakryt(); } catch { /* закрытие не должно ронять выгрузку */ } });
+  ctx.on?.('dispose', () => {
+    // 🔴 ИТОГ ПЕЧАТАЕТСЯ ВСЕГДА, В ТОМ ЧИСЛЕ ПРИ НУЛЕ. Молчание при нуле
+    // неотличимо от молчания при поломке счёта; строка «спросов 0» с
+    // перечнем причин — единственное, что различает эти два случая.
+    try { krik(itogPrivratnika(uchyotPrivratnika)); } catch { /* итог не должен ронять выгрузку */ }
+    try { hranilishche?.zakryt(); } catch { /* закрытие не должно ронять выгрузку */ }
+  });
 }
