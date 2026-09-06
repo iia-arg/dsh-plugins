@@ -131,19 +131,48 @@ if (!putSluzhby) {
   console.log('    Это НЕ «сошлось»: сверка не состоялась. Служба — часть платформы, а не');
   console.log('    зависимость пакета. Чтобы сверить: DSH_KOREN_PLATFORMY=<корень платформы>');
 } else {
-  proba('СЛОВАРЬ: наш исход есть в OUTCOMES платформы (сверка с предметом)', () => {
-    const fs = globalThis.process?.getBuiltinModule?.('node:fs') ?? null;
-    if (!fs) throw new Error('нет доступа к fs — сверить словарь нечем');
-    const ish = fs.readFileSync(putSluzhby, 'utf8');
-    const m = ish.match(/const OUTCOMES = \[([^\]]*)\]/);
-    if (!m) throw new Error('OUTCOMES в службе не найден — форма изменилась, сверка слепа');
-    const slovar = m[1].match(/"([a-z-]+)"/g)?.map((x) => x.replace(/"/g, '')) ?? [];
-    if (slovar.length === 0) throw new Error('словарь разобран пустым — проба слепа');
-    if (!slovar.includes(RAZRESHENO)) {
-      throw new Error(`наш исход «${RAZRESHENO}» НЕ в словаре платформы [${slovar.join(', ')}] — `
-        + 'служба нормализует его в unavailable молча, то есть мы будем отказывать всем');
+  // 🔴 «НЕ СМОГЛА ПРОЧИТАТЬ» И «НАШЕГО СЛОВА НЕТ» РАЗВЕДЕНЫ (правка 06.09.2026 по замечанию
+  // координатора о четвёртой порче). Прежде обе беды бросались из тела пробы и давали
+  // КРАСНОЕ — то есть чужой формат обвинял НАШ предмет, и приёмка пошла бы чинить не то.
+  // Замер порчами: файл с переименованным OUTCOMES → красное «форма изменилась, сверка
+  // слепа»; пустой словарь → красное «проба слепа». Текст сам говорил «слепа», а исход
+  // печатался как расхождение. Наше правило прямое: расхождение про ПРЕДМЕТ, слепота про
+  // ИНСТРУМЕНТ, и слепота ведёт себя как «нельзя», а не как «плохо».
+  // ⚠️ Словарь живёт в ЧУЖОМ пакете, который обновляется без нас: переезд или переименование
+  // здесь обычное дело, а не редкость. Значит эта ветка исполнится, и не однажды.
+  // ПУТЬ ПЕЧАТАЕТСЯ ВСЕГДА — иначе следующий будет гадать, что именно читали.
+  const fs = globalThis.process?.getBuiltinModule?.('node:fs') ?? null;
+  let slovar = null, prichinaSlepoty = null;
+  if (!fs) prichinaSlepoty = 'нет доступа к node:fs — читать нечем';
+  else {
+    let ish = null;
+    try { ish = fs.readFileSync(putSluzhby, 'utf8'); }
+    catch (e) { prichinaSlepoty = `файл не прочитан (${e?.code ?? 'причина не названа'})`; }
+    if (ish !== null) {
+      const m = ish.match(/const OUTCOMES = \[([^\]]*)\]/);
+      if (!m) prichinaSlepoty = 'OUTCOMES в службе не найден — форма чужого пакета изменилась';
+      else {
+        const nabor = m[1].match(/"([a-z-]+)"/g)?.map((x) => x.replace(/"/g, '')) ?? [];
+        if (nabor.length === 0) prichinaSlepoty = 'словарь разобран пустым — разбор не годится';
+        else slovar = nabor;
+      }
     }
-  });
+  }
+  if (slovar === null) {
+    slepot++;
+    console.log(`  СЛЕПОТА: словарь исходов НЕ СВЕРЕН — ${prichinaSlepoty}`);
+    console.log(`    читала: ${putSluzhby}`);
+    console.log('    Это НЕ «сошлось» и НЕ «наш исход неверен»: сверка не состоялась. Чужой');
+    console.log('    пакет обновляется без нас, и его форма — не наш дефект.');
+  } else {
+    proba('СЛОВАРЬ: наш исход есть в OUTCOMES платформы (сверка с предметом)', () => {
+      if (!slovar.includes(RAZRESHENO)) {
+        throw new Error(`наш исход «${RAZRESHENO}» НЕ в словаре платформы [${slovar.join(', ')}] — `
+          + 'служба нормализует его в unavailable молча, то есть мы будем отказывать всем');
+      }
+    });
+    console.log(`    (словарь прочитан: ${putSluzhby} · исходов ${slovar.length})`);
+  }
 }
 
 proba('ПРАВА ОТКАЗЫВАТЬ НЕТ: ветки rejected/cancelled в коде нет вовсе', () => {
