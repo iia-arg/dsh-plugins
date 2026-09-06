@@ -11,7 +11,7 @@ const proba = (imya, telo) => {
 }
 
 /** Подставной ctx той же природы, что живой: on('session/event', ...). */
-function stend(nastrojki = {}) {
+function stend(nastrojki = {}, marshrut = 'net') {
   const stroki = []
   const slushateli = []
   const ctx = {
@@ -20,7 +20,16 @@ function stend(nastrojki = {}) {
   }
   const cfg = new Config(nastrojki)
   const api = apply(ctx, cfg)
-  const podat = (type, data, timestamp) => slushateli.forEach((f) => f({ id: 's1' }, { type, data, timestamp }))
+  // 🔴 ПОДСТАВНАЯ СЕССИЯ ОТВЕЧАЕТ ТЕМ ЖЕ МЕТОДОМ, ЧТО ЖИВАЯ: requestContext() —
+  // «latest resolved route metadata» платформы. Четыре состояния взяты не из головы, а
+  // из её объявления: метода нет вовсе · маршрута ещё не было · маршрут есть, окна нет
+  // (поле необязательное) · окно объявлено числом.
+  const sessiya = marshrut === 'bez-metoda' ? { id: 's1' }
+    : { id: 's1', requestContext: () => marshrut === 'net' ? undefined
+        : (typeof marshrut === 'number'
+            ? { provider: 'p1', model: 'm-okno', contextWindow: marshrut }
+            : { provider: 'p1', model: 'm-bez-okna' }) }
+  const podat = (type, data, timestamp) => slushateli.forEach((f) => f(sessiya, { type, data, timestamp }))
   return { stroki, podat, api }
 }
 
@@ -179,6 +188,95 @@ proba('у ступеней заполнения знаменателя НЕТ, �
   const t = api.svodkaStorozha()
   if (!/у них знаменателя НЕТ/.test(t)) return 'про отсутствие знаменателя у ступеней не сказано'
   return true
+})
+
+
+// ── ОКНО У ПЛАТФОРМЫ, А НЕ ЧИСЛОМ В НАСТРОЙКЕ (ворота В5) ────────────────────────
+// 🔴 ПАРА ПРОБ, А НЕ ОДНА. Признак ломается в обе стороны: перестанем спрашивать
+// платформу — тихо вернёмся к устаревшему числу; перестанем брать настройку — потеряем
+// единственную опору там, где платформа окна не объявила. Каждая сторона своей пробой.
+
+proba('В5: окно берётся У ПЛАТФОРМЫ, а не из настройки', () => {
+  // настройка говорит 1000, платформа — 2000. При 1700 ток. доля по настройке была бы
+  // 170% (тревога), по платформе — 85% (тревога тоже). Различает ПЕЧАТЬ: чьё окно взято.
+  const t = stend({ predel: 1000, stupeni: [0.85] }, 2000)
+  t.podat('turn/end', { usage: { input: 1700 } }, 1)
+  const k = t.stroki.filter((s) => s.includes('ЗАПОЛНЕНИЕ'))
+  if (k.length !== 1) return `криков ${k.length}: ${k.join(' | ')}`
+  if (!/из 2000 ток\./.test(k[0])) return 'считает не по окну платформы: ' + k[0]
+  return /окно — платформа, модель m-okno/.test(k[0]) || 'источник окна не назван: ' + k[0]
+})
+
+proba('В5: платформа окна НЕ объявила → берётся настройка, и это ПОМЕЧЕНО', () => {
+  const t = stend({ predel: 1000, stupeni: [0.85] }, 'bez-okna')
+  t.podat('turn/end', { usage: { input: 900 } }, 1)
+  const k = t.stroki.filter((s) => s.includes('ЗАПОЛНЕНИЕ'))
+  if (k.length !== 1) return `криков ${k.length}`
+  if (!/из 1000 ток\./.test(k[0])) return 'запасное число не взято: ' + k[0]
+  return /окно — НАСТРОЙКА \(платформой не подтверждена/.test(k[0])
+    || 'не помечено, что число ничем не подтверждено: ' + k[0]
+})
+
+proba('🔴 В5: настройка РАСХОДИТСЯ с окном платформы → сказано один раз', () => {
+  const t = stend({ predel: 1000, stupeni: [0.85] }, 2000)
+  t.podat('turn/end', { usage: { input: 1700 } }, 1)
+  t.podat('turn/end', { usage: { input: 1900 } }, 2)
+  const r = t.stroki.filter((s) => s.includes('РАСХОДИТСЯ'))
+  if (r.length !== 1) return `сообщений о расхождении ${r.length}, ожидалось одно`
+  return (/1000/.test(r[0]) && /2000/.test(r[0])) || 'названы не оба числа: ' + r[0]
+})
+
+proba('🔴 нет ни окна платформы, ни настройки → СЛЕПОТА словами, не тишина', () => {
+  const t = stend({ predel: 0 }, 'net')
+  t.podat('turn/end', { usage: { input: 999999 } }, 1)
+  const sl = t.stroki.filter((s) => s.includes('ступени НЕ считаются'))
+  if (sl.length !== 1) return `строк слепоты ${sl.length}, ожидалась одна (и один раз, а не на каждый ход)`
+  if (!/не мерил/.test(sl[0])) return 'не сказано, что молчание значит «не мерил»: ' + sl[0]
+  return !t.stroki.some((s) => s.includes('ЗАПОЛНЕНИЕ')) || 'ступень сработала без окна'
+})
+
+proba('🔴 у сессии нет requestContext() — это про НАС, и причина другая', () => {
+  const t = stend({ predel: 0 }, 'bez-metoda')
+  t.podat('turn/end', { usage: { input: 10 } }, 1)
+  const sl = t.stroki.find((s) => s.includes('ступени НЕ считаются'))
+  if (!sl) return 'слепота не названа вовсе'
+  return /спросить платформу нечем/.test(sl)
+    || 'причина не различает «нас нечем спросить» и «модель не объявила»: ' + sl
+})
+
+// ── СОСТАВ СТРОКИ ТРЕВОГИ (ворота В1) ────────────────────────────────────────────
+
+proba('В1: агент стоит в КАЖДОЙ тревоге, а не в одной', () => {
+  const t = stend({ agent: 'iskra' })
+  t.podat('compaction/end', { compactionId: 'a1' }, 1000)
+  t.podat('compaction/prune', { shadowedTokenCount: 5 }, 2000)
+  t.podat('compaction/end', { compactionId: 'a2', error: 'сеть' }, 3000)
+  const trevogi = t.stroki.filter((s) => !s.includes('подъём:'))
+  if (trevogi.length !== 3) return `тревог ${trevogi.length}, ожидалось 3`
+  const bez = trevogi.filter((s) => !s.includes('агент iskra'))
+  return bez.length === 0 || `без агента ${bez.length}: ${bez.join(' | ')}`
+})
+
+proba('🔴 В1: агент не назван → так и написано, а не тишина', () => {
+  const t = stend({})
+  t.podat('compaction/end', { compactionId: 'b1' }, 1000)
+  return t.stroki.at(-1).includes('агент НЕ НАЗВАН')
+    || 'строка без агента и без признания в этом: ' + t.stroki.at(-1)
+})
+
+proba('В1: id сжатия в строке — иначе её не сшить с журналом', () => {
+  const t = stend({ agent: 'iskra' })
+  t.podat('compaction/end', { compactionId: 'k-77' }, 1000)
+  return t.stroki.at(-1).includes('id k-77') || 'id нет: ' + t.stroki.at(-1)
+})
+
+proba('🔴 В1: маршрут помечен как «на момент чтения», а не как маршрут сжатия', () => {
+  const t = stend({ agent: 'iskra' }, 2000)
+  t.podat('compaction/end', { compactionId: 'k-78' }, 1000)
+  const s = t.stroki.at(-1)
+  if (!s.includes('маршрут сейчас p1')) return 'провайдера нет: ' + s
+  return /не обязательно тот, которым сжимали/.test(s)
+    || 'маршрут выдан за маршрут сжатия — это утверждение сверх замера: ' + s
 })
 
 console.log(`\nитог: ${vsego - bed} из ${vsego}`)

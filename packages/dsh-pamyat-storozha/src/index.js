@@ -10,9 +10,53 @@ export const Config = Schema.object({
   komandaStoka: Schema.string().default(''),
   /** Ступени тревоги по заполнению. Нудж держит свою (0.8) отдельно и независимо. */
   stupeni: Schema.array(Schema.number()).default([0.85, 0.9]),
-  /** Предел контекста в токенах. 0 — доля не считается, и это ГОВОРИТСЯ. */
+  /**
+   * ЗАПАСНОЙ предел контекста в токенах. Основной источник — платформа
+   * (см. oknoModeli): она объявляет окно вместе с маршрутом модели. Это число
+   * берётся, только если платформа окна не назвала, и в строке тревоги честно
+   * помечается как «платформой не подтверждено». 0 — доли нет вовсе, и это ГОВОРИТСЯ.
+   */
   predel: Schema.number().default(0),
+  /**
+   * Имя агента для строки тревоги (ворота В1). Умолчания НЕТ намеренно: угадать
+   * агента изнутри нечем, а подставить чужое имя — уверенно ответить не про тот узел.
+   * Пусто — в строке стоит «агент НЕ НАЗВАН», а не тишина.
+   */
+  agent: Schema.string().default(''),
 })
+
+/**
+ * Окно контекста берётся У ПЛАТФОРМЫ, а не числом в настройке (ворота В5).
+ *
+ * 🔴 ПОЧЕМУ НЕ КОНСТАНТА. Число в конфиге описывает модель НА МОМЕНТ ЗАПИСИ. Сменят
+ * модель — окно станет другим, а число останется прежним и разойдётся МОЛЧА: ступень
+ * 85% посчитается от чужой ёмкости и будет то ранней, то поздней, не сказав об этом.
+ * Платформа же объявляет окно вместе с маршрутом (событие request/context, поле
+ * contextWindow), и `session.requestContext()` отдаёт последнее известное.
+ *
+ * ⚠️ ГРАНИЦА: поле НЕОБЯЗАТЕЛЬНОЕ — «when advertised» в объявлении платформы. Значит
+ * «окна нет» — законное состояние, а не поломка, и различается от «спросить не смогли»:
+ * первое про модель, второе про нас. Оба возвращают est:false, но с РАЗНОЙ причиной,
+ * потому что чинить их надо разное.
+ */
+function oknoModeli(session) {
+  let rc
+  try {
+    if (typeof session?.requestContext !== 'function') {
+      return { est: false, prichina: 'у сессии нет requestContext() — спросить платформу нечем' }
+    }
+    rc = session.requestContext()
+  } catch (e) {
+    return { est: false, prichina: `спросить платформу не смог: ${e?.message ?? e}` }
+  }
+  if (!rc) return { est: false, prichina: 'платформа маршрута ещё не объявила (request/context не было)' }
+  const w = rc.contextWindow
+  if (!Number.isInteger(w) || w <= 0) {
+    return { est: false, model: rc.model, provider: rc.provider,
+             prichina: `модель ${rc.model ?? '?'} окна НЕ объявила (поле необязательное)` }
+  }
+  return { est: true, tokenov: w, model: rc.model, provider: rc.provider }
+}
 
 // 🔴 ЧТО РЕШАЕТ ИСХОД У КАЖДОЙ ТРЕВОГИ (ворота В9; класс «данные собраны и не участвуют
 // в вердикте»). Сегодня этот класс нашёлся у двух приборов сразу: курьер подъёма печатал
@@ -34,7 +78,10 @@ export const Config = Schema.object({
 export function apply(ctx, config) {
   const krik = (s) => ctx.logger?.info?.(`[${name}] ${s}`) ?? console.log(`[${name}] ${s}`)
 
-  krik(`подъём: ступени ${JSON.stringify(config.stupeni)} · предел ${config.predel} ток.`
+  krik(`подъём: ступени ${JSON.stringify(config.stupeni)}`
+     + ` · окно контекста спрашивается У ПЛАТФОРМЫ в момент каждого замера`
+     + ` (запасное число в настройке: ${config.predel || 'нет'})`
+     + ` · агент ${config.agent || 'НЕ НАЗВАН (настройка agent пуста)'}`
      + ` · сток ${config.komandaStoka ? 'задан' : 'НЕ задан (только журнал)'}`)
 
   // 🔴 ОДНО ОПОВЕЩЕНИЕ ПОВЕРХ, А НЕ ПО СЛУШАТЕЛЮ НА СОБЫТИЕ. Замер до кода: событий
@@ -62,7 +109,8 @@ export function apply(ctx, config) {
     if (t === 'compaction/prune') {
       schet.obrezok++
       otdat(krik, config, `ОБРЕЗКА без модели: вытеснено ${event.data?.shadowedTokenCount ?? '?'} ток.`
-        + ` · узлов ${event.data?.shadowedSeqs?.length ?? '?'} · расхода нет ПО ПРИРОДЕ (модель не звалась)`)
+        + ` · узлов ${event.data?.shadowedSeqs?.length ?? '?'} · расхода нет ПО ПРИРОДЕ (модель не звалась)`
+        + ` · id ${id ?? 'нет (обрезка его не несёт)'}`)
       return
     }
 
@@ -77,6 +125,7 @@ export function apply(ctx, config) {
     }
 
     const svodka = svodki.get(id)
+    const marshrut = oknoModeli(session)
     const r = rashod(svodka?.usage)
     const d = dlitelnost(nachala.get(id)?.ms, ms)
     if (vid === 'prinuditelnoe') schet.prinuditelnyh++; else schet.estestvennyh++
@@ -89,7 +138,12 @@ export function apply(ctx, config) {
       + ` · расход ${r.est ? r.vsego + ' ток.' : 'НЕ СООБЩЁН (это не ноль)'}`
       + ` · модель ${svodka?.model ?? 'не названа'}`
       + ` · длительность ${d === null ? 'не измерима (нет метки начала)' : (d / 1000).toFixed(1) + ' с'
-          + ' — между ЗАПИСЯМИ В ЖУРНАЛ, не работа модели'}`)
+          + ' — между ЗАПИСЯМИ В ЖУРНАЛ, не работа модели'}`
+      // 🔴 id — чтобы строку можно было сшить с журналом; провайдер — из МАРШРУТА СЕЙЧАС,
+      // и это помечено: сжатие могло идти другим маршрутом, если его между делом сменили.
+      + ` · id ${id ?? 'нет'}`
+      + ` · маршрут сейчас ${marshrut.provider ?? 'не объявлен'}`
+      + ` (маршрут НА МОМЕНТ ЧТЕНИЯ, не обязательно тот, которым сжимали)`)
 
     nachala.delete(id); svodki.delete(id)
   })
@@ -111,12 +165,42 @@ export function apply(ctx, config) {
                   bezRashoda: 0, bezDliny: 0, stupenej: 0 }
   let vzyato = 0
   const otdannye = new Set()
-  const uchest = (usage) => {
+  let skazanoORashozhdenii = false
+  let skazanoOSlepote = false
+  const uchest = (usage, session) => {
     const r = rashod(usage)
     if (!r.est) return
     vzyato = r.vsego
-    if (!config.predel) return
-    const dolya = vzyato / config.predel
+
+    // 🔴 ОКНО — У ПЛАТФОРМЫ, НАСТРОЙКА ЗАПАСНАЯ (ворота В5).
+    const o = oknoModeli(session)
+    const predel = o.est ? o.tokenov : config.predel
+    const istochnikOkna = o.est
+      ? `платформа, модель ${o.model ?? '?'}`
+      : `НАСТРОЙКА (платформой не подтверждена: ${o.prichina})`
+
+    // 🔴 РАСХОЖДЕНИЕ НАСТРОЙКИ С ПЛАТФОРМОЙ НАЗЫВАЕТСЯ ВСЛУХ, ОДИН РАЗ. Молчаливое
+    // «беру платформу, а число в конфиге игнорирую» оставило бы в профиле цифру, которая
+    // выглядит действующей и ни на что не влияет — тот же класс, что метка, пережившая
+    // свою правду. Кричим и продолжаем считать по платформе: она про модель СЕЙЧАС.
+    if (o.est && config.predel && config.predel !== o.tokenov && !skazanoORashozhdenii) {
+      skazanoORashozhdenii = true
+      otdat(krik, config, `⚠️ предел в настройке ${config.predel} ток. РАСХОДИТСЯ с окном,`
+        + ` объявленным платформой (${o.tokenov} ток., модель ${o.model ?? '?'}).`
+        + ` Считаю по платформе; число в настройке пора убрать или поправить.`)
+    }
+
+    // 🔴 НЕТ НИ ТОГО НИ ДРУГОГО — ЭТО СЛЕПОТА, И ОНА ГОВОРИТСЯ. Прежде здесь стоял тихий
+    // возврат: ступени молчали, и молчание было неотличимо от «заполнение низкое».
+    if (!predel) {
+      if (!skazanoOSlepote) {
+        skazanoOSlepote = true
+        krik(`ступени НЕ считаются: окна нет ни у платформы (${o.prichina}),`
+          + ` ни в настройке (predel 0). Моё молчание тут означает «не мерил», а не «мало занято».`)
+      }
+      return
+    }
+    const dolya = vzyato / predel
     const vzyaty = []
     for (const st of config.stupeni) {
       if (dolya >= st && !otdannye.has(st)) { otdannye.add(st); vzyaty.push(st) }
@@ -130,10 +214,11 @@ export function apply(ctx, config) {
       otdat(krik, config, `🔴 ЗАПОЛНЕНИЕ ${(dolya * 100).toFixed(0)}% — `
         + (vzyaty.length > 1 ? 'ступени ' : 'ступень ') + vzyaty.map((x) => x * 100 + '%').join(' и ')
         + (vzyaty.length > 1 ? ' перейдены ОДНИМ скачком' : '')
-        + ` (${vzyato} из ${config.predel} ток.) · счёт СВОЙ, с нуджем не сверяется`)
+        + ` (${vzyato} из ${predel} ток.; окно — ${istochnikOkna})`
+        + ` · счёт СВОЙ, с нуджем не сверяется`)
     }
   }
-  ctx.on('session/event', (_s, event) => {
+  ctx.on('session/event', (session, event) => {
     if (event?.type === 'turn/start') schet.hodov++
     // 🔴 СЧЁТ ОБНУЛЯЕТ ЛЮБОЕ СЖАТИЕ, А НЕ ТОЛЬКО СВОДОЧНОЕ (ворота В0, найдено 06.09.2026).
     // Было: сброс только на compaction/summary. Обрезка без модели (prune) контекст УРЕЗАЕТ
@@ -146,7 +231,7 @@ export function apply(ctx, config) {
     if (event?.type === 'compaction/summary' || event?.type === 'compaction/prune') {
       otdannye.clear(); vzyato = 0; return
     }
-    uchest(event?.data?.usage)
+    uchest(event?.data?.usage, session)
   })
 
   // ── СВОДКА: ОБЛАСТЬ, ЧИСЛИТЕЛЬ, ЗНАМЕНАТЕЛЬ, «НЕ ПРОВЕРЯЛ» (ворота В10, В11) ─────
@@ -184,10 +269,15 @@ export function apply(ctx, config) {
  * задана, сторож пишет в журнал и ГОВОРИТ об этом при подъёме, а не молчит.
  */
 function otdat(krik, config, tekst) {
-  krik(tekst)
+  // 🔴 АГЕНТ В КАЖДОЙ ТРЕВОГЕ (ворота В1), И ПОДСТАВЛЕН ОДНИМ МЕСТОМ. Собирать имя в
+  // каждой строке отдельно — значит однажды забыть его ровно в той строке, которую будут
+  // читать. Пусто — пишем «НЕ НАЗВАН», а не молчим: у сообщения без адреса отправитель
+  // выглядит известным, пока сообщений не станет два.
+  const kto = config.agent ? `агент ${config.agent}` : 'агент НЕ НАЗВАН (настройка agent пуста)'
+  krik(`${kto} · ${tekst}`)
   if (!config.komandaStoka) return
   try {
-    execFileSync('/bin/sh', ['-c', config.komandaStoka], { input: tekst, timeout: 5000 })
+    execFileSync('/bin/sh', ['-c', config.komandaStoka], { input: `${kto} · ${tekst}`, timeout: 5000 })
   } catch (e) {
     // 🔴 ОТКАЗ СТОКА НЕ ГЛУШИТ ОПОВЕЩЕНИЕ: в журнал оно уже ушло выше. Кричим о самом
     // отказе — молчаливо потерянный сток неотличим от «тревог не было».
