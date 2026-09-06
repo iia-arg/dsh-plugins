@@ -273,7 +273,14 @@ export function apply(ctx, config) {
   // вставку в другой. Ключ берётся из инварианта платформы. Проверить:
   //   grep -B 2 'readonly id: SessionId' <платформа>/@deepseek-ai/dsh-agent/lib/types/runtime-types.d.ts
   //   -> «The single identity shared with session»
-  const pendingRestore = new Set()
+  // 🔴 ХРАНИМ НЕ ФАКТ, А ВРЕМЯ КОМПАКТА (Б2, 06.09.2026). Прежде здесь стояло
+  // множество идентификаторов сессий: «восстановление взведено, да/нет». Этого мало.
+  // Восстановление берёт ПОСЛЕДНЮЮ сводку из памяти; если свежая не записалась
+  // (фильтр отклонил, модель промолчала, заход упал) — молча подставляется прежняя,
+  // и строка журнала при этом ОДИНАКОВАЯ. Замер 05.09: в сессию вставлена сводка на
+  // 4,5 часа СТАРШЕ компакта, и узнать это можно было только сверив два времени руками.
+  // Чтобы сравнить, нужно время события — его и держим.
+  const pendingRestore = new Map()
   ctx.on('session/event', (session, event) => {
     if (event?.type !== 'compaction/end') return
     if (event.data?.error !== undefined) {
@@ -282,7 +289,7 @@ export function apply(ctx, config) {
     }
     const sid = String(session?.id ?? '')
     if (!sid) { say('🔴 compaction/end без опознанной сессии — восстановление пропущено'); return }
-    pendingRestore.add(sid)
+    pendingRestore.set(sid, { kogda: event.time ?? Date.now(), compactionId: event.data?.compactionId ?? null })
     // 🔴 СЛЕД ПРИХОДА. Без него живая проба невозможна по построению: событие
     // придёт, вставка произойдёт, и доказать это будет нечем. Молчание механизма
     // неотличимо от его отсутствия — ровно то, из-за чего первая редакция пакета
@@ -325,6 +332,7 @@ export function apply(ctx, config) {
     // B: восстановление после компакта
     const sid = String(agent?.session?.id ?? agent?.id ?? '')
     if (config.restoreEnabled && pendingRestore.has(sid)) {
+      const povod = pendingRestore.get(sid)
       pendingRestore.delete(sid)
       // Сводку спрашиваем У ЯДРА ПО КЛАССУ, а не выбираем из общего списка:
       // список ограничен десятью свежими, и сводка старше десятой в него просто
@@ -334,8 +342,33 @@ export function apply(ctx, config) {
       if (!records) return decision
       const summary = records[0]
       if (summary) {
-        say(`восстановление после компакта вставлено в сессию ${sid}: запись ${summary.id ?? '?'}, ${String(summary.soderzhim).length} знаков`)
-        return inject(`Восстановление после компакта:\n${summary.soderzhim}`, [summary.id].filter((v) => v !== undefined && v !== null))
+        // 🔴 СВОДКА СТАРШЕ КОМПАКТА — ЭТО ПОДМЕНА, И ОНА ОБЯЗАНА БЫТЬ ВИДНА ТОМУ, КОМУ
+        // ПОДСТАВЛЯЮТ. Молчаливая подстановка прежней сводки хуже потери: потеря заметна
+        // отсутствием, подмена не заметна ничем — та же форма, та же длина, то же имя.
+        // Поэтому предупреждение идёт В САМ ВСТАВЛЯЕМЫЙ ТЕКСТ, а не только в журнал:
+        // журнал читает тот, кто разбирает потом, а текст читает агент СЕЙЧАС.
+        // ⚠️ Мы всё равно ВСТАВЛЯЕМ: без сводки заход остаётся вовсе без опоры, и это
+        // хуже старой опоры с честной пометкой. Запрет здесь лечил бы видимость.
+        const kogdaSvodka = Number(summary.sozdano ?? summary.kogda ?? NaN)
+        const kogdaKompakt = Number(povod?.kogda ?? NaN)
+        const oba = Number.isFinite(kogdaSvodka) && Number.isFinite(kogdaKompakt)
+        const starshe = oba && kogdaSvodka < kogdaKompakt
+        const otstavanie = oba ? Math.round((kogdaKompakt - kogdaSvodka) / 60000) : null
+        let shapka = 'Восстановление после компакта:'
+        if (starshe) {
+          shapka = '🔴 Восстановление после компакта: сводка НЕ ОТ ЭТОГО СЖАТИЯ.\n'
+            + `Она записана за ${otstavanie} мин до него — свежей в памяти нет.\n`
+            + 'Значит итог последнего отрезка в неё НЕ вошёл: считайте её опорой на прошлое,\n'
+            + 'а не рассказом о том, что было только что.'
+        } else if (!oba) {
+          shapka = '⚠️ Восстановление после компакта: возраст сводки СВЕРИТЬ НЕ УДАЛОСЬ\n'
+            + '(нет времени записи либо времени события) — это «не смотрели», а не «свежая».'
+        }
+        say(`восстановление после компакта вставлено в сессию ${sid}: запись ${summary.id ?? '?'}, `
+          + `${String(summary.soderzhim).length} знаков`
+          + (starshe ? ` — 🔴 СВОДКА СТАРШЕ КОМПАКТА на ${otstavanie} мин: свежей нет, подставлена прежняя`
+             : oba ? ' — сводка этого сжатия' : ' — ⚠️ возраст сводки не сверялся'))
+        return inject(`${shapka}\n${summary.soderzhim}`, [summary.id].filter((v) => v !== undefined && v !== null))
       }
       // 🔴 Событие было, а вставлять нечего. Ветка ТИХО проваливалась, и потраченное
       // взведение выглядело снаружи как «событие не приходило». Говорим вслух.
