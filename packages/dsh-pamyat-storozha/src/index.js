@@ -1,6 +1,6 @@
 import Schema from '@deepseek-ai/schemastery'
 import { execFileSync } from 'node:child_process'
-import { vidKonca, rashod, dlitelnost } from './vidy-szhatiya.js'
+import { vidKonca, rashod, davlenie, dlitelnost } from './vidy-szhatiya.js'
 
 export const name = 'dsh-pamyat-storozha'
 export const inject = []
@@ -167,8 +167,19 @@ export function apply(ctx, config) {
   const otdannye = new Set()
   let skazanoORashozhdenii = false
   let skazanoOSlepote = false
+  let skazanoOChuzhih = false
   const uchest = (usage, session) => {
-    const r = rashod(usage)
+    // 🔴 СТУПЕНИ — ПО ДАВЛЕНИЮ НА КОНТЕКСТ, А НЕ ПО РАСХОДУ ВЫЗОВА (06.09.2026).
+    // Заполнение — это то, что уходит В ЗАПРОС: вход плюс кэш, без выхода (формула
+    // платформы pressureFrom). Ответ модели попадёт в контекст только СЛЕДУЮЩИМ вызовом.
+    // Прежде здесь стоял полный расход — доля завышалась на весь выход, то есть ступень
+    // кричала раньше срока, и объяснить это было бы нечем.
+    const r = davlenie(usage)
+    if (r.chuzhie?.length && !skazanoOChuzhih) {
+      skazanoOChuzhih = true
+      krik(`⚠️ в usage поля, не объявленные платформой: ${r.chuzhie.join(', ')}.`
+        + ` В счёт НЕ берутся — молчаливый учёт неизвестного даёт число, за которое никто не отвечает.`)
+    }
     if (!r.est) return
     vzyato = r.vsego
 
@@ -211,7 +222,7 @@ export function apply(ctx, config) {
     // делался «одним оповещением поверх»: шум учит не читать.
     if (vzyaty.length) {
       schet.stupenej += vzyaty.length
-      otdat(krik, config, `🔴 ЗАПОЛНЕНИЕ ${(dolya * 100).toFixed(0)}% — `
+      otdat(krik, config, `🔴 ЗАПОЛНЕНИЕ ${(dolya * 100).toFixed(0)}% (вход+кэш, БЕЗ выхода) — `
         + (vzyaty.length > 1 ? 'ступени ' : 'ступень ') + vzyaty.map((x) => x * 100 + '%').join(' и ')
         + (vzyaty.length > 1 ? ' перейдены ОДНИМ скачком' : '')
         + ` (${vzyato} из ${predel} ток.; окно — ${istochnikOkna})`

@@ -1,5 +1,5 @@
 /** Стенд опознания видов сжатия. Первая проба — на заведомо исправном. */
-import { vidKonca, rashod, dlitelnost } from '../src/vidy-szhatiya.js'
+import { vidKonca, rashod, davlenie, neznakomyePolya, dlitelnost } from '../src/vidy-szhatiya.js'
 
 let vsego = 0, bed = 0
 const proba = (imya, telo) => {
@@ -34,8 +34,41 @@ proba('расход: пустой объект → тоже «не сообщё�
   return (r.est === false && r.vsego === null) || `пустой usage прочтён как ноль: ${JSON.stringify(r)}`
 })
 
-proba('расход: числа складываются', () =>
-  rashod({ input: 10, output: 5 }).vsego === 15 || 'сумма не сошлась')
+// ═══ АРИФМЕТИКА ПЛАТФОРМЫ, А НЕ ЗДРАВЫЙ СМЫСЛ ═══════════════════════════════════
+// 🔴 ПРЕЖНЯЯ ПРОБА ЗДЕСЬ ГОНЯЛА `{ input: 10, output: 5 }` — ФОРМУ, КОТОРОЙ У ПЛАТФОРМЫ
+// НЕТ. Объявленные имена — inputTokens/outputTokens/cacheReadTokens/cacheWriteTokens/
+// reasoningTokens. Проба зеленела потому, что старая функция складывала ЛЮБОЕ число, а
+// не потому, что считала верно: она отвечала на свой вопрос, а читалась как ответ на наш.
+// Форму подставных данных надо брать у объявления, иначе стенд стережёт выдумку.
+
+proba('расход: непересекающиеся вёдра складываются', () =>
+  rashod({ inputTokens: 10, outputTokens: 5, cacheReadTokens: 3, cacheWriteTokens: 2 }).vsego === 20
+  || 'сумма не сошлась')
+
+proba('🔴 расход: reasoning НЕ прибавляется — он внутри outputTokens', () => {
+  const bez = rashod({ inputTokens: 10, outputTokens: 20 }).vsego
+  const s = rashod({ inputTokens: 10, outputTokens: 20, reasoningTokens: 5 }).vsego
+  return (bez === 30 && s === 30) || `удвоение reasoning: без ${bez}, с ним ${s} (платформа: «without double-counting reasoning output»)`
+})
+
+proba('🔴 давление на контекст: вход и кэш, БЕЗ выхода', () => {
+  const d = davlenie({ inputTokens: 100, outputTokens: 400, cacheReadTokens: 50 }).vsego
+  return d === 150 || `давление ${d}, ожидалось 150: выход в контекст ЭТОГО вызова не входит`
+})
+
+proba('давление и расход — РАЗНЫЕ величины на одних данных', () => {
+  const u = { inputTokens: 100, outputTokens: 400, cacheReadTokens: 50 }
+  return (davlenie(u).vsego !== rashod(u).vsego)
+    || 'величины совпали — значит одна из них считается не тем, и подмена пройдёт молча'
+})
+
+proba('🔴 чужая форма usage → «не сообщён», а поля НАЗВАНЫ', () => {
+  const r = rashod({ input: 10, output: 5 })
+  if (r.est !== false) return `форма не платформы прочтена как годная: ${JSON.stringify(r)}`
+  const ch = neznakomyePolya({ input: 10, output: 5 })
+  return (ch.includes('input') && ch.includes('output'))
+    || `незнакомые поля не названы: ${JSON.stringify(ch)}`
+})
 
 proba('длительность: без метки начала → null, а не ноль', () =>
   dlitelnost(undefined, 5000) === null || 'отсутствие метки прочтено как нулевая длительность')

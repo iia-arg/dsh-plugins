@@ -41,7 +41,7 @@ proba('контроль: подъём называет себя и состоя�
 proba('естественное сжатие: вид, объём, модель — в одной строке', () => {
   const t = stend()
   t.podat('compaction/start', { compactionId: 'k1' }, 1000)
-  t.podat('compaction/summary', { compactionId: 'k1', shadowedTokenCount: 5000, model: 'm-1', usage: { input: 10, output: 4 } }, 3000)
+  t.podat('compaction/summary', { compactionId: 'k1', shadowedTokenCount: 5000, model: 'm-1', usage: { inputTokens: 10, outputTokens: 4 } }, 3000)
   t.podat('compaction/end', { compactionId: 'k1', turn: 7 }, 4500)
   const s = t.stroki.at(-1)
   return (s.includes('естественное') && s.includes('5000') && s.includes('m-1') && s.includes('14 ток.')) || `вышло: ${s}`
@@ -95,8 +95,8 @@ proba('ступень заполнения кричит один раз и на�
   // разом, и теперь про них одно сообщение «ступени 85% и 90%». Проба была написана под
   // текст, а не под смысл; смысл — «на одно событие одно сообщение» — сохранён.
   const t = stend({ predel: 1000, stupeni: [0.85, 0.9] })
-  t.podat('turn/end', { usage: { input: 870 } }, 1)   // 87% — только первая ступень
-  t.podat('turn/end', { usage: { input: 880 } }, 2)   // 88% — фронт уже пройден, молчим
+  t.podat('turn/end', { usage: { inputTokens: 870 } }, 1)   // 87% — только первая ступень
+  t.podat('turn/end', { usage: { inputTokens: 880 } }, 2)   // 88% — фронт уже пройден, молчим
   const kriki = t.stroki.filter((s) => s.includes('ЗАПОЛНЕНИЕ'))
   if (kriki.length !== 1) return `криков ${kriki.length}: ${kriki.join(' | ')}`
   if (!/ступень 85%/.test(kriki[0])) return 'не названа перейдённая ступень: ' + kriki[0]
@@ -106,7 +106,7 @@ proba('ступень заполнения кричит один раз и на�
 proba('В2: ОБЕ ступени одним скачком → ОДНО сообщение, а не два', () => {
   // 800 000 → 950 000 из ворот В2, в масштабе стенда: сразу 95% при ступенях 85 и 90.
   const t = stend({ predel: 1000, stupeni: [0.85, 0.9] })
-  t.podat('turn/end', { usage: { input: 950 } }, 1)
+  t.podat('turn/end', { usage: { inputTokens: 950 } }, 1)
   const kriki = t.stroki.filter((s) => s.includes('ЗАПОЛНЕНИЕ'))
   if (kriki.length !== 1) return `сообщений ${kriki.length}, ожидалось одно: ${kriki.join(' | ')}`
   if (!/85% и 90%/.test(kriki[0])) return 'в одном сообщении названы не обе ступени: ' + kriki[0]
@@ -122,17 +122,17 @@ proba('В0: после ОБРЕЗКИ ступень объявляется СН
   // Настоящая цена несброса — обратная: перейдённая ступень остаётся в «уже отданных», и
   // при ПОВТОРНОМ наборе того же объёма тревоги НЕ БУДЕТ. Теряется не ложный крик, а нужный.
   const t = stend({ predel: 1000, stupeni: [0.85] })
-  t.podat('turn/end', { usage: { input: 900 } }, 1)          // 90% — тревога №1
+  t.podat('turn/end', { usage: { inputTokens: 900 } }, 1)          // 90% — тревога №1
   t.podat('compaction/prune', { shadowedTokenCount: 800 }, 2) // обрезка: контекст урезан
-  t.podat('turn/end', { usage: { input: 100 } }, 3)          // 10% — тихо
-  t.podat('turn/end', { usage: { input: 900 } }, 4)          // снова 90% — тревога №2
+  t.podat('turn/end', { usage: { inputTokens: 100 } }, 3)          // 10% — тихо
+  t.podat('turn/end', { usage: { inputTokens: 900 } }, 4)          // снова 90% — тревога №2
   const kriki = t.stroki.filter((s) => s.includes('ЗАПОЛНЕНИЕ'))
   return kriki.length === 2 || `тревог ${kriki.length}, ожидалось 2 (после обрезки фронт обязан сброситься): ${kriki.join(' | ')}`
 })
 
 proba('🔴 предел не задан → доля не считается и ступени молчат', () => {
   const t = stend({ predel: 0 })
-  t.podat('turn/end', { usage: { input: 999999 } }, 1)
+  t.podat('turn/end', { usage: { inputTokens: 999999 } }, 1)
   return !t.stroki.some((s) => s.includes('ЗАПОЛНЕНИЕ')) || 'ступень сработала без объявленного предела'
 })
 
@@ -147,7 +147,7 @@ proba('ЗНАМЕНАТЕЛЬ: ходы считаются и стоят ряд�
   const { podat, api } = stend()
   for (let i = 0; i < 5; i++) podat('turn/start', {})
   podat('compaction/start', { compactionId: 'c1' }, 1000)
-  podat('compaction/summary', { compactionId: 'c1', shadowedTokenCount: 10, usage: { input_tokens: 1 } })
+  podat('compaction/summary', { compactionId: 'c1', shadowedTokenCount: 10, usage: { inputTokens: 1 } })
   podat('compaction/end', { compactionId: 'c1' }, 3000)
   const t = api.svodkaStorozha()
   if (!/сжатий 1 /.test(t)) return 'числа сжатий нет: ' + t.slice(0, 200)
@@ -200,7 +200,7 @@ proba('В5: окно берётся У ПЛАТФОРМЫ, а не из наст
   // настройка говорит 1000, платформа — 2000. При 1700 ток. доля по настройке была бы
   // 170% (тревога), по платформе — 85% (тревога тоже). Различает ПЕЧАТЬ: чьё окно взято.
   const t = stend({ predel: 1000, stupeni: [0.85] }, 2000)
-  t.podat('turn/end', { usage: { input: 1700 } }, 1)
+  t.podat('turn/end', { usage: { inputTokens: 1700 } }, 1)
   const k = t.stroki.filter((s) => s.includes('ЗАПОЛНЕНИЕ'))
   if (k.length !== 1) return `криков ${k.length}: ${k.join(' | ')}`
   if (!/из 2000 ток\./.test(k[0])) return 'считает не по окну платформы: ' + k[0]
@@ -209,7 +209,7 @@ proba('В5: окно берётся У ПЛАТФОРМЫ, а не из наст
 
 proba('В5: платформа окна НЕ объявила → берётся настройка, и это ПОМЕЧЕНО', () => {
   const t = stend({ predel: 1000, stupeni: [0.85] }, 'bez-okna')
-  t.podat('turn/end', { usage: { input: 900 } }, 1)
+  t.podat('turn/end', { usage: { inputTokens: 900 } }, 1)
   const k = t.stroki.filter((s) => s.includes('ЗАПОЛНЕНИЕ'))
   if (k.length !== 1) return `криков ${k.length}`
   if (!/из 1000 ток\./.test(k[0])) return 'запасное число не взято: ' + k[0]
@@ -219,8 +219,8 @@ proba('В5: платформа окна НЕ объявила → берётся
 
 proba('🔴 В5: настройка РАСХОДИТСЯ с окном платформы → сказано один раз', () => {
   const t = stend({ predel: 1000, stupeni: [0.85] }, 2000)
-  t.podat('turn/end', { usage: { input: 1700 } }, 1)
-  t.podat('turn/end', { usage: { input: 1900 } }, 2)
+  t.podat('turn/end', { usage: { inputTokens: 1700 } }, 1)
+  t.podat('turn/end', { usage: { inputTokens: 1900 } }, 2)
   const r = t.stroki.filter((s) => s.includes('РАСХОДИТСЯ'))
   if (r.length !== 1) return `сообщений о расхождении ${r.length}, ожидалось одно`
   return (/1000/.test(r[0]) && /2000/.test(r[0])) || 'названы не оба числа: ' + r[0]
@@ -228,7 +228,7 @@ proba('🔴 В5: настройка РАСХОДИТСЯ с окном плат�
 
 proba('🔴 нет ни окна платформы, ни настройки → СЛЕПОТА словами, не тишина', () => {
   const t = stend({ predel: 0 }, 'net')
-  t.podat('turn/end', { usage: { input: 999999 } }, 1)
+  t.podat('turn/end', { usage: { inputTokens: 999999 } }, 1)
   const sl = t.stroki.filter((s) => s.includes('ступени НЕ считаются'))
   if (sl.length !== 1) return `строк слепоты ${sl.length}, ожидалась одна (и один раз, а не на каждый ход)`
   if (!/не мерил/.test(sl[0])) return 'не сказано, что молчание значит «не мерил»: ' + sl[0]
@@ -237,7 +237,7 @@ proba('🔴 нет ни окна платформы, ни настройки →
 
 proba('🔴 у сессии нет requestContext() — это про НАС, и причина другая', () => {
   const t = stend({ predel: 0 }, 'bez-metoda')
-  t.podat('turn/end', { usage: { input: 10 } }, 1)
+  t.podat('turn/end', { usage: { inputTokens: 10 } }, 1)
   const sl = t.stroki.find((s) => s.includes('ступени НЕ считаются'))
   if (!sl) return 'слепота не названа вовсе'
   return /спросить платформу нечем/.test(sl)
@@ -277,6 +277,45 @@ proba('🔴 В1: маршрут помечен как «на момент чте
   if (!s.includes('маршрут сейчас p1')) return 'провайдера нет: ' + s
   return /не обязательно тот, которым сжимали/.test(s)
     || 'маршрут выдан за маршрут сжатия — это утверждение сверх замера: ' + s
+})
+
+
+// ── СТУПЕНИ СЧИТАЮТСЯ ПО ДАВЛЕНИЮ, А НЕ ПО РАСХОДУ ВЫЗОВА ────────────────────────
+// 🔴 Пара проб, потому что дефект ломается в обе стороны: возьмём расход вместо
+// давления — доля завысится на весь выход и ступень закричит раньше срока; возьмём
+// один только вход без кэша — занизится и ступень опоздает. Обе стороны своей пробой.
+
+proba('🔴 выход модели в заполнение НЕ входит: ступень молчит', () => {
+  // вход 500 из 1000 = 50%, выход 600. По расходу вышло бы 110% — ложная тревога.
+  const t = stend({ predel: 1000, stupeni: [0.85] })
+  t.podat('turn/end', { usage: { inputTokens: 500, outputTokens: 600 } }, 1)
+  const k = t.stroki.filter((s) => s.includes('ЗАПОЛНЕНИЕ'))
+  return k.length === 0 || `ступень закричала на выходе модели: ${k.join(' | ')}`
+})
+
+proba('кэш в заполнение ВХОДИТ: он занимает контекст так же, как вход', () => {
+  const t = stend({ predel: 1000, stupeni: [0.85] })
+  t.podat('turn/end', { usage: { inputTokens: 500, cacheReadTokens: 400 } }, 1)
+  const k = t.stroki.filter((s) => s.includes('ЗАПОЛНЕНИЕ'))
+  if (k.length !== 1) return `криков ${k.length}, ожидался 1 (500+400=900 из 1000)`
+  return /900 из 1000/.test(k[0]) || 'кэш не учтён: ' + k[0]
+})
+
+proba('🔴 величина названа в самой строке — «вход+кэш, БЕЗ выхода»', () => {
+  const t = stend({ predel: 1000, stupeni: [0.85] })
+  t.podat('turn/end', { usage: { inputTokens: 900 } }, 1)
+  const k = t.stroki.find((s) => s.includes('ЗАПОЛНЕНИЕ'))
+  return /вход\+кэш, БЕЗ выхода/.test(k)
+    || 'доля напечатана без имени величины — читающий примет её за расход: ' + k
+})
+
+proba('🔴 поля usage не из объявления платформы → названы вслух, один раз', () => {
+  const t = stend({ predel: 1000, stupeni: [0.85] })
+  t.podat('turn/end', { usage: { inputTokens: 100, vydumannoe: 7 } }, 1)
+  t.podat('turn/end', { usage: { inputTokens: 200, vydumannoe: 8 } }, 2)
+  const ch = t.stroki.filter((s) => s.includes('не объявленные платформой'))
+  if (ch.length !== 1) return `сообщений ${ch.length}, ожидалось одно`
+  return /vydumannoe/.test(ch[0]) || 'поле не названо поимённо: ' + ch[0]
 })
 
 console.log(`\nитог: ${vsego - bed} из ${vsego}`)
