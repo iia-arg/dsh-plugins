@@ -746,8 +746,15 @@ export function apply(ctx, config = {}) {
 
   // ── ВЫХОД: события сессии → сообщения в Telegram
   ctx.on('session/event', (session, event) => {
-    // 🔴 DEBUG 2026-08-18: все типы событий
-    log(`[event] type=${event.type} session.id=${session?.id} knownSessions=${[...sessionToChat.keys()].join('|')}`);
+    // 🔴 DEBUG 2026-08-18: все типы событий. assistant/chunk НЕ журналируем:
+    // это строка на КАЖДЫЙ потоковый чанк — 99% журнала (13 665 из ~13,8 тыс.
+    // строк события за 11 минут, замер 06.09). Длинный ответ упирается
+    // в предел journald (10 000 сообщений / 30 с на службу), и journald МОЛЧА
+    // выбросит хвост окна вместе с нужными строками (compaction/end и т.п.) —
+    // сторожа этого не увидят. Полное сообщение по-прежнему даёт assistant/message.
+    if (event.type !== 'assistant/chunk') {
+      log(`[event] type=${event.type} session.id=${session?.id} knownSessions=${[...sessionToChat.keys()].join('|')}`);
+    }
     const sid = String(session?.id ?? '');
     // 🔴 ИСХОД ЦЕЛИ СООБЩАЕМ САМИ. Доводчик при упоре в предел переводит цель в
     // blocked — и делает это молча: снаружи автономный цикл просто перестаёт
