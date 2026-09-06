@@ -94,5 +94,59 @@ proba('🔴 предел не задан → доля не считается и
   return !t.stroki.some((s) => s.includes('ЗАПОЛНЕНИЕ')) || 'ступень сработала без объявленного предела'
 })
 
+
+// ── СВОДКА: ОБЛАСТЬ, ЧИСЛИТЕЛЬ, ЗНАМЕНАТЕЛЬ (ворота В10, В11) ─────────────────────
+// 🔴 ЗАЧЕМ ПРОБЫ ИМЕННО ТАКИЕ. «Сжатий N» без «ходов M» не значит ничего: ноль тревог
+// при четырёх ходах и ноль при четырёхстах — разные новости. И «не проверял» обязано
+// печататься ВСЕГДА, иначе тишина читается как «всё хорошо», а означать может «туда не
+// смотрели». Обе пробы держат оба конца: числа считаются и границы называются.
+
+proba('ЗНАМЕНАТЕЛЬ: ходы считаются и стоят рядом с числом сжатий', () => {
+  const { podat, api } = stend()
+  for (let i = 0; i < 5; i++) podat('turn/start', {})
+  podat('compaction/start', { compactionId: 'c1' }, 1000)
+  podat('compaction/summary', { compactionId: 'c1', shadowedTokenCount: 10, usage: { input_tokens: 1 } })
+  podat('compaction/end', { compactionId: 'c1' }, 3000)
+  const t = api.svodkaStorozha()
+  if (!/сжатий 1 /.test(t)) return 'числа сжатий нет: ' + t.slice(0, 200)
+  if (!/ЗНАМЕНАТЕЛЬ: ходов 5/.test(t)) return 'знаменателя нет или он не тот: ' + t.slice(0, 300)
+  return true
+})
+
+proba('виды НЕ складываются: обрезка и провал считаются отдельно от сжатий', () => {
+  const { podat, api } = stend()
+  podat('compaction/prune', { shadowedTokenCount: 7 })
+  podat('compaction/end', { compactionId: 'x', error: 'сеть' }, 2000)
+  const c = api.schet()
+  if (c.estestvennyh !== 0) return 'обрезка или провал попали в естественные: ' + JSON.stringify(c)
+  if (c.obrezok !== 1 || c.provalov !== 1) return 'счёт видов не тот: ' + JSON.stringify(c)
+  return true
+})
+
+proba('ОБЛАСТЬ и «НЕ проверял» печатаются ВСЕГДА, даже при нуле событий', () => {
+  const { api } = stend()
+  const t = api.svodkaStorozha()
+  if (!/область: события ЭТОГО процесса/.test(t)) return 'области нет';
+  if (!/НЕ проверял:/.test(t)) return 'строки «не проверял» нет при нуле — тишина прочтётся как «всё хорошо»'
+  if (!/сжатий 0 /.test(t)) return 'ноль не назван числом'
+  if (!/ЗНАМЕНАТЕЛЬ: ходов 0/.test(t)) return 'знаменатель при нуле не напечатан'
+  return true
+})
+
+proba('сводка НЕ выдаёт себя за суточную: счёт живёт в памяти процесса', () => {
+  const { api } = stend()
+  const t = api.svodkaStorozha()
+  if (!/с подъёма процесса/.test(t)) return 'не сказано, с какого момента счёт'
+  if (!/НЕ за сутки/.test(t)) return 'не сказано, что это НЕ сутки — а спросят именно про сутки'
+  return true
+})
+
+proba('у ступеней заполнения знаменателя НЕТ, и это названо', () => {
+  const { api } = stend()
+  const t = api.svodkaStorozha()
+  if (!/у них знаменателя НЕТ/.test(t)) return 'про отсутствие знаменателя у ступеней не сказано'
+  return true
+})
+
 console.log(`\nитог: ${vsego - bed} из ${vsego}`)
 process.exit(bed ? 1 : 0)
