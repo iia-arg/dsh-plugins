@@ -29,7 +29,8 @@ function stend(nastrojki = {}, marshrut = 'net') {
         : (typeof marshrut === 'number'
             ? { provider: 'p1', model: 'm-okno', contextWindow: marshrut }
             : { provider: 'p1', model: 'm-bez-okna' }) }
-  const podat = (type, data, timestamp) => slushateli.forEach((f) => f(sessiya, { type, data, timestamp }))
+  const podat = (type, data, timestamp, sid) => slushateli.forEach((f) =>
+    f(sid ? { ...sessiya, id: sid } : sessiya, { type, data, timestamp }))
   return { stroki, podat, api }
 }
 
@@ -316,6 +317,42 @@ proba('🔴 поля usage не из объявления платформы →
   const ch = t.stroki.filter((s) => s.includes('не объявленные платформой'))
   if (ch.length !== 1) return `сообщений ${ch.length}, ожидалось одно`
   return /vydumannoe/.test(ch[0]) || 'поле не названо поимённо: ' + ch[0]
+})
+
+
+// ── ОХВАТ ПО СЕССИЯМ (ворота В4 в исполнимой форме) ──────────────────────────────
+// 🔴 Пара проб: разряд обязан и СЧИТАТЬ виденное, и НАЗЫВАТЬ, чего он не видит.
+// Без второго «видел 1» прочтётся как «на машине один агент» — а это про сессии
+// ЭТОГО процесса, и чужих агентов сторож не видит ни одним событием.
+
+proba('В4: сессии считаются, и каждая названа с числом событий', () => {
+  const t = stend()
+  t.podat('turn/start', {}, 1, 'seans-a')
+  t.podat('turn/start', {}, 2, 'seans-a')
+  t.podat('turn/start', {}, 3, 'seans-b')
+  const spisok = t.api.sessii()
+  if (spisok.length !== 2) return `сессий ${spisok.length}, ожидалось 2: ${JSON.stringify(spisok)}`
+  const a = spisok.find((x) => x.id === 'seans-a')
+  if (!a || a.sobytij !== 2) return 'события сессии сосчитаны не поштучно: ' + JSON.stringify(spisok)
+  const sv = t.api.svodkaStorozha()
+  return (/ОХВАТ ПО СЕССИЯМ: видел 2/.test(sv) && /seans-a/.test(sv) && /seans-b/.test(sv))
+    || 'в сводке нет охвата или имён: ' + sv.slice(-200)
+})
+
+proba('🔴 В4: сказано, что это СЕССИИ, а не агенты машины', () => {
+  const t = stend()
+  t.podat('turn/start', {}, 1, 'seans-a')
+  const sv = t.api.svodkaStorozha()
+  if (!/НЕ агенты машины/.test(sv)) {
+    return 'разряд не оговаривает область — «видел 1» прочтётся как «на машине один агент»'
+  }
+  return /чужих агентов сторож не видит/.test(sv) || 'не сказано, что чужих не видно вовсе'
+})
+
+proba('охват печатается и при НУЛЕ событий', () => {
+  const sv = stend().api.svodkaStorozha()
+  return /ОХВАТ ПО СЕССИЯМ: видел 0 \(ни одной/.test(sv)
+    || 'при нуле строки нет — молчание прочтётся как «всё видно»: ' + sv.slice(-160)
 })
 
 console.log(`\nитог: ${vsego - bed} из ${vsego}`)
