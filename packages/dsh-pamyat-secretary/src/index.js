@@ -144,6 +144,21 @@ export function sozdatOtbroshennoe(config, krik) {
   };
 }
 
+export function sozdatSohranenieProzy(config, krik) {
+  return ({ tekst, pochemu }) => {
+    const shapka = [
+      '# сырой ответ модели при ВЫБОРЕ ТЕМ: не JSON-массив (proza)',
+      '# причина: ' + (pochemu ?? '?'),
+      '# когда: ' + new Date().toISOString(),
+      '# темы отсюда НЕ разобраны: разобрать рукой или повторить выбор',
+      '', '',
+    ].join('\n');
+    const imya = sohranitOtklonennoe(config.putOtklonennyh, 'proza', shapka + String(tekst ?? ''));
+    krik('[proza] сырой ответ сохранён: ' + imya);
+    return imya;
+  };
+}
+
 export function sozdatZapisatel(pamyat, config, krik) {
   return (zn) => {
     try {
@@ -431,6 +446,7 @@ export function apply(ctx, config = {}) {
           zapisat: sozdatZapisatel(pamyat, config, krik),
           zadanie: sozdatZadanie(config, krik),
           otbroshennoe: sozdatOtbroshennoe(config, krik),
+          sohranitProzu: sozdatSohranenieProzy(config, krik),
         }).catch((e) => krik('дистилляция оборвалась: ' + (e?.message ?? e)));
       }
     } catch (e) {

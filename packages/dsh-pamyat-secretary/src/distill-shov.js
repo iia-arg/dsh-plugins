@@ -12,7 +12,7 @@
  */
 import { zapisi_po_seq, sobrat_transkript } from './chtenie-zhurnala.js';
 import { vzyat_klyuch, sprosit, razobrat_massiv } from './distillyaciya.js';
-import { VYBOR_TEM, STATYA, NET_RELEVANTNOGO, KLASSY } from './promty.js';
+import { VYBOR_TEM, KONEC_VYBORA, STATYA, NET_RELEVANTNOGO, KLASSY } from './promty.js';
 
 /**
  * Достать список затенённых seq из данных события.
@@ -38,7 +38,7 @@ export function zatenennye(dannye) {
 const zahody_po_srezu = new Map();
 const PAMYAT_SREZOV = 20;   // помним последние; иначе счёт рос бы весь век процесса
 
-export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, krik, zapisat, zadanie, otbroshennoe }) {
+export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, krik, zapisat, zadanie, otbroshennoe, sohranitProzu }) {
   const { seqs, tokenov } = zatenennye(dannye);
   const kluch_sreza = seqs.length ? `${seansId}#${seqs[0]}-${seqs[seqs.length - 1]}` : null;
   if (kluch_sreza) {
@@ -139,7 +139,7 @@ export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, k
   };
 
   const s1 = await sprosit({ klyuch: k.klyuch, model: nastrojka.model, system: VYBOR_TEM,
-                             tekst: transkript, maxTokens: nastrojka.maxTokenovTem, ...(adres ? { adres } : {}) });
+                             tekst: transkript + '\n\n' + KONEC_VYBORA, maxTokens: nastrojka.maxTokenovTem, ...(adres ? { adres } : {}) });
   // 🔴 ПОСЛЕ ПЕРВОГО ВЫЗОВА ЛЮБОЙ РАННИЙ ВОЗВРАТ НЕСЁТ РАСХОД. Вызов состоялся и
   // оплачен, чем бы он ни кончился; вернуть исход без расхода значит показать заход
   // бесплатным ровно там, где деньги потрачены впустую.
@@ -150,7 +150,14 @@ export async function distillirovat({ putZhurnala, dannye, seansId, nastrojka, k
   }
   uchest(s1.usage);
   const m = razobrat_massiv(s1.tekst);
-  if (!m.godno) { krik('темы не разобраны: ' + m.pochemu); return { ishod: 'temy-ne-razobrany', rashod }; }
+  if (!m.godno) {
+    krik('[proza] темы не разобраны — ответ модели НЕ JSON-массив: ' + m.pochemu);
+    if (typeof sohranitProzu === 'function') {
+      try { sohranitProzu({ tekst: s1.tekst, pochemu: m.pochemu }); }
+      catch (e) { krik('🔴 сырой ответ [proza] НЕ сохранён: ' + (e?.message ?? e)); }
+    }
+    return { ishod: 'proza', rashod };
+  }
 
   const vsegoTem = m.spisok.length;
   if (vsegoTem === 0) { krik('дистилляция: тем не выбрано — по этому срезу знаний нет'); return { ishod: 'temy-pusty', tem: 0, rashod }; }
