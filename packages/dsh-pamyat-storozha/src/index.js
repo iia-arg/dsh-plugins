@@ -117,18 +117,35 @@ export function apply(ctx, config) {
     vzyato = r.vsego
     if (!config.predel) return
     const dolya = vzyato / config.predel
+    const vzyaty = []
     for (const st of config.stupeni) {
-      if (dolya >= st && !otdannye.has(st)) {
-        otdannye.add(st)
-        schet.stupenej++
-        otdat(krik, config, `🔴 ЗАПОЛНЕНИЕ ${(dolya * 100).toFixed(0)}% — ступень ${st * 100}%`
-          + ` (${vzyato} из ${config.predel} ток.) · счёт СВОЙ, с нуджем не сверяется`)
-      }
+      if (dolya >= st && !otdannye.has(st)) { otdannye.add(st); vzyaty.push(st) }
+    }
+    // 🔴 ОДНО СООБЩЕНИЕ ПРО ВСЕ ПЕРЕЙДЁННЫЕ СТУПЕНИ, А НЕ ПО СООБЩЕНИЮ НА КАЖДУЮ (В2).
+    // Один скачок расхода может перешагнуть обе ступени разом (800 000 → 950 000). Прежняя
+    // редакция кричала дважды об ОДНОМ событии — и это ровно та беда, ради которой сторож
+    // делался «одним оповещением поверх»: шум учит не читать.
+    if (vzyaty.length) {
+      schet.stupenej += vzyaty.length
+      otdat(krik, config, `🔴 ЗАПОЛНЕНИЕ ${(dolya * 100).toFixed(0)}% — `
+        + (vzyaty.length > 1 ? 'ступени ' : 'ступень ') + vzyaty.map((x) => x * 100 + '%').join(' и ')
+        + (vzyaty.length > 1 ? ' перейдены ОДНИМ скачком' : '')
+        + ` (${vzyato} из ${config.predel} ток.) · счёт СВОЙ, с нуджем не сверяется`)
     }
   }
   ctx.on('session/event', (_s, event) => {
     if (event?.type === 'turn/start') schet.hodov++
-    if (event?.type === 'compaction/summary') { otdannye.clear(); vzyato = 0; return }
+    // 🔴 СЧЁТ ОБНУЛЯЕТ ЛЮБОЕ СЖАТИЕ, А НЕ ТОЛЬКО СВОДОЧНОЕ (ворота В0, найдено 06.09.2026).
+    // Было: сброс только на compaction/summary. Обрезка без модели (prune) контекст УРЕЗАЕТ
+    // так же, а счёт после неё продолжал расти со старого значения — то есть заполнение
+    // оставалось завышенным, и ступень могла сработать на объёме, которого в контексте уже нет.
+    // Ворота В0 писались про другой источник (tokenMeter.measure() завышен после сжатия), но
+    // корень тот же: ОПОРА УСТАРЕЛА ПОСЛЕ СЖАТИЯ. У нас measure() не берётся вовсе — считаем
+    // по usage событий, — поэтому дефект #5632 нас не касается по построению; а вот его
+    // близнец по prune был и лечится тем же сбросом.
+    if (event?.type === 'compaction/summary' || event?.type === 'compaction/prune') {
+      otdannye.clear(); vzyato = 0; return
+    }
     uchest(event?.data?.usage)
   })
 
