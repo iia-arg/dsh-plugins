@@ -96,7 +96,7 @@ await proba('ГЛАВНОЕ: запись с объявленным секрет
     { soderzhim: 'password = Xk9#mQ2$vL8p' },
   ]);
   const f = put('sekret.jsonl');
-  const it = await vyvezti({ baza: b, fajl: f, yadro: YADRO });
+  const it = await vyvezti({ otkuda: 'стенд', baza: b, fajl: f, yadro: YADRO });
   if (it.zaderzhano !== 1) throw new Error('задержано ' + it.zaderzhano + ', ожидалась 1');
   if (it.vyvezeno !== 1) throw new Error('вывезено ' + it.vyvezeno + ', ожидалась 1');
   const telo = readFileSync(f, 'utf8');
@@ -110,7 +110,7 @@ await proba('все ЧЕТЫРЕ запирающих класса задерж�
     { soderzhim: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk' }, // strukturnyj:JWT
     { soderzhim: 'просто заметка' },
   ]);
-  const it = await vyvezti({ baza: b, fajl: put('chetyre.jsonl'), yadro: YADRO });
+  const it = await vyvezti({ otkuda: 'стенд', baza: b, fajl: put('chetyre.jsonl'), yadro: YADRO });
   if (it.zaderzhano !== 3) throw new Error('задержано ' + it.zaderzhano + ' из трёх секретных; классы: ' + it.zaderzhannye.map((z) => z.klass).join(', '));
 });
 
@@ -124,7 +124,7 @@ await proba('НЕЗНАКОМЫЙ класс ОСТАНАВЛИВАЕТ ВЕСЬ
   const b = baza('neizv', [{ soderzhim: 'тут ЧУЖОЕ слово' }, { soderzhim: 'чистая запись' }]);
   const fajl = put('neizv.jsonl');
   let upalo = null;
-  try { await vyvezti({ baza: b, fajl, yadro: podstavnoe }); }
+  try { await vyvezti({ otkuda: 'стенд', baza: b, fajl, yadro: podstavnoe }); }
   catch (e) { upalo = e; }
   if (!upalo) throw new Error('вывоз НЕ остановился на незнакомом классе — прошёл целиком');
   if (upalo.code !== 'VYVOZ_NEZNAKOMYJ_KLASS') throw new Error('код отказа ' + upalo.code);
@@ -142,14 +142,14 @@ await proba('ПОМЕЧАЮЩИЙ класс ВЫВОЗИТСЯ (пометка 
   `);
   const b = baza('pom', [{ soderzhim: 'запись, где есть ЭНТРОПИЯ' }]);
   const f = put('pom.jsonl');
-  const it = await vyvezti({ baza: b, fajl: f, yadro: podstavnoe });
+  const it = await vyvezti({ otkuda: 'стенд', baza: b, fajl: f, yadro: podstavnoe });
   if (it.vyvezeno !== 1) throw new Error('вывезено ' + it.vyvezeno);
   if (!readFileSync(f, 'utf8').includes('pometka_filtra')) throw new Error('пометка не названа в файле');
 });
 
 await proba('ОТЧЁТ НЕ ВЫНОСИТ СОДЕРЖИМОЕ задержанной записи', async () => {
   const b = baza('otch', [{ soderzhim: 'password = SuperTajnoe#42xyz' }]);
-  const it = await vyvezti({ baza: b, fajl: put('otch.jsonl'), yadro: YADRO });
+  const it = await vyvezti({ otkuda: 'стенд', baza: b, fajl: put('otch.jsonl'), yadro: YADRO });
   const t = otchyot(it);
   if (t.includes('SuperTajnoe')) throw new Error('🔴 отчёт вынес содержимое');
   if (!t.includes('пропущена')) throw new Error('отчёт молчит о задержке');
@@ -157,13 +157,13 @@ await proba('ОТЧЁТ НЕ ВЫНОСИТ СОДЕРЖИМОЕ задержа�
 
 await proba('числа в отчёте АБСОЛЮТНЫЕ, а не доля (условие В13)', async () => {
   const b = baza('chisla', [{ soderzhim: 'чисто' }, { soderzhim: 'password = Xk9#mQ2$vL8p' }]);
-  const t = otchyot(await vyvezti({ baza: b, yadro: YADRO }));
+  const t = otchyot(await vyvezti({ otkuda: 'стенд', baza: b, yadro: YADRO }));
   if (!/всего 2, вывезено 1, задержано 1/.test(t)) throw new Error('нет абсолютных чисел: ' + t.split('\n')[0]);
 });
 
 await proba('«задержано 0» НЕ выдаётся за «секретов нет»', async () => {
   const b = baza('nol', [{ soderzhim: 'чистая запись' }]);
-  const t = otchyot(await vyvezti({ baza: b, yadro: YADRO }));
+  const t = otchyot(await vyvezti({ otkuda: 'стенд', baza: b, yadro: YADRO }));
   if (!t.includes('а НЕ «секретов нет»')) throw new Error('ноль подан без границы');
 });
 
@@ -293,7 +293,7 @@ await proba('номера у принимающей базы СВОИ, а не �
   db0.exec("INSERT INTO zapisi (id, agent, klass, soderzhim, istochnik, sozdano) VALUES (500,'a','zametka','знание','n#1',9)");
   db0.close();
   const f = put('nom.jsonl');
-  await vyvezti({ baza: ishod, fajl: f, yadro: YADRO });
+  await vyvezti({ otkuda: 'стенд', baza: ishod, fajl: f, yadro: YADRO });
   const pustaya = baza('nom-v', []);
   await vvezti({ baza: pustaya, fajl: f, yadro: YADRO });
   const db = new DatabaseSync(pustaya, { readOnly: true });
@@ -322,7 +322,7 @@ await proba('отчёт и файл называют РЕДАКЦИЮ пакет
   if (VERSIYA_PAKETA !== manifest.version) throw new Error('в коде ' + VERSIYA_PAKETA + ', в манифесте ' + manifest.version);
   const b = baza('versiya', [{ soderzhim: 'знание' }]);
   const f = put('versiya.jsonl');
-  const t = otchyot(await vyvezti({ baza: b, fajl: f, yadro: YADRO }));
+  const t = otchyot(await vyvezti({ otkuda: 'стенд', baza: b, fajl: f, yadro: YADRO }));
   if (!t.includes(manifest.version)) throw new Error('отчёт не называет редакцию');
   if (!readFileSync(f, 'utf8').includes('chem_vyvezeno')) throw new Error('файл вывоза не называет, чем вывезен');
 });
@@ -334,7 +334,7 @@ await proba('СХЕМА УШЛА ВПЕРЁД: поле есть в базе, в
   db.exec('ALTER TABLE zapisi ADD COLUMN pole_iz_budushchego TEXT DEFAULT NULL');
   db.close();
   const fajl = put('novoe-pole.jsonl');
-  const it = await vyvezti({ baza: b, fajl, yadro: YADRO });
+  const it = await vyvezti({ otkuda: 'стенд', baza: b, fajl, yadro: YADRO });
   if (!(it.polya_neizvestnye_vyvozu ?? []).includes('pole_iz_budushchego')) {
     throw new Error('поле не названо: ' + JSON.stringify(it.polya_neizvestnye_vyvozu));
   }
@@ -413,9 +413,9 @@ await proba('В2: две записи РАЗНЫХ агентов с одним 
   const b = baza('dva-agenta');
   const db = new DatabaseSync(b);
   db.prepare('INSERT INTO zapisi (agent, klass, soderzhim, istochnik, sozdano) VALUES (?,?,?,?,?)')
-    .run('iskra', 'zametka', 'знание Искры', 'sess#1', 5000);
+    .run('agent-a', 'zametka', 'знание первого агента', 'sess#1', 5000);
   db.prepare('INSERT INTO zapisi (agent, klass, soderzhim, istochnik, sozdano) VALUES (?,?,?,?,?)')
-    .run('petrovich', 'zametka', 'знание Петровича', 'sess#1', 5000);
+    .run('agent-b', 'zametka', 'знание второго агента', 'sess#1', 5000);
   db.close();
   const f = put('dva.jsonl');
   await vyvezti({ baza: b, fajl: f, otkuda: 'proba', yadro: YADRO, krik: () => {} });
@@ -495,14 +495,14 @@ console.log('\n═══ В9: ОТБОР И ОБЁРТКА ПОД РУКУ ═�
 
 await proba('В9: отбор берёт ТОЛЬКО подходящее, и условия видны в отчёте', async () => {
   const b = baza('otbor', [
-    { agent: 'iskra', klass: 'zametka', soderzhim: 'знание Искры', sozdano: 100 },
-    { agent: 'petrovich', klass: 'zametka', soderzhim: 'знание Петровича', sozdano: 200 },
-    { agent: 'iskra', klass: 'svodka', soderzhim: 'сводка Искры', sozdano: 300 },
+    { agent: 'agent-a', klass: 'zametka', soderzhim: 'знание первого агента', sozdano: 100 },
+    { agent: 'agent-b', klass: 'zametka', soderzhim: 'знание второго агента', sozdano: 200 },
+    { agent: 'agent-a', klass: 'svodka', soderzhim: 'сводка первого агента', sozdano: 300 },
   ]);
-  const it = await vyvezti({ baza: b, otkuda: 'proba', yadro: YADRO, otbor: { agent: 'iskra' }, krik: () => {} });
+  const it = await vyvezti({ baza: b, otkuda: 'proba', yadro: YADRO, otbor: { agent: 'agent-a' }, krik: () => {} });
   if (it.vsego !== 2) return `взято ${it.vsego}, ждали 2 — отбор по агенту не применился`;
   const o = otchyot(it);
-  if (!o.includes('отбор: agent=iskra')) return 'условия отбора не названы в отчёте';
+  if (!o.includes('отбор: agent=agent-a')) return 'условия отбора не названы в отчёте';
   const bez = await vyvezti({ baza: b, otkuda: 'proba', yadro: YADRO, krik: () => {} });
   if (bez.vsego !== 3) return `без отбора взято ${bez.vsego}, ждали 3`;
   // Пустой отбор ОБЪЯВЛЯЕТСЯ: «взято всё» и «отбор не сработал» дают одинаковый файл
@@ -529,7 +529,7 @@ await proba('🔴 В9: отбор по полю, которого в базе Н
   db.close();
   // Тихий пропуск условия вывез бы БОЛЬШЕ, чем просили, и отчёт сказал бы «отбор: agent=…»
   return await dolzhnoUpast('VYVOZ_OTBOR_NET_POLYA',
-    () => vyvezti({ baza: b, fajl: put('ne-dolzhen.jsonl'), otkuda: 'proba', yadro: YADRO, otbor: { agent: 'iskra' }, krik: () => {} }));
+    () => vyvezti({ baza: b, fajl: put('ne-dolzhen.jsonl'), otkuda: 'proba', yadro: YADRO, otbor: { agent: 'agent-a' }, krik: () => {} }));
 });
 
 await proba('🔴 В9: обёртка разводит КОДАМИ отказ по предмету (1) и слепоту (2)', async () => {
@@ -541,14 +541,14 @@ await proba('🔴 В9: обёртка разводит КОДАМИ отказ �
     catch (e) { return e.status; }
   };
   const b = baza('obertka', [{ soderzhim: 'знание' }]);
-  const norma = kod(['--baza', b, '--yadro', YADRO]);
+  const norma = kod(['--baza', b, '--yadro', YADRO, '--otkuda', 'стенд']);
   if (norma !== 0) return `исправный вызов дал код ${norma}, ждали 0`;
   // неразобранное время: пустой отбор был бы неотличим от «подходящего нет»
-  const slepota = kod(['--baza', b, '--yadro', YADRO, '--s', 'вчера']);
+  const slepota = kod(['--baza', b, '--yadro', YADRO, '--otkuda', 'стенд', '--s', 'вчера']);
   if (slepota !== 2) return `неразобранное время дало код ${slepota}, ждали 2 (слепота)`;
-  const bez_bazy = kod(['--yadro', YADRO]);
+  const bez_bazy = kod(['--yadro', YADRO, '--otkuda', 'стенд']);
   if (bez_bazy !== 2) return `вызов без --baza дал код ${bez_bazy}, ждали 2`;
-  const dvazhdy = kod(['--baza', b, '--baza', b, '--yadro', YADRO]);
+  const dvazhdy = kod(['--baza', b, '--baza', b, '--yadro', YADRO, '--otkuda', 'стенд']);
   if (dvazhdy !== 2) return `ключ дважды дал код ${dvazhdy}, ждали 2 — молчаливый выбор одного из двух`;
   return true;
 });
@@ -558,7 +558,7 @@ await proba('В9: без --fajl обёртка НИЧЕГО не создаёт 
   const skript = join(zdes, '..', 'bin', 'vyvoz-pamyati.mjs');
   const b = baza('proba-suhaya', [{ soderzhim: 'знание' }]);
   const bylo = readdirSync(katalog).length;
-  const out = execFileSync('node', [skript, '--baza', b, '--yadro', YADRO], { encoding: 'utf8' });
+  const out = execFileSync('node', [skript, '--baza', b, '--yadro', YADRO, '--otkuda', 'стенд'], { encoding: 'utf8' });
   if (readdirSync(katalog).length !== bylo) return 'без --fajl что-то создано в каталоге';
   return out.includes('это была ПРОБА') || `нет строки о пробе: ${out.slice(0, 200)}`;
 });
@@ -581,6 +581,70 @@ await proba('Э8.5: proverka НЕ вывозится, и причина запи
   const p = NE_VYVOZITSYA.proverka;
   if (!p) return 'proverka не значится в НЕ_ВЫВОЗИТСЯ — следующий сочтёт, что её забыли';
   if (!/журнал/.test(p)) return 'причина не называет журнал — а решение держится именно на том, что журнал не переносится';
+  return true;
+});
+
+// ── «ОТКУДА» ОБЯЗАТЕЛЕН (решение координатора + условие автора предмета, 06.09.2026) ──
+// 🔴 ЗАЧЕМ ПАРЫ, А НЕ ОДИНОЧНЫЕ ПРОБЫ. Одна проба «без «откуда» отказывает» узаконила бы
+// и вырожденный предмет, который отказывает ВСЕГДА. Вторая половина пары стережёт именно
+// это: с названным источником вывоз обязан пройти и файл обязан появиться.
+
+console.log('\n═══ «ОТКУДА»: ОБЯЗАТЕЛЕН ЯВНО, УМОЛЧАНИЯ НЕТ ═══');
+
+await proba('🔴 вывоз БЕЗ «откуда» → отказ VYVOZ_NET_OTKUDA, и файла НЕ появляется', async () => {
+  const b = baza('bez-otkuda', [{ soderzhim: 'знание' }]);
+  const f = put('bez-otkuda.jsonl');
+  await dolzhnoUpast('VYVOZ_NET_OTKUDA', () => vyvezti({ baza: b, fajl: f, yadro: YADRO }));
+  // 🔴 ОТКАЗ ПРОВЕРЯЕТСЯ СЛЕДОМ НА ДИСКЕ, А НЕ ТОЛЬКО КОДОМ: «бросило» и «ничего не
+  // создало» — разные утверждения, и второе здесь и есть предмет.
+  if (existsSync(f)) return 'файл создан, хотя источник не назван';
+  return true;
+});
+
+await proba('пустая строка и пробелы — тоже НЕ имя источника', async () => {
+  const b = baza('pustoe-otkuda', [{ soderzhim: 'знание' }]);
+  await dolzhnoUpast('VYVOZ_NET_OTKUDA', () => vyvezti({ otkuda: '', baza: b, yadro: YADRO }));
+  await dolzhnoUpast('VYVOZ_NET_OTKUDA', () => vyvezti({ otkuda: '   ', baza: b, yadro: YADRO }));
+  return true;
+});
+
+await proba('ПАРА к отказу: с названным источником вывоз проходит и имя попадает в шапку', async () => {
+  const b = baza('s-otkuda', [{ soderzhim: 'знание' }]);
+  const f = put('s-otkuda.jsonl');
+  await vyvezti({ otkuda: 'uzel-a', baza: b, fajl: f, yadro: YADRO });
+  if (!existsSync(f)) return 'файла нет при названном источнике';
+  const shapka = JSON.parse(readFileSync(f, 'utf8').split('\n')[0]);
+  if (shapka.otkuda !== 'uzel-a') return `в шапке otkuda=${JSON.stringify(shapka.otkuda)}, а называли «uzel-a»`;
+  return true;
+});
+
+await proba('🔴 ПОРЯДОК: договор ядра проверяется РАНЬШЕ отсутствия «откуда»', async () => {
+  // Порядок намеренный: договор ядра — про безопасность (нечем отличить секрет),
+  // «откуда» — про пригодность файла на той стороне. Если порядок перевернуть, все
+  // пробы на отказ ядра начнут мерить отсутствие «откуда» и станут зелёными не про то.
+  const b = baza('poryadok', [{ soderzhim: 'знание' }]);
+  await dolzhnoUpast('VYVOZ_DOGOVOR_YADRA', () => vyvezti({ baza: b, yadro: put('takogo-yadra-net.mjs') }));
+  return true;
+});
+
+await proba('🔴 ВВОЗ файла БЕЗ «откуда» в шапке → отказ, база НЕ тронута', async () => {
+  const b = baza('vvoz-bez-otkuda', []);
+  const f = put('vvoz-bez-otkuda.jsonl');
+  writeFileSync(f, [JSON.stringify({ vyvoz: 'dsh-pamyat', versiya_shemy: VERSIYA_SHEMY, polya: POLYA, kogda: 1, zapisej: 1 }),
+    JSON.stringify({ agent: 'a', klass: 'zametka', soderzhim: 'чужое знание', istochnik: 's#1', sozdano: 1, proishozhdenie: 'do-protokola' })].join('\n') + '\n');
+  await dolzhnoUpast('VYVOZ_ZAGOLOVOK_BEZ_OTKUDA', () => vvezti({ baza: b, fajl: f, yadro: YADRO }));
+  // Отказ ДО первой записи: иначе «отказал» означало бы «половину вставил и передумал».
+  if (schyot(b) !== 0) return `в базе ${schyot(b)} записей — отказ случился ПОСЛЕ вставки`;
+  return true;
+});
+
+await proba('ПАРА к отказу ввоза: тот же файл с названным источником ввозится', async () => {
+  const b = baza('vvoz-s-otkuda', []);
+  const f = put('vvoz-s-otkuda.jsonl');
+  writeFileSync(f, [JSON.stringify({ vyvoz: 'dsh-pamyat', versiya_shemy: VERSIYA_SHEMY, polya: POLYA, otkuda: 'сосед', kogda: 1, zapisej: 1 }),
+    JSON.stringify({ agent: 'a', klass: 'zametka', soderzhim: 'чужое знание', istochnik: 's#1', sozdano: 1, proishozhdenie: 'do-protokola' })].join('\n') + '\n');
+  const it = await vvezti({ baza: b, fajl: f, yadro: YADRO });
+  if (it.vstavleno !== 1) return `вставлено ${it.vstavleno}, ждали 1`;
   return true;
 });
 
