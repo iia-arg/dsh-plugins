@@ -236,13 +236,40 @@ export function decide(record, config, now = Date.now()) {
   return { decision: 'use', reason: `свежая, вера ${record.vera}` }
 }
 
-function renderWelcome(records, config) {
+/** Пометка о записи, принятой без подтверждения — в САМ текст брифинга.
+ *
+ *  Правило (координатор, 06.09.2026, редакция после вопроса соседа по машине):
+ *      флаг = 1  ->  пометка в тексте
+ *      флаг = 0  ->  МОЛЧАНИЕ. Ни слова о подтверждении.
+ *
+ *  🔴 Почему при нуле молчим, а не пишем «подтверждено». Ноль НЕ значит «человек
+ *  подписал». Он значит «класс подтверждения не требовал», то есть события просто
+ *  не было (ядро: index.js, ветка reshenie==='ask' && otvechayushchegoNet —
+ *  единственное место, где флаг ставится). Симметричная надпись при нуле поставила
+ *  бы ЛОЖНУЮ ПОДПИСЬ на авто-знание — ровно та беда, против которой пометка и
+ *  заводится, только с другого конца.
+ *
+ *  ⚠️ Причина названа замером, а не догадкой: флаг ставится ТОЛЬКО когда на узле нет
+ *  отвечающего. «Из дистилляции» было бы приписыванием источника, которого поле не
+ *  содержит; источник записи стоит в строке отдельно, полем avtor.
+ *
+ *  ЧЕГО ПОМЕТКА НЕ ЛОВИТ: запись, подтверждение которой пришло НЕ от человека
+ *  (долг 119) — у неё флаг равен нулю, и она молчит наравне с авто-классами. */
+function pometkaBezPodtverzhdeniya(r) {
+  if (r.bezPodtverzhdeniya !== true) return ''
+  const kogda = (typeof r.kogda === 'number' && Number.isFinite(r.kogda))
+    ? new Date(r.kogda).toISOString().slice(0, 10)
+    : 'дата записи неизвестна'
+  return `⚠️ не подтверждено человеком (отвечающего на узле не было, ${kogda}) `
+}
+
+export function renderWelcome(records, config) {
   let left = config.welcomeBudget
   const lines = []
   for (const r of records) {
     const d = decide(r, config)
     if (d.decision === 'ignore') continue
-    const line = `[${d.decision}] (${r.vid} от ${r.avtor}) ${r.soderzhim} — ${d.reason}`
+    const line = `[${d.decision}] (${r.vid} от ${r.avtor}) ${pometkaBezPodtverzhdeniya(r)}${r.soderzhim} — ${d.reason}`
     if (line.length > left && lines.length > 0) break
     lines.push(line)
     left -= line.length
