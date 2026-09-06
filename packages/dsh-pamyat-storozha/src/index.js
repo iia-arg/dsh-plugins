@@ -100,8 +100,23 @@ export function apply(ctx, config) {
         && t !== 'compaction/end' && t !== 'compaction/prune') return
 
     const id = event?.data?.compactionId ?? null
-    const ms = typeof event?.timestamp === 'number' ? event.timestamp
-             : (Date.parse(event?.timestamp ?? '') || null)
+    // 🔴 ПОЛЕ ВРЕМЕНИ НАЗЫВАЕТСЯ `time`, А НЕ `timestamp` (06.09.2026, найдено ПРОГОНОМ НА
+    // ЖИВОМ ЖУРНАЛЕ, не стендом). Объявление платформы: SessionEvent = { type, seq, time,
+    // data } — «Unix epoch milliseconds» (dsh-session/lib/types/types.d.ts:425-431).
+    // Я читала `timestamp` — имя, взятое ИЗ ГОЛОВЫ, — и стенд это не ловил, потому что
+    // подставные события я писала тем же выдуманным именем. Проба стерегла выдумку.
+    // Цена: длительность была «не измерима» У ВСЕХ сжатий, и в бою тоже. Прогон на живых
+    // 82 событиях: 27 сжатий, у 27 длительности нет — то есть НИ У ОДНОГО.
+    // `timestamp` оставлен запасным на случай чужого источника событий, но первым спрашивается
+    // объявленное имя.
+    // ⚠️ И ГРАНИЦА РАЗБОРА, найденная порчей: `Date.parse('1000')` даёт ГОДНУЮ дату —
+    // год тысячный, — то есть строка неожиданной формы превращается не в «не измерима»,
+    // а в мусорное число (в пробе вышло 94 670 812 800 с). Поэтому разобранное время
+    // проверяется на разумность: раньше 2020 года у нас событий нет и быть не может.
+    const razumno = (x) => (typeof x === 'number' && Number.isFinite(x) && x > 1577836800000 ? x : null)
+    const ms = razumno(event?.time)
+           ?? razumno(event?.timestamp)
+           ?? razumno(Date.parse(event?.time ?? event?.timestamp ?? ''))
 
     if (t === 'compaction/start') { if (id) nachala.set(id, { ms }); return }
     if (t === 'compaction/summary') { if (id) svodki.set(id, event.data); return }
