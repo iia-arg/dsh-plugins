@@ -227,7 +227,11 @@ const kEdinstv = await podnyat();
 proba('П-единственность: объявленный секрет ОТВЕРГАЕТСЯ через zapisat, не только фильтром', () => {
   let otkaz = null;
   try {
-    kEdinstv.pamyat.zapisat({ klass: 'urok', soderzhim: 'password = Xk9#mQ2$vL8p', istochnik: 's#1-2' });
+    // 🔴 КЛАСС ВНЕ ОБЛАСТИ МАСКИ намеренно. С 06.09.2026 у классов ЗНАНИЙ и сводок
+    // объявленный секрет не рвёт запись, а теряет ЗНАЧЕНИЕ (маска образцов, пара П24 в
+    // стенде фильтра). Эта проба — про то, что запирание живёт в zapisat, а не только в
+    // фильтре, и потому берёт класс, которого маска не касается.
+    kEdinstv.pamyat.zapisat({ klass: 'proba-vne-maski', soderzhim: 'password = Xk9#mQ2$vL8p', istochnik: 's#1-2' });
   } catch (e) { otkaz = e; }
   if (!otkaz) throw new Error('запись с объявленным секретом ПРОШЛА — ядро не заперло');
   const tekst = String(otkaz.message ?? otkaz);

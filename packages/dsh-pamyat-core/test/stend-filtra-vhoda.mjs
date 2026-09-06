@@ -140,7 +140,11 @@ proba('П7 секрет отвергается и на ветке «класс �
   try {
     // ograničenie — класс из перечня «спрашивать»; на узле без отвечающего он идёт
     // РАННИМ возвратом, то есть по второй ветке.
-    k.pamyat.zapisat({ klass: 'ogranichenie', soderzhim: 'настройка password: hunter2 внутри' });
+    // 🔴 КЛАСС ВНЕ ОБЛАСТИ МАСКИ намеренно. С 06.09.2026 классы ЗНАНИЙ и сводок идут
+    // через маску образцов: объявленный секрет там не рвёт запись, а теряет ЗНАЧЕНИЕ.
+    // Эта проба про другое — что фильтр стоит ДО развилки подтверждения, — и потому
+    // берёт класс, которого маска не касается. Иначе она проверяла бы маску, а не врезку.
+    k.pamyat.zapisat({ klass: 'ogranichenie-proba-vne-maski', soderzhim: 'настройка password: hunter2 внутри' });
   } catch (e) { broshено = e; }
   if (!broshено) throw new Error('секрет записан через ветку подтверждения — фильтр стоит не до развилки');
   if (broshено.code !== 'PAMYAT_SEKRET_NA_VHODE') throw new Error('иной отказ: ' + broshено.code);
@@ -304,7 +308,9 @@ proba('П12-бис проза того же вида НЕ отвергается
 // Две пробы обязаны РАЗОЙТИСЬ: одна ждёт исключения, другая — записи с пометкой.
 proba('П13 объявленный секрет ЗАПИРАЕТ запись', () => {
   let brosheno = null;
-  try { k.pamyat.zapisat({ klass: 'fakt', soderzhim: 'в файле pwd: Hunter22xy лежит' }); }
+  // Класс ВНЕ области маски: у классов знаний объявленный секрет с 06.09.2026
+  // маскируется, а не запирается (см. пару П24/П24-бис ниже).
+  try { k.pamyat.zapisat({ klass: 'proba-vne-maski', soderzhim: 'в файле pwd: Hunter22xy лежит' }); }
   catch (e) { brosheno = e; }
   if (!brosheno) throw new Error('объявленный секрет записан — правило (а) не запирает');
   if (brosheno.code !== 'PAMYAT_SEKRET_NA_VHODE') throw new Error('чужой код: ' + brosheno.code);
@@ -689,9 +695,48 @@ proba('П22 склонение и заголовок ПОМЕЧАЮТ запис
 // ничего не значит — «всё помечает» и «всё запирает» обе прошли бы половину.
 proba('П22-бис прямое объявление по-прежнему ЗАПИРАЕТ (режимы не слились)', () => {
   let brosheno = null;
-  try { k.pamyat.zapisat({ klass: 'fakt', soderzhim: 'в файле ключ: hunter2xyz лежит' }); }
+  try { k.pamyat.zapisat({ klass: 'proba-vne-maski', soderzhim: 'в файле ключ: hunter2xyz лежит' }); }
   catch (e) { brosheno = e; }
   if (!brosheno) throw new Error('прямое объявление записалось — запирающий режим потерян');
+  if (brosheno.code !== 'PAMYAT_SEKRET_NA_VHODE') throw new Error('чужой код: ' + brosheno.code);
+});
+
+// ── П24: МАСКА ОБРАЗЦОВ НА ПРЯМОМ ПУТИ ЗАПИСИ (решение координатора 06.09.2026) ──
+// 🔴 ПАРА, А НЕ ОДНА ПРОБА. Маска СУЖАЕТ область запирания: там, где раньше запись
+// отвергалась целиком, теперь у неё отнимается значение. Одна проба доказала бы только
+// половину: «маскирует» без «не маскирует лишнего» — это дыра, «не маскирует» без
+// «маскирует» — это прежняя потеря знания. Обе стороны обязаны стоять рядом.
+proba('П24 урок с ОБРАЗЦОМ записывается С МАСКОЙ, значение в память не идёт', () => {
+  const id = k.pamyat.zapisat({ klass: 'urok', soderzhim: 'разбор фильтра: password: Secret.Pass1 проходил молча' });
+  if (!id) throw new Error('урок с образцом не записан — маска не отработала');
+  const z = k.pamyat.prochitat({ skolko: 1 })?.[0];
+  const t = String(z?.soderzhim ?? '');
+  if (t.includes('Secret.Pass1')) throw new Error('ЗНАЧЕНИЕ образца попало в память — маска не сработала');
+  if (!t.includes('***')) throw new Error('замены не видно: подмена обязана быть ВИДНОЙ');
+  if (!t.includes('password:')) throw new Error('съедено слово-объявление — маска вышла за границу');
+  // След подмены проверяем там, где он ПЕРЕЖИВАЕТ запись: в тексте (выше) и в журнале.
+  // Поля в записи нет намеренно — хранилище кладёт только объявленные столбцы.
+  // Журнал внутренний — читаем ТАБЛИЦУ, то есть след на той стороне, а не ответ вызова.
+  const dbm = new DatabaseSync(join(kat, 'p.db'), { readOnly: true });
+  const rm = dbm.prepare("SELECT pochemu FROM zhurnal WHERE priroda = ? ORDER BY id DESC LIMIT 1").get('maska-obrazcov');
+  dbm.close?.();
+  if (!rm) throw new Error('в журнале нет строки о маске — подмена не объявлена');
+  if (/Secret\.Pass1/.test(String(rm.pochemu ?? ''))) throw new Error('🔴 в строку журнала попало ЗНАЧЕНИЕ');
+});
+
+proba('П24-бис настоящий по ФОРМЕ секрет НЕ маскируется и запись ОТКЛОНЯЕТСЯ', () => {
+  let brosheno = null;
+  try { k.pamyat.zapisat({ klass: 'urok', soderzhim: 'ключ провайдера sk-abcdefghijklmnopqrstuvwx' }); }
+  catch (e) { brosheno = e; }
+  if (!brosheno) throw new Error('структурный секрет прошёл — маска стала тихой дырой');
+  if (brosheno.code !== 'PAMYAT_SEKRET_NA_VHODE') throw new Error('чужой код: ' + brosheno.code);
+});
+
+proba('П24-трет класс ВНЕ области маски по-прежнему ЗАПИРАЕТ объявленный', () => {
+  let brosheno = null;
+  try { k.pamyat.zapisat({ klass: 'ne-znanie-i-ne-svodka', soderzhim: 'password: Secret.Pass1' }); }
+  catch (e) { brosheno = e; }
+  if (!brosheno) throw new Error('маска расползлась за свою область');
   if (brosheno.code !== 'PAMYAT_SEKRET_NA_VHODE') throw new Error('чужой код: ' + brosheno.code);
 });
 

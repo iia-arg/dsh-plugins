@@ -25,7 +25,7 @@ import { createRequire } from 'node:module';
 import { otkrytHranilishche } from './hranilishche.js';
 import { zavestiZhurnal } from './zhurnal.js';
 import { reshitPoKlassu, istolkovatPodtverzhdenie } from './politika.js';
-import { filtr_ispraven, najti_sekret, ochistit, trevozhno, proverit_sluzhebnoe, normalizovat, zapiraet } from './filtr-vhoda.js';
+import { filtr_ispraven, najti_sekret, ochistit, trevozhno, proverit_sluzhebnoe, normalizovat, zapiraet, zamaskirovat } from './filtr-vhoda.js';
 import { postavitPrivratnika, itogPrivratnika } from './privratnik.js';
 import z from '@deepseek-ai/schemastery';
 
@@ -309,6 +309,54 @@ export function apply(ctx, config = {}) {
         }
       }
       zapis = { ...zapis, klass: normalizovat(zapis.klass), istochnik: normalizovat(zapis.istochnik) };
+      // ═══ МАСКА ОБРАЗЦОВ ДО ПРОВЕРКИ ФИЛЬТРОМ ═══════════════════════════════
+      // 🔴 ЗАЧЕМ ЗДЕСЬ, НА ПРЯМОМ ПУТИ ЗАПИСИ. Урок про фильтр обязан содержать образец
+      // секрета, иначе он необучающий, — и фильтр отклоняет ровно такой урок. Замер
+      // 06.09.2026: 11 отказов за сутки, ВСЕ класса obyavlennyj; две потерянные статьи
+      // несли «password: Secret.Pass1». Маска стояла у секретаря и покрывала только его
+      // сводки, а знания дистилляции и мои прямые записи шли мимо неё вовсе.
+      // Решение координатора 06.09: маска на прямом пути записи классов знаний и сводок.
+      //
+      // ⚠️ ОБЛАСТЬ НАЗВАНА ЧИСЛОМ, А НЕ «ВСЕМ ПОДРЯД»: классы знаний (klassyZnaniy) и всё,
+      // что начинается с «svodka». Прочие классы маска НЕ трогает — там текст не наш
+      // разбор, и подменять его молча нельзя. Запись такого класса с образцом по-прежнему
+      // будет отклонена, и это видно в журнале, а не тихо.
+      //
+      // ⚠️ ПОДМЕНА ОБЪЯВЛЯЕТСЯ: маска видна («***»), число замен идёт в запись и в журнал.
+      // Иначе через месяц правленую запись не отличить от исходной.
+      const podMaskoj = (config.klassyZnaniy ?? []).includes(zapis.klass)
+                        || String(zapis.klass ?? '').startsWith('svodka');
+      if (podMaskoj && config.maskirovatObrazcy !== false) {
+        const m = zamaskirovat(String(zapis.soderzhim ?? ''));
+        if (m.zameneno > 0) {
+          // 🔴 ПОЛЯ `maska` В ЗАПИСИ НЕТ НАМЕРЕННО. Хранилище кладёт только объявленные
+          // столбцы; лишнее поле молча исчезло бы, и запись «называла бы» число замен
+          // ровно до первого чтения из базы. След подмены живёт там, где он переживает
+          // запись: САМ ТЕКСТ («***») и строка журнала ниже. Отдельный столбец — это
+          // миграция схемы живой памяти, отдельный предмет и отдельные ворота.
+          zapis = { ...zapis, soderzhim: m.tekst };
+          zhurnal?.otmetit({
+            agent, klass: zapis.klass, ishod: 'zapisano', priroda: 'maska-obrazcov',
+            pochemu: 'замаскировано значений: ' + m.zameneno + ' (классы: ' +
+                     m.klassy.join(', ') + '). Слово-объявление и форма сохранены, заменено ' +
+                     'ТОЛЬКО значение. Текст записи ОТЛИЧАЕТСЯ от того, что подали на вход' +
+                     (m.upyorsya ? '. 🔴 МАСКА УПЁРЛАСЬ В ПРЕДЕЛ: замаскировано не всё' : ''),
+            istochnik: zapis.istochnik ?? null,
+          });
+        }
+        if (m.ostalos) {
+          // Класс, распознанный по СОБСТВЕННОЙ форме, маска не трогает намеренно —
+          // запись сейчас будет отклонена фильтром, и причину надо назвать заранее,
+          // иначе отказ прочтут как «маска не работает».
+          zhurnal?.otmetit({
+            agent, klass: zapis.klass, ishod: 'otkloneno', priroda: 'maska-ne-primenima',
+            pochemu: 'класс «' + m.ostalos + '» распознан по СОБСТВЕННОЙ форме значения, ' +
+                     'а не по слову рядом: маскировать его значило бы завести тихую дыру. ' +
+                     'Запись будет отклонена фильтром — это верно, а не сбой маски',
+            istochnik: zapis.istochnik ?? null,
+          });
+        }
+      }
       const sekret = najti_sekret(String(zapis.soderzhim ?? ''));
       if (sekret) {
         // 🔴 РЕЖИМ ОТКАЗА НАЗНАЧАЕТСЯ КАЖДОМУ ПРАВИЛУ ОТДЕЛЬНО, ПО ЕГО ДОЛЕ ЛОЖНЫХ

@@ -1,82 +1,48 @@
 /**
- * Стенд маски образцов (решение координатора 05.09.2026, развилка 4а).
- * Два условия сразу, одно без другого не годится:
- *   сводка о фильтре ЗАПИСЫВАЕТСЯ (не теряется) И в ней нет значений, которые ядро
- *   считает запирающими.
+ * СТОРОЖ: у секретаря НЕТ своей маски образцов и он НЕ зовёт ядро.
+ *
+ * 🔴 ЗАЧЕМ ЭТОТ СТЕНД ПОСЛЕ ТОГО, КАК МАСКУ ОТСЮДА УБРАЛИ. Прежде маска жила здесь и
+ * звала ядро по голому имени пакета; в боевой раскладке импорт не разрешался ни разу,
+ * маска молчала, и фильтр отклонял сводки целиком — 11 отказов за сутки (06.09.2026).
+ * Маска переехала В ЯДРО, на прямой путь записи. Возврат копии сюда вернёт и беду:
+ * копия правил разойдётся с ядром, а импорт снова упрётся в раскладку.
+ * Поэтому здесь стоит не проба маски (она в ядре, пара П24/П24-бис/П24-трет), а СТОРОЖ
+ * на возврат: файла нет, импорта ядра нет, слова «zamaskirovat» в коде нет.
+ *
+ * ЧЕГО НЕ ЛОВИТ: не проверяет, что маска РАБОТАЕТ (это ядро и его стенд) — только что
+ * она не завелась здесь во второй раз.
+ * ЧТО ЗНАЧИТ ЕГО МОЛЧАНИЕ: копии в секретаре нет. О самой маске он не говорит ничего.
  */
-import { zamaskirovat } from '../src/maska-obrazcov.js';
+import { readFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
-// 🔴 ЯДРО ИЩЕТСЯ ДВУМЯ ПУТЯМИ, И ОТКУДА ВЗЯТО — ПЕЧАТАЕТСЯ.
-// У получателя ядро стоит соседом (peer), и первый путь верен. В нашем рабочем дереве
-// соседа нет: каталог модулей принадлежит root, ссылку не поставить. Второй путь —
-// ОТНОСИТЕЛЬНЫЙ от самого стенда (не машинный: машинный путь уехал бы получателю —
-// обёртка публикации поймала его здесь как частное имя, 14-я утечка за трое суток).
-// Без печати источника проба молча мерила бы не то, что померит получатель.
-let yadro, otkuda;
-for (const [put, imya] of [['dsh-pamyat-core/src/filtr-vhoda.js', 'сосед (peer)'],
-                           [new URL('../../dsh-pamyat-core/src/filtr-vhoda.js', import.meta.url).href, 'сосед по каталогу пакетов']]) {
-  try { yadro = await import(put); otkuda = imya; break; } catch { /* пробуем следующий */ }
+const koren = dirname(dirname(fileURLToPath(import.meta.url)));
+let vsego = 0, krasnyh = 0;
+function proba(imya, telo) {
+  vsego++;
+  try { telo(); console.log('  ok   ' + imya); }
+  catch (e) { krasnyh++; console.log('  FAIL ' + imya + ' — ' + (e?.message ?? e)); }
 }
-if (!yadro) {
-  console.log('СЛЕПОТА: ядро фильтра не загрузилось ни соседом, ни прямым путём.');
-  console.log('  Маска берёт правила У ЯДРА; без него проверять нечего. Это не «чисто».');
-  process.exit(2);
-}
-console.log('ядро взято: ' + otkuda);
 
-let ok = 0, bed = 0;
-const t = (imya, f) => {
-  try {
-    const v = f();
-    if (v && typeof v.then === 'function') throw new Error('тело пробы ОЖИДАЮЩЕЕ, а прогонщик синхронный');
-    ok++; console.log('  ok   ' + imya);
-  } catch (e) { bed++; console.log('  FAIL ' + imya + ' — ' + String(e.message).slice(0, 200)); }
-};
-
-t('контроль: на заведомо ЧИСТОМ тексте замен нет', () => {
-  const r = zamaskirovat('обычная запись про подъём службы', yadro);
-  if (r.zameneno !== 0) throw new Error('замен ' + r.zameneno + ' там, где маскировать нечего');
+proba('своего файла маски в пакете НЕТ', () => {
+  if (existsSync(join(koren, 'src', 'maska-obrazcov.js'))) {
+    throw new Error('src/maska-obrazcov.js вернулся — это вторая копия правил');
+  }
 });
 
-t('🔴 ГЛАВНОЕ: после маски ядро молчит — значит запись пройдёт', () => {
-  const ish = 'Разбор: образец `pwd=Hunter22xy` и `api_key=sk-abc123XYZ789`.';
-  if (!yadro.najti_sekret(ish)) throw new Error('проба негодна: исходный текст ядро и так пропускает');
-  const r = zamaskirovat(ish, yadro);
-  const posle = yadro.najti_sekret(r.tekst);
-  if (posle && yadro.zapiraet(posle.klass)) throw new Error('после маски ядро всё ещё запирает: ' + posle.klass);
+proba('секретарь НЕ импортирует ядро по имени пакета', () => {
+  const src = readFileSync(join(koren, 'src', 'index.js'), 'utf8');
+  const stroki = src.split('\n').filter((s) => !s.trimStart().startsWith('//') && !s.trimStart().startsWith('*'));
+  const est = stroki.some((s) => /import\(\s*['"]dsh-pamyat-core/.test(s) || /from\s+['"]dsh-pamyat-core/.test(s));
+  if (est) throw new Error('импорт ядра вернулся — в боевой раскладке он не разрешается');
 });
 
-t('🔴 ГРАНИЦА: слово-объявление и форма СОХРАНЕНЫ, заменено только значение', () => {
-  const r = zamaskirovat('образец `pwd=Hunter22xy` тут', yadro);
-  if (!/pwd=\*\*\*/.test(r.tekst)) throw new Error('слово или форма съедены маской: ' + r.tekst);
-  if (/Hunter22/.test(r.tekst)) throw new Error('значение осталось в тексте');
+proba('контроль зрячести: признак импорта ловит подставную строку', () => {
+  const podstavnaya = "  import('dsh-pamyat-core/src/filtr-vhoda.js').then(() => {});";
+  const est = /import\(\s*['"]dsh-pamyat-core/.test(podstavnaya);
+  if (!est) throw new Error('признак слеп: подставной импорт не найден — проба ничего не стережёт');
 });
 
-t('текст ВОКРУГ значения не тронут', () => {
-  const ish = 'до и после: `pwd=Hunter22xy` — хвост фразы цел';
-  const r = zamaskirovat(ish, yadro);
-  if (!r.tekst.startsWith('до и после:')) throw new Error('начало изменено');
-  if (!r.tekst.endsWith('— хвост фразы цел')) throw new Error('хвост изменён: ' + r.tekst.slice(-40));
-});
-
-t('число замен и классы возвращаются наружу — подмена ОБЪЯВЛЯЕТСЯ', () => {
-  const r = zamaskirovat('`pwd=Hunter22xy` и `api_key=sk-abc123XYZ789`', yadro);
-  if (r.zameneno !== 2) throw new Error('замен ' + r.zameneno + ', ожидалось 2');
-  if (!r.klassy.length) throw new Error('классы не названы');
-});
-
-t('🔴 без ядра — ОТКАЗ, а не «замен 0»', () => {
-  let bylo = false;
-  try { zamaskirovat('`pwd=Hunter22xy`', null); } catch { bylo = true; }
-  if (!bylo) throw new Error('без ядра маска промолчала — «нечего маскировать» неотличимо от «нечем»');
-});
-
-t('помечающее ядро НЕ трогает: маска против того, что РВЁТ запись', () => {
-  // hex без объявления ядро помечает, а не запирает — значит маскировать его не надо.
-  const ish = 'сумма 0083e4a0781203aa1b2c3d4e5f607182 в отчёте';
-  const r = zamaskirovat(ish, yadro);
-  if (r.tekst !== ish) throw new Error('маска тронула то, что ядро не запирает');
-});
-
-console.log(`\nитог маски: ${ok} из ${ok + bed}`);
-process.exit(bed ? 1 : 0);
+console.log('итог: ' + (vsego - krasnyh) + ' из ' + vsego);
+process.exit(krasnyh ? 1 : 0);
