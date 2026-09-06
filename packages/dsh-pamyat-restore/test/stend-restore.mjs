@@ -146,41 +146,85 @@ t('B restore: сводка вставлена', /Сводка компакта|�
 // станет фоном и перестанет читаться. Вторая половина — «на свежей сводке его НЕТ».
 {
   const bylo = pamyat.prochitat
-  // сводка записана за 270 минут ДО компакта — ровно живой случай 05.09 (4,5 часа)
-  const kompaktV = Date.now()
+  // 🔴 ФОРМА ПОДСТАВНЫХ СОБЫТИЙ — ЖИВАЯ, А НЕ ПРИДУМАННАЯ (правка 06.09.2026).
+  // Прежняя редакция этих проб не подавала compaction/START вовсе, а «свежую» сводку
+  // ставила ПОЗЖЕ compaction/end. В бою так не бывает никогда: порядок событий
+  // start -> summary -> end, и сводка пишется по summary, то есть ВСЕГДА раньше end.
+  // Из-за этого пара зеленела на форме, которой не существует, и узаконила признак,
+  // который в бою клеймил КАЖДУЮ свежую сводку как прежнюю (замер 06.09 05:36:44Z).
+  // Теперь обе половины подают тройку событий в живом порядке.
+  const podat = (nachalo, konec, cid, hod) => {
+    sessionEvent?.({ id: 'sess-1' }, { type: 'compaction/start', data: { compactionId: cid }, time: nachalo })
+    sessionEvent?.({ id: 'sess-1' }, { type: 'compaction/end', data: { compactionId: cid, turn: hod }, time: konec })
+  }
+
+  // сводка записана за 270 минут ДО начала компакта — ровно живой случай 05.09 (4,5 часа)
+  const nach1 = Date.now()
   pamyat.prochitat = (vopros = {}) => (vopros.klass
     ? [{ id: 56, agent: 'a', klass: 'svodka-kompakcii', soderzhim: 'прежняя сводка',
-         sozdano: kompaktV - 270 * 60000, istochnik: 'a', vera: 0.9, bez_podtverzhdeniya: 0 }]
+         sozdano: nach1 - 270 * 60000, istochnik: 'a', vera: 0.9, bez_podtverzhdeniya: 0 }]
     : [])
-  sessionEvent?.({ id: 'sess-1' }, { type: 'compaction/end', data: { compactionId: 'c-b2', turn: 9 }, time: kompaktV })
+  podat(nach1, nach1 + 95000, 'c-b2', 9)
   const dB2 = await call(11, 1)
   const t1 = dB2.messages[0]?.content?.[0]?.text ?? ''
   t('Б2: старая сводка ВСТАВЛЕНА (запрет лечил бы видимость)', dB2.messages.length === 1, JSON.stringify(dB2.messages))
   t('Б2: во ВСТАВЛЕННОМ тексте сказано, что сводка НЕ от этого сжатия', /НЕ ОТ ЭТОГО СЖАТИЯ/.test(t1), t1.slice(0, 160))
   t('Б2: назван возраст числом, а не словом «старая»', /за 270 мин до него/.test(t1), t1.slice(0, 200))
 
-  // вторая половина пары: сводка СВЕЖЕЕ компакта -> предупреждения нет
-  const kompaktV2 = Date.now()
+  // вторая половина пары: сводка записана ВНУТРИ компакта (после start, до end) ->
+  // предупреждения нет. Это и есть живой порядок, на котором прежняя проба врала.
+  const nach2 = Date.now()
   pamyat.prochitat = (vopros = {}) => (vopros.klass
     ? [{ id: 57, agent: 'a', klass: 'svodka-kompakcii', soderzhim: 'свежая сводка',
-         sozdano: kompaktV2 + 1000, istochnik: 'a', vera: 0.9, bez_podtverzhdeniya: 0 }]
+         sozdano: nach2 + 94000, istochnik: 'a', vera: 0.9, bez_podtverzhdeniya: 0 }]
     : [])
-  sessionEvent?.({ id: 'sess-1' }, { type: 'compaction/end', data: { compactionId: 'c-b2b', turn: 10 }, time: kompaktV2 })
+  podat(nach2, nach2 + 95000, 'c-b2b', 10)
   const dB2b = await call(12, 1)
   const t2 = dB2b.messages[0]?.content?.[0]?.text ?? ''
-  t('Б2-бис: на СВЕЖЕЙ сводке предупреждения НЕТ (иначе оно станет фоном)',
+  t('Б2-бис: сводка ЭТОГО сжатия (записана между start и end) — предупреждения НЕТ',
     dB2b.messages.length === 1 && !/НЕ ОТ ЭТОГО СЖАТИЯ/.test(t2), t2.slice(0, 160))
+  t('Б2-бис: и это сказано вслух — «сводка этого сжатия»',
+    !/СВЕРИТЬ НЕ УДАЛОСЬ/.test(t2), t2.slice(0, 160))
 
-  // третий исход: времени нет -> «не смотрели», а не «свежая»
+  // третий исход: времени записи нет -> «не смотрели», а не «свежая»
+  const nach3 = Date.now()
   pamyat.prochitat = (vopros = {}) => (vopros.klass
     ? [{ id: 58, agent: 'a', klass: 'svodka-kompakcii', soderzhim: 'без времени',
          istochnik: 'a', vera: 0.9, bez_podtverzhdeniya: 0 }]
     : [])
-  sessionEvent?.({ id: 'sess-1' }, { type: 'compaction/end', data: { compactionId: 'c-b2c', turn: 11 }, time: Date.now() })
+  podat(nach3, nach3 + 95000, 'c-b2c', 11)
   const dB2c = await call(13, 1)
   const t3 = dB2c.messages[0]?.content?.[0]?.text ?? ''
   t('Б2-трет: без времени записи — «СВЕРИТЬ НЕ УДАЛОСЬ», а не молчание',
     /СВЕРИТЬ НЕ УДАЛОСЬ/.test(t3), t3.slice(0, 160))
+
+  // 🔴 четвёртый исход, ради которого рубеж и заведён: НАЧАЛА КОМПАКТА НЕ БЫЛО
+  // (плагин поднят посреди сжатия). Рубежа нет — значит и суждения нет. Ни
+  // «свежая», ни «старая»: обе были бы догадкой. Сводка при этом СВЕЖАЯ по времени,
+  // и без этой пробы прежнее сравнение с концом объявило бы её прежней.
+  const nach4 = Date.now()
+  pamyat.prochitat = (vopros = {}) => (vopros.klass
+    ? [{ id: 59, agent: 'a', klass: 'svodka-kompakcii', soderzhim: 'свежая, но начала не было',
+         sozdano: nach4 + 94000, istochnik: 'a', vera: 0.9, bez_podtverzhdeniya: 0 }]
+    : [])
+  sessionEvent?.({ id: 'sess-1' }, { type: 'compaction/end', data: { compactionId: 'c-b2d', turn: 12 }, time: nach4 + 95000 })
+  const dB2d = await call(14, 1)
+  const t4 = dB2d.messages[0]?.content?.[0]?.text ?? ''
+  t('Б2-четв: без compaction/start — «СВЕРИТЬ НЕ УДАЛОСЬ», а не «сводка старше»',
+    /СВЕРИТЬ НЕ УДАЛОСЬ/.test(t4) && !/НЕ ОТ ЭТОГО СЖАТИЯ/.test(t4), t4.slice(0, 200))
+
+  // и рубеж берётся только от СВОЕГО компакта: начало с чужим идентификатором не годится
+  const nach5 = Date.now()
+  pamyat.prochitat = (vopros = {}) => (vopros.klass
+    ? [{ id: 60, agent: 'a', klass: 'svodka-kompakcii', soderzhim: 'свежая, начало чужое',
+         sozdano: nach5 + 94000, istochnik: 'a', vera: 0.9, bez_podtverzhdeniya: 0 }]
+    : [])
+  sessionEvent?.({ id: 'sess-1' }, { type: 'compaction/start', data: { compactionId: 'c-CHUZHOJ' }, time: nach5 })
+  sessionEvent?.({ id: 'sess-1' }, { type: 'compaction/end', data: { compactionId: 'c-b2e', turn: 13 }, time: nach5 + 95000 })
+  const dB2e = await call(15, 1)
+  const t5 = dB2e.messages[0]?.content?.[0]?.text ?? ''
+  t('Б2-пят: начало ЧУЖОГО компакта рубежом не становится — «СВЕРИТЬ НЕ УДАЛОСЬ»',
+    /СВЕРИТЬ НЕ УДАЛОСЬ/.test(t5), t5.slice(0, 200))
   pamyat.prochitat = bylo
 }
 
@@ -663,7 +707,7 @@ kasanieOtvet = () => ({ otmecheno: 0, otkaz: null })
 // Меняли стенд намеренно? Поправьте число и скажите, почему.
 // 02.09.2026: 11 -> 16 при передаче владения, 16 -> 20 после монтажа (следы срабатывания) (подписка через session/event,
 // чужой тип события, ошибка компакта, чужая сессия).
-const ZHDYOM = 98  // 06.09.2026: 93 -> 98, пять проб Б2 «сводка старше компакта» (пара: старая называется числом минут во ВСТАВЛЕННОМ тексте · на свежей предупреждения НЕТ · без времени — «сверить не удалось»). Прежде: 05.09.2026: 74 -> 81, семь проб Э8.6; 81 -> 90, девять проб Э8.3 П1; 90 -> 93, три пробы «из двух сводок поднимается новейшая» (находка приёмки: [0] и [последняя] совпадали на фикстуре с одной сводкой) (касание на выдаче: повод, состав, число, отказ, старое ядро, исключение) (сводка целиком вне бюджета + зеркальная сторона «сводки нет»)
+const ZHDYOM = 101  // 06.09.2026: 98 -> 101, три пробы рубежа свежести (без compaction/start — «сверить не удалось», начало чужого компакта не годится, «сводка этого сжатия» сказана вслух); форма подставных событий приведена к живой: start -> summary -> end. Прежде: 93 -> 98, пять проб Б2 «сводка старше компакта» (пара: старая называется числом минут во ВСТАВЛЕННОМ тексте · на свежей предупреждения НЕТ · без времени — «сверить не удалось»). Прежде: 05.09.2026: 74 -> 81, семь проб Э8.6; 81 -> 90, девять проб Э8.3 П1; 90 -> 93, три пробы «из двух сводок поднимается новейшая» (находка приёмки: [0] и [последняя] совпадали на фикстуре с одной сводкой) (касание на выдаче: повод, состав, число, отказ, старое ядро, исключение) (сводка целиком вне бюджета + зеркальная сторона «сводки нет»)
 // 🔴 РАСХОЖДЕНИЕ ВАЖНЕЕ СЛЕПОТЫ, поэтому оно проверяется ПЕРВЫМ. Первая редакция
 // сначала сверяла число проверок — и на порче отвечала кодом 2 «часть не состоялась»,
 // пряча пять настоящих провалов за слепотой по недоступному пути. Читающий код увидел

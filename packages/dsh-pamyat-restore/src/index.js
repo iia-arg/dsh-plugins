@@ -281,7 +281,23 @@ export function apply(ctx, config) {
   // 4,5 часа СТАРШЕ компакта, и узнать это можно было только сверив два времени руками.
   // Чтобы сравнить, нужно время события — его и держим.
   const pendingRestore = new Map()
+  // 🔴 РУБЕЖ СВЕЖЕСТИ — ВРЕМЯ НАЧАЛА КОМПАКТА, А НЕ ЕГО КОНЦА (правка 06.09.2026).
+  // Первая редакция Б2 сравнивала время записи сводки с временем compaction/END.
+  // Сводка пишется по compaction/SUMMARY, а оно приходит РАНЬШЕ end ВСЕГДА — значит
+  // условие «сводка старше компакта» выполнялось для КАЖДОЙ свежей сводки, и ветка
+  // «сводка этого сжатия» не печаталась бы никогда. Замер на живом сжатии 05:36:44Z:
+  // запись 127 создана в ту же секунду, что событие, и была объявлена прежней.
+  // Направление промаха опасное: агенту в текст вставляется «это опора на прошлое»
+  // про верную свежую сводку — он ей не верит и переделывает сделанное.
+  // Годный рубеж — начало компакта: сводка ЭТОГО сжатия записана после него, любая
+  // прежняя — до. Сверяем по compactionId, чтобы не взять начало чужого компакта.
+  const nachalaKompakta = new Map()
   ctx.on('session/event', (session, event) => {
+    if (event?.type === 'compaction/start') {
+      const sid0 = String(session?.id ?? '')
+      if (sid0) nachalaKompakta.set(sid0, { kogda: event.time ?? Date.now(), compactionId: event.data?.compactionId ?? null })
+      return
+    }
     if (event?.type !== 'compaction/end') return
     if (event.data?.error !== undefined) {
       say(`компакт ${event.data.compactionId ?? '?'} завершился ошибкой — восстанавливать нечего`)
@@ -289,7 +305,15 @@ export function apply(ctx, config) {
     }
     const sid = String(session?.id ?? '')
     if (!sid) { say('🔴 compaction/end без опознанной сессии — восстановление пропущено'); return }
-    pendingRestore.set(sid, { kogda: event.time ?? Date.now(), compactionId: event.data?.compactionId ?? null })
+    const cid = event.data?.compactionId ?? null
+    const nachalo = nachalaKompakta.get(sid)
+    // Рубеж берём ТОЛЬКО от начала ТОГО ЖЕ компакта. Не совпал идентификатор либо
+    // начала не было (плагин поднят посреди сжатия) — рубежа нет, и это «сверить
+    // не удалось», а не «сводка свежая» и не «сводка старая».
+    const rubezh = (nachalo && (nachalo.compactionId === null || cid === null || nachalo.compactionId === cid))
+      ? nachalo.kogda : null
+    nachalaKompakta.delete(sid)
+    pendingRestore.set(sid, { kogda: event.time ?? Date.now(), compactionId: cid, rubezh })
     // 🔴 СЛЕД ПРИХОДА. Без него живая проба невозможна по построению: событие
     // придёт, вставка произойдёт, и доказать это будет нечем. Молчание механизма
     // неотличимо от его отсутствия — ровно то, из-за чего первая редакция пакета
@@ -350,7 +374,7 @@ export function apply(ctx, config) {
         // ⚠️ Мы всё равно ВСТАВЛЯЕМ: без сводки заход остаётся вовсе без опоры, и это
         // хуже старой опоры с честной пометкой. Запрет здесь лечил бы видимость.
         const kogdaSvodka = Number(summary.sozdano ?? summary.kogda ?? NaN)
-        const kogdaKompakt = Number(povod?.kogda ?? NaN)
+        const kogdaKompakt = Number(povod?.rubezh ?? NaN)
         const oba = Number.isFinite(kogdaSvodka) && Number.isFinite(kogdaKompakt)
         const starshe = oba && kogdaSvodka < kogdaKompakt
         const otstavanie = oba ? Math.round((kogdaKompakt - kogdaSvodka) / 60000) : null
@@ -362,7 +386,8 @@ export function apply(ctx, config) {
             + 'а не рассказом о том, что было только что.'
         } else if (!oba) {
           shapka = '⚠️ Восстановление после компакта: возраст сводки СВЕРИТЬ НЕ УДАЛОСЬ\n'
-            + '(нет времени записи либо времени события) — это «не смотрели», а не «свежая».'
+            + '(нет времени записи либо не пришло начало этого сжатия) — это «не смотрели»,\n'
+            + 'а не «свежая»: сводка может быть и от этого сжатия, и от прежнего.'
         }
         say(`восстановление после компакта вставлено в сессию ${sid}: запись ${summary.id ?? '?'}, `
           + `${String(summary.soderzhim).length} знаков`
