@@ -175,6 +175,44 @@ if (!putSluzhby) {
   }
 }
 
+// ── З1 приёмки: ИТОГ ВИДЕН ИЗ ЖУРНАЛА, А НЕ ТОЛЬКО ИЗ ВЫГРУЗКИ ──────────────
+// 🔴 Прежде итог звался ровно один раз — на dispose. При SIGKILL, OOM или падении он не
+// печатался НИКОГДА, и «привратник работал» нельзя было увидеть из журнала: счётчик жил
+// в памяти и умирал вместе с ней. А падение — как раз тот случай, когда разбираются по
+// журналу. ПАРА, а не одна проба: печатать итог НА КАЖДОМ спросе было бы не лечением,
+// а заплывшим журналом, и вторая половина стережёт именно это.
+proba('З1: итог печатается на ПЕРВОМ спросе — участие видно сразу', () => {
+  const p = podstavnoj();
+  postavitPrivratnika(p.ctx, true, p.gromko);
+  const obr = p.zapisi[0].cb;
+  p.kriki.length = 0;
+  obr({ toolName: 'proba-1' }, () => {});
+  const itogi = p.kriki.filter((s) => /привратник: спросов /.test(s));
+  if (itogi.length !== 1) throw new Error('итогов после первого спроса: ' + itogi.length);
+});
+
+proba('З1-бис: со второго по девятый итог НЕ печатается — иначе журнал заплывёт', () => {
+  const p = podstavnoj();
+  postavitPrivratnika(p.ctx, true, p.gromko);
+  const obr = p.zapisi[0].cb;
+  obr({ toolName: 'proba-1' }, () => {});   // первый — итог законен
+  p.kriki.length = 0;
+  for (let i = 2; i <= 9; i++) obr({ toolName: 'proba-' + i }, () => {});
+  const itogi = p.kriki.filter((s) => /привратник: спросов /.test(s));
+  if (itogi.length !== 0) throw new Error('лишних итогов: ' + itogi.length);
+});
+
+proba('З1-трет: на ДЕСЯТОМ спросе итог печатается снова', () => {
+  const p = podstavnoj();
+  postavitPrivratnika(p.ctx, true, p.gromko);
+  const obr = p.zapisi[0].cb;
+  for (let i = 1; i <= 9; i++) obr({ toolName: 'proba-' + i }, () => {});
+  p.kriki.length = 0;
+  obr({ toolName: 'proba-10' }, () => {});
+  const itogi = p.kriki.filter((s) => /привратник: спросов 10 /.test(s));
+  if (itogi.length !== 1) throw new Error('итогов на десятом: ' + itogi.length);
+});
+
 proba('ПРАВА ОТКАЗЫВАТЬ НЕТ: ветки rejected/cancelled в коде нет вовсе', () => {
   const fs = globalThis.process?.getBuiltinModule?.('node:fs') ?? null;
   if (!fs) throw new Error('нет доступа к fs');
