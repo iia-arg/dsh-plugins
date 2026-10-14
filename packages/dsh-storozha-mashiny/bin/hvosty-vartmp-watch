@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""hvosty-vartmp-watch — сторож брошенных хвостов /var/tmp.
+hvosty-vartmp-watch — watchdog for abandoned leftovers ("tails") in /var/tmp.
+
+RU: ЗАЧЕМ. /var/tmp не чистит никто: у systemd-tmpfiles для /var/tmp правил 0 (проверено --cat-config). Подставы
+проб, брошенные при повторе попытки (вторая попытка убрала свой каталог, первый остался), лежали до ручного
+обхода. Удалять САМ сторож не должен: замер показал — tmpfiles судит по файлу, а не по дереву (живую подставу
+потрошит частично), а в /var/tmp лежат карантины с возвратом и кандидаты. Поэтому: ОТЧЁТ, не удаление.
+Удаляет рука хозяина.
+EN: WHY. Nobody cleans /var/tmp: systemd-tmpfiles has 0 rules for it (checked with --cat-config). Test fixtures
+abandoned on a retry (the second attempt removed its directory, the first one stayed) lay there until a manual
+sweep. The watchdog must NOT delete by itself: tmpfiles judges by file, not by tree (it partially guts a live
+fixture), and /var/tmp holds restorable quarantines and candidates. Hence: REPORT, not deletion. The owner deletes.
+
+RU: ЧТО ДЕЛАЕТ. Раз в сутки (таймер) смотрит ВЕРХНИЙ уровень /var/tmp, кроме systemd-private-*. Возраст записи —
+по НОВЕЙШЕМУ mtime во всём её дереве (не по mtime каталога: он не меняется, когда пишут глубже). Старше порога
+(72 ч) и не в перечне долгожителей → тревога одним сообщением: имя · владелец · объём · возраст.
+EN: WHAT IT DOES. Once a day (timer) it looks at the TOP level of /var/tmp, except systemd-private-*. An entry's
+age is the NEWEST mtime in its whole tree (not the directory mtime: it does not change when writes go deeper).
+Older than the threshold (72 h) and not in the long-lived list → one alert message: name · owner · size · age.
+
+RU: ПЕРЕЧЕНЬ ДОЛГОЖИТЕЛЕЙ — данными: файл из настройки HVT_PERECHEN, строка
+«<маска имени> <срок ГГГГ-ММ-ДД> <хозяин> | <причина>». Маска — fnmatch по имени верхнего уровня. Срок истёк
+(сегодня позже срока) — запись снова видна, с пометкой «срок исключения истёк». Файла нет — перечень пуст
+(это не слепота): тогда хвостом назовётся всё старое.
+EN: THE LONG-LIVED LIST is data: the file from setting HVT_PERECHEN, one line per entry
+"<name mask> <expiry YYYY-MM-DD> <owner> | <reason>". The mask is fnmatch on the top-level name. Expired
+(today is after the expiry) → the entry is visible again, marked "exemption expired". No file → empty list
+(not blindness): then every old entry is reported.
+
+RU: ОСТЫВАНИЕ — суточный таймер: состояния на диске нет намеренно (новый каталог состояния потребовал бы
+разметки для резервной копии). Ручной прогон повторит тревогу — это его смысл.
+EN: COOL-DOWN is the daily timer: there is deliberately no on-disk state (a new state directory would need
+backup marking). A manual run repeats the alert — that is its purpose.
+
+RU: НЕ ЛОВИТ (граница, названная заранее):
+  - хвосты НЕ верхнего уровня и вне /var/tmp (/tmp, дома агентов);
+  - живую запись, в которую не пишут больше порога (долгий прогон, только читающий свои данные > 3 сут) — назовёт
+    её хвостом: тревога ложная, но громкая; лечится строкой перечня;
+  - подделанный mtime (touch -d) — возраст врёт в любую сторону;
+  - ссылки не раскрывает (lstat): объём и возраст — самой ссылки, не цели.
+EN: DOES NOT CATCH (boundary named up front):
+  - tails NOT on the top level and outside /var/tmp (/tmp, agent homes);
+  - a live entry that has not been written for longer than the threshold (a long run only reading its data
+    for > 3 days) — it will be called a tail: a false but loud alert; cured by a list line;
+  - a forged mtime (touch -d) — the age lies either way;
+  - symlinks are not followed (lstat): size and age are of the link itself, not its target.
+
+RU: ИСХОД: 0 хвостов нет · 1 хвосты есть, тревога ушла · 2 слепота (корень или перечень не читается, строка
+перечня негодна — ТОГДА ЭТА строка не исключает ничего) · 3 хвосты есть, тревога НЕ ушла.
+EN: EXIT: 0 no tails · 1 tails found, alert delivered · 2 blindness (root or list unreadable, a list line is
+invalid — THEN THAT line exempts nothing) · 3 tails found, alert NOT delivered.
+
+RU: НАСТРОЙКА (окружение): HVT_PERECHEN — путь к перечню долгожителей.
+Подмена — ТОЛЬКО для стенда (печатается строкой «ПОДМЕНА»): VT_KOREN, VT_PERECHEN, VT_ALERT, VT_POROG_CH,
+VT_SEGODNYA. VT_PERECHEN, если задан, главнее HVT_PERECHEN.
+EN: SETTING (environment): HVT_PERECHEN — path to the long-lived list.
+Overrides — FOR THE TEST STAND ONLY (printed as a "ПОДМЕНА" line): VT_KOREN, VT_PERECHEN, VT_ALERT, VT_POROG_CH,
+VT_SEGODNYA. VT_PERECHEN, when set, wins over HVT_PERECHEN.
+"""
+import datetime as dt, fnmatch, os, pwd, subprocess, sys, time
+
+TEG = 'hvosty-vartmp-watch'
+KOREN = os.environ.get('VT_KOREN', '/var/tmp')
+# RU: перечень — настройка HVT_PERECHEN; нейтральное умолчание — файл пакета, которого может не быть (= пустой перечень).
+# EN: the list is setting HVT_PERECHEN; neutral default is a package path that may be absent (= empty list).
+PERECHEN = os.environ.get('VT_PERECHEN', os.environ.get('HVT_PERECHEN', '/etc/hvosty-vartmp-watch/dolgozhiteli.txt'))
+ALERT = os.environ.get('VT_ALERT', '/usr/local/bin/agent-alert')
+POROG_CH = float(os.environ.get('VT_POROG_CH', '72'))
+SEGODNYA = os.environ.get('VT_SEGODNYA') or dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%d')
+
+
+def vladelec(uid):
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except KeyError:
+        return str(uid)
+
+
+def derevo(put):
+    """RU: (новейший mtime, объём в байтах) по дереву записи; ссылки не раскрываются.
+    EN: (newest mtime, size in bytes) over the entry's tree; symlinks are not followed."""
+    st = os.lstat(put)
+    novejshij, obyom = st.st_mtime, st.st_size
+    if os.path.isdir(put) and not os.path.islink(put):
+        for kor, katalogi, fajly in os.walk(put, followlinks=False, onerror=lambda e: None):
+            for imya in katalogi + fajly:
+                try:
+                    s = os.lstat(os.path.join(kor, imya))
+                except OSError:
+                    continue
+                novejshij = max(novejshij, s.st_mtime)
+                obyom += s.st_size
+    return novejshij, obyom
+
+
+def perechen():
+    """RU: [(маска, срок, хозяин, причина)], [негодные строки]; нет файла — пустой перечень, не слепота.
+    EN: [(mask, expiry, owner, reason)], [invalid lines]; no file — empty list, not blindness."""
+    zapisi, bedy = [], []
+    if not os.path.exists(PERECHEN):
+        return zapisi, bedy
+    with open(PERECHEN, encoding='utf-8') as f:
+        for n, s in enumerate(f, 1):
+            s = s.strip()
+            if not s or s.startswith('#'):
+                continue
+            golova, _, prichina = s.partition('|')
+            chasti = golova.split()
+            try:
+                assert len(chasti) == 3 and prichina.strip()
+                dt.date.fromisoformat(chasti[1])
+            except (AssertionError, ValueError):
+                bedy.append(f'строка {n} перечня негодна (нужно «маска ГГГГ-ММ-ДД хозяин | причина»): {s[:80]}')
+                continue
+            zapisi.append((chasti[0], chasti[1], chasti[2], prichina.strip()))
+    return zapisi, bedy
+
+
+def razmer(b):
+    for ed in ('Б', 'КБ', 'МБ', 'ГБ'):
+        if b < 1024 or ed == 'ГБ':
+            return f'{b:.0f} {ed}' if ed == 'Б' else f'{b:.1f} {ed}'
+        b /= 1024
+
+
+def main():
+    for v in ('VT_KOREN', 'VT_PERECHEN', 'VT_ALERT', 'VT_POROG_CH', 'VT_SEGODNYA'):
+        if v in os.environ:
+            print(f'⚠️ ПОДМЕНА: {v}={os.environ[v]}')
+    try:
+        imena = sorted(os.listdir(KOREN))
+    except OSError as e:
+        print(f'СЛЕПОТА: {KOREN} не читается: {e}')
+        return 2
+    try:
+        zapisi, bedy = perechen()
+    except OSError as e:
+        print(f'СЛЕПОТА: перечень {PERECHEN} не читается: {e}')
+        return 2
+    for b in bedy:
+        print(f'СЛЕПОТА: {b}')
+    teper = time.time()
+    hvosty, molchat = [], 0
+    for imya in imena:
+        if imya.startswith('systemd-private-'):
+            continue
+        put = os.path.join(KOREN, imya)
+        try:
+            novejshij, obyom = derevo(put)
+            vl = vladelec(os.lstat(put).st_uid)
+        except OSError:
+            continue
+        vozrast_ch = (teper - novejshij) / 3600
+        if vozrast_ch <= POROG_CH:
+            continue
+        pometka = ''
+        for maska, srok, hozyain, prichina in zapisi:
+            if fnmatch.fnmatchcase(imya, maska):
+                if SEGODNYA <= srok:
+                    pometka = None
+                    break
+                pometka = f' · срок исключения истёк {srok} (хозяин {hozyain})'
+        if pometka is None:
+            molchat += 1
+            continue
+        hvosty.append(f'{imya} · {vl} · {razmer(obyom)} · {vozrast_ch / 24:.1f} сут{pometka}')
+    itog = (f'{TEG}: записей {len(imena)}, хвостов старше {POROG_CH:.0f} ч — {len(hvosty)}, '
+            f'долгожителей по перечню {molchat}')
+    print(itog)
+    kod = 2 if bedy else 0
+    if not hvosty:
+        return kod
+    tekst = (f'🔴 хвосты {KOREN} на {os.uname().nodename}: {len(hvosty)} записей старше {POROG_CH:.0f} ч '
+             f'(возраст — по новейшему файлу дерева). Удаляет хозяин; по делу — строка в {PERECHEN}.\n'
+             + '\n'.join(hvosty[:30]) + (f'\n… и ещё {len(hvosty) - 30}' if len(hvosty) > 30 else ''))
+    for h in hvosty:
+        print(f'  {h}')
+    try:
+        ushlo = subprocess.run([ALERT, "--plain", "--", tekst], capture_output=True, timeout=120).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        ushlo = False
+    if not ushlo:
+        print(f'🔴 ТРЕВОГА НЕ ДОСТАВЛЕНА (канал {ALERT})')
+        return 3
+    return 2 if bedy else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

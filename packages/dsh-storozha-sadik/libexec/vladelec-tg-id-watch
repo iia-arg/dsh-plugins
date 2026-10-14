@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+# Called by the local root sadik-watch every 10 minutes; no Telegram dependency.
+import fcntl
+import json
+import math
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
+
+REMINDER_SECONDS = 6 * 3600
+
+def log(text):
+    try:
+        subprocess.run(['logger', '-t', 'vladelec-tg-id-watch', '--', text], timeout=3, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        print(text, file=sys.stderr)
+
+def save(file, value):
+    fd, name = tempfile.mkstemp(prefix='.vladelec-', dir=file.parent)
+    try:
+        with os.fdopen(fd, 'w') as out:
+            json.dump(value, out, ensure_ascii=False)
+            out.write('\n')
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(name, file)
+        directory = os.open(file.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+def main():
+    if len(sys.argv) != 1:
+        raise ValueError('доводы не принимаются')
+    directory = Path(os.environ.get('VLADELEC_WATCH_STATE_DIR', '/var/lib/sadik-watch'))
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (directory / 'vladelec-tg-id.lock').open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            log('другой такт уже проверяет настройку; этот такт пропущен')
+            return 2
+        file = directory / 'vladelec-tg-id.json'
+        damaged = False
+        try:
+            exists = file.exists()
+            old = json.loads(file.read_text()) if exists else None
+            if exists and (not isinstance(old, dict) or old.get('kind') not in ('failure', 'recovery', 'healthy') or not isinstance(old.get('reason'), str) or type(old.get('at')) not in (int, float) or not math.isfinite(old['at'])):
+                raise ValueError('неверная схема')
+        except (ValueError, OverflowError):
+            # Keep one forensic copy, then restore monitoring instead of trusting unknown state.
+            os.replace(file, file.with_suffix('.invalid'))
+            old, damaged = None, True
+            log('повреждённое состояние сохранено в ' + str(file.with_suffix('.invalid')))
+
+        try:
+            r = subprocess.run(['/usr/local/bin/vladelec-tg-id'], capture_output=True, text=True, timeout=3)
+            code, reason = r.returncode, r.stderr.strip()
+        except (OSError, subprocess.TimeoutExpired) as e:
+            code, reason = 2, str(e)
+        failed = code != 0
+        if failed:
+            reason = 'код ' + str(code) + ': ' + (reason or 'читатель не назвал причину')
+            kind = 'failure'
+        else:
+            if not damaged and (old is None or old['kind'] == 'healthy'):
+                return 0
+            reason, kind = '', 'recovery'
+        now = time.time()
+        changed = old is None or old['kind'] != kind or old['reason'] != reason
+        if not changed and 0 <= now - old['at'] < REMINDER_SECONDS:
+            return 2 if failed else 0
+        # Record the attempt BEFORE the courier: failed delivery cannot create a mail storm.
+        save(file, {'kind': kind, 'reason': reason, 'at': now})
+        body = ('B-N-2023 · сторож владельца sadik\n' +
+                ('vladelec-tg-id отказал: ' + reason + '\nПроверь /etc/vladelec/telegram-id.\n' if failed else
+                 'vladelec-tg-id: восстановлено; настройка владельца снова читается.\n') +
+                ('Состояние сторожа было повреждено и восстановлено; прежнее сохранено в ' + str(file.with_suffix('.invalid')) + '\n' if damaged else ''))
+        command = """p=$(mktemp /tmp/dlya-zabavy-vladelec-tg-id-watch.XXXXXX.md) || exit 2
+trap 'rm -f -- "$p"' EXIT
+cat > "$p" || exit 2
+tell-komu "$p"
+"""
+        try:
+            sent = subprocess.run(['timeout', '-k', '1s', '5s', 'sudo', '-n', '-u', 'iskra',
+                                   'env', 'DSH_HOME=/opt/iskra/.dsh', 'bash', '-c', command],
+                                  input=body, text=True, timeout=7).returncode
+        except (OSError, subprocess.TimeoutExpired) as e:
+            log('письмо Забаве НЕ положено: ' + str(e))
+            sent = 2
+        if sent == 0:
+            if not failed:
+                save(file, {'kind': 'healthy', 'reason': '', 'at': now})
+        else:
+            log('письмо Забаве НЕ положено, код ' + str(sent) + '; повтор через 6 часов либо при смене причины')
+        return 2 if failed or sent != 0 else 0
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, TypeError) as e:
+        log('СЛЕПОТА: ' + str(e))
+        sys.exit(2)

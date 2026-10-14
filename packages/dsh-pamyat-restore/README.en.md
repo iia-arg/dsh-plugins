@@ -1,175 +1,136 @@
 # dsh-pamyat-restore
 
-Post-compaction context restore and a welcome briefing at session start. One package — one kernel seam: `agent/pre-step`.
+## Purpose
 
-## Place in the dsh-pamyat family
+A dsh (cordis) plugin: the reading side of agent memory. Layer B: after a successful session compaction it inserts the compaction summary from memory into context (or only a continuation prompt, when a summary from the `dsh-pamyat-kompakt` engine is already in the compacted surface). Layer C: on the first eligible step of a session after process start it delivers a welcome briefing — the latest memory records with a `use/verify/ignore` decision and its reason, plus the latest compaction summary in full, unless the same summary already stands in this session's surface (`telegram-v2-*` sessions get knowledge only, without the summary). The plugin only adds a context message at `agent/pre-step`: it does not decide the turn, does not guard tool calls, and never substitutes stub records for memory.
 
-This package is the **reading side** of memory. Writing and storage live separately:
+## What gets installed and where
 
-| layer | package | what it does |
-|---|---|---|
-| A | `dsh-pamyat-secretary` | takes a summary before compaction overwrites the history |
-| — | `dsh-pamyat-core` | storage, decision journal, write policy |
-| — | `dsh-pamyat-omega` | long-term layer over external storage |
-| **B, C** | **this package** | **returns knowledge to the context: the summary after compaction and the briefing at start** |
-| E | `dsh-pamyat-byudzhet` | limit on how much is lifted back |
-| F | `dsh-pamyat-nudzh` | spending count: is it time to compact |
+Package files (`files` in `package.json`): `src/index.js` (all plugin code), `test/stend-*.mjs` (test stands), `README.md`, `README.en.md`, `CHANGELOG.md`, `docs/` (`ARCHITECTURE.md`, `GUARDS.md`, `SETTINGS.md`, `TROUBLESHOOTING.md`). Besides these, npm adds `package.json` and `LICENSE` (the MIT license text; the `license` field in `package.json`) to the archive by itself.
 
-🔴 **Why this is here.** A set without the reading side is memory that writes and never
-gives back. Completeness cannot be checked by machine today: every metapackage probe
-verifies the consistency of what is declared, and a missing layer is invisible to them —
-what is declared agrees perfectly. So the set is named in words, so that at least a human
-can see the gap.
+Deployed path on the machine: `/opt/agent-plugins/node_modules/dsh-pamyat-restore`. An agent profile sees it through the symlink `<DSH_HOME>/profiles/web/node_modules/dsh-pamyat-restore` → `/opt/agent-plugins/node_modules/dsh-pamyat-restore`.
 
-## What it does
+What `src/index.js` registers:
 
-- **Layer B (restore after compaction).** On the first `agent/pre-step` after a `compaction/end` event (delivered through the `session/event` hook, not a hook of its own — see Assumptions), injects a durable message with the summary (a record of class `svodka`): TL;DR, LAST USER DIRECTION, etc., saved by the secretary before compaction.
-- **Layer C (welcome briefing).** At session start (first step), injects a memory sample with a per-record `use` / `verify` / `ignore` decision.
+- `inject = ['agents']` — the plugin waits for the `agents` service and does not start without it.
+- `ctx.provide('newConversationRestore', { version: 1 })` — a flag that a new conversation generation will be restored. Two readers, both refuse a new generation without it: the `dsh-telegram-multiagent` channel before a `/new` transition and the subscription adapter `dsh-subscription-adapter` (the new-generation request and the `conversationIdentity.check` service) — via `ctx.get('newConversationRestore')?.version === 1`.
+- `ctx.on('session/event', …)` — catches `compaction/start`, `compaction/summary`, `compaction/end` from the session journal (there is no separate `compaction/*` hook). A successful `compaction/end` arms restoration for that session.
+- `ctx.on('agent/pre-step', …, { prepend: true })` — calls `next()` first, then, when needed, appends one `createUserMessage` message with `source.kind = 'plugin:dsh-pamyat-restore'`, `form: 'snapshot'` and sections `dsh-pamyat-restore#zapis-<id>` for the delivered records. A `reject` decision or an aborted step is left untouched.
+- No tools are registered.
+- Latch `globalThis.__pamyatRestore`: a second `apply` in the same process returns immediately.
 
-The injection is only a durable message with `source.kind=plugin` (like `dsh-time-context`). No decisions during the turn: restore adds context and leaves.
+Other services are obtained through `ctx.get`, not `inject` (their absence does not stop the agent):
 
-## use/verify/ignore decision
+- `pamyat` (core, `dsh-pamyat-core`): `prochitat` (reads records: 10 knowledge records, and separately 1 summary of class `klassSvodki`), `dostupna`/`pochemuNedostupna`, `sessiyaIsklyuchena` (session exclusion policy), `otmetitKasanie` (touches delivered records, `povod: 'vydacha-agentu'`), `sobytiyaSessii`/`eSvodkaSzhatiya` (session journal reading; without them it falls back to `session.events`).
+- `byudzhetPamyati` (`dsh-pamyat-byudzhet`): `otobrat({ zapisi })` — knowledge selection for layer C. Layer B never calls the budget.
 
-A deterministic rule that prints its REASON:
+Files written by the code:
 
-| decision | condition | printed reason |
-|---|---|---|
-| `ignore` | record older than `ignoreAfterMs` | `старше N сут` |
-| `verify` | record TIME unknown (absent or not a number) | `время записи неизвестно — применять с проверкой` |
-| `verify` | confidence NOT MEASURED (absent or not a number) | `вера не измерялась — применять с проверкой` |
-| `verify` | fresh but `vera` below `useVeraThreshold` | `вера X ниже порога Y` |
-| `use` | fresh and `vera` above the threshold | `свежая, вера X` |
+- `welcomeOtmetki` (default `~/.dsh-pamyat-welcome-otmetki.json`) — JSON mapping session id to the last briefing time in ms; written with `writeFileSync`, the directory is created if needed.
+- `<welcomeOtmetki>.compaction-ok.json` — evidence of a successful platform compaction `{version:1, scope, session, compactionId, time}`; written atomically: temporary `<…>.<uuid>.tmp` with mode 0600, `fsync`, `rename`, directory `fsync`.
 
-The reason is mandatory: without it, correct work and degradation are indistinguishable a month later.
+All plugin logging is stderr lines prefixed `[dsh-pamyat-restore <version from package.json>]`.
 
-### 🔴 Confidence is currently not measured for any record
+## Installation
 
-The `useVeraThreshold` limit is in force, but there is nothing to compare yet: **nobody
-sets confidence**. The core accepts it as a write parameter for any class — and none of
-today's writers passes it. In the live database confidence is empty on every record.
+**Where to install from.** The package is published to npm with release 3.1.2 (order and window — by the owner's decision). Until then the npm registry holds an old `0.1.0-alpha.*` edition (measured 10.10.2026, `npm view dsh-pamyat-restore version`): `npm install dsh-pamyat-restore` installs that one, not the one described here. Until the release, install from the source tree: `npm pack <дерево>/packages/dsh-pamyat-restore`, then `npm install ./dsh-pamyat-restore-<версия>.tgz`.
 
-So the "confidence was not measured" branch is not a rare case but the **normal state**,
-and it is kept apart from "below threshold" on purpose:
+On the machine the package is installed once for all agents, with npm from the lock file of `/opt/agent-plugins`. In `/opt/agent-plugins/package.json` the dependency points to a tarball:
 
-    confidence absent  ->  verify, reason "not measured" — WITHOUT a number
-    confidence 0       ->  verify, reason "0 below threshold" — a measured zero
-    confidence 0.5     ->  verify, reason with the number
-    confidence 0.9     ->  use
+```json
+"dsh-pamyat-restore": "file:../agent-plugins-tarbally/dsh-pamyat-restore-<версия>.tgz"
+```
 
-Without that branch the comparison collapsed both states back together, and did so in
-opposite directions: `null < 0.7` is true and produced verify with a false number in the
-reason, while `undefined < 0.7` is false — so an unmeasured record went to `use` as
-trustworthy.
+Tarballs live in `/opt/agent-plugins-tarbally/`; the exact version and `integrity` are pinned in `/opt/agent-plugins/package-lock.json`. The peer dependencies (`@deepseek-ai/dsh-llm`, `@deepseek-ai/schemastery`) and, for real data, `dsh-pamyat-core` must sit next to it in the same `node_modules`.
 
-The rule will start working once a measurer appears. Until then it is declared dormant
-here, so that nobody builds a conclusion on it.
+Enabling: a symlink from the agent profile to the shared directory and an entry in the `insert` section of `<DSH_HOME>/profiles/web/cordis.patch.yml`. Example in the form of the production profiles (the marker file path is a sample; each agent has its own):
+
+```yaml
+- insert:
+    - name: dsh-pamyat-restore
+      id: dsh-pamyat-restore
+      config:
+        klassSvodki: svodka-kompakcii
+        restoreEnabled: true
+        welcomeEnabled: true
+        welcomeBudget: 15200
+        ignoreAfterMs: 604800000
+        useVeraThreshold: 0.7
+        welcomeInterval: 86400000
+        welcomeOtmetki: /opt/<агент>/pamyat/welcome-otmetki.json
+```
+
+New settings take effect only after the agent process restarts: a repeated `apply` in the same process returns immediately (latch `globalThis.__pamyatRestore`).
 
 ## Configuration
 
-| key | default | meaning |
-|---|---|---|
-| `restoreEnabled` | `true` | enable layer B |
-| `welcomeEnabled` | `true` | enable layer C |
-| `welcomeBudget` | `800` | briefing budget in characters |
-| `ignoreAfterMs` | `604800000` | older than this -> `ignore` (7 days) |
-| `useVeraThreshold` | `0.7` | `vera` not below this -> `use`, else `verify` |
+`config` keys (Schema `Config` in `src/index.js`):
 
-## Read contract (with core)
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `restoreEnabled` | boolean | `true` | Layer B: restoration after a successful `compaction/end`. |
+| `welcomeEnabled` | boolean | `true` | Layer C: welcome briefing. |
+| `welcomeBudget` | number | `800` | Soft length limit for briefing knowledge lines (JS string length units). The first line always fits; the frame, cancellation lines and the compaction summary are outside the limit. |
+| `welcomeInterval` | number | `86400000` | Minimum interval between briefings of the same session, ms (tracked in `welcomeOtmetki`). |
+| `welcomeOtmetki` | string | `join(homedir(), '.dsh-pamyat-welcome-otmetki.json')` | Briefing marker file; the `<…>.compaction-ok.json` path is derived from it. When several agents share a home, give each its own path. |
+| `ignoreAfterMs` | number | `604800000` (7 days) | Older records get `ignore`. |
+| `useVeraThreshold` | number | `0.7` | Trust at or above it gets `use` (with the caveats below). |
+| `ignoreVeraThreshold` | number | `0.3` | Trust below it gets `ignore`; between the thresholds — `verify`. Must be below `useVeraThreshold`; otherwise startup logs «пороги веры несовместимы» (trust thresholds are incompatible) to stderr (loading continues). |
+| `klassSvodki` | string | `svodka-kompakcii` | Record class of the compaction summary. Must match the secretary `klass` (`dsh-pamyat-secretary`), otherwise summaries are "not found". |
 
-There is one source — the core's `pamyat` service, taken via `ctx.get('pamyat')`:
+`decide` order for a knowledge record: unknown time — `verify`; older than `ignoreAfterMs` — `ignore`; core trust state (`otmenena` — `ignore` with a visible ⛔ line without content; `oprovergnuta`/`otmetka-negodna`/`utochnena` — `verify`; `podtverzhdena` — `use`); trust not measured — `verify`; below `ignoreVeraThreshold` — `ignore`; below `useVeraThreshold` — `verify`; if all ratings are model-authored (`kem` starts with `model:`) — `use` only with "helped" from two distinct `kem` values.
 
-```
-pamyat.prochitat({ klass?, skolko? }) -> array of core table rows
-pamyat.dostupna() / pamyat.pochemuNedostupna()
-```
+The plugin code reads no environment variables (the default path depends on `homedir()`). The stands read: `DSH_SESSION`, `DSH_TEST_APP`, `STEND_APP` (`test/stend-restore.mjs`), `PREDMET` (`test/stend-krik-zvuchit.mjs`), `STEND_RESTORE` (`test/stend-welcome-v2.mjs`).
 
-The shapes differ, and a single place translates them — `perevesti()`:
+Files: writes `welcomeOtmetki` and `<welcomeOtmetki>.compaction-ok.json` (see above), reads them back, and reads the package `package.json` (version for log lines).
 
-| core | here | note |
-|---|---|---|
-| `klass` | `vid` | |
-| `sozdano` | `kogda` | |
-| `istochnik` | `avtor` | empty falls back to the knowledge owner; nothing is invented |
-| `vera` | `vera` | **passed through as is, including `null`** |
-| `bez_podtverzhdeniya` | `bezPodtverzhdeniya` | the trust mark travels with the record |
+## Verification
 
-🔴 **There is no stub.** There was one — and for a whole evening it fed the live context
-with plausible fiction: the layer honestly injected a record into the session, the log
-printed "restoration injected", and telling that apart from real work required comparing
-the text against the source. A fallback path to the same data is a second source of
-truth, and one day it wins silently.
+The stands live in `test/`, run on fixtures and temporary directories, and call no live services. Exit codes of each stand: 0 — match, 1 — mismatch (including an uncaught `assert`), 2 — blindness: the check could not run (missing dependencies, neighbouring package or SDK); exit 2 is not success.
 
-🔴 **The service is taken with `ctx.get`, not declared in `inject`** — by proportionality,
-not by loudness.
-
-The earlier rationale here was false, and a test run showed it: booting a copy of the
-platform with the core removed from the profile proved that `inject` is **not quiet but
-catastrophic** — the platform refuses to start at all and names the cause explicitly:
-
-    dsh: 1 entry did not activate
-    dsh-pamyat-secretary: pending (waiting for service: pamyat)
-
-`inject` gives excellent diagnostics at the price of the whole agent. The real argument
-for `ctx.get` is that **a missing briefing is not worth stopping the agent**: the layer
-must keep its voice, say there is no memory, and step aside. The secretary makes the
-opposite choice, and rightly so — without memory it has nowhere to write, and failing is
-more honest than doing empty work.
-
-## How to re-check
-
-The test benches ship with the code: a check that stays with its author is not a check.
-
+```sh
+    npm test
     node test/stend-restore.mjs
-    node test/stend-krik-zvuchit.mjs
+    node test/stend-doveriya-vydachi.mjs
     node test/stend-readme.mjs
+    DSH_SESSION=<платформа>/node_modules/@deepseek-ai/dsh-session/lib/index.js node test/stend-restore.mjs
+```
 
-🔴 The first one needs two platform packages, and without them it honestly goes blind
-(exit 2) rather than lying green. The package lives outside the platform tree, so the
-paths are given explicitly:
+`npm test` runs every `test/stend-*.mjs` in turn and returns: 1 if any stand returned 1; otherwise the nonzero code of the last stand that returned 2 or another nonzero code; 0 if all returned 0. It needs a POSIX shell.
 
-    DSH_PERSIST=<platform>/node_modules/@deepseek-ai/dsh-session-persistence/lib/index.js
-    DSH_SESSION=<platform>/node_modules/@deepseek-ai/dsh-session/lib/index.js
+| Stand | What it checks |
+|---|---|
+| `test/stend-restore.mjs` | Main stand: layers B and C separately — memory availability, message shape (`id`, role, `source.kind`, sections), trust and thresholds, budget, summary, touches. With an SDK (`DSH_SESSION` or `DSH_TEST_APP`/`STEND_APP`) — the event passes the platform load validator; with a neighbouring `dsh-pamyat-core` — thresholds agree with the trust formula; with a neighbouring `dsh-pamyat-secretary` — `klassSvodki` matches its `klass`. |
+| `test/stend-bez-isklyucheniya.mjs` | Without core `sessiyaIsklyuchena`, without the core, or for an excluded session, memory is not read and nothing is inserted; after recovery insertion resumes. |
+| `test/stend-doveriya-vydachi.mjs` | Trust states: cancellation yields an ⛔ line without content or touch; end-to-end probe through the real core on a temporary database. |
+| `test/stend-kasaniya-podannyh.mjs` | Touches go exactly to records that entered the text (real core, temporary database, checked through a separate SQL connection). |
+| `test/stend-klass-nol.mjs` | Zero summaries before and after successful compaction, failed `compaction/end`, pre-load history, corrupt and foreign `.compaction-ok.json`, write and read failures. |
+| `test/stend-krik-zvuchit.mjs` | In a separate process with real cordis: the startup line with the version from `package.json` reaches stderr; without the `agents` service the plugin waits silently. |
+| `test/stend-nastavleniya-ocenki.mjs` | The `pamyat_ocenit` instruction appears exactly once in the briefing and only with delivered knowledge. |
+| `test/stend-new-session.mjs` | A `telegram-v2-*` session receives knowledge but not the old global summary (neither in welcome nor after a foreign compaction); `telegram-a2a` keeps both paths. |
+| `test/stend-otmenennyh-v-konce.mjs` | Cancellations go last, outside `welcomeBudget`: first 3 by id, the rest summarized; record date DD.MM in Moscow time. |
+| `test/stend-pometki-otnoshenij.mjs` | Formatting of record relationships (cancelled/refined/cancels/refines) and `#id`. |
+| `test/stend-readme.mjs` | Both READMEs: settings keys, links to files in the `npm pack` archive, identical verification commands, mention of blindness; dependency version shape; runs the other stands from the unpacked archive (0 and 2 are acceptable). |
+| `test/stend-sleda-vydachi.mjs` | Delivery trace line: use/verify/ignore/"did not fit" counts add up to the number of selected records. |
+| `test/stend-styka-sobytij.mjs` | Core integration: `pomoshchnikYadra` via `ctx.get` and summary lookup in the surface on DSH 0.1.1 and 0.2.0 journal shapes. |
+| `test/stend-use-ot-modeli.mjs` | The `use` rule for model-only ratings: "helped" from two distinct `kem` values is required. |
+| `test/stend-welcome-v2.mjs` | `welcomeInterval` is per session: every new `telegram-v2-*` session gets a briefing, a restart of the same session within the interval does not. |
 
-All three share the same exit codes: 0 agreed, 1 mismatch, 2 could not check.
-"Nothing to check with" and "checked, all good" are different news, and the exit code
-tells them apart.
+`stend-doveriya-vydachi`, `stend-kasaniya-podannyh`, `stend-styka-sobytij` and parts of `stend-restore` look for a neighbouring `../../dsh-pamyat-core` (and `../../dsh-pamyat-secretary`); without them the result is exit 2. `stend-kasaniya-podannyh` needs `node:sqlite`.
 
-### Incoming budget
+## Limitations
 
-If `dsh-pamyat-byudzhet` is mounted, the briefing is selected under its limit — the
-`byudzhetPamyati.otobrat` service decides what to lift and shouts with named reasons when
-something is dropped. There is deliberately no second selection here: another way of
-deciding the same thing would silently drift from the first.
+- Dependencies: peers `@deepseek-ai/dsh-llm` (subexport `@deepseek-ai/dsh-llm/message`) and `@deepseek-ai/schemastery`; ranges are in `package.json`. The only required service is `agents`. Without `pamyat` (`dsh-pamyat-core`) the plugin starts but delivers nothing and says so on stderr. Without `byudzhetPamyati` (`dsh-pamyat-byudzhet`) the briefing is built without budget selection. Summaries are written by `dsh-pamyat-secretary`; the prompt-only path (no re-insertion) works only for summaries from provider `dsh-pamyat-kompakt` (package `dsh-pamyat-kompakt-dsh`). The code has no direct link to `dsh-pamyat-omega`.
+- Without core `sessiyaIsklyuchena`, memory reads and delivery are refused (`ОТКАЗ PAMYAT_POLITIKA_NEDOSTUPNA` on stderr); the normal agent turn proceeds.
+- `telegram-v2-*` sessions: the global summary is not carried over after a foreign compaction; welcome delivers knowledge only, without the compaction summary.
+- Layer C reads at most 10 records; the budget selects only from them. The summary in welcome is delivered in full, outside `welcomeBudget`, the budget service and `decide` checks (age and trust); the old-summary warning exists only in layer B. If its text (without the final continuation-promise paragraph) is already contained in a compaction summary message on the session surface (`svodkaNaPoverhnosti` in `src/index.js`), it is NOT raised into the briefing — stderr says «уже стоит в поверхности этой сессии — в брифинг НЕ поднята» (already in this session's surface, not raised); if the surface could not be read, the summary is raised as before with the line «поверхность сессии не прочитана — есть ли там сводка, НЕ ЗНАЕМ» (surface not read, unknown whether the summary is there).
+- `welcomeBudget` is not a limit on the whole message.
+- Markers (in-process and on disk) are set before memory is read: if reading fails, the session's briefing is not retried until a new process or the interval expires. Within one process a session gets at most one briefing, even after `welcomeInterval`. A corrupt or unreadable `welcomeOtmetki` reads as "no briefing yet".
+- Touches are recorded before the message is returned; this does not prove the model received it.
+- A `use` decision is an annotation, not proof of truth; distinct `kem` values do not prove independent deliveries (that is the core write protocol).
+- No backups, no encryption, no sanitizing of prompt instructions in stored knowledge, no watchdogs: logging is stderr only, and someone outside must read it.
+- The `npm test` script is written for a POSIX shell and does not work in other shells.
 
-The service is **optional**: without it the briefing is built in full. But its absence is
-**said out loud** — otherwise "budget not applied" is indistinguishable from "applied and
-dropped nothing", and a month later nobody can tell whether the limit works.
+## License
 
-🔴 **Layer B does not call the budget, and that is a decision, not an omission.** There the
-record is exactly one — the compaction summary the layer exists for; dropping it under a
-budget would cancel the layer rather than save anything.
-
-A budget failure does not cancel the briefing: it is about cost, not about permission.
-
-## Boundaries
-
-- **What it protects:** against context loss after compaction (B) and a "cold start" without memory (C).
-- **Where it does NOT apply:** steps that are not the first after `compaction/end` (B) and not the first step of the session (C); steps with `decision.kind === "reject"` or an aborted signal.
-- **What it does NOT catch:** it does not compact and does not cancel compaction; it does not guarantee the model USES the injection.
-- **Stop condition:** layers are disabled via `restoreEnabled`/`welcomeEnabled`.
-
-## What is NOT configurable (and why)
-
-- **A briefing-refresh key** — deliberately absent: a key lives in the version that EXECUTES it. A schema-accepted key that does nothing is indistinguishable from a ready capability.
-
-- **The essence of the `use/verify/ignore` decision** — the meaning of the classes; only the THRESHOLDS (`ignoreAfterMs`, `useVeraThreshold`) are configurable, not the rule itself.
-- **Reason printing** — "why this decision" cannot be disabled.
-- **Foreign-protocol literals** (`agent/pre-step`, `session/event`, the `compaction/end` event type, `source.kind=plugin`) — read from the kernel source, not configured.
-
-## Assumptions
-
-- **Verified against platform sources:** the `agent/pre-step` hook and durable-injection format — `dsh-time-context/lib/index.js:363`.
-- **🔴 Verified and FIXED on 2026-09-02:** there is NO hook named `compaction/*` in the platform at all (pattern `'compaction[^']*'(` across every `.d.ts` in the tree → 0, with a positive control: the same pattern finds `'session/event'(` in `dsh-session/lib/types/index.d.ts:66`). `compaction/end` is a session-log event type (`SessionEventMap`); every platform consumer reads it as `event.type === 'compaction/end'` (`dsh-compaction/lib/invariant.js:60,101`, `dsh-client-ui-trajectory/lib/client.js:416`). The first edition subscribed via `ctx.on('compaction/end')` — a subscription to a hook that does not exist registers silently and never fires, and from the outside that is indistinguishable from "no compaction happened". It now subscribes to `session/event` and filters by type.
-- **Verified in practice (session log, 8 events):** the `compaction/end` payload is `{ compactionId, turn }`; none carried `error` (the field is declared in the type and marks a FAILED compaction — those are skipped: history was not truncated, so there is nothing to restore).
-- **Per-function canary: 15 checks**, each proven by a deliberate break — welcome, use/verify/ignore, ignore-exclusion, reason, C without start, restore after compaction, B without compaction, bad input (both halves), correct subscription hook, foreign event type, failed compaction, compaction of another session. Plus an exact-count canary: a removed section exits 2 rather than green.
-- **Accepted without verification:** the real core contract (currently a `storage.poslednie/prochitat` stub); layer B firing on a LIVE node — the event is fed by the stand exactly as the platform feeds it, but a real compaction was not observed under instrumentation.
+MIT — the `license` field in `package.json`; the text is in [LICENSE](LICENSE).

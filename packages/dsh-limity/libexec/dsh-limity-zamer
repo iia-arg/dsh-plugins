@@ -1,0 +1,299 @@
+#!/usr/bin/python3 -B
+# -*- coding: utf-8 -*-
+"""dsh-limity-zamer — источник Б службы лимитов: штатный usage SDK через вход владельца pN, БЕЗ хода к модели (B-N-1776,
+решение Забавы 07.10 19:05Z после живой r5; частота — слово владельца 07.10 21:27 МСК «раз в час»). Зовёт таймер раз в 10 мин.
+
+По каждой подписке Claude из podpiski.json (zamer — учётка замера, organizaciya — организация, zamer_katalog — каталог
+входа, если не домашний учётки):
+  • в таблице dsh-limity есть ИЗМЕРЕННЫЙ замер (sdk_event шлюза или sdk_usage) моложе SVEZHO_MIN (30) → замера нет;
+  • свой прошлый замер по ней был меньше RAZ_V_MIN (60) минут назад → нет (отсчёт — от ПОПЫТКИ, удачной или нет);
+  • попыток по ней за сутки уже POTOLOK_SUTKI (24) → нет + строка в журнал (стоп-кран числом);
+  • иначе ОДИН замер: dsh-limity-zamer.mjs от учётки замера (setpriv, uid/gid числом), каталог входа — её домашний.
+Замер кладёт строки в приёмную сам (владелец файла = учётка замера — по нему служба 1.0.4 их и принимает).
+Тревога (agent-alert, как у codex-limit-watch) — ТОЛЬКО по переходу «измерено → не измерено» и обратно; «сказано» — по доставке.
+Цена: ≤ 24 замера/сутки на подписку, у подписки с трафиком шлюзов — 0; запросов к модели — 0.
+ЧЕГО НЕ ЛОВИТ: кредиты подписки С ТРАФИКОМ (её не замеряем — событие шлюза кредитов не несёт; SVEZHO_MIN=0 ⇒ замер раз в час
+  у всех) · подписку вне podpiski.json или без поля zamer · расход вне sadik — только ростом доли. Таблицу только ЧИТАЕТ.
+Коды: 0 — проход состоялся (в т.ч. «замерять не надо» и «не измерено»); 2 — слепота настройки («СЛЕПОТА: …»); 3 — ошибка вызова.
+"""
+import json, os, pwd, re, sqlite3, subprocess, sys, time
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from pathlib import Path
+for _l in (os.environ.get('DSH_LIMITY_LIB'), Path(__file__).resolve().parent.parent / 'lib', '/usr/local/lib/dsh-limity'):
+    if _l and (Path(_l) / 'dsh_limity_konfig.py').is_file(): sys.path.insert(0, str(_l)); break
+import dsh_limity_konfig   # r4: подписки, учётки, каталоги — только из конфига
+
+if len(sys.argv) > 1:
+    print('ОТКАЗ: у dsh-limity-zamer нет доводов, всё задаётся окружением DSH_LIMITY_*', file=sys.stderr); sys.exit(3)
+E = os.environ.get
+BAZA = Path(E('DSH_LIMITY_BAZA', '/var/lib/dsh-limity/limity.db'))
+PODPISKI = Path(E('DSH_LIMITY_PODPISKI', '/etc/dsh-limity/podpiski.json'))
+VHOD = E('DSH_LIMITY_VHOD', '/var/spool/dsh-limity/vhod')
+SOST = Path(E('DSH_LIMITY_ZAMER_SOST', '/var/lib/dsh-limity/zamer-sostoyanie.json'))
+NODE = E('DSH_LIMITY_ZAMER_NODE', '/usr/local/bin/node')
+MJS = E('DSH_LIMITY_ZAMER_MJS', '/usr/local/libexec/dsh-limity-zamer.mjs')
+ALERT = E('DSH_LIMITY_ZAMER_ALERT', '/usr/local/bin/agent-alert')
+SVEZHO_MIN = int(E('DSH_LIMITY_ZAMER_SVEZHO_MIN', '30'))
+RAZ_V_MIN = int(E('DSH_LIMITY_ZAMER_RAZ_V_MIN', '60'))
+POTOLOK_SUTKI = int(E('DSH_LIMITY_ZAMER_POTOLOK_SUTKI', str(24 * 60 // RAZ_V_MIN)))   # формулой: сутки / интервал
+SROK_S = 120
+POROGI_KREDITOV = (0.50, 0.80, 0.95)   # r2 (Вениамин 19:06Z): тревога по переходу ВВЕРХ через порог месячного предела кредитов
+REFRESH_ZA_S = 7 * 86400               # r2: тревога за 7 дней до refreshTokenExpiresAt входа
+VYDACHA = Path(E('DSH_LIMITY_VYDACHA', '/var/lib/dsh-limity/vydacha/limity.json'))
+# Пороги окон Claude (B-N-1776, Забава 20:43Z; ступени и отбой — как прежний сторож aclaude): окно выдачи → (подпись, ступени по возрастанию)
+STUPENI = {'pyat_chasov': ('5 ч', ((0.85, '⚠️'),)), 'nedelya': ('неделя', ((0.80, '⚠️'), (0.90, '🔴')))}
+SVEZHEST_MIN = 2 * RAZ_V_MIN + 10      # 130 при замере раз в час: два пропущенных замера и такт таймера (Забава 20:43Z)
+VYDACHA_MOLCHIT_MIN = 40              # r20 (Забава 21:28Z): выдача старше — служба dsh-limity молчит (её таймер — раз в минуту)
+MSK = ZoneInfo('Europe/Moscow')
+
+def trevoga(tekst, golaya=False):   # golaya — текст как есть (пороги окон: одна строка по слову владельца 23:34 МСК)
+    try:
+        return os.access(ALERT, os.X_OK) and subprocess.run([ALERT, tekst if golaya else f'лимиты подписок ({os.uname().nodename}): {tekst}'],
+                                                            capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+def svezhij_zamer(db, n):
+    return db.execute("SELECT MAX(moment_utc) FROM zamer WHERE provajder='claude' AND podpiska=? AND izmereno=1"
+                      " AND okno IN ('five_hour','seven_day') AND istochnik IN ('sdk_event','sdk_usage')", (n,)).fetchone()[0]
+
+def zamerit(n, uch, org, katalog=None):
+    """Один замер от учётки замера. → (ishod, prichina) из строки JSON замера; сбой запуска — ('ne_izmereno', причина)."""
+    try: pw = pwd.getpwnam(uch)
+    except KeyError: return 'slepota', f'учётки замера {uch} нет', {}
+    env = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'ENABLE_CLAUDEAI_MCP_SERVERS': 'false', 'DSH_LIMITY_ZAMER_N': str(n), 'DSH_LIMITY_ZAMER_KATALOG': katalog or pw.pw_dir,
+           'DSH_LIMITY_ZAMER_ORG': org, 'DSH_LIMITY_VHOD': VHOD}
+    for k in ('DSH_LIMITY_ZAMER_SDK', 'DSH_LIMITY_ZAMER_SROK_MS'):
+        if E(k): env[k] = E(k)
+    if os.getuid() == 0:
+        komanda = ['setpriv', f'--reuid={pw.pw_uid}', f'--regid={pw.pw_gid}', '--init-groups', '--no-new-privs', NODE, MJS]
+    elif os.getuid() == pw.pw_uid:   # стенд: обёртка уже под учёткой замера
+        komanda = [NODE, MJS]
+    else:
+        return 'slepota', f'обёртка под uid {os.getuid()}: нужен root (setpriv) или учётка {uch}', {}
+    try: p = subprocess.run(komanda, env=env, capture_output=True, text=True, timeout=SROK_S)
+    except subprocess.TimeoutExpired: return 'ne_izmereno', f'замер не завершился за {SROK_S} с (процесс снят)', {}
+    except OSError as e: return 'ne_izmereno', f'замер не запущен ({type(e).__name__})', {}
+    stroki = [l for l in p.stdout.splitlines() if l.startswith('{')]
+    try: o = json.loads(stroki[-1])
+    except (IndexError, ValueError):
+        hvost = re.sub(r'sk-ant-\S+|eyJ\S+|Bearer\s+\S+', '…', (p.stderr.strip().splitlines() or [''])[-1])[:120]
+        return 'ne_izmereno', f'замер без итога (код {p.returncode}){": " + hvost if hvost else ""}', {}
+    return o.get('ishod', 'ne_izmereno'), o.get('prichina'), o
+
+def msk(t, teper):
+    d = datetime.fromtimestamp(t, MSK)
+    return d.strftime('%H:%M' if d.date() == datetime.fromtimestamp(teper, MSK).date() else '%d.%m %H:%M') + ' МСК'
+
+def porogi_prohod(claude, sost, teper, svod):
+    """Пороги окон и свежесть выдачи включённых Claude-подписок: тревога по ПЕРЕХОДУ ступени (повтор — молча), отбой ✅ ниже;
+    «сказано» — по доставке. Окно без замера — не 0: ступень не меняется (свежесть скажет сама); сброс прошёл — уровень 0.
+    r20: выдача старше VYDACHA_MOLCHIT_MIN (vydano_unix) — «служба молчит», по переходу + отбой.
+    ЧЕГО НЕ ЛОВИТ: подписки Codex и выключенные · окна вне pyat_chasov/nedelya · расход между замерами (только следующим замером) ·
+    выдачи нет вовсе или она нечитаема — только СЛЕПОТА в журнале, без тревоги."""
+    try:
+        dok = json.loads(VYDACHA.read_text(encoding='utf-8')); vyd = dok['podpiski']
+        vydano = dok.get('vydano_unix')   # r20: момент сборки выдачи; выдача до r20 без поля — момент файла
+        if not isinstance(vydano, (int, float)) or isinstance(vydano, bool): vydano = VYDACHA.stat().st_mtime
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        print(f'СЛЕПОТА: выдача {VYDACHA} не прочитана ({type(e).__name__}) — пороги окон не проверены'); return 2
+    molchit = teper - vydano > VYDACHA_MOLCHIT_MIN * 60   # r20: служба dsh-limity молчит — по переходу + отбой; «сказано» — по доставке
+    if molchit != sost.get('vydacha_molchit_skazano', False):
+        tekst = (f'⚠️ dsh-limity: выдача не обновлялась {int((teper - vydano) // 60)} мин → sudo systemctl status dsh-limity' if molchit
+                 else '✅ dsh-limity: выдача снова обновляется')
+        if trevoga(tekst, golaya=True): sost['vydacha_molchit_skazano'] = molchit; svod.append('выдача: тревога доставлена')
+        else: svod.append('выдача: тревога НЕ доставлена — повтор')
+    kod = 0
+    for p in claude:
+        n, kl, imya = int(p['nomer']), p['kluch'], p['podpis']
+        s = sost.setdefault(str(n), {'popytki': [], 'ishod': None, 'skazano': None})
+        z = vyd.get(kl) if isinstance(vyd, dict) else None
+        if not isinstance(z, dict): print(f'СЛЕПОТА: в выдаче нет {kl} — пороги подписки {n} не проверены'); kod = 2; continue
+        sn = z.get('snyato_unix')
+        star = not isinstance(sn, (int, float)) or teper - sn > SVEZHEST_MIN * 60
+        if star != s.get('svezhest_skazano', False):
+            if not star: tekst = f'✅ {imya}: замер снова свежий'
+            elif not isinstance(sn, (int, float)): tekst = f'⚠️ {imya}: нет ни одного замера'
+            else: h, m = divmod(int((teper - sn) // 60), 60); tekst = f'⚠️ {imya}: нет свежего замера ' + (f'{h} ч {m} мин' if h else f'{m} мин')
+            if trevoga(tekst, golaya=True): s['svezhest_skazano'] = star; svod.append(f'{n}: тревога свежести доставлена')
+            else: svod.append(f'{n}: тревога свежести НЕ доставлена — повтор')
+        sk = s.setdefault('okna_skazano', {})
+        for okno, (metka, stupeni) in STUPENI.items():
+            o, bylo = z.get(okno), sk.get(okno) or {'uroven': 0, 'sbros': None}
+            if o is None:   # нет замера окна — или выдача обнулила окно, чей сброс прошёл
+                if not (bylo['uroven'] and bylo['sbros'] and bylo['sbros'] <= teper): continue
+                d, sbros = 0.0, None
+            elif not isinstance(o, dict) or not isinstance(o.get('izrashodovano_dolya'), (int, float)) or isinstance(o.get('izrashodovano_dolya'), bool):
+                print(f'СЛЕПОТА: выдача {kl}.{okno}: нет числа izrashodovano_dolya — ступень не определена (не 0)'); kod = 2; continue
+            else: d, sbros = o['izrashodovano_dolya'], o.get('sbros_unix')
+            uroven = sum(1 for porog, _ in stupeni if d >= porog)
+            if uroven == bylo['uroven']:
+                if uroven: sk[okno] = {'uroven': uroven, 'sbros': sbros}   # та же ступень — молча; сброс окна помним для отбоя
+                continue
+            if uroven > bylo['uroven']:
+                tekst = f'{stupeni[uroven - 1][1]} {imya}: {metka} {round(d * 100)}%' + (f' · сброс {msk(sbros, teper)}' if sbros else '')
+            else: tekst = f'✅ {imya}: {metka} снова ниже {round(stupeni[uroven][0] * 100)}%'
+            if trevoga(tekst, golaya=True): sk[okno] = {'uroven': uroven, 'sbros': sbros}; svod.append(f'{n}: {metka} ступень {bylo["uroven"]}→{uroven} доставлена')
+            else: svod.append(f'{n}: {metka} ступень {bylo["uroven"]}→{uroven} НЕ доставлена — повтор')
+    return kod
+
+REESTR = Path(E('DSH_LIMITY_REESTR', '/etc/agent-registry/agents.yaml'))
+INSTANCE = Path(E('DSH_LIMITY_INSTANCE_DIR', '/etc/claude-oauth'))
+
+def sverka_tokenov(konfig):
+    """r11 (Вениамин 19:13Z п.3, «два источника правды о токене»): конфиг хранит kluch → файл токена (token_shlyuza), кто какой токен держит —
+    реестр (sekrety_segodnya) и env шлюзов (instance-*.env GATEWAY_TOKEN_FILE). → список расхождений (пусто — сходится)."""
+    vkl = [p for p in konfig if p['provajder'] == 'claude' and p['vkl']]
+    puti = {t: p['kluch'] for p in vkl for t in p['token_shlyuza']}
+    rash = [f'{p["kluch"]}: файла токена {t} нет' for t, k in puti.items() for p in vkl if p['kluch'] == k and not Path(t).is_file()]
+    if puti:   # реестр нужен, только если конфиг вообще называет токены
+        try:
+            import yaml
+            izv = set(((yaml.safe_load(REESTR.read_text(encoding='utf-8')) or {}).get('mashina') or {}).get('sekrety_segodnya') or {})
+            rash += [f'{k}: токен {t} не числится в реестре ({REESTR}, mashina.sekrety_segodnya)' for t, k in puti.items() if t not in izv]
+        except Exception as e: rash.append(f'реестр {REESTR} не прочитан ({type(e).__name__}) — сверку токенов не провести')
+    for f in sorted(INSTANCE.glob('instance-*.env')) if INSTANCE.is_dir() else []:
+        try: stroki = [l.split('=', 1)[1].strip().strip('"\'') for l in f.read_text().splitlines() if l.strip().startswith('GATEWAY_TOKEN_FILE=')]
+        except OSError: continue
+        if stroki and stroki[-1] not in puti: rash.append(f'шлюз {f.name}: токен {stroki[-1]} не числится ни у одной включённой подписки (token_shlyuza)')
+    return sorted(set(rash))
+
+def deepseek_trevogi(db, konfig, sost, svod):
+    """r10: тревоги DeepSeek — по ПОСЛЕДНЕМУ снимку в таблице (меряет dsh-limity-deepseek под своей учёткой, без root): не измерено ↔ снова,
+    недоступен (is_available=false, признак Вениамина 19:56Z) ↔ снова доступен, остаток ниже порога (валюта по имени, сравнение Decimal строки
+    как пришла — без float и без сложения валют). Всё по переходу; «сказано» — только по доставке."""
+    from decimal import Decimal, InvalidOperation
+    uzel = os.uname().nodename
+    for p in konfig:
+        if p['provajder'] != 'deepseek' or not p['vkl'] or (p.get('mashina') and p['mashina'] != uzel): continue
+        n, kluch, imya = p['nomer'], p['kluch'], p['podpis']
+        try: r = db.execute("SELECT dannye, moment_utc FROM usage_snimok WHERE provajder='deepseek' AND podpiska=? ORDER BY moment_utc DESC LIMIT 1", (n,)).fetchone()
+        except sqlite3.Error: r = None
+        if r is None: continue   # ещё ни одного снимка — нечего говорить (первый проход)
+        sn = json.loads(r[0]); d, osh = sn.get('dannye'), sn.get('oshibka')
+        s = sost.setdefault(f'deepseek-{n}', {'skazano': None, 'nedostupen': False, 'porog_skazano': False})
+        def skazat(tekst, pole, znach):
+            if trevoga(f'DeepSeek «{imya}»: {tekst}'): s[pole] = znach; svod.append(f'{kluch}: тревога «{tekst[:40]}» доставлена')
+        # 1.0.10 (условие Вениамина 22:52Z): снимок кладётся и при ошибке запроса — старый снимок значит, что dsh-limity-deepseek не ходил.
+        # Старше SVEZHEST_MIN — тревога по переходу + отбой; «сказано» — по доставке. ЧЕГО НЕ ЛОВИТ: ни одного снимка вовсе (не с чем сравнить).
+        vozr = time.time() - r[1] if isinstance(r[1], (int, float)) else None
+        star = vozr is not None and vozr > SVEZHEST_MIN * 60
+        if star != s.get('star_skazano', False):
+            h, m = divmod(int(vozr // 60), 60) if vozr is not None else (0, 0)
+            tekst = (f'⚠️ {imya}: остаток не измеряется ' + (f'{h} ч {m} мин' if h else f'{m} мин')) if star else f'✅ {imya}: остаток снова измеряется'
+            if trevoga(tekst, golaya=True): s['star_skazano'] = star; svod.append(f'{kluch}: тревога свежести доставлена')
+            else: svod.append(f'{kluch}: тревога свежести НЕ доставлена — повтор')
+        if osh:
+            if s.get('skazano') != 'ne_izmereno': skazat(f'остаток НЕ ИЗМЕРЕН — {osh}', 'skazano', 'ne_izmereno')
+            continue
+        if s.get('skazano') == 'ne_izmereno': skazat('остаток снова измеряется', 'skazano', 'izmereno')
+        elif s.get('skazano') is None: s['skazano'] = 'izmereno'
+        dost = d.get('is_available')
+        if dost is False and not s.get('nedostupen'): skazat('НЕДОСТУПЕН (is_available=false) — запросы будут отказаны', 'nedostupen', True)
+        elif dost is True and s.get('nedostupen'): skazat('снова доступен', 'nedostupen', False)
+        porog, val = p.get('porog_ostatka'), p.get('valyuta_poroga')   # валюта — по имени: порядок balance_infos меняется (живой замер 20:12Z)
+        bi = next((b for b in d.get('balance_infos') or [] if isinstance(b, dict) and b.get('currency') == val), {})
+        try: ost = Decimal(str(bi.get('total_balance')))
+        except (InvalidOperation, ValueError): ost = None
+        if porog is None or ost is None or not ost.is_finite(): continue
+        if ost >= Decimal(str(porog)): s['porog_skazano'] = False; continue
+        if not s.get('porog_skazano'): skazat(f'остаток {bi.get("total_balance")} {val} НИЖЕ порога {porog} — пополнить', 'porog_skazano', True)
+
+def prohod():
+    konfig, oshibki, na_godnom = dsh_limity_konfig.prochitat_rabochij(PODPISKI)   # r7: негодный — работа на последней годной редакции
+    if oshibki and not na_godnom:
+        for o in oshibki: print(f'СЛЕПОТА: конфиг: {o}')
+        return 2
+    if oshibki: print(f'ВНИМАНИЕ: конфиг {PODPISKI} НЕГОДЕН ({"; ".join(oshibki)[:300]}) — работаю на последней годной редакции {dsh_limity_konfig.GODEN}')
+    claude = [p for p in konfig if p['provajder'] == 'claude' and p['sposob'] == 'claude_usage' and p['vkl']]   # выключенные не замеряются
+    if E('ENABLE_CLAUDEAI_MCP_SERVERS') != 'false':   # r2 (Вениамин 19:06Z): ставит Environment= юнита; нет — ни одного замера
+        print('СЛЕПОТА: ENABLE_CLAUDEAI_MCP_SERVERS не false в окружении (Environment= юнита) — замеров нет'); return 2
+    try: db = sqlite3.connect(f'file:{BAZA}?mode=ro', uri=True, timeout=30); db.execute('SELECT 1 FROM zamer LIMIT 1')
+    except sqlite3.Error as e: print(f'СЛЕПОТА: таблица {BAZA} не прочитана ({e})'); return 2
+    sost = dsh_limity_konfig.prochitat_sostoyanie(SOST, 'zamer')
+    teper, kod, svod = time.time(), 0, []
+    sk = sost.setdefault('konfig', {'negoden_skazano': False})   # r7: тревога о конфиге — по переходу, «сказано» — по доставке
+    if oshibki and not sk['negoden_skazano'] and trevoga(f'конфиг подписок {PODPISKI} НЕГОДЕН: {"; ".join(oshibki)[:300]} — служба и замер '
+                                                         f'работают на последней годной редакции до исправления'):
+        sk['negoden_skazano'] = True; svod.append('конфиг: тревога «негоден» доставлена')
+    elif not oshibki and sk['negoden_skazano'] and trevoga(f'конфиг подписок {PODPISKI} снова годен'):
+        sk['negoden_skazano'] = False; svod.append('конфиг: тревога «снова годен» доставлена')
+    for p in claude:
+        n, uch, org = int(p['nomer']), p['zamer'], p.get('organizaciya')
+        if not org: print(f'СЛЕПОТА: подписка {n} ({p["kluch"]}): в конфиге нет organizaciya — впишите руками (UUID из claude.ai), затем dsh-limity-podpiski vojti'); kod = 2; continue
+        s = sost.setdefault(str(n), {'popytki': [], 'ishod': None, 'skazano': None})
+        s['popytki'] = [t for t in s['popytki'] if teper - t < 86400]
+        sv = svezhij_zamer(db, n)
+        if sv is not None and teper - sv < SVEZHO_MIN * 60:
+            svod.append(f'{n}: свежо ({int((teper - sv) // 60)} мин)'); continue
+        if s['popytki'] and teper - s['popytki'][-1] < RAZ_V_MIN * 60:
+            svod.append(f'{n}: замер был {int((teper - s["popytki"][-1]) // 60)} мин назад'); continue
+        if len(s['popytki']) >= POTOLOK_SUTKI:
+            svod.append(f'{n}: ПОТОЛОК {POTOLOK_SUTKI} замеров/сутки достигнут — замера нет'); continue
+        s['popytki'].append(teper)
+        dsh_limity_konfig.zapisat_json(SOST, sost)   # попытка учтена ДО замера
+        ishod, prichina, itog = zamerit(n, uch, org, p['zamer_katalog'])
+        if itog.get('refresh_do'): s['refresh_do'] = itog['refresh_do']
+        if itog.get('kredity'): s['kredity'] = itog['kredity']
+        if 'weekly_all' in itog: s['weekly_all'] = itog['weekly_all']
+        if ishod == 'slepota': print(f'СЛЕПОТА: подписка {n}: {prichina}'); kod = 2; continue
+        s['ishod'] = 'izmereno' if ishod == 'izmereno' else 'ne_izmereno'
+        svod.append(f'{n}: замер → {s["ishod"]}' + (f' ({prichina})' if prichina else ''))
+    for p in claude:   # тревога по переходу; «сказано» — только по доставке; первое «измерено» — молча
+        s = sost.get(str(int(p['nomer'])))
+        if not s or s['ishod'] is None or s['ishod'] == s['skazano']: continue
+        if s['skazano'] is None and s['ishod'] == 'izmereno': s['skazano'] = 'izmereno'; continue
+        n = int(p['nomer'])
+        tekst = (f'подписка {n}: НЕ ИЗМЕРЕНО замером раз в час — страница и переключатель её не видят' if s['ishod'] == 'ne_izmereno'
+                 else f'подписка {n}: снова измеряется (замер раз в час)')
+        if trevoga(tekst): s['skazano'] = s['ishod']; svod.append(f'{n}: тревога доставлена')
+        else: svod.append(f'{n}: тревога НЕ доставлена — повтор на следующем проходе')
+    for p in claude:   # r2: кредиты — по переходу вверх через 50/80/95 %; вниз (новый месяц) — молча; «сказано» — по доставке
+        n = int(p['nomer']); s = sost.get(str(n)) or {}; kr = s.get('kredity')
+        if not kr or kr.get('dolya') is None: continue
+        uroven = max([x for x in POROGI_KREDITOV if kr['dolya'] >= x] or [0])
+        bylo = s.get('kredity_skazano', 0)
+        if uroven < bylo: s['kredity_skazano'] = uroven; continue
+        if uroven == bylo: continue
+        summy = (f"потрачено {kr.get('potracheno')} из {kr.get('predel')}" if kr.get('predel') is not None
+                 else 'суммы не выданы — единица неизвестна')   # r9: не «None USD»; валюта — в выдаче (kredity.valyuta)
+        tekst = (f"подписка {n}: кредиты ≥{round(uroven * 100)}% месячного предела — {summy}"
+                 f"{' · ПРЕДЕЛ ДОСТИГНУТ' if kr.get('upor') else ''} (деньги владельца)")
+        if trevoga(tekst): s['kredity_skazano'] = uroven; svod.append(f'{n}: тревога кредитов {round(uroven * 100)}% доставлена')
+        else: svod.append(f'{n}: тревога кредитов НЕ доставлена — повтор')
+    for p in claude:   # r3 (слово владельца 22:07 МСК): limits[weekly_all] severity critical — тревога по переходу; ушёл с critical — молча
+        n = int(p['nomer']); s = sost.get(str(n)) or {}; wa = s.get('weekly_all') or {}
+        krit = wa.get('severity') == 'critical'
+        if not krit: s['weekly_krit_skazano'] = False; continue
+        if s.get('weekly_krit_skazano'): continue
+        tekst = f"подписка {n}: недельный лимит (weekly_all) CRITICAL — {wa.get('percent')}% (переключателю: подписка исчерпана до сброса недели)"
+        if trevoga(tekst): s['weekly_krit_skazano'] = True; svod.append(f'{n}: тревога weekly_all critical доставлена')
+        else: svod.append(f'{n}: тревога weekly_all critical НЕ доставлена — повтор')
+    for p in claude:   # r2: за 7 дней до конца refresh-токена входа — одна тревога на каждый срок
+        n = int(p['nomer']); s = sost.get(str(n)) or {}; rd = s.get('refresh_do')
+        if not rd or rd - teper > REFRESH_ZA_S or s.get('refresh_skazano') == rd: continue
+        tekst = (f"подписка {n}: вход замера ({p.get('zamer')}) истекает {time.strftime('%d.%m %H:%MZ', time.gmtime(rd))} — "
+                 f"нужен повторный вход владельца, иначе подписка станет «не измерено»")
+        if trevoga(tekst): s['refresh_skazano'] = rd; svod.append(f'{n}: тревога срока входа доставлена')
+        else: svod.append(f'{n}: тревога срока входа НЕ доставлена — повтор')
+    if porogi_prohod(claude, sost, teper, svod): kod = 2   # пороги окон (B-N-1776, Забава 20:43Z)
+    rash = sverka_tokenov(konfig); st = sost.setdefault('tokeny', {'skazano': []})   # r11: тревога — по переходу (набор расхождений сменился)
+    if rash != st['skazano']:
+        tekst = ('токены подписок: РАСХОЖДЕНИЕ — ' + '; '.join(rash)[:500]) if rash else 'токены подписок: конфиг, реестр и шлюзы снова сходятся'
+        if (rash or st['skazano']) and trevoga(tekst): st['skazano'] = rash; svod.append('токены: тревога доставлена')
+    # r17 (Забава 20:33:07Z): тревога «конфиг изменён вне учёта» — у nezafiksirovano-watch Искры (/etc/dsh-limity в перечне с 20:37Z), здесь её нет
+    deepseek_trevogi(db, konfig, sost, svod)   # r10: запрос — в dsh-limity-deepseek (своя учётка); здесь — только тревоги по таблице
+    dsh_limity_konfig.zapisat_json(SOST, sost)
+    print('dsh-limity-zamer: ' + (' · '.join(svod) or 'подписок нет'))
+    return kod
+
+def main():
+    try: return prohod()
+    except dsh_limity_konfig.SostoyanieError as e:
+        print(f'СЛЕПОТА: {e}')
+        print('ТРЕВОГА: ' + ('доставлена' if trevoga(str(e)) else 'НЕ доставлена'))
+        return 2
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""strahovanie-modulej-watch — сторож страхования модулей sadik (B-N-903, вариант Б к B-H-080; 25.09.2026, Михалыч).
+
+ЗАЧЕМ. Страховка перед монтажом модуля держалась на привычке руки: 49 из 49 монтажей 23–25.09 со страховкой,
+но ни один инструмент её не требовал и её отсутствие не заметил бы никто. Вариант А (smontirovat-fajly)
+страхует сам; этот сторож ловит монтаж В ОБХОД него — запись в каталог пакета без страховки.
+
+ЧТО ДЕЛАЕТ. Раз в сутки читает журнал sudo (journalctl _COMM=sudo) за окно с прошлого прогона.
+  ЗАПИСЬ В ПАКЕТ — cp/install/mv/rsync/ln/tar -x, чья ЦЕЛЬ в каталоге пакета:
+    /opt/<агент>/plugins/<п>, /opt/coders/<к>/plugins/<п>, /opt/agent-plugins/{node_modules/<п>,dsh-*},
+    /opt/<агент>/app/node_modules/<п>, /opt/<агент>/.dsh/profiles/web/plugin/<п>.
+    Записи одного пакета с паузой < 10 мин — ОДИН монтаж.
+  СТРАХОВКА ЭТОГО ПАКЕТА — в пределах 15 мин ДО первой записи монтажа (и до 5 с после):
+    cp/install/tar -c с источником в пакете и целью в /var/backups/montazh[-s-klyuchom]
+      (tar -C <каталог> <относительное имя> собирается в полный путь — урок разбора B-H-080);
+    mv каталога пакета в .*old*; strahovka --punkt … <файл в пакете>.
+  Монтаж без страховки → тревога: время, рука (кто звал sudo), пакет, число записей.
+НЕ ЛОВИТ (граница, названная заранее):
+  - запись БЕЗ sudo — из-под учётки-владельца каталога (iskra в /opt/iskra/plugins и т. п.): в журнале sudo её нет;
+  - запись изнутри процесса, запущенного через sudo (скрипт сам пишет, не зовя sudo) — видна только строка
+    вызова самого скрипта. Так работает smontirovat-fajly — он страхует по построению, и это не пропуск;
+    но ЛЮБОЙ другой скрипт под sudo, пишущий в пакет, этому сторожу невидим;
+  - страховку, снятую не в montazh (свой каталог, git stash) — сочтёт отсутствием: тревога ложная, но громкая;
+  - ПОЛНОТУ страховки (сняли один файл из трёх) — только факт;
+  - окно сутки: монтаж без страховки будет назван на следующий день после него.
+ИСХОД: 0 без страховки 0 · 1 найдены (тревога ушла) · 2 слепота (журнал не прочитан) или канал отказал · 3 неверный вызов.
+Состояние (момент, до которого прочитано) пишется только если тревога ушла или не требовалась.
+"""
+import argparse, collections, datetime as dt, json, os, re, shlex, subprocess, sys, time
+
+ALERT = '/usr/local/bin/agent-alert'
+SOST = '/var/lib/strahovanie-modulej-watch/sost.json'
+TEG = 'strahovanie-modulej-watch'
+PAUZA_MONTAZHA = 600
+OKNO_STRAHOVKI = 900
+PK = re.compile(r'(/opt/(?:coders/[a-z]+|[a-z]+)/plugins/[A-Za-z0-9._@-]+'
+                r'|/opt/agent-plugins/node_modules/(?:@[A-Za-z0-9._-]+/)?[A-Za-z0-9_-][A-Za-z0-9._-]*'
+                r'|/opt/agent-plugins/dsh-[A-Za-z0-9._-]+'
+                r'|/opt/[a-z]+/app/node_modules/(?:@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+'
+                r'|/opt/[a-z]+/\.dsh/profiles/web/plugin/[A-Za-z0-9._-]+)')
+RX = re.compile(r'^(\S+) \S+ sudo\[\d+\]: +(\S+) : .*?(?:PWD=(\S+) ; )?USER=\S+ ; COMMAND=(.*)$')
+PISHUT = {'cp', 'install', 'mv', 'rsync', 'ln', 'tar'}
+
+
+def paket(put):
+    m = PK.search(put or '')
+    if not m: return None
+    p = m.group(1)
+    if re.search(r'/\.[^/]*(old|new|smf)', p) or p.endswith('.package-lock.json'): return None
+    return p
+
+
+def razobrat(stroki):
+    """→ (записи [(t, рука, пакет)], страховки [(t, пакет)])."""
+    zap, strah = [], []
+    for l in stroki:
+        m = RX.match(l)
+        if not m: continue
+        t = dt.datetime.fromisoformat(m.group(1)); ruka = m.group(2); pwd = m.group(3) or '/'; cmd = m.group(4)
+        try: a = shlex.split(cmd)
+        except ValueError: a = cmd.split()
+        if not a: continue
+        b = os.path.basename(a[0])
+        if b == 'strahovka':
+            for x in a[1:]:
+                pk = paket(os.path.join(pwd, x)) if not x.startswith('-') else None
+                if pk: strah.append((t, pk))
+            continue
+        if b not in PISHUT: continue
+        args = [x for x in a[1:] if not x.startswith('-')]
+        if b == 'tar':
+            kat = next((a[i + 1] for i, x in enumerate(a) if x == '-C' and i + 1 < len(a)), None)
+            flagi = ''.join(x for x in a[1:] if x.startswith('-') and not x.startswith('--'))
+            if 'c' in flagi:   # tar -c: страховка, если архив в montazh
+                arh = next((a[i + 1] for i, x in enumerate(a) if x.startswith('-') and 'f' in x and not x.startswith('--') and i + 1 < len(a)), '')
+                if '/var/backups/montazh' in arh or '/var/backups/montazh' in cmd:
+                    for x in args:
+                        if x == arh or x == kat: continue
+                        pk = paket(x if x.startswith('/') else os.path.join(kat or pwd, x))
+                        if pk: strah.append((t, pk))
+                continue
+            if 'x' in flagi and kat:
+                pk = paket(kat.rstrip('/') + '/')
+                if pk: zap.append((t, ruka, pk))
+            continue
+        if not args: continue
+        cel = args[-1]; ist = args[:-1]
+        if '/var/backups/montazh' in cel:
+            for x in ist:
+                pk = paket(x if x.startswith('/') else os.path.join(pwd, x))
+                if pk: strah.append((t, pk))
+            continue
+        if b == 'mv' and ist and re.search(r'/\.[^/]*old', cel):
+            pk = paket(ist[0])
+            if pk: strah.append((t, pk)); continue
+        if re.search(r'^/(tmp|var/tmp)/|/workspace/', cel): continue
+        pk = paket(cel if cel.startswith('/') else os.path.join(pwd, cel))
+        if pk: zap.append((t, ruka, pk))
+    return zap, strah
+
+
+def montazhi(zap):
+    zap = sorted(zap, key=lambda x: (x[2], x[0])); kl = []
+    for t, ruka, pk in zap:
+        if kl and kl[-1]['pk'] == pk and (t - kl[-1]['t1']).total_seconds() < PAUZA_MONTAZHA:
+            kl[-1]['t1'] = t; kl[-1]['n'] += 1
+        else:
+            kl.append(dict(pk=pk, ruka=ruka, t0=t, t1=t, n=1))
+    return kl
+
+
+def zastrahovan(k, strah):
+    return any(k['t0'] - dt.timedelta(seconds=OKNO_STRAHOVKI) <= t <= k['t0'] + dt.timedelta(seconds=5)
+               and (p == k['pk'] or p.startswith(k['pk'] + '/') or k['pk'].startswith(p + '/')) for t, p in strah)
+
+
+def main():
+    ap = argparse.ArgumentParser(description='сторож страхования модулей (B-N-903)', allow_abbrev=False)
+    ap.add_argument('--sost', default=SOST)
+    ap.add_argument('--kanal', default=ALERT)
+    ap.add_argument('--okno-s', help='ISO-время начала окна (для пробы; иначе — из состояния, первый раз −24 ч)')
+    ap.add_argument('--okno-po', help='ISO-время конца окна (для пробы; иначе — сейчас)')
+    ap.add_argument('--iz-fajla', help='читать журнал sudo из файла (формат journalctl -o short-iso), для пробы')
+    ap.add_argument('--tolko-pechat', action='store_true')
+    try:
+        a = ap.parse_args()
+    except SystemExit:
+        return 3
+    seyc = dt.datetime.now(dt.timezone.utc)
+    try:
+        prezhde = json.load(open(a.sost))
+    except (OSError, ValueError):
+        prezhde = {}
+    s = dt.datetime.fromisoformat(a.okno_s) if a.okno_s else (
+        dt.datetime.fromisoformat(prezhde['do']) if prezhde.get('do') else seyc - dt.timedelta(hours=24))
+    po = dt.datetime.fromisoformat(a.okno_po) if a.okno_po else seyc
+    chtenie_s = s - dt.timedelta(seconds=OKNO_STRAHOVKI)
+    if a.iz_fajla:
+        try: stroki = open(a.iz_fajla).read().splitlines()
+        except OSError as e: print(f'СЛЕПОТА: {e}'); return 2
+    else:
+        r = subprocess.run(['journalctl', '_COMM=sudo', '--since', chtenie_s.strftime('%Y-%m-%d %H:%M:%S UTC'),
+                            '--until', po.strftime('%Y-%m-%d %H:%M:%S UTC'), '--no-pager', '-o', 'short-iso', '-q'],
+                           capture_output=True, text=True, timeout=300)
+        if r.returncode != 0:
+            msg = f'СЛЕПОТА: журнал sudo не прочитан (код {r.returncode}: {r.stderr.strip()[:120]})'
+            print(msg); subprocess.run(['logger', '-t', TEG, '--', msg]); return 2
+        stroki = r.stdout.splitlines()
+    zap, strah = razobrat(stroki)
+    kl = [k for k in montazhi(zap) if s <= k['t0'] <= po]
+    bez = [k for k in kl if not zastrahovan(k, strah)]
+    itog = (f'окно {s:%d.%m %H:%MZ}…{po:%d.%m %H:%MZ} · строк sudo {len(stroki)} · монтажей {len(kl)} · '
+            f'со страховкой {len(kl) - len(bez)} · БЕЗ страховки {len(bez)}')
+    print(itog)
+    for k in bez:
+        print(f'  🔴 {k["t0"]:%d.%m %H:%M:%SZ} · {k["ruka"]} · {k["pk"]} · записей {k["n"]}')
+    if a.tolko_pechat:
+        return 1 if bez else 0
+    ushlo = True
+    if bez:
+        tekst = ('🔴 sadik: монтаж модуля БЕЗ страховки в /var/backups/montazh (журнал sudo, 15 мин до записи):\n'
+                 + '\n'.join(f'{k["t0"]:%d.%m %H:%MZ} · {k["ruka"]} · {k["pk"]} · записей {k["n"]}' for k in bez[:12])
+                 + ('\n…' if len(bez) > 12 else '') + f'\n{itog}\nмонтировать через smontirovat-fajly (страхует сам)')
+        try:
+            ushlo = subprocess.run([a.kanal, '--', tekst[:3500]], capture_output=True, timeout=120).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            ushlo = False
+    if ushlo and not a.okno_s:
+        os.makedirs(os.path.dirname(a.sost), exist_ok=True)
+        with open(a.sost + '.chast', 'w') as f:
+            json.dump({'do': po.isoformat()}, f)
+        os.replace(a.sost + '.chast', a.sost)
+    subprocess.run(['logger', '-t', TEG, '--', itog + ('' if not bez else ' · тревога ушла' if ushlo else ' · тревога НЕ УШЛА')])
+    return 2 if not ushlo else (1 if bez else 0)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

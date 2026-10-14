@@ -1,0 +1,10 @@
+[Unit]
+Description=Проверка покрытия ядер — ежедневно и после загрузки · Kernel coverage check — daily and after boot
+
+[Timer]
+OnBootSec=5min
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Collect compaction evidence each minute; per-turn observation continues after seven-day report
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=60s
+AccuracySec=1s
+Unit=dsh-compact-outcomes.service
+
+[Install]
+WantedBy=timers.target

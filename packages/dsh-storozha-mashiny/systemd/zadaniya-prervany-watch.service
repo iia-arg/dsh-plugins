@@ -1,0 +1,15 @@
+# RU: Читатель прерванных дистилляций — наряд координатору (см. шапку bin/zadaniya-prervany-watch).
+# RU: Отказ (код 1 канал / 2 слепота) ⇒ юнит failed ⇒ его видит «сторож над сторожами» машины, если он есть.
+# RU: Обязательные настройки ZPW_KOREN и ZPW_ADRESAT — через EnvironmentFile в drop-in; без них отказ 2.
+# EN: Reader of interrupted distillations — work order to the coordinator (see the header of bin/zadaniya-prervany-watch).
+# EN: Failure (exit 1 channel / 2 blindness) ⇒ unit failed ⇒ seen by the machine's "watcher of watchers", if any.
+# EN: Required settings ZPW_KOREN and ZPW_ADRESAT — via EnvironmentFile in a drop-in; without them exit 2.
+[Unit]
+Description=Читатель прерванных дистилляций: zadanie-prervan-* старше часа → наряд координатору
+
+[Service]
+Type=oneshot
+User=root
+StateDirectory=zadaniya-prervany-watch
+ExecStart=/usr/local/sbin/zadaniya-prervany-watch
+TimeoutStartSec=300

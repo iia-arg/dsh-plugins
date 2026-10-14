@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""nezafiksirovano-watch — сторож НЕЗАФИКСИРОВАННОГО в git-учётах машины (B-H-336, 24.09.2026, кандидат Зари).
+
+ЗАЧЕМ. Учёт боевых файлов ведётся коммитом после каждого монтажа — рукой. Утром 24.09 в /etc/agent-registry
+висело 397 строк без коммита с ночи, заметили случайно. Учёт, который забыли закрыть, неотличим от учёта,
+который закрыт: «git log» показывает последний коммит, а не то, что после него лежит на диске.
+
+ЧТО ДЕЛАЕТ. Для каждого учёта из перечня (NEZAF_UCHYOTY через «:»; умолчания НЕТ — перечень свой у каждой машины, №13 аудита 16):
+`git status --porcelain=v1 -z --untracked-files=all` → по каждому файлу возраст = сейчас − mtime файла.
+Старше NEZAF_PREDEL_CH часов (по умолчанию 6) — просрочено. Удалённый файл mtime не имеет: он считается
+просроченным, только если и ПОСЛЕДНИЙ КОММИТ учёта старше предела (удалили после него — раньше не узнать).
+КОДЫ: 0 чисто (со знаменателем) · 1 просроченное — тревога с перечнем и возрастом · 2 слепота · 3 тревога не ушла.
+ЧЕГО НЕ ЛОВИТ: учёт, которого НЕТ в перечне (новый git-учёт машины вписывается рукой; перечень — ниже).
+  B-N-1036 (26.09.2026, Аврора; находка Зари при B-N-923): учёт /opt/agent-plugins (заведён 25.09 16:08Z, B-H-487) в перечень
+  не вписали — сторож его не видел сутки. Перепись 26.09 11:1xZ (find -maxdepth 4 -name .git по /, /opt, /etc, /usr, владелец root,
+  без remote): учётов боевых файлов ЧЕТЫРЕ — эти; перепись 07.10 20:3xZ (Искра, B-N-1776) — ПЯТЬ: + /etc/dsh-limity (живой конфиг
+  службы лимитов, git с r7 dsh-limity 1.0.6); /opt/udp2raw-src — клон исходников (origin, 1 коммит), не учёт. Прочие .git —
+  учётки агентов (профили, дерево Искры) — свой порядок, вне сторожа. 08.10.2026 (слово Забавы 03:11Z, Искра) — ШЕСТЬ: + учёт доработок
+  /opt/iskra/workspace/dorabotki (владелец iskra: смонтированное копилось незакоммиченным с 02.10, 54 пути). Его git под root без
+  SUDO_UID отказывает «dubious ownership» — поэтому git учёта, чей корень принадлежит НЕ root, зовётся ОТ ВЛАДЕЛЬЦА корня (uid, его
+  группа, HOME из passwd; замечание Вениамина 08.10, решение Забавы 03:25Z), без исключений safe.directory: root не исполняет git в
+  чужом дереве (его хуки/настройки). Владельца нет в passwd / корень не читается — СЛЕПОТА этого учёта. Пустой перечень учётов
+  (NEZAF_UCHYOTY="") — СЛЕПОТА, код 2: «проверено 0 из 0» не «чисто». Перечень ещё назван в plugins.yaml
+  (запись nezafiksirovano-watch, breaks_if_gone) — меняется тем же монтажом;
+  правку, отменённую до прогона; mtime, выставленный задним числом (touch -d) — возраст тогда врёт;
+  «закоммичено, но не то» — это ворота, а не сторож.
+ГДЕ ОШИБАЕТСЯ ВОЗРАСТ (он — mtime, а не время появления): cp -p, rsync -a, tar x, install -p сохраняют mtime
+  ИСТОЧНИКА — только что положенный файл сразу «старше 6 ч» (ложная тревога на свежем монтаже); и наоборот,
+  touch или любая перезапись молодит давно висящий файл (low ворот Вениамина 14:26).
+КОГДА ОСТАНАВЛИВАЕТСЯ: один проход; git на учёт не дольше 60 с.
+"""
+import os, pwd, subprocess, sys, time
+
+# №13 аудита 16 (10.10.2026): умолчание перечня было шестью путями одной машины — на чужой машине первый же прогон
+# слеп. Теперь перечень задаётся только NEZAF_UCHYOTY (у юнита — Environment=); не задан — СЛЕПОТА «не задан».
+UCHYOTY_ZADAN = "NEZAF_UCHYOTY" in os.environ
+UCHYOTY = [u for u in os.environ.get("NEZAF_UCHYOTY", "").split(":") if u]
+ALERT = os.environ.get("NEZAF_ALERT", "/usr/local/bin/agent-alert")
+POKAZ = 10   # имён на учёт в тревоге; остальные — числом
+
+def trevoga(kod, tekst):
+    print(tekst)
+    try:
+        if os.access(ALERT, os.X_OK) and subprocess.run([ALERT, f"незафиксированное на {os.uname().nodename}: {tekst}"],
+                                                         capture_output=True, timeout=60).returncode == 0:
+            sys.exit(kod)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    print(f"🔴 ТРЕВОГА НЕ ДОСТАВЛЕНА (канал: {ALERT})")
+    sys.exit(3)
+
+def git(uchyot, *args):
+    # 🔴 --no-optional-locks (ворота Вениамина 14:26): обычный git status ПЕРЕПИСЫВАЕТ .git/index (обновление
+    # кэша stat) и берёт index.lock в БОЕВОМ учёте — сторож на чтение не имеет права писать в предмет.
+    # Корень учёта не root (dorabotki — iskra) → git от владельца корня: root без SUDO_UID получает «dubious ownership»,
+    # а исключение safe.directory заставило бы root исполнять чужие настройки/хуки. Не узнать владельца — слепота этого учёта.
+    argv = ["git", "--no-optional-locks", "-C", uchyot, *args]
+    try:
+        st = os.stat(uchyot)
+        if st.st_uid == 0:
+            return subprocess.run(argv, capture_output=True, timeout=60)
+        # №12 аудита 16: сменить учётку может только root (setgroups требует CAP_SETGID) — прочие зовут git от себя.
+        if os.geteuid() != 0:
+            return subprocess.run(argv, capture_output=True, timeout=60)
+        pw = pwd.getpwuid(st.st_uid)
+        return subprocess.run(argv, capture_output=True, timeout=60, user=pw.pw_uid, group=pw.pw_gid, extra_groups=[],
+                              env={**os.environ, "HOME": pw.pw_dir, "USER": pw.pw_name, "LOGNAME": pw.pw_name})
+    except (OSError, KeyError) as e:
+        return subprocess.CompletedProcess(argv, 128, b"", f"владелец/корень учёта не определён: {type(e).__name__}: {e}".encode())
+
+def vozrast(sek):
+    return f"{sek / 3600:.1f} ч" if sek >= 3600 else f"{int(sek // 60)} мин"
+
+def glavnaya():
+    if len(sys.argv) > 1:
+        print(f"ОТКАЗ: доводов нет и не бывает (получено: {' '.join(sys.argv[1:])}) — сторож только проверяет", file=sys.stderr)
+        sys.exit(2)
+    if not UCHYOTY:   # замечание Вениамина 08.10: пустой перечень — не «чисто 0 из 0»
+        kak = "задан пустым" if UCHYOTY_ZADAN else "не задан — у этого сторожа умолчания нет"
+        trevoga(2, f"СЛЕПОТА: перечень учётов пуст (NEZAF_UCHYOTY {kak}) — проверено 0 из 0, это не «чисто»")
+    # №37 аудита 16: предел разбирается ЗДЕСЬ, под обёрткой: прежде кривое значение роняло модуль трассой с кодом 1.
+    try:
+        PREDEL_CH = float(os.environ.get("NEZAF_PREDEL_CH", "6"))
+        if not PREDEL_CH > 0:
+            raise ValueError("не больше нуля")
+    except ValueError as e:
+        trevoga(2, f"СЛЕПОТА: NEZAF_PREDEL_CH={os.environ.get('NEZAF_PREDEL_CH')!r} — не положительное число ({e})")
+    teper = time.time(); predel = PREDEL_CH * 3600
+    slepota, prosrocheno, svodka = [], [], []
+    vsego_fajlov = 0
+    for u in UCHYOTY:
+        r = git(u, "rev-parse", "--show-toplevel")
+        if r.returncode != 0 or os.path.realpath(r.stdout.decode().strip()) != os.path.realpath(u):
+            slepota.append(f"{u}: не git-учёт или не его корень ({r.stderr.decode().strip()[:100] or r.stdout.decode().strip()})")
+            continue
+        r = git(u, "log", "-1", "--format=%ct")
+        if r.returncode != 0 or not r.stdout.strip():
+            slepota.append(f"{u}: последний коммит не читается ({r.stderr.decode().strip()[:100]})")
+            continue
+        posl_kommit = int(r.stdout.strip())
+        r = git(u, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+        if r.returncode != 0:
+            slepota.append(f"{u}: git status отказал кодом {r.returncode} ({r.stderr.decode().strip()[:100]})")
+            continue
+        chasti = r.stdout.decode("utf-8", "replace").split("\0")
+        zapisi, i = [], 0
+        while i < len(chasti):
+            z = chasti[i]; i += 1
+            if len(z) < 4:
+                continue
+            xy, put = z[:2], z[3:]
+            if "R" in xy or "C" in xy:   # у переименования следом идёт прежнее имя — пропускаем его
+                i += 1
+            zapisi.append((xy, put))
+        vsego_fajlov += len(zapisi)
+        moi = []
+        for xy, put in zapisi:
+            polnyj = os.path.join(u, put)
+            try:
+                v = teper - os.lstat(polnyj).st_mtime
+                if v >= predel:
+                    moi.append((v, f"{xy.strip() or '?'} {put} — {vozrast(v)}"))
+            except FileNotFoundError:
+                v = teper - posl_kommit
+                if v >= predel:
+                    moi.append((v, f"{xy.strip()} {put} — удалён; последний коммит {vozrast(v)} назад"))
+        moi.sort(reverse=True)
+        svodka.append(f"{u}: незафиксировано {len(zapisi)}, из них старше {PREDEL_CH:g} ч — {len(moi)}; "
+                      f"последний коммит {vozrast(teper - posl_kommit)} назад")
+        if moi:
+            prosrocheno.append(f"{u} — {len(moi)} файл(ов) старше {PREDEL_CH:g} ч: "
+                               + "; ".join(t for _, t in moi[:POKAZ])
+                               + (f"; и ещё {len(moi) - POKAZ}" if len(moi) > POKAZ else ""))
+    if slepota:
+        trevoga(2, "СЛЕПОТА: " + " | ".join(slepota) + f" · проверено учётов {len(UCHYOTY) - len(slepota)} из {len(UCHYOTY)}"
+                   + (" · " + " | ".join(svodka) if svodka else ""))
+    if prosrocheno:
+        trevoga(1, f"🔴 незафиксировано дольше {PREDEL_CH:g} ч в {len(prosrocheno)} из {len(UCHYOTY)} учётов: "
+                   + " || ".join(prosrocheno) + " · закрыть коммитом (или вернуть к зафиксированному)")
+    print(f"чисто: учётов {len(UCHYOTY)} из {len(UCHYOTY)}, просроченных файлов 0 (порог {PREDEL_CH:g} ч; "
+          f"незафиксировано всего {vsego_fajlov}, все моложе порога)")
+    for s in svodka:
+        print("  " + s)
+    sys.exit(0)
+
+if __name__ == "__main__":
+    try:
+        glavnaya()
+    except SystemExit:
+        raise
+    except BaseException as e:
+        trevoga(2, f"СЛЕПОТА: сторож отказал неожиданно — {type(e).__name__}: {e}")

@@ -1,0 +1,13 @@
+{
+  "sessionIdPrefixes": [
+    "telegram-site-",
+    "telegram-gost-"
+  ],
+  "allowedToolNames": [
+    "pismo_rukovoditelyu",
+    "pamyat_dlya_gostej",
+    "zapomnit_dannye_gostya",
+    "ostrov_api"
+  ],
+  "telegramGuestToolNames": ["telegram_send_file", "telegram_make_pdf", "ostrov_api"]
+}

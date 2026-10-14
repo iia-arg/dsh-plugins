@@ -1,0 +1,197 @@
+#!/bin/bash
+# RU: zadaniya-prervany-watch — ЧИТАТЕЛЬ ПРЕРВАННЫХ ДИСТИЛЛЯЦИЙ.
+# EN: zadaniya-prervany-watch — READER OF INTERRUPTED DISTILLATIONS.
+#
+# RU: 🔴 ЗАЧЕМ. Секретарь памяти (плагин dsh-pamyat-secretary, najtiPrervannye) при старте агента превращает
+# RU:   висящую метку razbor-idet-* в zadanie-prervan-*, пишет строку «ПРЕРВАНА» в журнал агента и шлёт тревогу
+# RU:   владельцу. Повтор — ТОЛЬКО РУКОЙ (решение координатора). Задание читал один человек по тревоге — и однажды
+# RU:   не прочёл 16 ч. Тревога — событие, задание — состояние; этот сторож читает СОСТОЯНИЕ: пока файл лежит,
+# RU:   координатор получает наряд.
+# EN: 🔴 WHY. On agent start the memory secretary (plugin dsh-pamyat-secretary, najtiPrervannye) turns a dangling
+# EN:   razbor-idet-* marker into zadanie-prervan-*, writes an "ПРЕРВАНА" (interrupted) line into the agent's journal
+# EN:   and alerts the owner. Retry is MANUAL ONLY (coordinator's decision). One person read the task from the alert —
+# EN:   and once did not read it for 16 h. An alert is an event, a task file is a state; this watcher reads the STATE:
+# EN:   while the file exists, the coordinator keeps getting a work order.
+#
+# RU: ЧТО ДЕЛАЕТ (раз в час, root): по ВСЕМ агентам реестра (agent-registry list → dom) берёт putOtklonennyh из ЖИВОГО
+# RU:   профиля <dom>/.dsh/profiles/web/cordis.patch.yml; в каждом каталоге zadanie-prervan-<мс>-<pid>.txt, лежащее
+# RU:   дольше 1 ч (ctime: rename метки в задание меняет ctime — это момент появления задания), → ОДНА строка-наряд на
+# RU:   задание в ОДНОМ письме координатору (tell-komu dlya-<адресат>, не владельцу: это работа, не авария). Повтор на
+# RU:   то же задание — раз в сутки. Файла больше нет, а наряд о нём был — строка «снято». Записано статей — из строки
+# RU:   «ПРЕРВАНА … задание на повтор рукой: <путь>» в журнале службы агента (в самом задании этого числа НЕТ: его
+# RU:   считает ядро при старте).
+# EN: WHAT IT DOES (hourly, as root): for ALL agents of the registry (agent-registry list → dom) it reads putOtklonennyh
+# EN:   from the LIVE profile <dom>/.dsh/profiles/web/cordis.patch.yml; in each such directory every
+# EN:   zadanie-prervan-<ms>-<pid>.txt older than 1 h (ctime: renaming the marker into a task changes ctime — that is the
+# EN:   moment the task appeared) → ONE work-order line per task in ONE letter to the coordinator (tell-komu
+# EN:   dlya-<recipient>, not to the owner: this is work, not an outage). Repeat for the same task — once a day. File gone
+# EN:   but an order was sent — a "снято" (removed) line. Articles written — taken from the "ПРЕРВАНА … задание на повтор
+# EN:   рукой: <path>" line in the agent service journal (the task file itself does NOT carry this number: the core
+# EN:   counts it on start).
+#
+# RU: ЧИТАТЕЛЬ: агент-координатор. Слепота и отказ канала — код ≠0 ⇒ юнит failed ⇒ «сторож над сторожами» машины
+# RU:   (суточный перечень сторожей) — владельцу.
+# EN: READER: the coordinator agent. Blindness and channel failure — exit ≠0 ⇒ unit failed ⇒ the machine's
+# EN:   "watcher of watchers" (daily list of watchers) — to the owner.
+#
+# RU: ⚠️ ГРАНИЦА: НЕ различает «повтор сделан рукой, файл забыли удалить» — наряд будет идти раз в сутки, пока файл лежит;
+# RU:   «снято» значит «файла нет», а НЕ «срез разобран». Не видит: задания вне profiles/web (другие профили агента); метку
+# RU:   razbor-idet-*, которую не превратили в задание (агент не поднимался); задание с негодным именем (называет в журнале,
+# RU:   наряда не шлёт). Записано статей «НЕ установлено», если строки «ПРЕРВАНА» в журнале уже нет (ротация) или старый
+# RU:   секретарь писал «знания среза НЕ записаны» без счёта (ошибочно: однажды при такой строке было записано 51) →
+# RU:   передаю «НЕ известно».
+# EN: ⚠️ BOUNDARY: does NOT tell "retry done by hand, file forgotten" apart — the order repeats daily while the file exists;
+# EN:   "снято" means "the file is gone", NOT "the slice was processed". Does not see: tasks outside profiles/web (other
+# EN:   agent profiles); a razbor-idet-* marker that was never turned into a task (agent did not start); a task with an
+# EN:   invalid name (named in the output, no order sent). Articles written is "НЕ установлено" (not established) if the
+# EN:   "ПРЕРВАНА" line has left the journal (rotation) or an old secretary wrote "знания среза НЕ записаны" without a
+# EN:   count (wrongly: once 51 articles had been written) → reported as "НЕ известно" (unknown).
+#
+# RU: ⚠️ ЩЕЛЬ: у службы машины своей исходящей щели нет; кладём в щель агента ZPW_KOREN (его дом), зеркало — в своё
+# RU:   состояние, не в чужой polnye. Отправитель назван в теле письма.
+# EN: ⚠️ OUTBOX: a machine service has no outbox of its own; we use the outbox of the agent at ZPW_KOREN (its home),
+# EN:   the mirror goes into our own state, not into someone else's polnye. The sender is named in the letter body.
+#
+# RU: Коды: 0 — обход состоялся (наряд ушёл или слать нечего) · 1 — канал отказал (отметки не обновлены, повтор в
+# RU:   следующий час) · 2 — слепота (реестр не прочитан / ни у одного агента нет пути / каталог не читается / не
+# RU:   настроено). Неизвестный довод — отказ 2.
+# EN: Exit codes: 0 — pass completed (order sent or nothing to send) · 1 — channel failed (marks not updated, retry next
+# EN:   hour) · 2 — blindness (registry unreadable / no agent has a path / directory unreadable / not configured).
+# EN:   Any argument — refusal 2.
+set -uo pipefail
+[ $# -eq 0 ] || { echo "ОТКАЗ: доводов не принимаю ($*) — запуск: systemctl start zadaniya-prervany-watch.service" >&2; exit 2; }
+SOST="${ZPW_SOST:-/var/lib/zadaniya-prervany-watch}"
+REESTR="${ZPW_REESTR_BIN:-/usr/local/bin/agent-registry}"
+TELL="${ZPW_TELL_BIN:-/usr/local/bin/tell-komu}"
+JCTL="${ZPW_JOURNALCTL:-journalctl}"
+# RU: Дом агента, через щель которого уходит письмо. Пусто — не настроено (отказ ниже, ничего не шлём).
+# EN: Home of the agent whose outbox carries the letter. Empty — not configured (refusal below, nothing is sent).
+KOREN="${ZPW_KOREN:-}"
+# RU: Адресат письма в родительном падеже — часть имени файла dlya-<адресат>-…, по ней tell-komu выбирает получателя.
+# EN: Letter recipient (genitive form) — part of the file name dlya-<recipient>-…, tell-komu routes by it.
+ADRESAT="${ZPW_ADRESAT:-}"
+# RU: Первая строка письма (кто пишет, кому, о чём). Умолчание — нейтральное, с именем машины.
+# EN: First line of the letter (sender, recipient, subject). The default is neutral, with the host name.
+SHAPKA="${ZPW_SHAPKA:-$(hostname -s) · zadaniya-prervany-watch (root, щель $KOREN) → координатору · ПРЕРВАННЫЕ ДИСТИЛЛЯЦИИ: повтор только рукой}"
+# RU: Как назвать правку секретаря, после которой он пишет счёт статей (в тексте наряда).
+# EN: How to name the secretary change after which it reports the article count (used in the order text).
+PRAVKA_SCHYOTA="${ZPW_PRAVKA_SCHYOTA:-правки счёта статей}"
+VOZRAST=3600; POVTOR=86400
+SEYCHAS="${ZPW_SEYCHAS:-$(date +%s)}"   # RU: ZPW_SEYCHAS — только стенд · EN: ZPW_SEYCHAS — test stands only
+[ -n "$KOREN" ] && [ -n "$ADRESAT" ] || { echo "СЛЕПОТА: не настроено — ZPW_KOREN (дом агента-отправителя) и ZPW_ADRESAT (адресат письма) обязательны; обход не делаю, ничего не шлю"; exit 2; }
+mkdir -p "$SOST/otmetki" "$SOST/polnye" || { echo "СЛЕПОТА: состояние $SOST не создаётся"; exit 2; }
+
+imena=$("$REESTR" list 2>/dev/null | sed -nE 's/^([a-z0-9_-]+)  \(.*/\1/p'); rc=$?   # RU: pipefail: код list, не sed · EN: pipefail: exit code of list, not of sed
+[ "$rc" -eq 0 ] && [ -n "$imena" ] || { echo "СЛЕПОТА: реестр агентов не прочитан ($REESTR list, код $rc)"; exit 2; }
+pole_zadaniya() {
+  jq -r --arg k "$1" '(.[$k] // "") | if type=="string" then . else tojson end | gsub("[\r\n\u0085\u2028\u2029•]"; " ") | if length>160 then .[0:150]+" [усечено]" else . end' "$2" 2>/dev/null
+}
+N_AG=0; N_PUT=0; N_ZAD=0; N_SVEZH=0; N_NEGOD=0; SLEP=""; STROKI=""; SNYATO=""; K_OTMETKE=()
+while read -r ag; do
+  [ -n "$ag" ] || continue; N_AG=$((N_AG+1))
+  dom=$("$REESTR" pole "$ag" dom --json 2>/dev/null | jq -r 'select(type=="string")'); sl=$("$REESTR" pole "$ag" sluzhba --json 2>/dev/null | jq -r 'select(type=="string")')
+  cfg="$dom/.dsh/profiles/web/cordis.patch.yml"
+  if [ -z "$dom" ] || [ ! -r "$cfg" ]; then echo "   $ag: профиль не читается (${cfg}) — задания не проверены"; SLEP="$SLEP $ag"; continue; fi
+  puti=$(timeout 10 python3 - "$cfg" <<'PY_PATHS'
+import sys
+from pathlib import Path
+import yaml
+try:
+    path=Path(sys.argv[1])
+    if not path.is_file() or path.stat().st_size > 1048576: raise ValueError('profile is not a regular file within 1 MiB')
+    root=yaml.compose(path.read_text(), Loader=yaml.SafeLoader)
+    todo=[root]; seen=set(); paths=[]
+    while todo:
+        node=todo.pop()
+        if node is None or id(node) in seen: continue
+        seen.add(id(node))
+        if len(seen)>10000: raise ValueError('profile exceeds 10000 YAML nodes')
+        if isinstance(node,yaml.MappingNode):
+            for key,value in node.value:
+                if isinstance(key,yaml.ScalarNode) and key.value=='putOtklonennyh':
+                    values=value.value if isinstance(value,yaml.SequenceNode) else [value]
+                    for item in values:
+                        if not isinstance(item,yaml.ScalarNode) or item.tag!='tag:yaml.org,2002:str' or not item.value.startswith('/') or any(c in item.value for c in '\r\n'):
+                            raise ValueError('putOtklonennyh needs a literal absolute path or a list of such paths')
+                        if item.value not in paths: paths.append(item.value)
+                todo.append(value)
+        elif isinstance(node,yaml.SequenceNode): todo.extend(node.value)
+    print('\n'.join(paths),end='')
+except Exception as error:
+    detail=str(error) if type(error) is ValueError else type(error).__name__
+    print('profile '+sys.argv[1]+' not parsed: '+detail,file=sys.stderr);sys.exit(2)
+PY_PATHS
+  ) || { echo "   $ag: профиль/putOtklonennyh не разобран — задания не проверены"; SLEP="$SLEP $ag"; continue; }
+  [ -n "$puti" ] || { echo "   $ag: putOtklonennyh в профиле нет — секретаря нет, проверять нечего"; continue; }
+  while read -r kat; do
+    [ -n "$kat" ] || continue; N_PUT=$((N_PUT+1))
+    [ -d "$kat" ] || { echo "   $ag: каталога $kat нет — заданий нет"; continue; }
+    spisok=$(ls -1A -- "$kat" 2>/dev/null) || { echo "   $ag: каталог $kat не читается"; SLEP="$SLEP $ag"; continue; }
+    # RU: Срез с ЖИВОЙ меткой razbor-idet-* сейчас разбирается (автоповтор или рукой) — не наряд.
+    # RU: Живая = pid метки жив И метка моложе 3 ч (наибольший замеренный разбор — 99,5 мин): иначе переиспользованный
+    # RU: pid глушил бы наряд вечно.
+    # EN: A slice with a LIVE razbor-idet-* marker is being processed right now (auto-retry or by hand) — no order.
+    # EN: Live = the marker's pid is alive AND the marker is younger than 3 h (longest measured run — 99.5 min):
+    # EN: otherwise a reused pid would silence the order forever.
+    ZHIVYE=" "
+    while read -r f; do
+      case "$f" in razbor-idet-*.txt) ;; *) continue ;; esac
+      m="$kat/$f"; ms=$(jq -r '.srez // empty' "$m" 2>/dev/null); mp=$(jq -r '.pid // empty' "$m" 2>/dev/null)
+      [ -n "$ms" ] && [[ "$mp" =~ ^[0-9]+$ ]] && [ -d "/proc/$mp" ] && [ $(( SEYCHAS - $(stat -c %Y -- "$m" 2>/dev/null || echo 0) )) -lt 10800 ] && ZHIVYE="$ZHIVYE$ms "
+    done <<< "$spisok"
+    while read -r f; do
+      case "$f" in zadanie-prervan-*) ;; *) continue ;; esac
+      p="$kat/$f"
+      [[ "$f" =~ ^zadanie-prervan-[0-9]+-[0-9]+\.txt$ ]] || { echo "   $ag: НЕГОДНОЕ имя $p — не задание секретаря, наряда нет"; N_NEGOD=$((N_NEGOD+1)); continue; }
+      N_ZAD=$((N_ZAD+1)); poyav=$(stat -c %Z -- "$p" 2>/dev/null || echo "$SEYCHAS")
+      if [ $(( SEYCHAS - poyav )) -lt "$VOZRAST" ]; then echo "   $ag: задание $p — моложе часа, ещё не наряд"; N_SVEZH=$((N_SVEZH+1)); continue; fi
+      kl=$(printf '%s' "$p" | sha256sum | cut -c1-16); om="$SOST/otmetki/$kl"; posl=0
+      [ -r "$om" ] && posl=$(head -1 "$om" 2>/dev/null); [[ "$posl" =~ ^[0-9]+$ ]] || posl=0
+      if [ $(( SEYCHAS - posl )) -lt "$POVTOR" ]; then echo "   $ag: задание $p — наряд был $(( (SEYCHAS - posl) / 3600 )) ч назад, повтор раз в сутки"; continue; fi
+      srez=$(pole_zadaniya srez "$p") || srez="? (задание не JSON)"; pozv=$(pole_zadaniya pozvana "$p") || pozv="?"
+      case "$ZHIVYE" in *" $srez "*) echo "   $ag: задание $p — срез $srez сейчас разбирается (живая метка razbor-idet), не наряд"; continue ;; esac
+      av=$(pole_zadaniya avtopovtor "$p") || av="?"
+      zap="НЕ установлено (строки «ПРЕРВАНА» с этим путём в журнале ${sl:-службы} нет)"
+      if [ -n "$sl" ]; then
+        st=$("$JCTL" -u "$sl" -o cat --no-pager -q 2>/dev/null | grep -F "задание на повтор рукой: $p" | tail -1)
+        if [ -n "$st" ]; then
+          zap=$(printf '%s' "$st" | sed -E 's/^.* процессом [^ ]+ — //; s/; задание на повтор рукой: .*$//')
+          ver=$(printf '%s' "$st" | sed -nE 's/^\[dsh-pamyat-secretary ([^ ]+) .*/\1/p')
+          # RU: Старый секретарь (до правки счёта) писал «знания среза НЕ записаны» БЕЗ счёта — и ошибался
+          # RU: (однажды при такой строке записано 51). Не передаём как факт.
+          # EN: An old secretary (before the count fix) wrote "знания среза НЕ записаны" WITHOUT a count — and was
+          # EN: wrong (once 51 articles had been written). We do not pass it on as a fact.
+          [ "$zap" = "знания среза НЕ записаны" ] && zap="записано ли — НЕ известно (секретарь ${ver:-?} писал «НЕ записаны» без счёта, до $PRAVKA_SCHYOTA)"
+          zap="$zap [строка секретаря ${ver:-?}]"
+        fi
+      fi
+      STROKI="$STROKI• $ag · срез $srez · позвана $pozv · $zap${av:+ · автоповтор $av} · задание $p"$'\n'
+      K_OTMETKE+=("$om|$p")
+    done <<< "$spisok"
+  done <<< "$puti"
+done <<< "$imena"
+# RU: «снято»: отметка есть, а файла задания нет
+# EN: "снято" (removed): a mark exists but the task file does not
+for om in "$SOST"/otmetki/*; do
+  [ -f "$om" ] || continue; p=$(sed -n 2p "$om")
+  [ -n "$p" ] && [ ! -e "$p" ] && SNYATO="$SNYATO• снято: $p (файла нет — повтор сделан или задание убрано; разобран ли срез, НЕ проверено)"$'\n'
+done
+echo "   обход: агентов $N_AG · каталогов $N_PUT · заданий $N_ZAD (моложе часа $N_SVEZH) · к наряду $(printf '%s' "$STROKI" | grep -c .) · снято $(printf '%s' "$SNYATO" | grep -c .) · негодных имён $N_NEGOD"
+KOD=0
+if [ -n "$STROKI$SNYATO" ]; then
+  pis="$SOST/dlya-$ADRESAT-zadaniya-prervany.md"
+  { echo "$SHAPKA"
+    [ -n "$STROKI" ] && { echo "Лежат дольше часа — нужен повтор рукой (как — поле «kak» в задании):"; printf '%s' "$STROKI"; }
+    [ -n "$SNYATO" ] && printf '%s' "$SNYATO"
+    echo "Граница: наряд идёт раз в сутки, пока файл лежит; «сделано, файл забыли удалить» не различаю."; } > "$pis"
+  if DSH_HOME="$KOREN/.dsh" HOME="$KOREN" A2A_ZERKALO="$SOST/polnye" "$TELL" "$pis" > "$SOST/tell.out" 2>&1; then
+    echo "   наряд положен координатору: $(grep -m1 '^положено' "$SOST/tell.out" | cut -c1-200)"
+    for x in "${K_OTMETKE[@]}"; do printf '%s\n%s\n' "$SEYCHAS" "${x#*|}" > "${x%%|*}"; done
+    for om in "$SOST"/otmetki/*; do [ -f "$om" ] || continue; p=$(sed -n 2p "$om"); [ -n "$p" ] && [ ! -e "$p" ] && rm -f -- "$om"; done
+  else
+    echo "🔴 наряд координатору НЕ положен ($TELL, код $?: $(tail -1 "$SOST/tell.out" | cut -c1-160)) — отметки не обновлены, повтор через час"; KOD=1
+  fi
+fi
+if [ -n "$SLEP" ]; then echo "🔴 СЛЕПОТА: задания не проверены у:$SLEP"; KOD=2; fi
+if [ "$N_PUT" -eq 0 ]; then echo "🔴 СЛЕПОТА: ни у одного из $N_AG агентов нет putOtklonennyh — формат профиля сменился?"; KOD=2; fi
+exit "$KOD"

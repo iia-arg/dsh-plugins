@@ -1,0 +1,14 @@
+[Unit]
+Description=Ежесуточный опрос новых версий платформы DSH
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+# RU: Машина живёт круглосуточно, но если пропустили — спросить при первой возможности:
+# RU: пропущенный опрос молча превращает сторожа в украшение.
+# EN: The machine runs around the clock, but if a run was missed — ask at the first opportunity:
+# EN: a missed poll silently turns the watcher into decoration.
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

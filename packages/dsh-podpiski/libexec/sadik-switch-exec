@@ -1,0 +1,134 @@
+#!/usr/bin/python3 -B
+"""B-N-1438: root-исполнитель только sadik-switch@1/a/2/b, без аргументов из Telegram.
+2 (слово владельца 03.10 20:55 МСК): Codex туда-обратно БЕЗ заслона лимита — pereklyuchatel-codex toggle-force.
+sss / sss-on (B-N-1499, слово владельца 03.10 21:10 МСК): выключатель чата сайта ↔ Варвара — создать/убрать файл-состояние
+/var/lib/sajt-chat/zakryto (тот же, что пишет /sss в чате Варвары; читает адаптер sajt-chat). Мгновенно, ДО общего замка
+переключений: стоп не ждёт идущего переключения подписки (оно может длиться до 10 минут).
+1 (слово владельца 03.10 20:30 МСК): Claude туда-обратно С force — переключатель без цели + force (снят заслон лимита;
+заслон занятых агентов и отказ при смешанном состоянии — переключателя, остаются).
+Подмены только SADIK_STEND=1. Бой: отдельный root-каталог итогов, атомарная запись.
+Одна попытка, максимум770с (Claude) /170с (Codex) +3с на сбор вывода; общий замок двух команд.
+Claude сохраняет штатный заслон/рестарты; Codex toggle — свой замок и лимитный заслон.
+"""
+import fcntl
+import json
+import os
+from pathlib import Path
+import signal
+import stat
+import subprocess
+import sys
+import time
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] not in ('1', 'a', '2', 'b', 'sss', 'sss-on'):
+        print('ОТКАЗ: допустим только 1, a, 2, b, sss или sss-on', file=sys.stderr)
+        return 2
+    family = sys.argv[1]
+    defaults = {'CLAUDE': '/usr/local/sbin/pereklyuchatel-podpiski',
+                'CODEX': '/usr/local/sbin/pereklyuchatel-codex',
+                'RESULT': '/var/lib/sadik-switch', 'LOCK': '/run/sadik-switch.lock',
+                'SAJT_STATE': '/var/lib/sajt-chat/zakryto'}
+    key = os.environ.get('SADIK_STEND')
+    if key not in (None, '1'):
+        print('ОТКАЗ: SADIK_STEND допустим только 1', file=sys.stderr)
+        return 2
+    supplied = [k for k in defaults if 'SADIK_EXEC_' + k in os.environ]
+    if key == '1':
+        print('ПОДМЕНЕНО: ' + ' '.join(supplied), flush=True)
+        defaults.update({k: os.environ['SADIK_EXEC_' + k] for k in supplied})
+    elif supplied:
+        print('ИГНОРИРУЮ (нет SADIK_STEND=1): ' + ' '.join(supplied), file=sys.stderr)
+    started = time.time()
+    result = Path(defaults['RESULT']) / f'switch-{family}.txt'
+    result.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    if family in ('sss', 'sss-on'):
+        text, code = vyklyuchatel_sajta(family, Path(defaults['SAJT_STATE']))
+        zapisat_itog(result, started, text)
+        print(text, flush=True)
+        return code
+    with open(defaults['LOCK'], 'w') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            text, code = 'ОТКАЗ: другое переключение ещё идёт', 2
+        else:
+            limit = 170 if family in ('b', '2') else 770
+            argv = {'a': [defaults['CLAUDE']], '1': [defaults['CLAUDE'], 'force'],
+                    'b': [defaults['CODEX'], 'toggle'], '2': [defaults['CODEX'], 'toggle-force']}[family]
+            try:
+                p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                     text=True, start_new_session=True)
+                try:
+                    text, _ = p.communicate(timeout=limit)
+                    code = p.returncode
+                except subprocess.TimeoutExpired:
+                    os.killpg(p.pid, signal.SIGKILL)
+                    p.communicate(timeout=3)
+                    text, code = f'ОТКАЗ: превышено {limit}с; состояние могло измениться частично — нужна проверка шлюзов', 2
+            except (OSError, subprocess.SubprocessError) as e:
+                text, code = f'ОТКАЗ: исполнитель {type(e).__name__}; проверь состояние шлюзов', 2
+            text = text.strip()[-3400:] or f'ОТКАЗ: исполнитель не дал текста (код {code})'
+        zapisat_itog(result, started, text)
+    print(text, flush=True)
+    return code
+
+
+def zapisat_itog(result, started, text):
+    # Каталог боя создаёт systemd как root:root; agent-switch читает, но не пишет.
+    tmp = result.with_name(f'.{result.name}.{os.getpid()}')
+    try:
+        with open(tmp, 'x', encoding='utf-8') as f:
+            f.write(f'{started}.{os.getpid()}\t{text}\n')
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, result)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def vyklyuchatel_sajta(family, state):
+    """sss — создать файл-состояние (атомарно), sss-on — убрать. Каталог должен существовать (его ставит монтаж адаптера)."""
+    if not state.parent.is_dir():
+        return f'ОТКАЗ: нет каталога {state.parent} — чат сайта не установлен', 2
+    try:
+        current = state.lstat()
+    except FileNotFoundError:
+        current = None
+    except OSError as e:
+        return f'ОТКАЗ: состояние {state} не прочитано ({type(e).__name__}) — чинить руками', 2
+    if current is not None and not stat.S_ISREG(current.st_mode):
+        return f'ОТКАЗ: состояние {state} не обычный файл — чинить руками', 2
+    if family == 'sss':
+        if current is not None:
+            return 'Чат сайта уже закрыт (с ' + time.strftime('%d.%m %H:%M UTC', time.gmtime(current.st_mtime)) + ').', 0
+        tmp = state.with_name(f'.{state.name}.{os.getpid()}')
+        # MED Вениамина (B-N-1499): каталог пишет и гость — путь tmp мог быть подставлен ссылкой. Создание только НОВОГО
+        # файла без перехода по ссылке, режим — по дескриптору; chmod по пути нет. Занятый путь — ОТКАЗ, его цель не трогаем.
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640)
+        except OSError as e:
+            return f'ОТКАЗ: временный файл {tmp} не создан ({type(e).__name__}) — чат сайта НЕ закрыт', 2
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                os.fchmod(f.fileno(), 0o640)
+                f.write(json.dumps({'s': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'kto': 'sadik-bot'}) + '\n')
+            os.replace(tmp, state)
+        except OSError as e:
+            return f'ОТКАЗ: состояние {state} не создано ({type(e).__name__}) — чинить руками', 2
+        finally:
+            try: tmp.unlink(missing_ok=True)
+            except OSError: pass   # исходная причина записи не должна исчезнуть за ошибкой уборки
+        return ('Чат сайта ЗАКРЫТ: посетителям — «оператор сейчас недоступен», ответы Варвары не уходят, '
+                'идущие разговоры прерываются. Открыть — /sss_on.'), 0
+    try:
+        state.unlink()
+    except FileNotFoundError:
+        return 'Чат сайта уже открыт.', 0
+    except OSError as e:
+        return f'ОТКАЗ: состояние {state} не удалено ({type(e).__name__}) — чинить руками', 2
+    return 'Чат сайта ОТКРЫТ: сообщения посетителей снова идут Варваре.', 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

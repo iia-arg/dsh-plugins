@@ -1,0 +1,34 @@
+[Unit]
+# Приёмка копии по расписанию: скачать уехавшее обратно и убедиться, что оно
+# ОТКРЫВАЕТСЯ. Собирает копию sadik-backup.service; здесь её принимают снаружи.
+# Разделение намеренное: тот, кто делает копию, не может её принимать — он проверит
+# ровно то, что сам положил, и его слепое пятно перейдёт в проверку целиком.
+Description=Приёмка копии sadik (скачать с Drive и открыть)
+Documentation=file:///opt/iskra/workspace/procedury/DOLGI.md
+After=network-online.target
+Wants=network-online.target
+# 🔴 B-H-561 (24.09): приёмку убивает TimeoutStartSec/OOM/сигнал до её собственной вести — сказать некому.
+# Штатные вердикты с доставленной вестью (коды 1/2/4, notification=sent) тревога узнаёт по строке итога и молчит.
+OnFailure=backup-verify-failed.service
+
+[Service]
+Type=oneshot
+# От root: распаковка архива трогает /etc/agent-secrets, а за секретом скрипт ходит
+# к владельцу ключа через sudo -n -u iskra — так же, как сборщик. Проверено прогоном.
+User=root
+ExecStart=/usr/local/sbin/proverka-svezhesti-kopii.sh
+# Успех решает НЕ этот файл. Живая политика — drop-in zz-itogi-priyomki.conf (19.09, ворота
+# Вениамина): SuccessExitStatus пуст ⇒ успех ТОЛЬКО код 0, любой другой — failed. Прежняя строка
+# «SuccessExitStatus=1 2» снята как мёртвая (B-N-918, 26.09): её перекрывали оба drop-in.
+# Голос при failed — OnFailure → backup-verify-failed.service → /usr/local/sbin/kopiya-upala:
+# молчит, если строка BACKUP_RESULT этого запуска несёт notification=sent, иначе говорит сам.
+# Коды — шапка /usr/local/sbin/proverka-svezhesti-kopii.sh.
+# 🔴 НЕ вносить 8 в SuccessExitStatus: при 8 сторож не говорит, единственный голос — OnFailure.
+# Замер: скачивание 32 МБ — 18 с, расшифровка 263 записей — 2 с. 20 минут — запас
+# кратный, и он же граница: зависшее скачивание не должно висеть до следующих суток.
+TimeoutStartSec=1200
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

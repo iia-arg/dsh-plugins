@@ -1,0 +1,25 @@
+[Unit]
+Description=Соцсети Анны: приём ВК и устойчивый журнал
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=anna
+Group=anna
+SupplementaryGroups=socseti
+WorkingDirectory=/opt/socseti-anna
+StateDirectory=socseti-anna
+StateDirectoryMode=0700
+Environment=SOCSETI_OWNER_READER=/usr/local/bin/vladelec-tg-id
+Environment=SOCSETI_APPROVERS_FILE=/etc/socseti/approvers.json
+ExecStart=/usr/local/bin/node /opt/socseti-anna/src/main.mjs /opt/anna/.config/socseti/config.json
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=40s
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

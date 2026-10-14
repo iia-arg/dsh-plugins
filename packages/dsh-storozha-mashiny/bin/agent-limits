@@ -1,0 +1,428 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""agent-limits — читатель системных пределов и политик агентов.
+agent-limits — reader of system limits and policies for agents.
+
+  pokazhi <агент|agent> [параметр|key] [--json]
+      Без параметра — все значения с ИСТОЧНИКОМ каждого: файл агента, общий файл
+      или умолчание кода. С параметром — одно значение; нет такого — код 3 и
+      НОЛЬ байт на stdout (иначе конвейер подавится мусором).
+      Without a key: every value with its SOURCE (agent file, shared file or code
+      default). With a key: one value; unknown key -> exit 3 and ZERO bytes on stdout.
+  proverit [--json]
+      Форма всех файлов: разбираются ли, есть ли единица в имени числового
+      предела, не меньше ли токенный предел двух КВАНТОВ.
+      Shape of all files: do they parse, does every numeric limit carry a unit in
+      its name, is no token limit below two QUANTA.
+
+  Каталог · Directory: AGENT_LIMITS_DIR (окружение → файл настроек пакета → умолчание /etc/ai-agent-limits ·
+  environment → package settings file → default /etc/ai-agent-limits)
+
+🔴 ИНСТРУМЕНТ ТОЛЬКО ЧИТАЕТ — по построению, а не по договорённости. Записи в нём
+нет вовсе: ни открытия файла на запись, ни shutil, ни os.replace. Правит эти файлы
+администратор машины (решение владельца: агент свои конфиги не правит, чтобы
+будущие второстепенные агенты не правили их себе сами).
+🔴 THE TOOL ONLY READS — by construction, not by agreement. It has no write path at
+all: no open-for-write, no shutil, no os.replace. The machine administrator edits these
+files (owner's decision: an agent does not edit its own limits).
+
+🔴 КВАНТ. У предела по токенам есть допуск: проверка идёт МЕЖДУ ходами, значит
+перерасход на цену последнего хода гарантирован. Инструмент печатает допуск числом
+рядом со значением и говорит «ЗАЩИТЫ НЕТ», если предел меньше двух квантов.
+Без этого предел вводит в заблуждение сильнее, чем его отсутствие.
+🔴 QUANTUM. A token limit has a tolerance: it is checked BETWEEN turns, so overspending
+by the cost of the last turn is guaranteed. The tool prints the tolerance as a number
+next to the value and says "NO PROTECTION" when the limit is below two quanta.
+
+🔴 В конвейере код возврата берите через PIPESTATUS или `set -o pipefail`:
+`agent-limits pokazhi <агент> --json | jq ...` отдаёт код jq, а тот на пустом
+входе равен 0 — отказ инструмента при этом не виден вовсе.
+🔴 In a pipeline take the exit code via PIPESTATUS or `set -o pipefail`:
+`agent-limits pokazhi <agent> --json | jq ...` returns jq's code, which is 0 on empty
+input — the tool's failure is then invisible.
+"""
+import json
+import os
+import sys
+
+# RU: Каталог файлов пределов — настройка. Умолчание нейтральное; рабочий каталог
+# RU: машины задаётся AGENT_LIMITS_DIR. Нет каталога — pokazhi работает на умолчаниях
+# RU: кода и говорит об этом, proverit отвечает СЛЕПОТОЙ (код 2).
+# EN: The limits directory is a setting. The default is neutral; a machine's real
+# EN: directory comes from AGENT_LIMITS_DIR. No directory — pokazhi runs on code defaults
+# EN: and says so, proverit answers BLINDNESS (exit 2).
+# RU: Настройки — через lib/nastrojka пакета: окружение → файл настроек → умолчание (порядок и формат — в её
+# RU: шапке). Зовётся списком аргументов, без оболочки. Ищется рядом с НАСТОЯЩИМ путём этого файла (установка:
+# RU: bin/ и lib/ бок о бок; символическая ссылка раскрывается), запасной путь —
+# RU: /usr/local/lib/dsh-storozha-mashiny/lib/nastrojka. Нет ни там, ни там — громкий отказ, код 2.
+# EN: Settings come through the package's lib/nastrojka: environment → settings file → default (order and format
+# EN: are in its header). Called with an argument list, no shell. Looked up next to the REAL path of this file
+# EN: (install layout: bin/ and lib/ side by side; a symlink is resolved), fallback path —
+# EN: /usr/local/lib/dsh-storozha-mashiny/lib/nastrojka. Found in neither place — a loud refusal, exit 2.
+def _nastrojka(klyuch, umolchanie):
+    import subprocess
+    put = os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir, 'lib', 'nastrojka')
+    if not os.access(put, os.X_OK):
+        put = '/usr/local/lib/dsh-storozha-mashiny/lib/nastrojka'
+    if not os.access(put, os.X_OK):
+        print('ОТКАЗ · REFUSED: нет lib/nastrojka пакета (рядом с bin/ и в /usr/local/lib/dsh-storozha-mashiny/lib)'
+              ' · package lib/nastrojka not found', file=sys.stderr)
+        sys.exit(2)
+    r = subprocess.run([put, klyuch, umolchanie], stdout=subprocess.PIPE)
+    if r.returncode != 0:
+        sys.exit(2)   # RU: причину nastrojka уже сказала в stderr  EN: nastrojka already told the reason on stderr
+    v = r.stdout.decode('utf-8', 'surrogateescape')
+    return v[:-1] if v.endswith('\n') else v
+
+
+KATALOG = _nastrojka('AGENT_LIMITS_DIR', '/etc/ai-agent-limits')
+OBSHCHEE = 'obshchee.yml'
+
+# RU: Умолчания кода — последний рубеж. Значение, которого нет ни в файле агента, ни в
+# RU: общем, берётся отсюда и НАЗЫВАЕТСЯ вслух: молчаливое умолчание неотличимо от
+# RU: «настройка доехала».
+# EN: Code defaults are the last line. A value absent from both the agent file and the
+# EN: shared file is taken from here and NAMED aloud: a silent default is
+# EN: indistinguishable from "the setting arrived".
+UMOLCHANIYA = {
+    'predely': {
+        'maxConsecutiveCount': 6,
+        'maxPerDayCount': 48,
+        'minIntervalSeconds': 1800,
+        'maxWallClockSeconds': 0,
+        'maxTokensPerRun': 0,
+        'maxTokensPerDay': 0,
+    },
+    'politiki': {
+        'humanKinds': ['user'],
+        'dayZone': 'UTC',
+    },
+    'prava': {},
+    'zamer': {'kvantTokenovNaHod': 11500000},
+}
+
+# RU: Единица измерения обязана быть в ИМЕНИ. Проверяется формой, а не памяткой.
+# EN: The unit of measure must be in the NAME. Enforced by shape, not by a memo.
+EDINICY = ('Count', 'Seconds', 'Minutes', 'Tokens', 'TokensPerRun', 'TokensPerDay')
+
+
+def otkaz(kod, tekst):
+    """RU: Отказ идёт в stderr, stdout остаётся пустым. Код возврата — предмет проверки.
+    EN: A refusal goes to stderr, stdout stays empty. The exit code is what callers check."""
+    print(tekst, file=sys.stderr)
+    sys.exit(kod)
+
+
+def prochest(put):
+    """RU: Разобрать один файл. Битый — отказ кодом 2 с ИМЕНЕМ файла, а не тихое умолчание:
+    сломанный конфиг, прочитанный как пустой, снимает все пределы молча.
+    EN: Parse one file. A broken one is a refusal with exit 2 and the file NAME, not a
+    silent default: a broken config read as empty silently removes all limits."""
+    try:
+        import yaml
+    except ImportError:
+        otkaz(2, 'СЛЕПОТА: нет модуля yaml — прочитать файлы нечем')
+    try:
+        with open(put, 'r', encoding='utf-8') as f:
+            d = yaml.safe_load(f)
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        otkaz(2, f'ОТКАЗ: {put} не разбирается: {e}')
+    if d is None:
+        return {}
+    if not isinstance(d, dict):
+        otkaz(2, f'ОТКАЗ: {put} — верхний уровень не словарь, а {type(d).__name__}')
+    return d
+
+
+def sobrat(agent):
+    """RU: Сложить значения по слоям и запомнить ИСТОЧНИК каждого.
+    EN: Merge values by layer and remember the SOURCE of each.
+
+    RU: Слоёв ровно два плюс умолчание кода. Больше не будет: третий слой вернул бы
+    ту самую беду, ради которой всё затевалось, — «прочитал файл и сделал неверный
+    вывод», потому что не видно, перебито ли значение.
+    EN: Exactly two layers plus the code default. Never more: a third layer would bring
+    back the very problem this tool exists for — "read the file, drew the wrong
+    conclusion" because it is not visible whether a value was overridden.
+    """
+    put_a = os.path.join(KATALOG, f'{agent}.yml')
+    put_o = os.path.join(KATALOG, OBSHCHEE)
+    d_a = prochest(put_a)
+    d_o = prochest(put_o)
+    if d_o is None:
+        d_o = {}
+    itog = {}
+    istochnik = {}
+    for razdel in ('predely', 'politiki', 'prava', 'zamer', 'proverka'):
+        itog[razdel] = {}
+        istochnik[razdel] = {}
+        for klyuch, znach in UMOLCHANIYA.get(razdel, {}).items():
+            itog[razdel][klyuch] = znach
+            istochnik[razdel][klyuch] = 'умолчание кода'
+        for klyuch, znach in (d_o.get(razdel) or {}).items():
+            itog[razdel][klyuch] = znach
+            istochnik[razdel][klyuch] = put_o
+        if d_a is not None:
+            for klyuch, znach in (d_a.get(razdel) or {}).items():
+                itog[razdel][klyuch] = znach
+                istochnik[razdel][klyuch] = put_a
+    perehod = None
+    if d_a is not None and 'perehod_zavershyon' in d_a:
+        perehod = bool(d_a['perehod_zavershyon'])
+    return {
+        'agent': agent,
+        'fajl_agenta': put_a if d_a is not None else None,
+        'fajl_obshchij': put_o if d_o else None,
+        'znacheniya': itog,
+        'istochnik': istochnik,
+        'perehod_zavershyon': perehod,
+    }
+
+
+def kvant(sv):
+    return int(sv['znacheniya'].get('zamer', {}).get('kvantTokenovNaHod', 0) or 0)
+
+
+def dopusk(klyuch, znach, kv):
+    """RU: Строка допуска для токенного предела. Пусто — если мера не токенная.
+    EN: Tolerance note for a token limit. Empty if the measure is not tokens."""
+    if 'Tokens' not in klyuch or not isinstance(znach, int):
+        return ''
+    if znach == 0:
+        return '  [0 = НЕ ОГРАНИЧИВАТЬ — явное решение, не пропуск]'
+    if kv <= 0:
+        return '  [🔴 квант не задан — допуск предела НЕИЗВЕСТЕН]'
+    if znach < 2 * kv:
+        # RU: Порог «два кванта» выбран не на глаз: при пределе ровно в два кванта
+        # RU: перерасход достигает 50 % самого предела. Меньше — и «предел 15 млн»
+        # RU: означает «от 15 до 26,5 млн», то есть число в файле перестаёт что-либо
+        # RU: обещать. Выше двух квантов доля перерасхода падает: 4 кванта — 25 %.
+        # EN: The "two quanta" threshold is not arbitrary: at exactly two quanta the
+        # EN: overspend reaches 50 % of the limit. Below that, "limit 15 M" means
+        # EN: "15 to 26.5 M", so the number stops promising anything. Above two quanta
+        # EN: the overspend share falls: 4 quanta — 25 %.
+        return (f'  [🔴 ЗАЩИТЫ НЕТ: предел меньше двух квантов ({kv} токенов на ход) — '
+                f'перерасход превысит половину предела]')
+    return f'  [допуск ±{kv} токенов: проверка идёт между ходами]'
+
+
+def cmd_pokazhi(argv):
+    kak_json = '--json' in argv
+    dovody = [a for a in argv if not a.startswith('--')]
+    if not dovody:
+        otkaz(3, 'нужен агент: agent-limits pokazhi <агент> [параметр]')
+    agent = dovody[0]
+    sv = sobrat(agent)
+    if sv['fajl_agenta'] is None and not kak_json:
+        print(f'⚠️  файла агента нет ({os.path.join(KATALOG, agent + ".yml")}) — '
+              f'работаю на общем и умолчаниях кода', file=sys.stderr)
+    kv = kvant(sv)
+
+    if len(dovody) > 1:
+        imya = dovody[1]
+        for razdel, pary in sv['znacheniya'].items():
+            if imya in pary:
+                znach = pary[imya]
+                if kak_json:
+                    json.dump({'agent': agent, 'razdel': razdel, 'imya': imya,
+                               'znachenie': znach, 'istochnik': sv['istochnik'][razdel][imya],
+                               'kvantTokenovNaHod': kv}, sys.stdout, ensure_ascii=False)
+                    print()
+                else:
+                    print(f'{imya} = {znach}')
+                    print(f'  взято: {sv["istochnik"][razdel][imya]}')
+                    d = dopusk(imya, znach, kv)
+                    if d:
+                        print(f' {d.strip()}')
+                return 0
+        # RU: 🔴 НОЛЬ БАЙТ на stdout: потребитель, разбирающий вывод, не должен получить
+        # RU: ни строки на несуществующем параметре.
+        # EN: 🔴 ZERO BYTES on stdout: a consumer parsing the output must not get a single
+        # EN: line for a nonexistent key.
+        otkaz(3, f'ОТКАЗ: у агента {agent} нет параметра «{imya}»')
+
+    if kak_json:
+        json.dump(sv, sys.stdout, ensure_ascii=False, indent=1)
+        print()
+        return 0
+
+    print(f'ПРЕДЕЛЫ И ПОЛИТИКИ АГЕНТА {agent}')
+    print(f'  файл агента: {sv["fajl_agenta"] or "НЕТ"}')
+    print(f'  общий файл:  {sv["fajl_obshchij"] or "НЕТ"}')
+    if sv['perehod_zavershyon'] is False:
+        # RU: Говорим КАЖДЫЙ раз, а не один: файл, который ещё никем не читается, легко
+        # RU: принять за действующую настройку — и это худший исход из возможных.
+        # RU: («cordis» в тексте вывода — имя прежнего слоя настройки; строка вывода
+        # RU: оставлена как в бою, чтобы поведение не менялось.)
+        # EN: Say it EVERY time, not once: a file nobody reads yet is easily mistaken for
+        # EN: an active setting — the worst possible outcome. ("cordis" in the output is
+        # EN: the name of the previous settings layer; the output string is kept unchanged.)
+        print('  🔴 ПЕРЕХОД НЕ ЗАВЕРШЁН: потребители ещё читают старые слои cordis, '
+              'значения ниже пока НЕ ДЕЙСТВУЮТ')
+    for razdel in ('predely', 'politiki', 'prava', 'zamer', 'proverka'):
+        pary = sv['znacheniya'].get(razdel) or {}
+        if not pary:
+            continue
+        print(f'\n{razdel}:')
+        for klyuch in sorted(pary):
+            znach = pary[klyuch]
+            ist = sv['istochnik'][razdel][klyuch]
+            metka = 'умолчание кода' if ist == 'умолчание кода' else os.path.basename(ist)
+            print(f'  {klyuch:26} = {znach!r:38} ({metka}){dopusk(klyuch, znach, kv)}')
+    return 0
+
+
+def chitateli(klyuch, korni):
+    """RU: Кто читает этот ключ ИЗ НАШЕГО КАТАЛОГА.
+    EN: Who reads this key FROM OUR DIRECTORY.
+
+    RU: 🔴 ЗАЧЕМ. Агент-координатор нашёл в файле четыре ключа, которых не читал
+    НИКТО: файл выглядел источником правды, а правка такой строки давала молчаливое
+    ничто. Комментарием это не лечится — пометка про один из них там уже стояла, и
+    её не заметили ни координатор, ни придирчивый аудитор. Значит нужна
+    проверка, а не текст.
+    EN: 🔴 WHY. The coordinator agent found four keys in the file that NOBODY read: the
+    file looked like the source of truth, and editing such a line did silently nothing.
+    A comment does not cure this — a note about one of them was already there and
+    neither the coordinator nor a picky auditor noticed it. So a check is needed, not text.
+
+    RU: ПРИЗНАК ЧИТАТЕЛЯ: файл потребителя содержит И путь нашего каталога, И имя ключа.
+    Одного имени мало — `goalUsers` читают несколько файлов, но из ПРЕЖНЕГО СЛОЯ
+    настройки, а не отсюда; для нашего файла такой ключ всё равно сирота.
+    EN: READER SIGN: the consumer file contains BOTH our directory path AND the key name.
+    The name alone is not enough — `goalUsers` is read by several files, but from the
+    PREVIOUS settings layer, not from here; for our file such a key is still an orphan.
+
+    RU: ГРАНИЦЫ ПРИЗНАКА, обе названы, потому что он приблизительный:
+      * сам инструмент из поиска исключён — он по устройству упоминает все ключи;
+      * упоминание ключа в КОММЕНТАРИИ потребителя считается чтением. Проба
+        сильнее, чем ничего, но слабее разбора кода: она отвечает «есть ли связь»,
+        а не «исполняется ли она».
+    EN: LIMITS OF THE SIGN, both named because it is approximate:
+      * the tool itself is excluded from the search — it mentions every key by design;
+      * a key mentioned in a consumer's COMMENT counts as reading. Stronger than
+        nothing, weaker than parsing code: it answers "is there a link", not "does it run".
+    """
+    najdeno = []
+    for koren in korni:
+        if not os.path.isdir(koren):
+            continue
+        for put, kat, fajly in os.walk(koren):
+            kat[:] = [d for d in kat if d not in ('node_modules', '.git')]
+            for f in fajly:
+                if any(f.endswith(x) for x in ('.bak', '.orig', '.porcha', '.limits', '.snyato')):
+                    continue
+                if '.bak-' in f or '.SNYATO' in f:
+                    continue
+                pf = os.path.join(put, f)
+                if os.path.realpath(pf) == os.path.realpath(__file__):
+                    continue
+                try:
+                    with open(pf, 'r', encoding='utf-8', errors='ignore') as fh:
+                        t = fh.read()
+                except (OSError, IsADirectoryError):
+                    continue
+                # RU: 1.0.1: признак — путь НАШЕГО каталога (KATALOG) или вызов инструмента, плюс имя ключа.
+                # RU: Прежде искалось только слово 'agent-limits': при AGENT_LIMITS_DIR без этого слова читатель по пути
+                # RU: не находился, и ключ ложно объявлялся сиротой.
+                # EN: 1.0.1: the sign is OUR directory path (KATALOG) or a call of the tool, plus the key name. Before, only
+                # EN: the word 'agent-limits' was searched: with an AGENT_LIMITS_DIR lacking that word a reader by path was missed.
+                if ('agent-limits' in t or KATALOG in t) and klyuch in t:
+                    najdeno.append(pf)
+    return najdeno
+
+
+def cmd_proverit(argv):
+    kak_json = '--json' in argv
+    bedy = []
+    if not os.path.isdir(KATALOG):
+        otkaz(2, f'СЛЕПОТА: каталога {KATALOG} нет — проверять нечего')
+    imena = sorted(f[:-4] for f in os.listdir(KATALOG)
+                   if f.endswith('.yml') and f != OBSHCHEE)
+    narochno_vsego = set()
+    for agent in imena:
+        # RU: 🔴 Битый файл ОДНОГО агента не должен гасить проверку остальных: иначе
+        # RU: первая же опечатка делает инструмент слепым ко всем агентам, и это
+        # RU: выглядит как отказ инструмента, а не как беда в одном файле.
+        # EN: 🔴 A broken file of ONE agent must not kill the check of the others: otherwise
+        # EN: the first typo blinds the tool to every agent, and it looks like a tool
+        # EN: failure instead of a problem in one file.
+        try:
+            sv = sobrat(agent)
+        except SystemExit:
+            bedy.append(f'{agent}: файл не разбирается (см. отказ выше)')
+            continue
+        kv = kvant(sv)
+        # RU: 🔴 У КАЖДОГО КЛЮЧА ДОЛЖЕН БЫТЬ ЧИТАТЕЛЬ. Ключ без читателя — ложно-зелёное
+        # RU: внутри самой защиты от ложно-зелёного: строка есть, значение верное, а
+        # RU: правка не делает ничего.
+        # EN: 🔴 EVERY KEY MUST HAVE A READER. A key without a reader is a false green inside
+        # EN: the very protection against false greens: the line exists, the value is right,
+        # EN: and editing it does nothing.
+        pr = sv['znacheniya'].get('proverka') or {}
+        korni = pr.get('korniPotrebitelej') or []
+        narochno = set(pr.get('bezChitatelyaNarochno') or [])
+        narochno_vsego |= narochno
+        if korni:
+            for razdel in ('predely', 'politiki', 'prava'):
+                for klyuch in (sv['znacheniya'].get(razdel) or {}):
+                    if klyuch in narochno:
+                        continue
+                    # RU: 🔴 Проверяем читателя только у того, что РЕАЛЬНО ЛЕЖИТ В ФАЙЛЕ.
+                    # RU: Умолчание кода — не строка файла: у него нет и не должно быть
+                    # RU: «читателя из каталога», и жалоба на него была бы жалобой на
+                    # RU: то, чего никто не писал. Поймано стендом на подставных данных:
+                    # RU: на боевых это молчало, потому что там умолчания совпадают с файлом.
+                    # EN: 🔴 Check readers only for what REALLY IS IN THE FILE. A code
+                    # EN: default is not a file line: it has no "reader from the directory"
+                    # EN: and should not; complaining about it would be complaining about
+                    # EN: something nobody wrote. Caught by a stand on fake data; on real
+                    # EN: data it was silent because the defaults matched the file.
+                    if sv['istochnik'][razdel].get(klyuch) == 'умолчание кода':
+                        continue
+                    if not chitateli(klyuch, korni):
+                        bedy.append(f'{agent}: ключ «{klyuch}» ({razdel}) не читает НИКТО — '
+                                    f'правка этой строки не сделает ничего')
+        else:
+            bedy.append(f'{agent}: рамка проверки не объявлена (proverka.korniPotrebitelej) — '
+                        f'читателей проверить нечем')
+        for klyuch, znach in (sv['znacheniya'].get('predely') or {}).items():
+            if isinstance(znach, int) and not any(klyuch.endswith(e) for e in EDINICY):
+                bedy.append(f'{agent}: у предела «{klyuch}» нет единицы в имени')
+            if 'Tokens' in klyuch and isinstance(znach, int) and 0 < znach < 2 * kv:
+                bedy.append(f'{agent}: предел «{klyuch}» = {znach} меньше двух квантов '
+                            f'({kv}) — защиты нет')
+    if kak_json:
+        json.dump({'agentov': len(imena), 'bed': len(bedy), 'bedy': bedy},
+                  sys.stdout, ensure_ascii=False)
+        print()
+    else:
+        print(f'проверено агентов: {len(imena)} ({", ".join(imena) or "нет"})')
+        if narochno_vsego:
+            print(f'намеренно без читателя: {len(narochno_vsego)} '
+                  f'({", ".join(sorted(narochno_vsego))}) — список обязан убывать')
+        if bedy:
+            print(f'🔴 БЕД: {len(bedy)}')
+            for b in bedy:
+                print(f'  {b}')
+        else:
+            print('форма сходится')
+    return 1 if bedy else 0
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return 0
+    cmd = sys.argv[1]
+    if cmd == 'pokazhi':
+        return cmd_pokazhi(sys.argv[2:])
+    if cmd == 'proverit':
+        return cmd_proverit(sys.argv[2:])
+    otkaz(3, f'неизвестная подкоманда: {cmd}')
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -1,0 +1,27 @@
+#!/bin/bash
+# gost-podpiska-vybor — гостевому шлюзу ОДНА подписка (B-N-1621, Михалыч 08.10.2026, наряд Забавы 21:09Z).
+# ЗОВЁТ: ExecStartPre=+ гостевого шлюза (drop-in 95-gost.conf), от root, с RUNTIME_DIRECTORY юнита.
+# ДЕЛАЕТ: берёт GATEWAY_TOKEN_FILE из instance-<гость>.env (тот же файл, что правит pereklyuchatel-podpiski),
+#   копирует РОВНО этот токен в RuntimeDirectory юнита (root:<группа каталога> 0440). Каталог systemd удаляет при остановке.
+#   Прежде LoadCredential грузил гостю ВСЕ ТРИ подписки (замер 08.10 21:09Z: varvara читает 1, 2, 3).
+# ПОЧЕМУ НЕ ПРАВКА DROP-IN ПЕРЕКЛЮЧАТЕЛЕМ: выбор остаётся в ОДНОМ месте (env-файл); откат переключателя (cp env назад + restart)
+#   сам возвращает и токен — второго состояния, которое надо откатывать, нет. Переключатель не меняется.
+# ГРАНИЦА: шлюз и платформа гостя — одна учётка; ТЕКУЩИЙ токен учётка гостя читать по-прежнему может (шлюзу он нужен).
+#   Полностью закрывает только отдельная учётка шлюза. Это правило «1 из 3», а не «0».
+# Неизвестное → отказ (код 2), шлюз не стартует: лучше гость без модели, чем гость со всеми подписками.
+set -euo pipefail
+otkaz() { echo "gost-podpiska-vybor: ОТКАЗ: $*" >&2; exit 2; }
+[ $# -eq 1 ] || otkaz "ожидался ровно один аргумент — имя гостя (%i), получено $#"
+I=$1; [[ "$I" =~ ^[a-z][a-z0-9_-]*$ ]] || otkaz "имя гостя '$I' не по образцу"
+ENVD=${GOST_ENV_DIR:-/etc/claude-oauth}; TOKD=${GOST_TOKEN_DIR:-/etc/claude-oauth}
+OUT=${RUNTIME_DIRECTORY:-}; [ -n "$OUT" ] && [ -d "$OUT" ] || otkaz "нет RUNTIME_DIRECTORY (в юните нет RuntimeDirectory=?)"
+case "$OUT" in *:*) otkaz "RuntimeDirectory должен быть один, получено: $OUT";; esac
+EF=$ENVD/instance-$I.env; [ -r "$EF" ] || otkaz "нет $EF"
+n_str=$(grep -cE '^GATEWAY_TOKEN_FILE=' "$EF" || true); [ "$n_str" = 1 ] || otkaz "в $EF строк GATEWAY_TOKEN_FILE: $n_str (нужна одна)"
+f=$(sed -n 's/^GATEWAY_TOKEN_FILE=//p' "$EF")
+[[ "$f" =~ ^$TOKD/token-podpiska-([123])$ ]] || otkaz "GATEWAY_TOKEN_FILE='$f' не $TOKD/token-podpiska-[123]"
+N=${BASH_REMATCH[1]}; [ -f "$f" ] && [ ! -L "$f" ] || otkaz "$f не обычный файл"
+grp=$(stat -c %G "$OUT")
+find "$OUT" -mindepth 1 -maxdepth 1 -exec rm -f -- {} +
+install -m 0440 -o root -g "$grp" "$f" "$OUT/token-podpiska-$N"
+echo "gost-podpiska-vybor: $I → подписка $N (из $EF), в $OUT ровно $(find "$OUT" -mindepth 1 | wc -l) файл"

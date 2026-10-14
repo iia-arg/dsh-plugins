@@ -1,0 +1,1025 @@
+# ДЕЙСТВУЮЩИЙ перечень: его читает vse-stendy-boevye.sh (путь по умолчанию). Пометка «КАНДИДАТ»
+# снята 23.09.2026 (A-N-626): монтировать нечего — обходчик уже читает этот файл.
+# ⚠️ Зовущего ПО РАСПИСАНИЮ у обходчика НЕТ — его зовут рукой (registry-watchdog зовёт nashi-dorabotki.sh --check,
+#   а тот стенды не гоняет). Перечень действует тогда, когда обходчик позвали.
+# Сохраняет прежние обязательства; переезды и новые проверки обоснованы в REPORT.md.
+# Позиция vyvoz РЕШЕНА 23.09.2026 (A-H-050): выведен из боевого перечня, см. строку о нём ниже.
+# ПРАВИЛО (Вениамин, B-N-1599, 05.10.2026): Стенд на Python, который портит файл и импортирует его, обязан исключить __pycache__ (PYTHONDONTWRITEBYTECODE=1 или компиляция из исходника): порча того же размера в ту же секунду исполняет прежний байткод
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-arhiva-prochitannogo.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-dostupa-sluzhb.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-imena.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-istochnika-oprosa.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-klyuchej-podavleniya.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-komand-konteksta.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-maska-modul-prava.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-pobudki.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-poroga-nastrojki.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-poslannye-yashchika.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-predela-pachki.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-prichiny-otkaza.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-status-srez.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-svezhesti-opory.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-uborki-na-vseh-vyhodah.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-uspeha-oprosa.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-vlozheniya-acceptance.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-vlozheniya-authorization.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-vlozheniya-confirmation.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-vlozheniya-quota-notice.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-vlozheniya-route.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-vlozheniya-store.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-yashchika-shiny.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-zakryt-neizvestnyj.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-zhurnala-chankov.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-byudzhet/test/stend-krik-zvuchit.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-byudzhet/test/stend-mery.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-byudzhet/test/stend-otbora.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-byudzhet/test/stend-readme.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-byudzhet/test/stend-granic-chisel.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-dogovora-filtra.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-dolgovremennoj.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-filtra-vhoda.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-hranilishcha.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-istochnika-perechnya.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-kasanij.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-klyuchej-a1870.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-krik-zvuchit.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-ocheredi-dostavki.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-otbora-klassov.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-po-istochniku.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-podachi-perechnya.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-politiki.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-predel-po-klassu.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-predela-zapisi.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-privratnika.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-readme.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-rubezha.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-sborki.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-svidetelya-zagruzki.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-very.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-svyazi-omega.mjs
+# dsh-pamyat-core 0.1.0-alpha.80 (24.09, A-N-753 — маска кода и отметка чистки, Заря)
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-maski-koda.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-zhurnala.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-klassov-vne-umolchanij.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-doveriya.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-invarianta-apply.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-nudzh/test/stend-krik-zvuchit.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-nudzh/test/stend-porogov.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-nudzh/test/stend-readme.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-nudzh/test/stend-scheta.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-nudzh/test/stend-vstavki.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-nudzh/test/stend-granic-porogov.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-karty-tipov.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-krik-zvuchit.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-podtverzhdeniya.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-readme.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-sborki.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-svyazi.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-restore/test/stend-krik-zvuchit.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-restore/test/stend-readme.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-restore/test/stend-restore.mjs
+# dsh-pamyat-restore 0.1.0-alpha.31 (23.09, A-N-661 — пометки отношений в приветствии, Искра)
+/opt/agent-plugins/node_modules/dsh-pamyat-restore/test/stend-pometki-otnoshenij.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-adresa.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-avtopovtora.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-distillyacii.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-flaga-distillyacii.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-godnyh-klassov.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-krik-zvuchit.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-maski-obrazcov.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-novizny.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-orientira-porcha.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-otbroshennogo-nachala.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-otklonennoj-svodki.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-povtora-pri-pustom.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-povtora-zahoda.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-predela-okon.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-predela-stati.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-rashoda.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-razbora.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-razmera-okna.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-readme.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-regulyatora-glubiny.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-shva.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-soglasiya-nastrojki.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-syroj-prozy.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-upornogo-vyzova.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-zadaniya-na-povtor.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-istochnika-rashoda.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-odinochnogo-montazha.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-opisaniya.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-opoveshcheniya.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-svodki-po-taktu.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-vidov.mjs
+# dsh-pamyat-storozha 0.1.0-alpha.26 (23.09, A-N-662 Беты)
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-primenimosti-prune.mjs
+# dsh-pamyat-storozha 0.1.0-alpha.27 (25.09, B-N-861a Авроры, монтаж руки claude 09:01Z)
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-poroga-i-hraneniya.mjs
+# dsh-pamyat-storozha 0.1.0-alpha.29 (26.09, A-N-998 Зари)
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-vygruzki.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-modeli-omega.sh
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-nastrojki.sh
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-pravki-postavki-omega.sh
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-proverki-opory.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-slepoty-nastrojki.sh
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-svodki-doveriya.sh
+# dsh-pamyat-vyvoz ВЫВЕДЕН ИЗ БОЕВОГО ПЕРЕЧНЯ 23.09.2026 (A-H-050, решение Забавы по разбору Искры):
+#   ручной инструмент, зовут рукой, В БОЮ НЕ ЖИВЁТ по замыслу. Живёт в дереве:
+#   /opt/iskra/workspace/dsh-plugins/packages/dsh-pamyat-vyvoz/test/stend-vyvoza.mjs
+#   Его стенд гоняется при выпуске (npm test в дереве), а не этим обходом боя.
+# ↳ B-N-986 (26.09.2026): ВОЗВРАЩЁН в обход ПО ПУТИ ДЕРЕВА (бой = дерево, как метапакет dsh-pamyat). Довод A-H-050 «стенд гоняется
+#   при выпуске npm test в дереве» не исполнялся: с 24.09 (B-H-060) ворота зовут только этот обходчик, и vyvoz слеп кодом 2.
+/opt/iskra/workspace/dsh-plugins/packages/dsh-pamyat-vyvoz/test/stend-vyvoza.mjs
+/opt/iskra/plugins/dsh-subscription-adapter/test/stend-predela.mjs
+# dsh-subscription-adapter 0.1.3 (25.09, A-N-878; монтаж Забавы 11:03Z)
+/opt/iskra/plugins/dsh-subscription-adapter/test/stend-perepolneniya.mjs
+/opt/iskra/plugins/dsh-subscription-adapter/test/stend-povtora.mjs
+# dsh-subscription-adapter 0.1.5 (26.09, B-N-999 Зари)
+/opt/iskra/plugins/dsh-subscription-adapter/test/stend-vygruzki.mjs
+# dsh-subscription-adapter 0.1.10 (01.10, B-N-1357 шаг 2, Бета): аренда запроса для отмены хода Codex, по умолчанию выключено
+/opt/iskra/plugins/dsh-subscription-adapter/test/stend-task-control.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-heartbeat.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-ostanovki.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-publikacii.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-rezhimov.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-rezyume.mjs
+# dsh-tool-bridge 0.3.9 (23.09, A-N-671 — pamyat_otnoshenie для моделей SDK-агентов, Искра)
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-pamyat-otnoshenie.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-pravki-intervala.mjs
+# dsh-tool-bridge 0.3.11 (25.09, B-N-901) — отметка «сделано» после результата: тревога о пропаже источника, остановка по пределу
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-otmetki-posle.mjs
+# dsh-tool-bridge 0.3.14 (26.09, B-N-999 Зари)
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-vygruzki.mjs
+# B-N-939 (26.09, Заря): мост в 7 копиях — ТОЛЬКО стенды настроек агента, строкой «@ + файл» под учёткой копии. Код копий = код Искры (fingerprint_check реестра, ежедневно).
+/opt/zarya/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs
+/opt/zarya/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs
+/opt/avrora/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs
+/opt/avrora/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs
+/opt/marc/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs
+/opt/marc/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs
+/opt/spartak/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs
+/opt/spartak/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs
+/opt/varvara/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs
+/opt/varvara/plugins/dsh-tool-bridge/test/stend-ostrov-api.mjs
+/opt/varvara/plugins/dsh-tool-bridge/test/stend-saved-plans.mjs
+# 1.0.46 (09.10, Искра; слово Зари 08:2xZ, B-N-1919 вариант (г)): граница 04.10 СНЯТА — журнал службы varvara снимает обходчик
+#   в файл прогона (600 + ACL u:varvara:r, MOST_ZHURNAL_YUNITA), в systemd-journal varvara по-прежнему не добавлена. Мост ≥1.3.43-b1919.
+/opt/varvara/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs
+/opt/coders/alfa/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs
+/opt/coders/alfa/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs
+/opt/coders/beta/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs
+/opt/coders/beta/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs
+/opt/coders/gamma/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs
+/opt/coders/gamma/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs
+# B-N-1982 (обход 3.1.8, Искра): копия моста anna (root:root 755, служба User=anna) — под anna, область @anna /opt/anna/app.
+/opt/anna/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs
+/opt/anna/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs
+# dsh-schedule-guard 0.5.1 (24.09, A-N-745) — боевой каталог Петровича; обходчик гоняет его под dsh на /opt/petrovich/app
+/opt/petrovich/.dsh/profiles/web/plugin/dsh-schedule-guard/test/stend-heartbeat-close.mjs
+# dsh-schedule-guard 0.5.3 (25.09, B-H-105) — уведомление владельцу: отметка после отправки, одно на эпизод остановки
+/opt/petrovich/.dsh/profiles/web/plugin/dsh-schedule-guard/test/stend-uvedomleniya.mjs
+# dsh-schedule-guard 0.6.0 (30.09, B-N-1194) — сторож на службе расписания DSH 0.2: пробуждения по событиям 0.2, снятие через службу с записью снимаемых целиком ДО delete
+/opt/petrovich/.dsh/profiles/web/plugin/dsh-schedule-guard/test/stend-raspisaniya-0.2.mjs
+/opt/petrovich/.dsh/profiles/web/plugin/dsh-schedule-guard/test/stend-zhivye-korni.mjs
+
+# ═══ ДОПИСАНО 23.09.2026 (A-N-626, Искра): 24 стенда, пришедшие выпусками 18–23.09 мимо перечня.
+# На момент записи ЗЕЛЁНЫХ 21, КРАСНЫХ 3 — красные по НЕ-своей причине (A-N-623):
+# receipt-runtime, receipt-sigkill, receipt-session-native зашиты на платформу из домов кодеров.
+# dsh-telegram-multiagent 1.5.20 (18.09, квитанции доставки — работа Альфы)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-receipt-file-route.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-receipt-offset.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-receipt-recovery.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-receipt-runtime.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-receipt-sigkill.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-receipts.mjs
+# dsh-telegram-multiagent 1.5.21 (19.09)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-owner-copies.mjs
+# dsh-telegram-multiagent 1.5.42 (26.09, B-N-1012 Зари): шапка письма a2a/in по началу имени файла
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-otpravitelya-a2a.mjs
+# dsh-telegram-multiagent 1.5.22 (19.09)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-copy-decisions.mjs
+# dsh-telegram-multiagent 1.5.23 (19.09)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-poll-persist-required.mjs
+# dsh-telegram-multiagent 1.5.24 (19.09)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-guard-events.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-wake-boundary.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-wake-gate.mjs
+# dsh-telegram-multiagent 1.5.52 (01.10, B-N-1357 шаги 1+2, Бета): отмена посреди хода Codex — учёт стадий и служба taskControlCodex (codex-control берёт боевой шлюз)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-task-control.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-codex-control.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-cs-claude-process.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-cs-gateway-source.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-cs-live-process.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-cs-live-turn.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-cs-postcompact-process.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-cs-common-template.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-cs-idle-status.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-wake-restart.mjs
+# dsh-telegram-multiagent 1.5.25 (19.09)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-finished-dispatch.mjs
+# dsh-telegram-multiagent 1.5.26 (19.09)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-receipt-session.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-receipt-session-native.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-session-tick.mjs
+# dsh-telegram-multiagent 1.5.27 (20.09, отказ приёмника)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-trevogi-otkaza.mjs
+# dsh-telegram-multiagent 1.5.30 (23.09, A-N-005 строка лага)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-receipt-lag.mjs
+# dsh-telegram-multiagent 1.5.31 (23.09, К1 A-H-011)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-envelope-reception.mjs
+# dsh-pamyat-core 0.1.0-alpha.75 (19.09)
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-schyota-zapisej.mjs
+# dsh-pamyat-nudzh 0.1.0-alpha.18 (19.09)
+/opt/agent-plugins/node_modules/dsh-pamyat-nudzh/test/stend-nedostovernogo-schyota.mjs
+# dsh-pamyat-nudzh 0.1.0-alpha.23 (30.09, A-N-1245 Беты): после компакта давление неизвестно, старое число не вставляется; в дереве PASS
+/opt/agent-plugins/node_modules/dsh-pamyat-nudzh/test/stend-posle-kompakta.mjs
+# dsh-pamyat-omega 0.1.0-alpha.15 (23.09, A-N-084)
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-prichina-identichnost.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-sozdana.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-vydachi.mjs
+# dsh-pamyat-secretary 0.1.0-alpha.61 (23.09, A-N-084)
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-prichina-identichnost.mjs
+# dsh-pamyat-secretary 0.1.0-alpha.64 (23.09, A-P-056 Гаммы)
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-istochnika-sessii.mjs
+# A-N-778 (a65, 24.09, Аврора): подъём пробует ключ дистилляции
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-proby-klyucha.mjs
+# dsh-pamyat-secretary 0.1.0-alpha.67 (24.09, A-N-812): хвост дистиллятору, режимы, источник — голова
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-hvosta-distillyacii.mjs
+# dsh-pamyat-secretary 0.1.0-alpha.68 (24.09, A-N-812): выключатель дистилляции онлайн
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-vyklyuchatelya.mjs
+# dsh-pamyat-secretary 0.1.0-alpha.71 (24.09, A-N-816): рассуждения агента черновиком + rassuzhdeniya/онлайн-файл
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-rassuzhdenij.mjs
+# dsh-pamyat-secretary 0.1.0-alpha.72 (24.09, A-N-818): размер статьи указанием, одна статья — одна тема
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-razmera-stati.mjs
+# dsh-pamyat-secretary 0.1.0-alpha.73 (25.09, A-N-826): срез из вставок памяти (compact/restore) не дистиллируется
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-sreza-svodki.mjs
+# dsh-pamyat-secretary 0.1.0-alpha.74 (25.09, A-N-823): правдивая строка об исходе записи ядра
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-ishoda-yadra.mjs
+# dsh-pamyat-secretary 0.1.0-alpha.75 (25.09, A-N-829): суд отмены
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-suda-otmeny.mjs
+# dsh-pamyat-secretary 0.1.0-alpha.80 (25.09, A-N-838): команда /svodka-prinyat в форме вызова платформы
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-komandy-svodki.mjs
+# dsh-pamyat-secretary 0.1.0-alpha.85 (26.09, A-N-1010 Зари): «НЕТ РЕЛЕВАНТНОГО.» с пунктуацией и строка «записано id N по теме»
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-pustoty-i-stroki-zapisi.mjs
+# dsh-telegram-multiagent 1.5.32 (23.09, единый: К2 Беты) — test-platform.mjs рядом ПОМОЩНИК, не стенд, в перечень не идёт
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-supersedes-race.mjs
+# dsh-telegram-multiagent 1.5.33 (23.09, A-N-631 Гаммы: три различения /compact-status возвращены; стенд — A-N-628 Искры)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-smysl-statusa.mjs
+# dsh-telegram-multiagent 1.5.35 (23.09, A-N-634 Гаммы: строка ошибки /compact-status)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-status-error-line.mjs
+# dsh-pamyat-core 0.1.0-alpha.77 (23.09, A-N-646 — писатель отношения, Искра)
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-otnoshenij.mjs
+# dsh-pamyat-core 0.1.0-alpha.78 (23.09, A-N-661 — инструмент pamyat_otnoshenie, Искра)
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-instrumenta-otnoshenij.mjs
+# dsh-pamyat-core 0.1.0-alpha.79 (23.09, A-N-656 Гаммы)
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-otnoshenij-schet.mjs
+# dsh-pamyat-core 0.1.0-alpha.81 (24.09, A-N-802/A-H-137, Аврора): позиция окна второго прохода
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-pozicii-okna.mjs
+# dsh-pamyat-core 0.1.0-alpha.83 (24.09, A-N-805, Аврора): обрамление в объявлениях
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-obramleniya.mjs
+# dsh-pamyat-core 0.1.0-alpha.84 (25.09, A-N-829): кандидаты суда отмены
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-dejstvuyushchih.mjs
+# dsh-pamyat-core 0.1.0-alpha.85 (25.09, A-N-838): маска объявленного значения в обрамлении
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-maski-obramleniya.mjs
+# dsh-pamyat-core 0.1.0-alpha.88 (26.09, A-N-998 часть core, Зари)
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-vygruzki.mjs
+# A-N-1111 ч.2 (27.09, Искра): маска входа внешней модели zamaskirovatVhod — образцы всех классов, прямой и обратный порядок; выдача службой
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-maski-vhoda.mjs
+# dsh-vypusk-watch 0.1.0-alpha.1 (23.09, A-N-686 Альфы)
+/opt/agent-plugins/node_modules/dsh-vypusk-watch/test/stend-kopij-vypuska.sh
+# dsh-vypusk-watch 0.1.0-alpha.4 (26.09, B-N-612 Искры): соответствие шлюза /opt/claude-oauth
+/opt/agent-plugins/node_modules/dsh-vypusk-watch/test/stend-sootvetstviya.sh
+# dsh-vypusk-watch 0.1.0-alpha.5 (26.09, B-N-1021 Искры): любой довод сторожа → отказ код 3
+/opt/agent-plugins/node_modules/dsh-vypusk-watch/test/stend-dovodov.sh
+# dsh-vypusk-watch 0.1.0-alpha.7 (01.10, B-N-1350, Гамма/Альфа; выпуск Искры): бой = своему выпуску, 16 сценариев
+/opt/agent-plugins/node_modules/dsh-vypusk-watch/test/stend-svoej-metki.sh
+/opt/agent-plugins/node_modules/dsh-vypusk-watch/test/stend-nastroek.sh
+/opt/agent-plugins/node_modules/dsh-vypusk-watch/test/stend-pochinki.sh
+# dsh-vypusk-watch 1.1.11 (07.10, B-N-1738 Искры): несколько копий по соответствию, сумма состава в отпечатке невыпущенного
+/opt/agent-plugins/node_modules/dsh-vypusk-watch/test/stend-neskolko-kopij.sh
+# dsh-vypusk-watch 1.1.12 (07.10, B-N-1767 Зари): сверка по раскладке VYPUSK_RASKLADKA — строка не внесена при монтаже 1.1.12
+/opt/agent-plugins/node_modules/dsh-vypusk-watch/test/stend-raskladki.sh
+# dsh-vypusk-watch 1.1.13 (07.10, B-N-1767 Зари): сверка по записям derevo реестра (VYPUSK_REESTR)
+/opt/agent-plugins/node_modules/dsh-vypusk-watch/test/stend-derevo.sh
+# dsh-vypusk-watch 1.1.14 (09.10, A-N-1948 шаг 0 Зари): прежние имена пакета dsh.prezhnie_imena — метка версии боя, соответствие, каталог в метке, derevo
+/opt/agent-plugins/node_modules/dsh-vypusk-watch/test/stend-prezhnih-imen.sh
+# dsh-pamyat-restore 0.1.0-alpha.32 (A-N-070, Гамма)
+/opt/agent-plugins/node_modules/dsh-pamyat-restore/test/stend-klass-nol.mjs
+# dsh-pamyat-restore 0.1.0-alpha.35 (25.09, A-N-946 — касание только поданным в текст брифинга, Аврора)
+/opt/agent-plugins/node_modules/dsh-pamyat-restore/test/stend-kasaniya-podannyh.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-restore/test/stend-doveriya-vydachi.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-restore/test/stend-nastavleniya-ocenki.mjs
+# dsh-pamyat-restore 0.1.0-alpha.38 (26.09, B-N-984 — «⛔» отменённых в конце брифинга, вне бюджета, Аврора)
+/opt/agent-plugins/node_modules/dsh-pamyat-restore/test/stend-otmenennyh-v-konce.mjs
+# dsh-pamyat-kompakt 0.1.0-alpha.21 — стенды в КОРНЕ пакета (A-N-732: до него обход их не видел)
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt/stend-boevogo-puti.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt/stend-istochnikov.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt/stend-last-output.mjs
+# A-N-775 (a22, 24.09): барьер [MODE=] и перенос метки в первую строку
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt/stend-metki-rezhima.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt/stend-okna.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt/stend-pereklyuchatelej.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt/stend-polnoy-zanyatosti.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt/stend-predohranitelya.mjs
+# A-N-775 (a23, 24.09): рамка стенограммы, след отказа, согласие рамки и промта
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt/stend-ramki-i-otkaza.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt/stend-rashoda.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt/stend-sostava.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt/stend-svodki-porogov.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt/stend-versii-v-zhurnale.mjs
+# dsh-pamyat-kompakt 0.1.0-alpha.30 (26.09, A-N-1024 Искры): пути ответа против входа сжатия
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt/stend-putej-vhoda.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt/stend-lenivyh-tekstovyh-nastroek.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt/stend-tekstovyh-nastroek.mjs
+# dsh-pamyat-kompakt-dsh 0.1.0-alpha.6 — стенды в КОРНЕ пакета (A-N-732)
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-pristavki.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-sostava.mjs
+# A-N-809 (kompakt-dsh a7, 24.09): хвост из сессии агента вторым блоком, стык по содержимому
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-hvosta.mjs
+# dsh-pamyat-kompakt-dsh 0.1.0-alpha.9 (25.09, A-N-875 Авроры)
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-uderzhaniya.mjs
+# dsh-telegram-multiagent 1.5.36 (A-N-728, Бета)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-resume-cwd.mjs
+# dsh-telegram-multiagent 1.5.37 (24.09, B-N-659 — битый UTF-8 удержан в ledger, Искра)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-bityj-utf8.mjs
+# dsh-telegram-multiagent 1.5.38 (24.09, B-H-123 — claimed_at и audit claimed в ledger, Аврора)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-receipt-claimed-at.mjs
+# dsh-telegram-multiagent 1.5.39 (25.09, B-P-084 — отказ «Не смог выполнить ход» ловится .catch, Заря)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-otkaza-soobshcheniya-obryva.mjs
+# dsh-telegram-multiagent 1.5.40 (25.09, B-N-854 — catch в фоновых блоках, Заря)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-otkazov-v-fonovyh-blokah.mjs
+# dsh-telegram-multiagent 1.5.43 (26.09, B-N-714/B-N-1067 — решение без цели выпускается, отменённое до прихода удерживается, негодное B не глушит A; Искра)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-decision-bez-celi.mjs
+# строки-файлы области (25.09, B-H-183 и сам механизм строки-файла; условие Вениамина — оба)
+/opt/iskra/workspace/dorabotki/stend-priyomki-kopii.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-oblasti-fajlom.sh
+# строки-файлы области: стенды обходчика и ворот (25.09, B-H-203; условие Вениамина — у них нет зовущего)
+/opt/iskra/workspace/dorabotki/stendy/stend-isklyuchenij-obhodchika.sh
+# B-N-1982 (обход 3.1.8, Искра): каждая копия моста из реестра плагинов — в перечне и (чужая) в области обхода; под iskra, без sudo.
+/opt/iskra/workspace/dorabotki/stendy/stend-pokrytiya-kopij-mosta.sh
+# B-N-1862: основа версии исключения, включая чужую основу с тем же -bNNNN
+/opt/iskra/workspace/dorabotki/stendy/stend-osnovy-versii.py
+# B-N-1877: машинная редакция юнитов dsh-storozha-mashiny/oom-watch/omega-memory — дерево↔бой за вычетом /etc/agent-registry/ozhidaemye-razlichiya.yaml
+/opt/iskra/workspace/dorabotki/stendy/stend-mashinnoj-redakcii.py
+/opt/iskra/workspace/dorabotki/stendy/stend-vorot-vypuska.sh
+# B-N-1923 (09.10, dsh-montazh 1.0.18 Зари; слово Забавы 11:30Z): стенд следа ворот и сторожа меток мимо ворот — иначе читателя у стенда нет (ворота пакетов дерева стенды не гоняют). Под iskra: sudo -n зовёт сам.
+/usr/local/libexec/stend-metki-vorot.sh
+# 3.1.39 (B-N-2029/2030/2033, dsh-montazh 3.1.11, Аврора): ворота меток — номер с дефисом, SOURCE_ONLY, места по registry ID; от iskra
+/usr/local/libexec/stend-zagolovka-versii.py
+/usr/local/libexec/stend-source-only.py
+/usr/local/libexec/stend-mesta-po-id.py
+# stend-sekretov-na-mestah.sh (25.09, B-N-907) — карта «секрет на месте → ветка хранилища», строкой-файлом в области обходчика
+/opt/iskra/workspace/dorabotki/stend-sekretov-na-mestah.sh
+# B-N-949 (26.09, Заря): 5 стендов dorabotki, прежде вне обходчика (устарели — правка стендов тем же пунктом). stend-vozrast-pisma — НЕ внесён: красный по находке в предмете (telegram, e3b6017).
+# A-N-1728 (07.10, Искра): из этих пяти сняты stend-kontrakt-kodov.sh и stend-kto-podnimal-bajty.sh — двойники стендов пакета dsh-pribory (вместо них ниже — стенды пакета).
+/opt/iskra/workspace/dorabotki/stend-poteri-pisem.mjs
+/opt/iskra/workspace/dorabotki/stend-snyatie-ogranichitelej.mjs
+/opt/iskra/workspace/dorabotki/stend-stop-pobudok.mjs
+/opt/iskra/workspace/dorabotki/stend-verdiktov-istochniki.mjs
+# dsh-pamyat 0.1.0-alpha.34 (25.09, A-H-079 Авроры; решение Забавы 18:24): метапакет — ИЗ ДЕРЕВА (на бою его нет), раскладка «мастерская»:
+#   соседи — packages/ дерева, сверка сумм — с полкой /opt/agent-plugins-tarbally, версии — РАВНЫ бою /opt/agent-plugins/node_modules.
+#   ⚠️ Краснеет после КАЖДОГО монтажа члена набора, пока набор не пересобран, — это его смысл (набор отстал); пересборка — шаг монтажа (решение (а)).
+/opt/iskra/workspace/dsh-plugins/packages/dsh-pamyat/test/stend-sostava.mjs
+# B-N-991 (26.09, Аврора): стенды pravka — прежде без зовущего (reestra красный ~10 ч с B-N-898 незамеченным); mimo ~510 с, предел в PREDEL_STENDOV обходчика.
+/opt/iskra/workspace/dorabotki/stend-pravki-reestra.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-pravki-mimo.sh
+# B-N-1047 (26.09, Заря): stend-vidimosti-a2a — видимость A2A владельцу («← от»/«→ кому»); прежде вне обходчика (16/19 с 19.09 незамечено). От iskra: sudo + группа a2a-pochta; свой корень ящиков в mktemp, tell-owner и журнал курьера — заглушки.
+/opt/iskra/workspace/dorabotki/stend-vidimosti-a2a.sh
+# B-N-1048 (26.09, Аврора; решение Забавы): стенд канарейки шлюза — прежде без зовущего; ловит дрейф «ключ в env или в gateway.mjs без строки списка». Под root (строка «@root»), дом /opt/avrora через SREDA_STENDOV обходчика; ~10–45 с, 2 живые копии шлюза на свободном порту 18800–18860.
+/opt/iskra/workspace/dorabotki/stend-kanarejki-shlyuza.sh
+# B-N-1204 (30.09, Аврора): боевой стенд ролей DSH 0.2.0 в шлюзе (из стенда перехода B-N-738) — форма 0.2.0 даёт то же тело к SDK,
+# что форма 0.1.1, ВНУТРИ предмета /opt/claude-oauth/gateway.mjs (каталог закрыт iskra — строка «@root» в области обходчика); секунды.
+/opt/iskra/workspace/dorabotki/stendy/stend-rolej-shlyuza.mjs
+# B-N-1060 (26.09, Заря; слово Забавы 14:24Z): стенд dsh-compact-watch — строка байтами, печать «последнее из журнала», голос падения; от iskra без sudo, ~2 с; предмет — боевой /usr/local/sbin/dsh-compact-watch.
+/opt/iskra/workspace/dorabotki/stendy/stend-compact-watch.sh
+# B-N-1698 хвост (07.10, Аврора; ворота Вениамина 07:16Z): читатель крика фильтра схем в dsh-compact-watch — стенд на подставном journalctl и канале, сторож — аргументом (боевой /usr/local/sbin/dsh-compact-watch).
+/opt/iskra/workspace/dorabotki/stendy/stend-otbros-shlyuza.py
+# zhivaya-versiya (07.10, Искра; ворота Вениамина 07:51Z): стенд сторожа живой версии — версия с суффиксом «-…» (1.3.33-b1700) не слепота; без довода — боевой /usr/local/sbin/zhivaya-versiya-watch.
+/opt/iskra/workspace/dorabotki/stendy/stend-zhivaya-versiya.py
+# B-N-1085 (26.09, Аврора; решение Забавы 17:28Z): стенд доли «только пресет» kontekst-zamer и dsh-compact-watch — ast-разбор, секунды; @root (живая часть читает профили и пресеты 9 домов, от iskra — слепота 16)
+/opt/iskra/workspace/dorabotki/stendy/stend-doli-preseta.sh
+# B-N-1064 (26.09, Аврора; решение Забавы): стенды реестра агентов — прежде без зовущего; reestra-agentov стоял красным (выбор «закрытого дома» по индексу). ~8 с и ~1 с, под своей учёткой, только временные каталоги.
+/opt/iskra/workspace/dorabotki/stend-reestra-agentov.sh
+/opt/iskra/workspace/dorabotki/stend-registry-json.sh
+# B-N-1074 (26.09, Аврора; решение Забавы) — ВНЕ ночного обхода, НЕ забыты:
+#   недельные (среда 01:30Z, vse-stendy-nedelnye.timer, перечень perechen-nedelnyh-stendov.txt): stend-vzaimnogo-nabludeniya, stend-storozha-reestrov — ~15 мин каждый
+#   ИСКЛЮЧЁН, ручной: /opt/iskra/workspace/dsh-plugins/packages/dsh-reestr/test/stend-krug-samoproverki.sh (копия dorabotki снята 1.0.50, B-N-1929: источник — дерево) — раздел E без ключа стопит/стартует ЖИВОЙ apt-daily.timer (sudo), F (--okno) пишет drop-in в /etc/systemd/system/registry-watchdog.timer.d
+# B-N-1092 (26.09, Аврора; наряд Забавы): стенд имени письма v2 (a2a-v2.py бой + читатель telegram бой) — отправитель по договору ящика,
+#   дубль ловит получатель, учётка с «-» → отказ (S6); под iskra, mktemp, ~10 с; вспомогательный priyomnik-imeni-v2.mjs — не стенд
+/opt/iskra/workspace/dorabotki/stendy/stend-imeni-v2.sh
+# B-H-081 Ш3-2 (26.09, Искра; КРАСНОЕ Вениамина 19:29Z): agent-registry sobrat --kuda никогда не пишет в бой — «/», «/var/..», ссылка etc→корень, пустое; под root не идёт
+/opt/iskra/workspace/dorabotki/stendy/stend-sobrat-kuda.sh
+# B-H-081 Ш6 (01.10, стенд Авроры; дом и зовущий — Заря, наряд Забавы): разбор EnvironmentFile в agent-registry = systemd (подставной + все /etc/claude-oauth/instance-*.env); под root («@root»: systemd-run), ~2 с; печатает только имена ключей
+/opt/iskra/workspace/dorabotki/stendy/stend-razbora-env.sh
+# B-N-1151 v5 (28.09, Искра): переключатель подписки sadik и цепочка приёмник→итог; под iskra, mktemp, всё на подставных, предметы по умолчанию — бой; .py зовётся обёрткой
+/opt/iskra/workspace/dorabotki/stendy/stend-pereklyuchatelya-podpiski.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-priyomnik-itog.sh
+# B-N-1776 такт 4 (07.10, Аврора; ГОДЕН Вениамина 18:05Z): стенд читателя лимитов переключателя — под iskra, подставная база, по умолчанию боевые читатель и настройка; стенд службы dsh-limity — НЕ здесь: ворота Вениамина 18:48Z (стенд из рабочего дерева судит sbin дерева, root исполнял бы файл дерева) — копией в 1.0.8
+/opt/iskra/workspace/dorabotki/stendy/stend-limity-pereklyuchatelya.py
+# Четыре команды бота /switch-1 /switch-a /switch-2 /switch-b (слово владельца 03.10 20:30 и 20:55 МСК, Искра): приёмник→юнит→исполнитель→настоящие переключатели Claude и Codex в режиме стенда, подставной Telegram на 127.0.0.1; 19 проб; под iskra, mktemp, ~8 с; боевые systemctl/sudo — сторожа в PATH
+/opt/iskra/workspace/dorabotki/stendy/stend-switch-1.sh
+# B-N-1499 (03.10, Искра; стенд — r14 Авроры): адаптер чата сайта sajt-chat — 50 проб (было «42», B-N-1977, 10.10) на подставных Chatwoot/шлюзе/тревоге 127.0.0.1; под iskra, mktemp, ~45 с; предмет — бой /usr/local/sbin/sajt-chat
+/opt/iskra/workspace/dorabotki/stendy/stend-sajt-chat.sh
+# B-N-1156 (28.09, Искра): курьер писем tell-komu — 12 проб на подставной щели, объявленной пробой (A2A_TELL_PROBA+A2A_TELL_LIST); под iskra, mktemp в workspace, ~2 с; боевую щель не трогает
+/opt/iskra/workspace/dorabotki/stend-kurera.sh
+# B-N-1098 (26.09, Заря; слово Забавы): stend-ucheta — предупреждения/отказы учёта smontirovat-fajly; прежде без зовущего. Под root («@root»: запись и снятие инструмент делает только от root), ~1 с; журнал монтажа — подставной (заглушка logger), страховки PROBA-B1027-* — в настоящем /var/backups/montazh, убираются стендом.
+/opt/iskra/workspace/dorabotki/stendy/stend-ucheta.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-smontirovat-vypusk-rezhimy.sh
+# B-N-1755 (07.10, Михалыч): стенды smontirovat-fajly B-N-971/922 и B-N-923 (под root, довод — инструмент) и читатель обхода B-N-1741.
+/opt/iskra/workspace/dorabotki/stendy/stend-mihalycha.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-ucheta-git.sh
+# B-N-1817 покрытие (08.10, Михалыч; условие Вениамина 05:00Z): правило соседей smontirovat-fajly --novyj без ключей — единственный читатель; от root (@root в обходчике)
+/opt/iskra/workspace/dorabotki/stendy/stend-rezhim-novogo.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-chitatelya-obhoda.py
+/opt/iskra/workspace/dorabotki/stendy/stend-nemoty-posle-szhatiya.py
+# B-N-1768 (07.10, разбор Авроры RAZBOR-B-N-1768 1cb9a102; наряд Забавы 15:20Z): четыре зелёных стенда вне обхода — в ночной.
+#   pochtalona: принятый остаток риска — «новый вызов мимо pochtalon() — предмет ворот правки почтальона» (предохранитель B-N-1115 даёт СЛЕПОТУ 2 при неверной подмене).
+/opt/iskra/workspace/dorabotki/stend-pochtalona.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-a2a-owner-copy-watch.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-mail-stop-hold.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-trust-sverka.sh
+# B-N-1768 такт 2 (07.10, Аврора, П7 a5c1c745; ворота Вениамина): atsiklichnosti (@root), obyavlenij-profilej и pokrytiya (iskra), stend-profil (@root, HODPRIBOR; ловушка уборки).
+#   Не вписаны: stend-hranilishcha-sekretov (правка есть, в обход — после решения по 2700, слово Забавы), stend-vozrast-pisma (после правки telegram), stend-snyatiya/-profilya (ловушки нет).
+/opt/iskra/workspace/dorabotki/stend-atsiklichnosti.sh
+/opt/iskra/workspace/dorabotki/stend-obyavlenij-profilej.sh
+/opt/iskra/workspace/dorabotki/stend-pokrytiya.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-profil.sh
+# B-N-1768 такт 3 (07.10, разбор Михалыча 21:21Z; решения Забавы 21:22Z): «не вписаны» строкой выше — сняты:
+#   stend-hranilishcha-sekretov — в боевой: «после решения по 2700» снято фактом (stat /etc/agent-secrets/sistemnoe 07.10 21:25Z: 2750 root:agent-secrets);
+#     замер Искры 21:25Z под iskra: «итог: ok=296 fail=0 слепота=0», код 0 (Михалыч — то же).
+#   stend-vozrast-pisma — в боевой С ИСКЛЮЧЕНИЕМ (stend-exceptions.yaml, ОЖИДАЕМО): красный по находке telegram e3b6017 до правки telegram —
+#     пусть краснота видна каждую ночь, а не забыта. Замер 21:25Z: стенд «итог: 7 из 8», код 1; обходчик с исключением — «код 3» (только ожидаемое).
+#     ⇒ A-N-1945 (09.10.2026): исключение СНЯТО — на telegram 2.5.121-b1892 стенд зелёный («итог: 8 из 8», код 0; ночной обход 09.10 сам назвал его «устарело»).
+/opt/iskra/workspace/dorabotki/stend-hranilishcha-sekretov.sh
+/opt/iskra/workspace/dorabotki/stend-vozrast-pisma.mjs
+#   stend-needrestart.sh — ПЕРЕНЕСЁН В НЕДЕЛЬНЫЙ (B-N-1808, 08.10, Михалыч): замок dpkg/apt держится на прогон; см. perechen-nedelnyh-stendov.txt.
+#   РУЧНОЙ НАМЕРЕННО: /opt/iskra/workspace/dorabotki/stend-kanarejki.sh — копия наследует личность живого агента; перед ручным применением канарейки —
+#     стенд на синтетическом доме.
+# 1.0.5 (07.10, Искра; слово Забавы 16:42Z): такт 3 Авроры (П7 fae08d61) — snyatiya и snyatiya-profilya r2 с ловушками EXIT+TERM, от root, довод smontirovat-fajly;
+#   охват прогона 1.0.4: стенды сегодняшних выпусков, которых не было в перечне (telegram 2.5.108/2.5.109, core 1.1.107, omega 1.1.36–1.1.37 — пропуск спутников).
+/opt/iskra/workspace/dorabotki/stendy/stend-snyatiya.sh
+# B-N-1822 (08.10, Аврора): ступень 2в sadik-watch «root-каталог голоса в /var/tmp» — от root (chown 0 в подставе), ~1 с, всё в своём mktemp;
+#   предмет — боевой /usr/local/sbin/sadik-watch; до монтажа ступени стенд даёт СЛЕПОТУ «блока 2в нет» (код 2).
+/opt/iskra/workspace/dorabotki/stendy/stend-sadik-watch-voice-root.sh
+# B-N-1828 (08.10, Аврора): sadik-watch «суточный сторож застрял в activating» — от root, ~26 с (временный юнит stend-zastryal-<pid>, sleep 25,
+#   ловушка EXIT снимает; остатки 0 — проба П6); до монтажа sadik-watch 523e5040 стенд даёт красное Б0, П2–П4 (код 1, замер на основе 0dd35dd0: 3 из 7).
+/opt/iskra/workspace/dorabotki/stendy/stend-sadik-watch-zastryal.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-snyatiya-profilya.sh
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-new-stateless.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-new-iskra-sadik.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-povtora-bez-id.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-po-telu.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-vseh-kornej.mjs
+# A-N-1107 (27.09, Искра): ходовой зов дистилляции у Codex-агентов; п.5 слепа без копии журнала кодера — исключение в stend-exceptions (a89)
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-hodovogo-zova.mjs
+# A-N-1111 ч.2 (27.09, Искра): маска входа DeepSeek в теле дистилляции — оба зовущих, fail-closed без ядра a91
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-maski-vhoda-sekretarya.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-proba-v-ledger.mjs
+
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-fakta-zova.mjs
+# C-N-1138 (28.09.2026, Искра): описатель картинок — стенд плагина (подставные команды) и стенд команды opisat-kartinku (подставные ollama/OpenAI на 127.0.0.1).
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-opisaniya-kartinok.mjs
+# B-N-1163 (29.09.2026, Искра): receipt-admin discard закрывает удержание invalid_utf8; опрос переносит исходник в released/ (временный ledger, ~1 с)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-zakryt-bityj-utf8.mjs
+# обходчик 03:51Z «НА ДИСКЕ ЕСТЬ, В ПЕРЕЧНЕ НЕТ»: модуль обслуживания памяти (поставлен 28.09 20:17Z) — unittest на Python OMEGA, 56 тестов, ~7 с; временные корни, боевых путей нет; под iskra
+/opt/agent-plugins/node_modules/dsh-pamyat-obsluzhivanie/test/stend-obsluzhivaniya.mjs
+/opt/iskra/workspace/dorabotki/stendy/stend-opisat-kartinku.sh
+
+# A-N-1172: fresh usage after successful compaction (kompakt-dsh a13)
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-svezhego-usage.mjs
+
+# A-N-1172 a14: предел ожидания usage
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-predela-usage.mjs
+# A-N-1671/1677 (kompakt-dsh 1.1.29–1.1.30): курсор аудита; среда — SREDA_STENDOV STEND_BOLSHOJ_UNIT (A-N-1711)
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-kursora-audita.mjs
+
+# A-N-1172 a16: отбой ожидания usage (Аврора, 29.09)
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-otboya-usage.mjs
+
+# A-N-910 (а1) core a94 / secretary a91 (Аврора, 29.09)
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-vidnosti-omega.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-povtora-suda.mjs
+
+# A-N-1181 core a96: текст записи в NFC до фильтра (Искра, 29.09)
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-nfc-soderzhim.mjs
+
+# B-N-738 окно обновления DSH: помощник событий сессии (Аврора, 29.09) — core a97 / secretary a94 / restore a41 / kompakt-dsh a17
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-sobytij-sessii.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-styka-sobytij.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-restore/test/stend-styka-sobytij.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-styka-sobytij.mjs
+# dsh-pamyat-kompakt-dsh 0.1.0-alpha.20 (30.09, A-N-1244 шаг а, Бета): отметка MODE=ACTIVE — held→processed→once, rejection/STOP; в дереве PASS
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-otmetki.mjs
+# dorabotki/stendy/stend-smontirovat-vypusk-git.sh (B-N-1263, 30.09, Искра): учёт git инструмента выпуска — 5 проб, от root
+/opt/iskra/workspace/dorabotki/stendy/stend-smontirovat-vypusk-git.sh
+# dorabotki/stendy/stend-smontirovat-vypusk-args.sh (B-N-1401, 02.10, Искра): разбор аргументов инструмента выпуска — 13 проб, от root (B-N-2046: окно монтажа пишет только root), всё во временных каталогах
+/opt/iskra/workspace/dorabotki/stendy/stend-smontirovat-vypusk-args.sh
+# dorabotki/stendy/stend-smontirovat-vypusk-strahovka.sh (B-N-1464, 03.10, Искра): страховка инструмента выпуска по составу — 12 проб, от root (B-N-2046), всё во временных каталогах
+/opt/iskra/workspace/dorabotki/stendy/stend-smontirovat-vypusk-strahovka.sh
+# 1.0.44 (B-N-1913, dsh-storozha-sadik 1.0.8): stend-gruppy-prav — без @root, в ОБЛАСТИ той же строкой
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-gruppy-prav.sh
+# B-N-2018 (12.10, Аврора; dsh-storozha-sadik): сторож отставания копии API Острова — 14 проб, от iskra, всё во временном каталоге
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-ostrov-kopiya-watch.py
+# B-N-2040 (14.10, Заря; dsh-storozha-sadik 3.1.8): предел чтения журнала pamyat-fill-watch — 6 проб, от iskra, подставной journalctl, журналы машины не читает
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-pamyat-fill-predel.py
+# 1.0.42 (09.10, B-N-1899 Михалыча, subscription-gateway 1.4.55): stend-env-dvizhka — каталог пакета в области целиком, здесь голый путь
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-env-dvizhka.mjs
+# B-N-1260/B-N-1266 (30.09, Заря): запрет подмены модели — обрыв Codex на model/rerouted (пакет шлюза, заглушка app-server через node,
+# предмет — codex-app-server.mjs своего пакета, 14 проб) и сторож model-podmena-watch (13 проб, от iskra; предмет без MPW_* → СЛЕПОТА, не запуск)
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-podmena.mjs
+# subscription-gateway 0.4.22 (01.10, B-N-1354): тексты стопа без рода (Альфа) и время события давления Codex (Гамма) — дерево выпуска
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-pressure-text.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-pressure-event-time.mjs
+# subscription-gateway 0.4.23 (01.10, B-N-1357 шаг 2, Бета): маршрут отмены хода Codex — дерево выпуска
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-task-control.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-task-control-process.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-control-router.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-control-close.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-control-matrix.mjs
+/opt/iskra/workspace/dorabotki/stendy/stend-model-podmena.sh
+# C-H-088 (01.10, Искра): внешний прибор aclaude aclaude-snaruzhi-watch — 31 проба на подставе (ssh, каналы, sshd), от iskra; предмет без подмены → СЛЕПОТА, не запуск
+/opt/iskra/workspace/dorabotki/stendy/stend-aclaude-snaruzhi.sh
+# dsh-telegram-multiagent 1.5.48 (30.09, B-N-738 окно: стенды лежали на диске вне перечня; на 0.2 зелёные — 8 из 8, ok=10 FAIL=0; разбор Зари)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-istochnika-pisma.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-styka-sobytij.mjs
+# dsh-telegram-multiagent 1.5.51 (30.09, B-N-1205 Беты): квитанции без dsh-pamyat-core — events → snapshotEvents; в дереве PASS
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-receipts-bez-yadra.mjs
+# dsh-tool-bridge 0.3.18 (30.09, B-N-738: П-13 — счёт самопробуждений на подсистеме расписания 0.2; на 0.2 «сошлось»; разбор Зари)
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-p13-novyj-raspisatel.mjs
+# dsh-tool-bridge 1.3.28-b1857 (08.10, B-N-1857 Авроры; выпуск Искры): терпение 15 мин к несходимости «свидетель > журнал» — Б1–Б9; основа — СЛЕПОТА (нет функции)
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-b1857-terpenie.mjs
+# agent-alert (30.09, B-N-1199, Искра; слово Забавы 04:32 МСК): пробы подставные, наружу 0 отправок; до монтажа agent-alert 7169ff5f — прежний стенд 16/16, после — новый 18/18 (ставятся ОДНИМ монтажом)
+# dsh-pamyat-omega 0.1.0-alpha.25 (30.09, A-N-1202 ч.2 Авроры; Искра — номер): доступность «Б» до модели — ставится ОДНИМ монтажом с lock (файла до него нет)
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-dostupnosti-b.mjs
+# dsh-tool-bridge 0.3.20 (30.09, A-N-1202 Зари; в бою с 01:41:53Z): выдача pamyat_po_smyslu только агенту с регистрацией; на бою 6/6
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-vydacha.mjs
+# dsh-pamyat-secretary 0.1.0-alpha.95 (30.09, A-N-1203 Авроры; в бою с 02:07Z lock-2): повтор выбора тем при ne-dochitala
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-povtora-vybora-tem.mjs
+# dsh-pamyat-secretary 0.1.0-alpha.96 (30.09, A-N-1203 /distill-srez Авроры; в бою с 02:1xZ lock-3): дозапуск разбора среза, строка цены с масштабом
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-distill-srez.mjs
+# dsh-pamyat-secretary 0.1.0-alpha.99 (30.09, A-N-1243 Зари): прерванный заход — ядро о записанном, задание среза закрывается; в дереве 9/9
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-prervannogo-zahoda.mjs
+# dorabotki/stendy/stend-podyoma.sh (стенд podyom-uzla, 19 проб на 30.09, B-N-1189) — ВНЕ ОБХОДА НАМЕРЕННО (30.09.2026, Искра;
+#   вопрос Вениамина по B-N-1189): П14 требует ИДУЩЕГО хода — ночью его нет, стенд был бы слепым кодом 2 каждую ночь;
+#   стенд копирует живую базу Искры через sudo и зовёт настоящий podyom-uzla (с заглушкой подъёма). ЗОВУЩИЙ — рука:
+#   прогон на КАНДИДАТЕ и на основе при каждой правке podyom-uzla (П7, ворота Вениамина). Строки пути здесь нет — не забыта.
+# dsh-pamyat-restore 0.1.0-alpha.43 (30.09, B-H-115 шаг 2 (1) Авроры): след выдачи welcome-брифинга — строка «выдача: … — сходится»
+/opt/agent-plugins/node_modules/dsh-pamyat-restore/test/stend-sleda-vydachi.mjs
+/opt/iskra/workspace/dorabotki/stendy/stend-obsluzhivaniya-store-pin.sh
+# dsh-pamyat-core 0.1.0-alpha.99 + dsh-pamyat-restore 0.1.0-alpha.44 (30.09, B-H-115 шаг 2 (2), Аврора; выпуск Искры): инструмент
+#   модели pamyat_ocenit — одна оценка на выдачу (poslednyaya_vydacha); use по вере модели — только из двух разных выдач
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-ocenki-modeli.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-restore/test/stend-use-ot-modeli.mjs
+# dsh-pamyat-kompakt-dsh 0.1.0-alpha.21 (30.09, A-N-1244 a21, Бета; выпуск Искры): пустой journalctl --grep (rc1 без вывода) — не тревога; настоящий journalctl
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-pustogo-audita.mjs
+# dsh-pamyat-kompakt-dsh 0.1.0-alpha.22 (30.09, A-N-1244 dsh, Бета; выпуск Искры): служба из agent-registry, журнал через sudo -n — доступ к аудиту
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-dostupa-audita.mjs
+# dsh-tool-bridge 0.3.21 (30.09, B-H-115 шаг 2 (2), Аврора; выпуск Искры): pamyat_ocenit до моделей через мост — перечень, /invoke, отказы ядра a99
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-pamyat-ocenit.mjs
+# dsh-tool-bridge 0.3.23 (01.10, B-H-081 Ш1, Альфа) — живые инструменты платформы в описании моста
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-live-tools.mjs
+# dsh-pamyat-secretary 0.1.0-alpha.100 (30.09, B-N-1285, Искра): число тем окна в метке разбора — крючок distillirovat до первой статьи
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-tem-v-metke.mjs
+# dsh-pamyat-secretary 0.1.0-alpha.101 (30.09, B-N-1286, Искра): три строки журнала, которые читают proverit-podyom-kodera и podyom-uzla
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-strok-dlya-podyoma.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-bezopasnosti-shova.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-vody-otkaza.mjs
+# dsh-pamyat-kompakt-dsh 0.1.0-alpha.25 (01.10, B-N-1361, Бета; выпуск Искры): marker узнаёт письмо-продолжение Codex|Claude
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-pisma-prodolzheniya.mjs
+# dsh-pamyat-kompakt-dsh 0.1.0-alpha.26 (01.10, B-N-1370, Гамма; выпуск Искры): продолжение гасит только /stop человека из Telegram
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-stop-komandy.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-fazy-otmetki.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-literala-hvosta.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-nastrojki-i-rezolva.mjs
+# dsh-pamyat-core 0.1.0-alpha.101 (01.10, B-N-1369, Альфа; выпуск Искры): журнал readOnly для ночного читателя
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-zhurnal-ro.mjs
+# dsh-telegram-multiagent 1.5.53 (01.10, B-N-1365 ступень 1 r2, Бета; совместный выпуск с B-N-1367): /stop от allowedUsers
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-stop-native.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-stop-route.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-telegram-stop.mjs
+# dsh-subscription-adapter 0.1.11 (01.10, B-N-1365 Бета + B-N-1367 Гамма): привязка /stop и метаданные картинки
+/opt/iskra/plugins/dsh-subscription-adapter/test/stend-telegram-stop-binding.mjs
+/opt/iskra/plugins/dsh-subscription-adapter/test/stend-image-metadata.mjs
+# dsh-tool-bridge 0.3.24 (01.10, B-N-1367 Гамма): read_image картинкой — копия iskra
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-image-limits.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-image-transport.mjs
+# subscription-gateway 0.4.26 (01.10, B-N-1365 Бета + B-N-1367 Гамма) — дерево выпуска
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-telegram-stop.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-stop-process.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-image-transport.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-image-envelope.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-image-history.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-image-cleanup-caller.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-image-platform-checkpoint.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-compact-without-images.mjs
+# B-N-1395 остаток (02.10, Заря): стенды сторожа лимита Codex codex-limit-watch (20 случаев, от iskra, ~44 с; ключ CLW_STEND) и
+# переключателя Codex pereklyuchatel-codex (7 случаев, @root — runuser; боевые ссылки шлюзов сверяются до/после); оба сверяют вывод с эталоном рядом
+/opt/iskra/workspace/dorabotki/stendy/stend-codex-limit-watch.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-pereklyuchatelya-codex.sh
+# B-N-1621 (05.10, Искра): доступ шлюзов к токенам — помощник svesti-dostup-podpisok + переход takt1/takt2 (36 проб, @root,
+# учётки настоящие, чтение ядром с живыми группами) и права производного у codex-obnovitel (7 проб, @root)
+/opt/iskra/workspace/dorabotki/stendy/stend-svesti-dostup-podpisok.sh
+# B-N-1621 k2 (05.10, Искра): сторож --proverit по таймеру r2 — 14 проб на подставных (без root)
+/opt/iskra/workspace/dorabotki/stendy/stend-svesti-dostup-watch.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-obnovitel-prava.sh
+# dsh-telegram-multiagent 1.5.54 (02.10, B-N-1412 r2, Бета; выпуск Искры): нет task-control шлюза → красный, нет доступа → слепота с учёткой
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-gateway-access.mjs
+/opt/iskra/workspace/dorabotki/stend-priyomki-po-raspisaniyu.sh
+# dsh-telegram-multiagent 1.5.55 (02.10, B-N-1444, Искра): рабочий групповой чат — только прямое обращение (groups mention)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-rabochego-chata.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-spool-conversation.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-spool-reply-outcomes.mjs
+# B-N-1359 r3 (02.10, Альфа; выпуск 1.5.56/1.5.57 Искры): подпись координаторских A2A-конвертов (три стенда пакета)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-coordinator-poll.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-coordinator-signature.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-coordinator-signer.mjs
+# B-N-1456 + B-N-1454 (02.10, Аврора; выпуск 1.5.58 Искры): text_link https://t.me/<бот> и тревоги только владельцу
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-text-link-i-trevoga.mjs
+# B-N-1448 (02.10, Заря): стенд сборщика копии sadik-backup.py — восстановимый __pycache__ (B-N-1434) и нарочный .pyc не роняет
+# сборку (B-N-1436); настоящая sobrat() на подставном доме, 6 проверок, от iskra, <1 с; тревога — заглушка
+/opt/iskra/workspace/dorabotki/stendy/stend-sborshchika-kopii.sh
+# B-N-1836 (08.10, Заря; находка Вениамина): читатель исхода _check_alert_contract sadik-backup.py — договор с agent-alert
+# (три якоря); боевые файлы + 3 порчи копии agent-alert, нет файла, возврат; 6 проверок, от iskra, <1 с; сборщик не запускается
+/opt/iskra/workspace/dorabotki/stendy/stend-dogovora-trevogi.sh
+# B-N-1848 (08.10, Аврора): smontirovat-fajly --osnova — сверка боя с основой кандидата до записи; 17 проб, от root (строка @root в обходчике), предмет — бой по умолчанию
+/opt/iskra/workspace/dorabotki/stendy/stend-osnova.sh
+# subscription-gateway 0.4.27 (02.10, B-N-1357 шаг 4, Аврора) — дерево выпуска; при смене SDK прогнать (README)
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-claude-task-control.mjs
+# B-P-060 (B-N-028, 02.10, Аврора): срок 7 наших классов OMEGA по таблице поставки — порчу значения при целой метке признак 6 не видит; от iskra, <1 с
+/opt/iskra/workspace/dorabotki/omega-b-p-060/stend-b-p-060.sh
+# B-N-1460 (02.10, Бета; выпуск 1.5.59 Искры): живой writer сессии — канал берёт его взаймы, а не открывает второй (16 проб на настоящей платформе DSH)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-live-session-owner.mjs
+# B-N-1462 (03.10, Бета r6; выпуск /new 1.5.60 Искры): пауза /stop, ротация /new, холодное чтение — telegram 1.5.60 (13), шлюз 0.4.28 (2, дерево выпуска), адаптер 0.1.12 (1), restore a46 (1)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-cold-conversation.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-conversation-pause.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-conversation-sessions.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-current-session-native.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-new-busy.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-new-freeze.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-new-return-restart.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-new-return.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-new-rotation.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-new-switch.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-pause-before-idle.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-pause-visibility.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-stop-pause.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-conversation-http.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-conversation-isolation.mjs
+/opt/iskra/plugins/dsh-subscription-adapter/test/stend-conversation-identity.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-restore/test/stend-new-session.mjs
+# razmer-kopii-watch (B-N-1470, 03.10, Аврора): запас места = формула приёмки (сцепка С1–С8 с proverka-svezhesti-kopii.sh), место М1–М5, ступенька без журналов Ш1–Ш4
+/opt/iskra/workspace/dorabotki/stend-razmer-kopii-watch.sh
+# stend-prav-domov (B-N-1477, 03.10, Заря): живые права домов iskra/zarya/avrora — посторонний отказ, законные читают, other=--- на носителях
+/opt/iskra/workspace/dorabotki/stendy/stend-prav-domov.sh
+# stend-mest-kopij (B-N-1477 т.3, 03.10, Заря): живые права мест копий — montazh, /home/claude, zadaniya-prervany-watch, /tmp/z-*
+/opt/iskra/workspace/dorabotki/stendy/stend-mest-kopij.sh
+# subscription-gateway 0.4.29 + dsh-subscription-adapter 0.1.13 (03.10, B-N-1482 + B-N-1476, Бета): ключ входа шлюза и флаг экземпляра гостя — дерево выпуска / копия Искры
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-ingress-key-file.mjs
+/opt/iskra/plugins/dsh-subscription-adapter/test/stend-ingress-key.mjs
+/opt/iskra/plugins/dsh-subscription-adapter/test/stend-provider-metadata-race.mjs
+/opt/iskra/plugins/dsh-subscription-adapter/test/stend-provider-output-ndjson.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-guest-tools.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-ingress-auth.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-claude-input-trust.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-claude-mail-http.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-codex-spool-conversation.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-continuation-conversations.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-spool-conversation.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-context-observer.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-context-endpoint.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-context-http.mjs
+# B-N-1698 этап 2 (07.10, Искра): читатель фильтра схем моста в боевом шлюзе — Claude-веткой обходчика (claudeoauth, /opt/claude-oauth)
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-shemy-mosta.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-codex-inbox.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-deployment-config.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-inbox-frame-queue.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-inbox-gateway-races.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-memory-module-config.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-guest-channel.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-guest-file-scope.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-merged-tools.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-outgoing-files.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-outgoing-native.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-outgoing-registration.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-supervisor-registration.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-telegram-platform-permissions.mjs
+# dsh-telegram-multiagent 1.5.65 (03.10, B-N-1499 чат сайта Альфы + B-N-1504 срок 30 сут Авроры): 10 новых стендов; среда обхода env -i DSH_TEST_APP/STEND_APP=/opt/iskra/app,
+#   боевая раскладка (../node_modules) — 10/10 код 0 (замер Зари 21:4xZ). stend-site-adapter НЕ внесён: слеп по замыслу (нужен SITE_ADAPTER_CANDIDATE — путь адаптера).
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-istechenie-tel.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-site-batch.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-site-channel.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-site-generation.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-site-native.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-site-policy.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-site-remount.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-site-retention.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-site-supervisor.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-site-timer.mjs
+# dsh-telegram-multiagent 1.5.66 (03.10, B-N-1499 Альфа): +2 стенда; среда обхода, боевая раскладка — 2/2 код 0 (и прежние 10 сайта на 1.5.66 — 10/10; замер Зари 22:2xZ)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-site-file-registration.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-site-platform-tools.mjs
+# B-N-1528 (04.10, Искра): stend-site-adapter внесён — без перечня обходчик краснел «НА ДИСКЕ ЕСТЬ, В ПЕРЕЧНЕ НЕТ». Без SITE_ADAPTER_CANDIDATE стенд слеп по замыслу
+#   (код 2, «СЛЕПОТА: нужен SITE_ADAPTER_CANDIDATE») — ожидаемая слепота записана в /etc/agent-registry/stend-exceptions.yaml на 1.5.66 (замер 04:10:06Z).
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-site-adapter.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-claude-input-signature-native.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-deployment-portability.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-owner-channel-mount.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-owner-settings.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-sdk-inbox-native.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-sdk-inbox-nextturn.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-sdk-receiver-r2-ack.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-sdk-receiver-r2-casunknown.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-sdk-receiver-r2-closeflush.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-sdk-receiver-r2-extended.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-sdk-receiver-r2-lifecycle.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-telegram-download-limits.mjs
+# dsh-tool-bridge 0.3.25 (03.10, B-N-1499 Гамма): scoped-сессии сайта — копия iskra; нужен DSH_TEST_APP (среда юнита обхода)
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-scoped-sessions.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-hourly-delete.mjs
+# dsh-tool-bridge 3.1.1 (10.10, A-N-1948 №6, Искра): новые пробы №5–9 и находки Авроры к №9 — копия iskra (как для A-N-671: прочие копии — только cel-mosta/predelov)
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-ostrov-request-simlink.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-trevoga-ne-blokiruet.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-zapusk-python.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-ostrov-bez-polya.mjs
+# dsh-tool-bridge 1.3.29–1.3.43 (стенды пакета, до 3.1.1 в копию iskra не доезжали; A-N-626, решение Забавы 10.10 11:22Z) — копия iskra;
+#   слепнут в среде обхода 6 (нет TELEGRAM_TEST_PLUGIN_ROOT / MARK_TEST_APP / GATEWAY_CANDIDATE) — исключения в stend-exceptions.yaml
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-crm-caller.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-crm-schema.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-gost-bez-zapisi.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-mcp-input-schemas.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-ostrov-api.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-ostrov-request-state.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-owner-private-context.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-saved-plans.mjs
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-site-turn-evidence.mjs
+# A-N-1518 (04.10.2026, Аврора): стенды, вписанные в область обхода (П7 A-N-1518)
+/opt/iskra/workspace/dorabotki/stendy/stend-hvostov.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-vorot-perenosa.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-montazha.sh
+/opt/iskra/workspace/dorabotki/stend-agent-limits.sh
+/opt/iskra/workspace/dorabotki/stend-U0-istochnik.mjs
+/opt/iskra/workspace/dorabotki/stend-B14-snimok.sh
+/opt/iskra/workspace/dorabotki/stend-373-svodki-vne-vydachi.mjs
+/opt/iskra/workspace/dorabotki/stend-svyazok-podpisok.sh
+/opt/iskra/workspace/dorabotki/stend-izmeritelya.sh
+/opt/iskra/workspace/dorabotki/stend-soglasie-sloev.sh
+/opt/iskra/workspace/dorabotki/stend-svershchika.sh
+/opt/iskra/workspace/dorabotki/stend-compaction-zaveden.mjs
+/opt/iskra/workspace/dorabotki/stend-skill-links.sh
+/opt/iskra/workspace/dorabotki/stend-priznaka-oblasti.sh
+/opt/iskra/workspace/dorabotki/stend-apt-notify.sh
+/opt/iskra/workspace/dorabotki/stend-otmetki-priyomki.sh
+/opt/iskra/workspace/dorabotki/stend-proverki-opory.mjs
+/opt/iskra/workspace/dorabotki/stend-ohvat-i-sverka.mjs
+/opt/iskra/workspace/dorabotki/stend-vtoroj-vhod-svodki.mjs
+/opt/iskra/workspace/dorabotki/stend-cepi-pamyati.mjs
+/opt/iskra/workspace/dorabotki/stend-uborki-pisma.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-pamyat-core/test/stend-shemy-bez-istorii.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-pamyat-omega/test/stend-bez-isklyucheniya.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-pamyat-omega/test/stend-zapisi-bez-politiki.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-pamyat-restore/test/stend-bez-isklyucheniya.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-pribory/test/stend-kontrakt-kodov.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-pribory/test/stend-kto-podnimal-bajty.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-pribory/test/stend-nastrojki.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-pribory/test/stend-skill-links.sh
+# B-N-1922 (09.10, dsh-reestr 2.0.9 Михалыча): стенды дерева dsh-reestr сняты — stend-nastrojki в 2.0.9 удалён; stend-priznaka-oblasti и stend-pravki-reestra = боевым копиям dorabotki (те в области) — гонялись дважды.
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-audit.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-agent-limits.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-agent-watchdog.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-apt-notify.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-bash-padenie-70.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-dkms-kernel-coverage.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-doli-preseta.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-dsh-upstream-watch.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-dve-kopii.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-hvostov.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-inet6-poyavlenie.sh
+# 1.0.35 (09.10, Искра; слово Забавы 02:20:52Z): два стенда dsh-storozha-mashiny были вне перечня — stend-storozh-dvizhkov краснел 10/12 с 2.0.9 незамеченным (метки пакета ставятся рукой, мимо ворот); stend-klass-padenie — временные юниты systemd-run, от iskra слепота «нужен root» → @root в области обходчика (здесь путь голым) (замер 02:3xZ: 6/0 код 0); stend-storozh-dvizhkov от iskra 16/0 код 0
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-klass-padenie.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-podyom-mimo-vorot.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-predel-dliny-watch.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-python-padenie-70.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-storozh-dvizhkov.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-yadro-predohranitel.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-agent-alert.sh
+/opt/iskra/workspace/dsh-plugins/packages/omega-memory/test/stend-gruppy.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-pered-podyomom.mjs
+# B-N-1613 (05.10.2026, Михалыч): 34 стенда «НА ДИСКЕ ЕСТЬ, В ПЕРЕЧНЕ НЕТ» прогона 03:40–04:02Z + 2 новых telegram 2.5.81 (courier-publication, mail-stop-status-trust).
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-human-stop-regression.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-arrival.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-backlog.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-courier.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-expired-delivery.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-ingress-native.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-kernel.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-ledger.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-local-sender.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-protocol.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-publication.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-receiver.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-sdk-http.mjs
+# B-N-1632 остаток (05.10, Гамма; наряд Забавы 15:36Z): шаг 0 B-N-1600 — письмо без метки не входит в идущий ход (@root, GATEWAY_CANDIDATE)
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-shag0-bez-metki.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-sdk-reader.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-sender.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-signature.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-status-io.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-unloaded-native.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-sdk-inbox-yakor.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-sent-copies.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-shemy-bez-istorii.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-bez-isklyucheniya.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-zapisi-bez-politiki.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-restore/test/stend-bez-isklyucheniya.mjs
+/opt/agent-plugins/node_modules/dsh-vypusk-watch/test/stend-pustoj-zapisi.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-exact-turn-terminal.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-mail-stop-no-compaction.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-pdn-maska.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-pressure-stop-review.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-pressure-stop-watch.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-pressure-stop-watch-process.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-request-terminal-barrier.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-sekrety-vyhoda.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-stop-terminal.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-courier-publication.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-status-trust.mjs
+
+# B-N-1695 1.3.33, Забава06.10: весь каталог моста через SDK шлюза; активировать вместе с выпуском.
+/opt/varvara/plugins/dsh-tool-bridge/test/stend-mcp-input-schemas.mjs
+# B-N-1695 (06.10, Искра): тот же список моста — движком шлюза (схема без type:object роняет весь список)
+/opt/iskra/workspace/dorabotki/stendy/stend-mcp-spiska-dvizhkom.mjs
+
+# A-N-1721 (07.10, Аврора; наряд Забавы): 38 стендов «на диске есть, в перечне нет» (ночной обход 07.10 04:03Z) — живые:
+#   ночью 37 зелёных, stend-guest-pdf.mjs красный (импорт ../../bridge — раскладка дерева, в бою соседа нет; дефект стенда, назван в П7).
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-gost-pamyat.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-guest-pdf.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-interrupt-owner.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-interrupt-status.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-interrupt-status-personal.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-legacy-outgoing-copies.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-new-migration.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-new-native.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-new-protocol.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-new-races.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-new-reasons.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-new-receiver.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-new-recovery-failures.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-new-sigkill.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-new-wiring.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-absent-legacy.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-outgoing-owner-all.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-outgoing-personal-backlog.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-pdf-letterhead-schema.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-pdf-letterheads-engine.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-pdf-openbot-registration.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-pdf-saved-schema.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-sent-copy-records.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-spool-bez-dublya-kopii.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-spool-agent-name.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-svertka-kopij.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-svertka-maska.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-tg-gost.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-transcribe-predel.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-voice-a2a-order.mjs
+# B-N-1691 (07.10, Бета; telegram 2.5.109-b1691, монтаж Забавы 17:40:55Z): четыре голосовых стенда пакета — прогон 1.0.7 в unshare нашёл их «на диске есть, в перечне нет»; под iskra, неожиданных 0
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-voice-archive.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-voice-route.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-voice-sweep.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-voice-temp.mjs
+# B-N-1814 (08.10, Аврора; telegram 2.5.112-b1814): закрытие удержания channel_interrupted через receipt-admin — под iskra, всё во временном каталоге.
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-zakryt-prervannyj.mjs
+# 14.10.2026 Забава (B-N-2027, канал 3.1.6): социальные стенды Анны в установленной копии канала — ворота метки «на диске есть, в перечне нет»; stend-social-dispatch получает SOCSETI_TEST_ROOT строкой SREDA_STENDOV
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-social-dispatch.mjs
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-social-ingress.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-core/test/stend-povtora-ocheredi.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-yakorya-audita.mjs
+# A-N-1948 №7-В1 (10.10, Аврора; kompakt-dsh 3.1.1, B-N-1969): ид службы для поиска отметок берётся у службы, чужой/пустой ид — слепота, не «ok 0».
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-identifikatora-audita.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-b-kazhdyj-podyom.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-gostej.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-omega/test/stend-zamera-vydachi.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-restore/test/stend-welcome-v2.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-opory-1563.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-tekstov-vladelcu.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-codex-input-verified.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-flagged-otkazy.mjs
+# subscription-gateway 1.4.51 (B-N-1776 такт 2, Заря; разбор обхода 08.10): лимиты шлюза → приёмная dsh-limity.
+# process — Claude-веткой обходчика (claudeoauth, /opt/claude-oauth: настоящий шлюз из sdk-runtime); sobytie — функции дерева в vm.
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-limity-process.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-limity-sobytie.mjs
+# A-N-1948 модуль №1 (шлюз 3.1.1, Искра): аудит №1 — тело запроса и карта сессий (Claude-веткой, бой /opt/claude-oauth); срок хранения карты — дерево, iskra.
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-telo-zaprosa.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-karta-sessij.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-srok-sessij.mjs
+# 1.0.37 (09.10, B-N-1889): stend-gost-odna-podpiska из test/ пакета — @root в ОБЛАСТИ (здесь путь голым); дубль dorabotki/stend-gost-odna-podpiska.sh снимается в 1.0.38
+/opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-gost-odna-podpiska.sh
+# A-N-1721: .py-стенды (обходчик гоняет python3 с PYTHONDONTWRITEBYTECODE=1). Семь — дерево пакетов; стенд шлюза OMEGA — под root, venv OMEGA (SREDA PATH).
+/opt/iskra/workspace/dsh-plugins/packages/a2a-bus/test/stend-outgoing-mirror.py
+/opt/iskra/workspace/dsh-plugins/packages/a2a-bus/test/stend-13-21.py
+/opt/iskra/workspace/dsh-plugins/packages/a2a-bus/test/stend-alpha.py
+/opt/iskra/workspace/dsh-plugins/packages/a2a-bus/test/stend-limit-owner.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-nastroek-proby.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-porchi.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-watch-hvost.py
+/opt/iskra/workspace/dsh-plugins/packages/oom-watch/test/stend-cli.py
+# 1.0.41 (B-N-1901): stend-yunit-trevoga — юнит oom-watch из пакета несёт канал тревоги
+/opt/iskra/workspace/dsh-plugins/packages/oom-watch/test/stend-audit.py
+/opt/iskra/workspace/dsh-plugins/packages/oom-watch/test/stend-yunit-trevoga.py
+/opt/iskra/workspace/dsh-plugins/packages/voice-stack/test/stend-archive-warning.py
+/opt/iskra/workspace/dsh-plugins/packages/voice-stack/test/stend-voice-tools.py
+/usr/local/lib/omega-shlyuz/stend-shlyuza-omega.py
+
+# B-N-1683: installed upstream patch + actual varvara profile, reader under UID981.
+/usr/local/libexec/stend-varvara-fs-deny.mjs
+# B-N-1768 остаток (08.10, Аврора; слово владельца 08.10 09:33 «всё, что ничего не держит, — решать сейчас»): файлы dorabotki/stendy без строки ни в одном перечне —
+#   РУЧНОЙ НАМЕРЕННО: /opt/iskra/workspace/dorabotki/stendy/stend-podyoma.sh — ⛔ шапка: зовёт боевой podyom-uzla с iskra.service, ловушка выхода ПИШЕТ
+#     в боевой kanon-podyoma-iskra.txt и /var/log/podyom-uzla; в обход — только после переделки ловушки (B-N-866, B-N-1188).
+#   ДУБЛИ ПРЕЖНЕЙ РЕДАКЦИИ, не зовутся: /opt/iskra/workspace/dorabotki/stendy/stend-modeli-omega.sh (1dbae419), stend-pravki-postavki-omega.sh (661d39f4),
+#     stend-svodki-doveriya.sh (0ccd02a7) — ночной обход зовёт их копии из пакета: /opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/ (строки 330–332
+#     vse-stendy-boevye.sh). Ручного смысла у копий dorabotki нет; убрать — рука Искры (учёт dorabotki).
+#   ПОМОЩНИКИ, не стенды (их зовёт свой .sh из перечня): stendy/stend-obnovitel-prava.py, stend-priyomnik-itog.py, stend-razbora-env.py,
+#     stend-sajt-chat.py, stend-switch-1.py.
+
+# Ночь 13.10: dsh-subscription-adapter 1.1.21 — адрес беседы, все 10 копий
+/opt/iskra/plugins/dsh-subscription-adapter/test/stend-spool-conversation.mjs
+/opt/zarya/plugins/dsh-subscription-adapter/test/stend-spool-conversation.mjs
+/opt/avrora/plugins/dsh-subscription-adapter/test/stend-spool-conversation.mjs
+/opt/spartak/plugins/dsh-subscription-adapter/test/stend-spool-conversation.mjs
+/opt/varvara/plugins/dsh-subscription-adapter/test/stend-spool-conversation.mjs
+/opt/coders/alfa/plugins/dsh-subscription-adapter/test/stend-spool-conversation.mjs
+/opt/coders/beta/plugins/dsh-subscription-adapter/test/stend-spool-conversation.mjs
+/opt/coders/gamma/plugins/dsh-subscription-adapter/test/stend-spool-conversation.mjs
+/opt/marc/plugins/dsh-subscription-adapter/test/stend-spool-conversation.mjs
+/opt/anna/plugins/dsh-subscription-adapter/test/stend-spool-conversation.mjs
+
+# B-N-2023 R3: приватные root-настройки и namespace, без модели/Telegram
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-b2023-reader.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-b2023-consumers.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-b2023-watch.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-b2023-watch-state.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-podpiski/test/stend-b2023-receiver.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-socseti/test/stend-b2023-social.py
+
+# A-N-1948 module09: actual source/permissions/deadline/offline unit tests
+/opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-audit-kraev.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-audit-deadline.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-audit-yunits.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-audit-porchi.py
+
+# A-N-1948 №11: реальные функции кандидатов, частные файлы/процессы, без API/модели/учёток
+/opt/iskra/workspace/dsh-plugins/packages/dsh-podpiski/test/stend-audit-kraev.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-limity/test/stend-audit-sostoyanie.py
+
+# B-N-2025: частные пробы окна монтажа
+/opt/iskra/workspace/dsh-plugins/packages/dsh-montazh/test/stend-montazh-okno.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-montazh/test/stend-flagi-okna.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-montazh/test/stend-prewindow-gate.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-montazh/test/stend-montazh-producer.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-montazh/test/stend-zhivaya-montazh.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-reestr/test/stend-montazh-mode.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-dve-kopii-montazh.sh
+/opt/agent-plugins/node_modules/dsh-vypusk-watch/test/stend-montazh-okno.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-montazh-sutochnye.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-obhod-stendov/dorabotki/stendy/stend-nashi-montazh.py
+
+# A-N-1948 №12: dsh-subscription-adapter 3.1.1 — runtime и документация
+/opt/iskra/plugins/dsh-subscription-adapter/test/stend-audit-contract.mjs
+/opt/iskra/plugins/dsh-subscription-adapter/test/stend-audit-docs.mjs
+
+# A-N-1948 module13: private install/permission/parser probes
+/opt/iskra/workspace/dsh-plugins/packages/omega-memory/test/stend-audit.py
+
+# A-N-1948 №14 часть Б: вывоз 3.1.1 — строгий отбор и документальный договор
+/opt/iskra/workspace/dsh-plugins/packages/dsh-pamyat-vyvoz/test/stend-audit-boundaries.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-pamyat-vyvoz/test/stend-audit-docs.mjs
+
+# A-N-1948 №18: сторож3.1.1 — аудит и native lifecycle
+/opt/iskra/workspace/dsh-plugins/packages/dsh-schedule-guard/test/stend-audit-runtime.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-schedule-guard/test/stend-audit-docs.mjs
+/opt/iskra/workspace/dsh-plugins/packages/dsh-schedule-guard/test/stend-native-lifecycle.mjs
+# 14.10.2026 Забава (A-N-1948 №18, обход 3.1.27): те же три стенда в установленной копии Петровича — ворота меток требуют их в перечне (НА ДИСКЕ ЕСТЬ, В ПЕРЕЧНЕ НЕТ); исполняются строкой каталога @petrovich в vse-stendy-boevye.sh
+/opt/petrovich/.dsh/profiles/web/plugin/dsh-schedule-guard/test/stend-audit-runtime.mjs
+/opt/petrovich/.dsh/profiles/web/plugin/dsh-schedule-guard/test/stend-audit-docs.mjs
+/opt/petrovich/.dsh/profiles/web/plugin/dsh-schedule-guard/test/stend-native-lifecycle.mjs
+
+# A-N-1948 №17 dsh-pamyat-storozha 3.1.1 — частные фикстуры
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-audit-plugin.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-audit-bin.mjs
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-audit-install.mjs
+
+# A-N-1948 №19: runtime-contract — синтетические внешние команды, собственный HTTP, без живых моделей.
+/opt/iskra/workspace/dsh-plugins/packages/voice-stack/test/stend-runtime-contract.py
+
+# A-N-1948 №21: приватные подставы, проверяет установленные пофайлово приборы через SREDA.
+/opt/iskra/workspace/dsh-plugins/packages/dsh-pribory/test/stend-audit-runtime.py
+
+# A-N-1948 №22 на B-N-2032: новые входы установленного пакета
+/opt/agent-plugins/node_modules/dsh-vypusk-watch/test/stend-audit-runtime.py
+/opt/agent-plugins/node_modules/dsh-vypusk-watch/test/stend-audit-docs.py
+
+# B-N-2027 Meta: independent reader of timer/actual intake state, under anna; environment in SREDA_STENDOV.
+# Только установленная копия: из дерева стенд не исполним — src/config.mjs импортирует 'ajv', node_modules в дереве нет,
+# а NODE_PATH ESM-импорт не читает (проба 14.10 06:2xZ: ERR_MODULE_NOT_FOUND и с NODE_PATH). Дерево = копии сверяет vypusk-okno-watch.
+/opt/socseti-anna/test/stend-meta-watch.mjs

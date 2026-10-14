@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# ubrat — удалить каталог, ПРЕДВАРИТЕЛЬНО выйдя из него.
+#
+# 🔴 ЗАЧЕМ. За сутки я ДЕСЯТЬ раз удалила каталог, стоя в нём. Следующая же команда падала
+# с «getcwd: cannot access parent directories», и это не косметика: оболочка теряет рабочий
+# каталог, относительные пути перестают значить то, что значили, а вывод выглядит как
+# поломка машины, а не как последствие уборки.
+# Правило «выходи наружу перед удалением» я записывала дважды и дважды не исполнила —
+# потому что уборка почти всегда ПОПУТНОЕ действие в конце команды, а не работа, о которой
+# думаешь. Значит нужно не правило, а команда.
+#
+# ⚠️ ГДЕ НЕ ПРИМЕНЯЕТСЯ:
+#   · не удаляет ничего вне разрешённых корней — список ниже, и он намеренно узкий;
+#   · не рекурсивная защита от опечатки в имени: разрешённый корень целиком
+#     удалить можно, и это осознанно — иначе пришлось бы держать второй список исключений;
+#   · не спасает, если каталог удаляет ДРУГАЯ команда в том же заходе.
+# ЧТО ЗНАЧИТ ЕГО МОЛЧАНИЕ: «каталога больше нет и рабочий каталог оболочки цел».
+#
+# КОДЫ: 0 убрано · 2 отказ (пусто, вне корней, не каталог)
+# EN: ubrat — remove a directory, HAVING FIRST stepped out of it.
+#     🔴 WHY. In one day I removed a directory TEN times while standing in it. The very next command failed with
+#     "getcwd: cannot access parent directories", and this is not cosmetic: the shell loses its working
+#     directory, relative paths stop meaning what they meant, and the output looks like a machine breakage, not
+#     a consequence of cleanup.
+#     I wrote the rule "step outside before removing" twice and twice did not follow it — because cleanup is
+#     almost always an INCIDENTAL action at the end of a command, not work you think about. So what is needed is
+#     not a rule but a command.
+#     ⚠️ WHERE IT DOES NOT APPLY:
+#     · it removes nothing outside the allowed roots — the list is below, and it is deliberately narrow;
+#     · it is not a recursive protection against a typo in the name: an allowed root can be removed entirely,
+#     and this is deliberate — otherwise a second list of exceptions would be needed;
+#     · it does not help if ANOTHER command in the same turn removes the directory.
+#     WHAT ITS SILENCE MEANS: "the directory is gone and the shell's working directory is intact".
+#     CODES: 0 removed · 2 refusal (empty, outside the roots, not a directory)
+set -uo pipefail
+# Файл настройки пакета dsh-pribory: строки «КЛЮЧ=значение», «#» — комментарий; берётся последнее вхождение.
+# Путь меняет DSH_PRIBORY_CONF. Порядок: переменная → файл → нейтральное умолчание; нет ничего — СЛЕПОТА, код 2.
+# EN: Settings file of the dsh-pribory package: "KEY=value" lines, a line starting with "#" is a comment; the
+#     last occurrence wins.
+#     DSH_PRIBORY_CONF changes the path. Order: variable → file → neutral default; nothing at all — BLINDNESS,
+#     code 2.
+DSH_PRIBORY_CONF="${DSH_PRIBORY_CONF:-/etc/dsh-pribory/dsh-pribory.conf}"
+# « #» в значении — громкий отказ (stderr, код 2), а не склеивание пояснения со значением; зовущий обязан выйти: X=$(konf …) || exit 2.
+# EN: " #" in a value is a loud refusal (stderr, code 2), not gluing the note into the value; the caller must exit: X=$(konf …) || exit 2.
+konf() { local v; v=$(sed -n "s/^[[:space:]]*$1[[:space:]]*=//p" "$DSH_PRIBORY_CONF" 2>/dev/null | tail -n 1) || true; case "$v" in *[[:space:]]#*) echo "ОТКАЗ: значение ключа $1 в $DSH_PRIBORY_CONF содержит « #» — комментарий допускается только с начала строки" >&2; return 2;; esac; v=$(printf '%s' "$v" | sed "s/^[[:space:]]*//;s/[[:space:]]*$//"); printf '%s' "${v:-$2}"; }
+# 🔴 КАТАЛОГ ВЫЗЫВАТЕЛЯ ЗАПОМИНАЕТСЯ ДО ВСЕГО. Увести вызывателя наружу инструмент НЕ
+# МОЖЕТ — cd внутри живёт в этом процессе. Значит честное, что он может, — предупредить
+# ТОЧНО. Первая редакция проверяла pwd ПОСЛЕ своего cd / и потому молчала всегда:
+# защита от моей же беды не срабатывала ни разу. Поймано первой пробой, не чтением.
+# EN: 🔴 THE CALLER'S DIRECTORY IS REMEMBERED BEFORE ANYTHING. The tool CANNOT move the caller outside — cd
+#     inside lives in this process. So the honest thing it can do is warn PRECISELY. The first edition checked
+#     pwd AFTER its own cd / and therefore was always silent: the protection against my own trouble never fired
+#     once. Caught by the first probe, not by reading.
+ZVALI_IZ="${PWD:-}"
+KORNI="$(konf UBRAT_KORNI "")" || exit 2
+[ -n "$KORNI" ] || { echo "🔴 СЛЕПОТА: разрешённые корни не заданы — ключ UBRAT_KORNI в $DSH_PRIBORY_CONF" >&2; exit 2; }
+[ $# -ge 1 ] || { echo "ubrat <каталог> [каталог…]   разрешённые корни: $KORNI" >&2; exit 2; }
+ubrano=0
+for cel in "$@"; do
+  [ -n "$cel" ] || { echo "🔴 пустое имя — не трогаю" >&2; exit 2; }
+  polnyj=$(readlink -f "$cel" 2>/dev/null) || polnyj=""
+  [ -n "$polnyj" ] || { echo "🔴 путь не разрешается: $cel" >&2; exit 2; }
+  ok=нет
+  for k in $KORNI; do case "$polnyj" in "$k"/*|"$k") ok=да;; esac; done
+  [ "$ok" = да ] || { echo "🔴 ОТКАЗ: $polnyj вне разрешённых корней ($KORNI)" >&2; exit 2; }
+  [ -d "$polnyj" ] || { echo "⚠️  не каталог или уже нет: $polnyj"; continue; }
+  # 🔴 ВОТ РАДИ ЧЕГО ВСЁ: уходим наружу ДО удаления, и уходим в заведомо живой каталог.
+  # EN: 🔴 THIS IS WHAT IT IS ALL FOR: we step outside BEFORE removing, and into a directory known to be alive.
+  cd / || exit 2
+  if ! rm -rf -- "$polnyj" || [ -e "$polnyj" ] || [ -L "$polnyj" ]; then
+    echo "ОТКАЗ: каталог $polnyj не удалён" >&2; exit 2
+  fi
+  ubrano=$((ubrano + 1))
+done
+# Рабочий каталог оболочки-вызывателя не меняется: cd здесь живёт внутри этого процесса.
+# Но если звали ИЗ удаляемого каталога, вызыватель всё равно останется без него —
+# поэтому говорим вслух, а не делаем вид, что спасли всех.
+# EN: The calling shell's working directory does not change: cd here lives inside this process. But if it was
+#     called FROM the directory being removed, the caller will be left without it anyway — so we say it aloud
+#     rather than pretend we saved everyone.
+if [ -n "$ZVALI_IZ" ] && [ ! -d "$ZVALI_IZ" ]; then
+  KUDA=$(konf UBRAT_KUDA "~") || exit 2
+  echo "⚠️  ВЫ СТОИТЕ В УДАЛЁННОМ КАТАЛОГЕ ($ZVALI_IZ) — следующая команда упадёт на getcwd." >&2
+  echo "   Увести вас отсюда я не могу (cd живёт в моём процессе). Сделайте: cd $KUDA" >&2
+fi
+echo "убрано каталогов: $ubrano"
+exit 0

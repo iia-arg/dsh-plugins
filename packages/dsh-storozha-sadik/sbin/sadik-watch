@@ -1,0 +1,1210 @@
+#!/usr/bin/env bash
+# sadik-watch — НЕЗАВИСИМЫЙ ОТ АГЕНТОВ срез машины sadik.
+#
+# ЗАЧЕМ. До 04.09.2026 наблюдения за sadik не было ВООБЩЕ: всё, что мы знали о той
+# машине, приходило письмами её же агентов — то есть от тех, за кем надо наблюдать.
+# Если бы Искра замолчала по поломке, а не по пределу сессии, мы узнали бы об этом
+# от неё же, то есть никогда. (Я весь день числил свой сторож работающим — а его не
+# существовало ни живого, ни мёртвого; в сводке стояла пометка «подтверждено по
+# переписке». Подтверждение из письма, а не из состояния, и есть механизм ошибки.)
+#
+# 🔴 ЧТО МЕРЯЕТ И ЧЕГО НЕ ЛОВИТ — обязательные колонки, требование приёмки (В6):
+#   предмет            | признак                        | ЧЕГО НЕ ЛОВИТ
+#   служба жива        | свежесть УСПЕШНОГО события в    | «процесс есть, работы нет»
+#                      | журнале, НЕ systemctl is-active | ловится только через рост базы
+#   память наполняется | рост числа записей в pamyat.db  | качество записей; их осмысленность
+#   место на диске     | df по корню                     | место внутри контейнеров/томов
+#   связь с машиной    | сам факт ssh                    | НЕ отличает «машина легла» от
+#                      |                                 | «наш канал/ключ сломан» — см. ниже
+#
+# 📌 Ищешь графу «ЧЕГО НЕ ЛОВИТ» грепом — она в КОЛОНКЕ 3 таблицы выше, четыре записи;
+# сами записи сформулированы содержательно, без слов «не ловит», поэтому маска по этим
+# словам даёт одну строку вместо четырёх (Вениамин так и посчитала 04.09). Считать по области.
+#
+# 🔴 ЧТО ЗНАЧИТ МОЛЧАНИЕ СТОРОЖА: «за последний такт беды не найдено». Молчание при
+# СЛОМАННОМ стороже выглядит так же — поэтому раз в SADIK_GOLOS_SUTOK суток (7) он говорит
+# человеку через канал тревог «жив» (B-N-988, ниже раздел 3). Молчание дольше — сторож умер.
+#
+# 🔴 ПРИ ВЫВОДЕ aclaude ИЗ РАБОТЫ снять ЯВНО: systemctl disable --now sadik-watch.timer
+# Иначе сторож замолчит вместе с машиной, и последний отчёт будет зелёным (правило фермы).
+
+# 🔴 КАК ПРОГНАТЬ ПРОБОЙ, НЕ ТРОНУВ БОЕВОЕ (правило фермы 122 от 05.09.2026: прогон рукой
+# обязан иметь режим, где наружу не делается ничего). Отдельного ключа заводить не нужно —
+# все три точки внешнего действия параметризованы:
+#   SADIK_WATCH_SOST=/tmp/proba-sost SADIK_ALERT_BIN=/bin/true SADIK_VLADELEC_WATCH_BIN=/bin/true /usr/local/sbin/sadik-watch
+# Первое уводит состояние (иначе проба затрёт боевые рубежи), второе гасит канал тревог.
+# Проверять надо ВСЕ ТРИ (с B-N-2023 независимая A2A-проверка отдельно): без первого проба молча съест рубеж и настоящая тревога не прозвучит.
+set -uo pipefail
+HOST="${SADIK_HOST:-sadik}"
+# 🔴 Состояние ЗДЕСЬ, а не в /var/lib: сторож работает под claude (User=claude в юните),
+# потому что имя хоста sadik и ключ к нему живут в ~/.ssh/config ПОЛЬЗОВАТЕЛЯ claude.
+# Первый же прогон из-под root дал ЛОЖНУЮ тревогу «машина недоступна» — root не смог
+# даже разрешить имя. Проба моей рукой не равна пробе рукой службы (урок 31.08.2026).
+# A-N-1948 №5 (№23): «${HOME:-}» — без HOME (env -i, cron, чужой юнит) set -u падал здесь кодом 1, раньше отказа кодом 2 ниже;
+# пустой путь состояния ловит тот же отказ (условие с SADIK_WATCH_SOST и HOME).
+SOST="${SADIK_WATCH_SOST:-${HOME:-}/.local/state/sadik-watch}"
+LOG_TAG="sadik-watch"
+PORog_TISHINY_MIN="${POROG_TISHINY_MIN:-120}"   # столько минут без строк в журнале службы = тревога
+PORog_MESTA_PROC="${POROG_MESTA_PROC:-90}"
+# Окно поиска отказа по длине. Переменной — НЕ для удобства: без неё проба не доходит
+# до ветки (за 3 часа отказов обычно нет) и молча возвращает «проверено», ничего не проверив.
+OKNO_OTKAZA="${OKNO_OTKAZA:-3h}"
+# ⚠️ Адрес канала — через переменную с ТЕМ ЖЕ умолчанием. Нужен для стенда: иначе проверить
+# ограничение частоты (Г3) можно только рассылкой настоящих сообщений владельцу.
+ALERT="${SADIK_ALERT_BIN:-/usr/local/bin/sadik-alert}"
+
+# 🔴 06.09.2026, ПОРУЧЕНИЕ АЛЕКСАНДРА ГОЛОСОМ 11:33: тревоги про sadik уходят С САМОГО SADIK.
+# Сторож должен уметь работать ДВУМЯ способами: снаружи (как жил на aclaude) и НА наблюдаемой
+# машине. Различие — одна переменная; код проверок общий, иначе две редакции разъедутся молча.
+#   MESTNO=0 (умолчание) — снимаем срез по ssh с чужой машины
+#   MESTNO=1             — мы НА sadik, снимаем локально
+MESTNO="${SADIK_WATCH_MESTNO:-0}"
+
+# ⚠️ ЧТО ТЕРЯЕТСЯ ПРИ MESTNO=1, И ЭТО НЕ ЧИНИТСЯ ПРАВКОЙ:
+# проба «машина недоступна» существует только у ВНЕШНЕГО наблюдателя. Сторож, живущий на
+# наблюдаемой машине, молчит вместе с ней — его молчание неотличимо от порядка. Ровно то, о чём
+# правило «когда машину выключат, сторожа замолчат, и это НЕ должно выглядеть как всё хорошо».
+# Поэтому при MESTNO=1 ветка связи не притворяется работающей, а НАЗЫВАЕТ СЕБЯ снятой.
+snyat() {
+  if [ "$MESTNO" = "1" ]; then
+    bash -c "$1"
+  else
+    ssh -n -o ConnectTimeout=15 -o BatchMode=yes "$HOST" "$1"
+  fi
+}
+
+# 🔴 B-N-916 (25.09.2026): ЗАПУСК БЕЗ СРЕДЫ ЮНИТА — ОТКАЗ (код 2), А НЕ ТРЕВОГА. Умолчания выше — режим aclaude (срез по ssh,
+# отправщик sadik-alert); на sadik голый запуск (`sudo sadik-watch --help`, ручная проба) снимал срез по ssh, падал кодом 255,
+# основной канал отдавал 127 и запасной слал ЛОЖНУЮ тревогу агенту (25.09 15:36Z). Признак среды — обе переменные, которые даёт
+# ТОЛЬКО юнит/стенд: SADIK_WATCH_MESTNO и SADIK_ALERT_BIN (заданы явно, хоть пустыми). Проверка — ДО первого побочного действия.
+# Почему отказ, а не умолчания по имени хоста: умолчание спрятало бы ту же ошибку на другой машине, отказ её называет.
+# ⚠️ Не ловит: запуск с этими двумя переменными, но без остальной среды (SADIK_WATCH_SOST и т.п.) — это осознанная подмена.
+if [ -z "${SADIK_WATCH_MESTNO+x}" ] || [ -z "${SADIK_ALERT_BIN+x}" ]; then
+  echo "ОТКАЗ: sadik-watch запущен без среды юнита (нет SADIK_WATCH_MESTNO и/или SADIK_ALERT_BIN) — сторож не работает, тревог нет. Штатно: systemctl start sadik-watch.service" >&2
+  exit 2
+fi
+if [ -z "${SADIK_WATCH_SOST:-}" ] && [ -z "${HOME:-}" ]; then
+  echo "ОТКАЗ: sadik-watch без SADIK_WATCH_SOST и без HOME — некуда писать состояние; сторож не работает, тревог нет. Штатно: systemctl start sadik-watch.service" >&2
+  exit 2
+fi
+VLADELEC_WATCH="${SADIK_VLADELEC_WATCH_BIN-/usr/local/libexec/vladelec-tg-id-watch}"
+[ -n "$VLADELEC_WATCH" ] || { echo 'ОТКАЗ: пустой SADIK_VLADELEC_WATCH_BIN' >&2; exit 2; }
+mkdir -p "$SOST"
+# B-N-2023: independent A2A notice; failure never uses the owner Telegram channel.
+if [ "$MESTNO" = 1 ]; then "$VLADELEC_WATCH" || true; fi
+# 🔴 Только echo, БЕЗ logger: под systemd stdout и так уходит в журнал с тегом службы.
+# С обоими каждая строка попадала в журнал ДВАЖДЫ (проверено прогоном 20:07) — и любой,
+# кто посчитает строки, получит удвоение. Наш класс «число, которое врёт вдвое».
+log() { echo "$*"; }
+# 🔴 06.09.2026: вывод канала БОЛЬШЕ НЕ ГЛУШИТСЯ. `sadik-alert` научен называть причину отказа
+# (учётка, путь, запись, ответ Telegram), а этот вызов отправлял её в /dev/null — печатать стал
+# тот, кого не слушают. Класс: ЛЕЧЕНИЕ В ОДНОМ ЗВЕНЕ, ОБЕСЦЕНЕННОЕ СОСЕДНИМ (формулировка Забавы).
+# `|| true` остаётся намеренно: сторож не должен падать из-за канала.
+# 🔴 B-N-886 (25.09.2026): ЗАПАСНОЙ КАНАЛ. Основной канал (dsh-alert, бот Telegram) отказал — тревога уходила только в журнал
+# и повторялась каждый такт, видимая лишь тому, кто читает журнал. Теперь при отказе основного — письмо a2a в ящик агента этой
+# машины (SADIK_ZAPASNOJ_ADRESAT, умолч. iskra; SADIK_A2A_BIN): транспорт ДРУГОЙ природы (файл в ящике, почтальон, ход агента),
+# не тот бот. Коды a2a-send: 0 — лёг и видимость ушла; 4 — лёг, видимость не ушла (у root нет бота) — оба «доставлено в ящик».
+# Отметка об отправке — при успехе ЛЮБОГО из двух; оба отказали — строка 🔴 в журнале, отметка не ставится, повтор в следующий такт.
+# Одна функция на ВСЕ три места зова канала (trevoga, gruppa, подтверждение подъёма) — иначе запасной закрыл бы часть тревог.
+# ⚠️ ЧЕГО НЕ ЛОВИТ: смерть самого sadik-watch; отказ обоих каналов (только журнал); ход агента-адресата не начнётся — письмо лежит.
+ZAPASNOJ_ADRESAT="${SADIK_ZAPASNOJ_ADRESAT:-iskra}"; A2A="${SADIK_A2A_BIN:-/usr/local/bin/a2a-send}"
+kanal() { # kanal «текст» → 0, если тревога ушла основным ИЛИ запасным каналом
+  local k=0 z=0 otv=""
+  if [ -x "$ALERT" ]; then "$ALERT" "sadik-watch: $1" || k=$?; else k=127; fi
+  [ "$k" -eq 0 ] && return 0
+  log "⚠️ основной канал тревог отказал ($ALERT, код $k) — запасной: письмо a2a агенту $ZAPASNOJ_ADRESAT"
+  if [ -x "$A2A" ]; then
+    otv=$(printf 'sadik-watch: ОСНОВНОЙ КАНАЛ ТРЕВОГ ОТКАЗАЛ (%s, код %s). Тревога:\n%s\n' "$ALERT" "$k" "$1" | "$A2A" "$ZAPASNOJ_ADRESAT" 2>&1) || z=$?
+  else z=127; fi
+  if [ "$z" -eq 0 ] || [ "$z" -eq 4 ]; then log "   запасной канал: письмо в ящике $ZAPASNOJ_ADRESAT (a2a-send код $z)"; return 0; fi
+  log "🔴 ЗАПАСНОЙ канал тоже отказал (a2a-send код $z: $(printf '%s' "$otv" | tail -1 | cut -c1-160)) — тревога только в журнале"
+  return 1
+}
+trevoga() { log "🔴 $*"; kanal "$*" || true; }
+# 🔴 B-N-860 (25.09.2026): ГРУППОВАЯ ТРЕВОГА — одна сводная строка на СМЕНУ СОСТАВА группы, повтор не чаще остывания.
+# Было: «coder-gateway@… молчит N мин» по строке на шлюз каждый такт — 422 из 436 отправок с 24.09 20:00Z (кодеры на квоте
+# Codex до 28.09), настоящие тревоги тонули. Журнал — каждый такт (журнал не устаёт); канал — смена состава либо истёк срок
+# остывания (0 — без повторов). Отметка — ТОЛЬКО при успехе канала (приём Г3 ниже): отказ канала не прячет сам себя.
+# Состав — имена БЕЗ минут (иначе он «менялся» бы каждый такт). Файл: $SOST/grp-<ключ> = «состав|время отправки».
+gruppa() { # gruppa ключ «состав» «текст» остывание_с
+  local f="$SOST/grp-$1" sost="$2" txt="$3" ost="$4" bylo="" posl=0 soob="" kod=0
+  [ -r "$f" ] && IFS='|' read -r bylo posl < "$f"
+  [ -n "$sost" ] && log "🔴 $txt"
+  if [ "$sost" != "$bylo" ]; then
+    if [ -n "$sost" ]; then soob="$txt${bylo:+ (было: $bylo)}"; else soob="снова в порядке: $bylo"; fi
+  elif [ -n "$sost" ] && [ "$ost" -gt 0 ] && [ $(( SEYCHAS - ${posl:-0} )) -ge "$ost" ]; then
+    soob="$txt (напоминание: не чаще раза в $(( ost / 60 )) мин)"
+  fi
+  [ -z "$soob" ] && return 0
+  kanal "$soob" || kod=$?
+  if [ "$kod" -eq 0 ]; then printf '%s|%s' "$sost" "$SEYCHAS" > "$f"
+  else log "⚠️ канал тревог НЕ принял групповую тревогу $1 (код $kod) — отметка НЕ обновлена, повтор в следующий такт"; fi
+}
+
+# ── ПОДТВЕРЖДЕНИЕ ПОДЪЁМА ───────────────────────────────────────────────────────
+# 🔴 ЗАЧЕМ (04.09.2026, находка при разборе моего же подъёма a27): до этой правки сторож
+# обновлял отметку старта В ТОМ ЖЕ ПРОГОНЕ, где кричал о перезапуске. Тревога звучала
+# РОВНО ОДИН РАЗ и гасила сама себя — наблюдение, гасящее собственный сигнал. При живом
+# автоперезапуске это одно сообщение в телеграм и тишина навсегда.
+# Теперь ожидаемый старт кладёт РУКА, сделавшая подъём. Автоперезапуск отметки не кладёт
+# ПО ПОСТРОЕНИЮ — не по договорённости, поэтому крик не гаснет сам.
+#
+# 🔴 ЧЕГО ЗДЕСЬ ПОКА НЕТ, И ЭТО НАДО ЗНАТЬ ДО ТОГО, КАК ПОЛОЖИТЬСЯ НА МЕХАНИЗМ:
+# ПОСТОЯННОГО скрипта подъёма со сверкой сумм НЕ СУЩЕСТВУЕТ (проверено 04.09 поиском по
+# /usr/local/{bin,sbin}). Подъём a27 делался разовым скриптом внутри сессии, он не сохранён.
+# В /tmp/zabava-podyem-iskry.sh лежит ДРУГОЙ, от 03.09: он делает рестарт БЕЗ сверки сумм
+# и без отметки — брать его как «скрипт подъёма» нельзя, и /tmp вдобавок чистится.
+# СЛЕДСТВИЕ: пока подтверждение кладётся ТОЛЬКО руками — `sadik-watch --podtverdit` сразу
+# после подъёма. То есть половина схемы держится на памяти поднимающего, а не на устройстве.
+# Это честное состояние, а не недоделка втихую: оформление скрипта подъёма — отдельная
+# работа и отдельное решение, здесь она не сделана.
+# ⚠️ Пустое значение НЕ подтверждаем: пустая переменная узаконила бы любой старт.
+if [ "${1:-}" = "--podtverdit" ]; then
+  _s="$(snyat 'systemctl show iskra.service -p ActiveEnterTimestamp --value')"
+  [ -n "$_s" ] || { echo "НЕ подтверждаю: не смог снять старт с $HOST (пустое значение узаконило бы что угодно)"; exit 1; }
+  printf '%s' "$_s" > "$SOST/ozhidaemyj-start-iskra.txt"
+  rm -f "$SOST/trevoga-start-iskra.txt"
+  echo "подтверждено: ожидаемый старт iskra.service = «$_s»"
+  exit 0
+fi
+
+# B-N-1443 (02.10.2026, Заря): курсоры журнала для поиска квоты Codex (ветка SVEZH в теле среза). Строка: служба|курсор|время отказа|срок.
+# В тело уходят только строки строгого вида (значение попадает внутрь команды сбора) и base64 без переносов — кавычкам тела не мешает.
+KURSORY_F="$SOST/kvota-kursory.txt"
+KURSORY_B64=$(grep -E '^[A-Za-z0-9@._-]+\|[a-z]=[0-9a-f]+(;[a-z]=[0-9a-f]+)*\|[0-9]*\|[A-Za-z0-9 ,:]*$' "$KURSORY_F" 2>/dev/null | base64 -w0)
+# Битый файл не роняет сторож: его строки отбрасываются, у этих служб — полный проход 7 суток; число отброшенных — в журнал.
+_kurs_vsego=$(grep -c . "$KURSORY_F" 2>/dev/null); _kurs_prinyato=$(printf '%s' "$KURSORY_B64" | base64 -d 2>/dev/null | grep -c .)
+[ "${_kurs_vsego:-0}" -gt "${_kurs_prinyato:-0}" ] && log "   ⚠️ файл курсоров квоты $KURSORY_F: отброшено $(( _kurs_vsego - _kurs_prinyato )) строк из $_kurs_vsego (неверный вид) — у этих служб полный проход 7 суток"
+
+# ── 1. СВЯЗЬ. Отличаем «машина недоступна» от «сторож не смог спросить» ──────────
+SREZ="$(snyat '
+  # B-N-961 (25.09, Михалыч): sudo — только если сценарий исполняется НЕ под root. Бой (MESTNO=1, юнит root) — без sudo
+  # (было ~12,6 тыс. вызовов/сутки); срез по ssh с aclaude (claude) — с sudo, как прежде. Решает uid ТОЙ стороны, где исполняется.
+  S=sudo; [ "$(id -u)" = 0 ] && S=
+  _kursory=$(printf "%s" "'"$KURSORY_B64"'" | base64 -d 2>/dev/null)
+  _ramka=$(agent-registry pokrytie --json --s-nepolnymi)
+  _kod_reestra=$?
+  if [ "$_kod_reestra" -ne 0 ] && [ "$_kod_reestra" -ne 4 ]; then
+    printf "REGISTRY_ERROR|agent-registry pokrytie --json --s-nepolnymi: код %s; JSON рамки не получен\n" "$_kod_reestra"
+    exit 1
+  fi
+  if ! printf "%s" "$_ramka" | jq -e --argjson code "$_kod_reestra" ".format == \"pokrytie-s-nepolnymi-v1\" and (.doma|type==\"object\") and (.nepolnye|type==\"array\") and (all(.nepolnye[]; (.imya|type==\"string\") and (.prichiny|type==\"array\"))) and (if \$code == 0 then .polnoe == true and (.nepolnye|length)==0 else .polnoe == false and (.nepolnye|length)>0 end)" >/dev/null; then
+    printf "REGISTRY_ERROR|agent-registry pokrytie: код %s; JSON не соответствует договору\n" "$_kod_reestra"
+    exit 1
+  fi
+  printf "%s" "$_ramka" | jq -r ".nepolnye[] | \"UNCOVERED|\" + .imya + \"|\" + (.prichiny|join(\"; \"))"
+  # ИСТОЧНИК ИМЁН — РЕЕСТР (15.09.2026, Михалыч). Был зашитый список, и сторож не видел
+  # Альфу, боевую с 14.09. Пустой ответ реестра -> цикл пуст -> срез неполон -> сработает
+  # ветка «не смог спросить», а не тишина. Мест со списком было ДВА, правлены оба.
+  for u in $(agent-registry sluzhby); do
+    printf "%s|%s|%s\n" "$u" "$(systemctl is-active $u 2>/dev/null)" \
+      "$(systemctl show $u -p ActiveEnterTimestamp --value 2>/dev/null)"
+  done
+  # Дома — тоже из реестра: агент без базы честно даст ошибку чтения ниже, а не пропуск.
+  while IFS= read -r d; do
+    b="$d/pamyat/pamyat.db"
+    # 🔴 sqlite3 на sadik НЕ УСТАНОВЛЕН (проверено 04.09) — читаем питоном, он там есть.
+    # mode=ro обязателен: connect без него СОЗДАЁТ файл, если пути нет (мой промах 03.09).
+    n=$($S python3 -c "
+import sqlite3,sys
+try:
+    c=sqlite3.connect(\"file:$b?mode=ro\",uri=True)
+    print(c.execute(\"SELECT count(*) FROM zapisi\").fetchone()[0])
+except Exception as e:
+    print(\"?\")
+" 2>/dev/null || echo "?")
+    printf "BAZA|%s|%s\n" "$b" "$n"
+  done < <(printf "%s" "$_ramka" | jq -r ".doma[]")
+  printf "MESTO|%s\n" "$(df --output=pcent / | tail -1 | tr -d " %")"
+  # 🔴 22.09.2026 (Михалыч, наряд главной; ПЕРЕНЕСЕНО B-N-1337 01.10 Заря — правка легла в выведенную 06.09 копию
+  # на aclaude, в бою её не было ни дня): РУКОПОЖАТИЕ MESH sadik→vps-ru. Возраст считаем ЗДЕСЬ, на sadik.
+  # Отдаём готовые секунды, -1 = рукопожатия нет вовсе. $S — sudo только не под root (B-N-961).
+  # Пир vps-ru выбираем по ENDPOINT 46.19.64.6 (Вениамин 06:05Z: при втором пире head -1 мог взять не его), затем его рукопожатие по ключу.
+  _pk=$($S awg show awg9 endpoints 2>/dev/null | grep -F "46.19.64.6:" | cut -f1 | head -1)
+  _hs=""; [ -n "$_pk" ] && _hs=$($S awg show awg9 latest-handshakes 2>/dev/null | grep -F "$_pk" | cut -f2 | head -1)
+  if [ -n "$_hs" ] && [ "$_hs" != "0" ]; then
+    printf "MESH|awg9|%s\n" "$(( $(date +%s) - _hs ))"
+  else
+    printf "MESH|awg9|-1\n"
+  fi
+  # 🔴 05.10.2026 D-N-1651 (Михалыч; ворота Вениамин): ПРАВИЛО 72 — TCP на внешний адрес vps-ru через awg-ru.
+  # Отдаём: сколько правил «to 46.19.64.6 iif lo ipproto tcp lookup 225» в pref 72 и куда ip route get отправляет TCP.
+  _rn=$(ip -4 rule show pref 72 2>/dev/null | grep -cF "to 46.19.64.6 iif lo ipproto tcp lookup 225" || true)
+  _rd=$(ip -4 route get 46.19.64.6 ipproto tcp 2>/dev/null | grep -oE "dev [^ ]+" | head -1 | cut -d" " -f2 || true)
+  printf "RUTCP|%s|%s\n" "${_rn:-0}" "${_rd:-никуда}"
+  # 🔴 05.10.2026 B-N-1660 (Михалыч; ворота Вениамин): RU SPLIT ЖИВ — по живой конструкции (D-N-1656: был мёртв с 16.08,
+  # «выглядел включённым»). Отдаём «ok» или перечень того, что не так. Порог набора 5000 (RIPE ~8400, sanity ru-cidr-update 500).
+  _rs=""
+  if ! $S nft list table inet ru_split >/dev/null 2>&1; then _rs="таблицы inet ru_split НЕТ; "
+  else
+    _rch=$($S nft list chain inet ru_split output 2>/dev/null || true)
+    printf "%s" "$_rch" | grep -qF "ip daddr @ru_v4 meta mark set 0x0000a2c9" || _rs="${_rs}нет правила пометки @ru_v4; "
+    printf "%s" "$_rch" | grep -qF "ip daddr { 46.19.64.6, 186.246.17.63, 201.51.21.218 } return" || _rs="${_rs}нет исключения концов туннелей; "
+    _rn2=$($S nft list set inet ru_split ru_v4 2>/dev/null | grep -oE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(/[0-9]+)?" | wc -l)
+    [ "${_rn2:-0}" -ge 5000 ] 2>/dev/null || _rs="${_rs}в ru_v4 ${_rn2:-0} сетей (порог 5000); "
+    $S nft list chain inet ru_split postrouting 2>/dev/null | grep -qF "oifname \"awg-ru\" masquerade" || _rs="${_rs}нет masquerade на awg-ru; "
+  fi
+  ip -4 rule show 2>/dev/null | grep -qF "fwmark 0xa2c9 lookup 225" || _rs="${_rs}нет ip rule fwmark 0xa2c9 → 225; "
+  ip -4 route show table 225 2>/dev/null | grep -q "^default dev awg-ru" || _rs="${_rs}в таблице 225 нет default dev awg-ru; "
+  [ -n "$(find "${RU_SPLIT_SPISOK:-/etc/ru-split/ru_v4.cidrs}" -mtime -15 2>/dev/null)" ] || _rs="${_rs}список ru_v4.cidrs старше 15 сут или его нет; "
+  printf "RUSPLIT|%s\n" "${_rs:-ok}"
+  # 🔴 05.10.2026 B-N-1675 (Михалыч; ворота Вениамин): БЕЛЫЙ СПИСОК ВАРВАРЫ — читатель отказов разборщика. Шлюз пишет
+  # отказ списка в журнал ОДИН раз на смену содержимого (pdn-maska.mjs belyjSled) — пропущенную строку журнала больше
+  # никто не увидит. Поэтому файл проверяем сами: ТЕМ ЖЕ разборщиком живого модуля гостевого шлюза и ОТ УЧЁТКИ шлюза
+  # (varvara) — так видны и негодные строки, и права, и пропажа файла. Путь — из настройки службы шлюза.
+  # 06.10 слово владельца (05.10 20:49 МСК): иностранный «тел: +<код≠7>…» не открывать — неразобранная строка такого вида
+  # — ПРИНЯТОЕ состояние (журнал, не тревога); красное — нераспознанная строка иного вида и российский номер не той формы.
+  _bp="${SADIK_BELYJ_SPISOK:-$(systemctl show -p Environment --value claude-oauth-gateway@varvara 2>/dev/null | tr " " "\n" | sed -n "s/^GATEWAY_GOST_BELYJ_SPISOK=//p" | head -1)}"
+  _bm="${SADIK_BELYJ_MODUL:-/opt/subscription-gateway-guest/pdn-maska.mjs}"
+  if [ -z "$_bp" ]; then _bs="bad:путь списка в настройке шлюза varvara не задан (GATEWAY_GOST_BELYJ_SPISOK) — маскируется всё"
+  else
+    _bs=$(cd / && BS_PUT="$_bp" BS_MOD="$_bm" timeout 20 $S runuser -u varvara -- /usr/local/bin/node --input-type=module -e "const {prochestBelyjSpisok}=await import(process.env.BS_MOD); const fs=await import(\"node:fs\"); const m=[]; prochestBelyjSpisok(process.env.BS_PUT, x=>m.push(String(x))); const red=[]; const inostr=[]; for (const s of m) { if (s.includes(\"не прочитан\")) { red.push(s); continue; } const g=s.match(/строки ([0-9, ]+) не разобраны/); if (!g) continue; const L=fs.readFileSync(process.env.BS_PUT,\"utf8\").split(\"\\n\"); for (const n of g[1].split(\",\").map(x=>Number(x.trim()))) { const t=(L[n-1]||\"\").trim(); const tel=t.match(/^тел\\s*:\\s*(\\+.+)$/u); const c=tel?tel[1].replace(/\\D/g,\"\"):\"\"; if (tel && c.length>=8 && c[0]!==\"7\") inostr.push(n); else red.push(\"строка \"+n+\" не разобрана\"); } } const svod=m.join(\" / \").replace(/; 🔴 строки [0-9, ]+ не разобраны — НЕ пропускаются/,\"\"); console.log((red.length?\"bad:\"+red.join(\"; \"):\"ok:\"+svod)+(inostr.length?\" · иностранные номера — принятое состояние, маской не пропускаются: строки \"+inostr.join(\",\"):\"\"));" 2>&1 | tr "\n|" "  " | cut -c1-400)
+    case "$_bs" in ok:*|bad:*) ;; *) _bs="nemer:${_bs:-нет вывода}" ;; esac
+  fi
+  printf "BELYJ|%s\n" "$_bs"
+  # 🔴 06.10.2026 Остров, B-N-1679 (Михалыч; ворота Вениамин; признаки Авроры OTVET-stdout-i-nemota.md): НЕМОТА ПЕСОЧНИЦЫ
+  # ВАРВАРЫ. Обёртка bwrap-bez-zhurnala закрывает из песочницы сокеты journald; сломанная обёртка = bash Варвары молча
+  # не работает или (подмена) журнал снова открыт. (а) каждый такт: сумма и права обёртки; профиль зовёт обёртку; служба
+  # поднята ПОСЛЕ правки профиля; проба под varvara через обёртку — все три сокета journald и ledger Варвары (receipts.sqlite) не видны. (б) журнал за 1 ч.
+  _nw="${SADIK_NEMOTA_OBERTKA:-/usr/local/bin/bwrap-bez-zhurnala}"; _np=""
+  _ns=$(sha256sum "$_nw" 2>/dev/null | cut -c1-64)
+  # A-N-1948 №5 (№2): ПРИНЯТАЯ сумма — из реестра, а не константой: запись, чей derevo.files ставит обёртку, её метка выпуска
+  # (derevo.ref) и файл обёртки в этой метке. Константа 1171ba97 пережила выпуск dsh-gosti 1.0.5 (c8ce8637) — каждый такт
+  # ложная тревога, настоящая подмена в ней неотличима. Реестр/запись/метка не прочитаны — «не мерено», не красное.
+  # ⚠️ ЧЕГО НЕ ЛОВИТ: подмену, внесённую в метку и реестр (это принятие, не подмена); правку реестра мимо ворот.
+  _na=$($S env NW="$_nw" NR="${SADIK_NEMOTA_REESTR:-/etc/agent-registry/plugins.yaml}" python3 -I -B - 2>&1 <<"PY"
+import hashlib, os, subprocess, sys
+try:
+    import yaml
+    d = yaml.safe_load(open(os.environ["NR"], encoding="utf-8"))
+except Exception as e:
+    print("nemer:реестр %s не прочитан (%s)" % (os.environ["NR"], type(e).__name__)); sys.exit()
+w = os.environ["NW"]; naj = []
+def obhod(o):
+    if isinstance(o, dict):
+        dv = o.get("derevo")
+        if isinstance(dv, dict):
+            for f in dv.get("files") or []:
+                if isinstance(f, dict) and f.get("local") == w: naj.append((dv, f))
+        for v in o.values(): obhod(v)
+    elif isinstance(o, list):
+        for v in o: obhod(v)
+obhod(d)
+if len(naj) != 1:
+    print("nemer:записей реестра, ставящих %s: %d, нужна одна" % (w, len(naj))); sys.exit()
+dv, f = naj[0]; put = "%s:%s/%s" % (dv.get("ref"), dv.get("subdir"), f.get("remote"))
+# A-N-1948 №5, LOW Вениамина: доверие git (root читает дерево чужой учётки) — ровно адресу из записи, не «*»: адрес не корень
+# дерева (git нашёл бы родительское) — отказ git, «не мерено». Проба: test/stend-nemota-obertki.sh П7.
+r = subprocess.run(["git", "-c", "safe.directory=" + str(dv.get("address")), "-C", str(dv.get("address")), "show", put], capture_output=True)
+if r.returncode != 0:
+    print("nemer:%s в %s не прочитан (git, код %d)" % (put, dv.get("address"), r.returncode)); sys.exit()
+print("ok:%s %s" % (hashlib.sha256(r.stdout).hexdigest(), put))
+PY
+); _nnem=""
+  case "$_na" in
+    ok:*) _na=${_na#ok:}; [ "$_ns" = "${_na%% *}" ] || _np="${_np}сумма обёртки ${_ns:0:16} ≠ принятой ${_na:0:16} (${_na#* }); " ;;
+    *) _nnem="принятая сумма обёртки не установлена (${_na#nemer:})" ;;
+  esac
+  _nr=$(stat -c "%U:%G %a" "$_nw" 2>/dev/null || echo нет); [ "$_nr" = "root:root 755" ] || _np="${_np}права обёртки $_nr ≠ root:root 755; "
+  _nf="${SADIK_NEMOTA_PROFIL:-/opt/varvara/.dsh/profiles/web/cordis.patch.yml}"
+  grep -qF "runnerCommand: [/usr/local/bin/bwrap-bez-zhurnala]" "$_nf" 2>/dev/null || _np="${_np}профиль Варвары не зовёт обёртку (runnerCommand); "
+  _nst=$(date -d "$(systemctl show -p ActiveEnterTimestamp --value varvara.service)" +%s 2>/dev/null || echo 0); _npm=$(stat -c %Y "$_nf" 2>/dev/null || echo 0)
+  [ "${_nst:-0}" -ge "${_npm:-0}" ] 2>/dev/null || _np="${_np}varvara.service поднята ДО правки профиля — обёртка в живом процессе не загружена; "
+  _nl="${SADIK_NEMOTA_LEDGER:-/opt/varvara/workspace/.message-receipts/receipts.sqlite}"
+  _nt=$(cd / && timeout 15 $S setpriv --reuid=varvara --regid=varvara --clear-groups -- "$_nw" --ro-bind / / --dev /dev --unshare-pid --proc /proc --die-with-parent -- /bin/sh -c "test ! -e /run/systemd/journal/socket -a ! -e /run/systemd/journal/stdout -a ! -e /run/systemd/journal/dev-log || { echo журнал виден из песочницы; exit 1; }; test ! -e $_nl || { echo ledger виден из песочницы; exit 1; }" 2>&1); _nk=$?
+  [ "$_nk" -eq 0 ] || _np="${_np}проба песочницы под varvara: код $_nk ($(printf "%s" "$_nt" | tr "\n|" "  " | cut -c1-80)); "
+  if [ -n "${SADIK_NEMOTA_ZHURNAL:-}" ]; then _nj=$(cat "$SADIK_NEMOTA_ZHURNAL" 2>/dev/null); else _nj=$(journalctl -u varvara.service --since "-1 hour" --no-pager -o cat 2>/dev/null); fi
+  _no=$(printf "%s\n" "$_nj" | grep -cE "🔴 bash для .*bwrap: "); _nu=$(printf "%s\n" "$_nj" | grep -cE "вызов bash для .*: успех")
+  # Нет receipts.sqlite на хосте — проба ledger слепа (зелёная по построению): «не мерено», не ok (Вениамин 00:04Z). Беда (а) важнее.
+  [ -z "$_np" ] && [ ! -e "$_nl" ] && _np="nemer:receipts.sqlite на хосте нет ($_nl) — проба ledger слепа; "
+  [ -z "$_np" ] && [ -n "$_nnem" ] && _np="nemer:$_nnem; "
+  printf "NEMOTA|%s|%s\n" "$(printf "%s" "${_np:-ok}" | tr "|" "/")" "$_no/$_nu"
+  # 🔴 Версия ядра НА ДИСКЕ — через разрешение ГЛАВНОГО ВХОДА, а не запросом «имя/package.json».
+  # Прибор Искры, 04.09: у пакетов с объявленным exports запрос манифеста даёт ложное
+  # ERR_PACKAGE_PATH_NOT_EXPORTED на ИСПРАВНОМ пакете (проверено мной на двух из тринадцати).
+  printf "YADRO_DISK|%s\n" "$(node -e '"'"'
+    const {createRequire}=require("node:module"), fs=require("fs"), path=require("path");
+    try{
+      const req=createRequire("/opt/iskra/.dsh/profiles/web/");
+      let d=path.dirname(req.resolve("dsh-pamyat-core"));
+      while(!fs.existsSync(path.join(d,"package.json"))) d=path.dirname(d);
+      process.stdout.write(require(path.join(d,"package.json")).version);
+    }catch(e){ process.stdout.write("?"); }
+  '"'"' 2>/dev/null)"
+  # 🔴 ЗАСТРЯВШИЙ ХОД (заведено 05.09.2026, поручение Александра через Забаву).
+  # Случай 05.09: агент 30 минут в одном ходе, снаружи всё зелено — служба active, ошибок 0,
+  # события идут. Владелец не мог получить ответ и узнал об этом САМ, не от приборов.
+  # ПОРОГ 25 МИНУТ — снят по живым данным, не назначен: за сутки 267 завершённых ходов,
+  # медиана 3.1 (Искра) и 1.5 (Петрович), 90-й процентиль 7.8, максимум 29.3.
+  # Порог 30 дал бы НОЛЬ тревог и пропустил бы тот самый случай (29.3 мин); порог 25 даёт
+  # ровно 1 тревогу за сутки — его же. Ниже 20 пошли бы ложные (4 хода).
+  # Только службы АГЕНТОВ: sluzhby включает ещё и шлюзы, у которых нет turn/start.
+  # Имена и точные службы берём из реестра; отказ списка не превращаем в пустой обход.
+  _agenty=$(printf "%s" "$_ramka" | jq -r ".doma | keys[]") || exit 1
+  # B-N-1443 (02.10.2026, Заря): вторая проба соединений — после ОДНОЙ общей паузы на всех, а не 20 с на каждого агента в ходе
+  # (было 40 с прогона при двух таких агентах). Хвост разбора хода — две функции: их зовут и цикл, и проба после паузы.
+  _otlozh=""
+  _pr_iz_vnesh() {
+    _wch=$($S cat "/proc/$_p/wchan" 2>/dev/null); _wch="${_wch:-?}"
+    _sost=$($S awk "/^State:/{print \$2}" "/proc/$_p/status" 2>/dev/null); _sost="${_sost:-?}"
+    if [ "${_vnesh:-0}" -gt 0 ]; then
+      _pr="rabota|соединений к провайдеру $_vnesh, ждёт $_wch, состояние $_sost"
+    else
+      _pr="zavisanie|внешних соединений НЕТ, ждёт $_wch, состояние $_sost"
+    fi
+  }
+  _hod_pechat() {
+    _posl=$($S journalctl -u $_sl -n 1 --no-pager -o short-unix 2>/dev/null | awk "{print int(\$1)}")
+    if [ -z "$_posl" ]; then _tiho="?"; else _tiho=$(( $(date +%s) - _posl )); fi
+    printf "HOD|%s|%s|%s|%s|%s\n" "$_sl" "$_min" "$_pisem" "$_pr" "$_tiho"
+  }
+  for _agent in $_agenty; do
+    _sl=$(set -o pipefail; agent-registry pole "$_agent" sluzhba --json |
+      jq -er "select(type == \"string\" and length > 0)") || exit 1
+    # Для Codex оставлены 900 с тишины и 180 мин хода как поводы проверить вручную.
+    # Журнал платформы не показывает все шаги движка за отдельным шлюзом;
+    # отсутствие внешних соединений её cgroup не доказывает зависание Codex.
+    # 🔴 ДЫРА 1 (нашёл Вениамин замером 05.09): пустой _st значит ДВА разных: журнал не
+    # прочитан ИЛИ ходов за окно не было. У Петровича 16 ходов в сутки, окна >6 ч — НОРМА
+    # (замер: 22:32→07:15 и 08:55→16:58). Без различения сторож кричал бы «ДОСТУП» каждую
+    # ночь при живом журнале и гнал бы проверять ssh вместо ничего.
+    # Различаем КОДОМ ВОЗВРАТА, а не пустотой вывода.
+    _syroj=$($S journalctl -u $_sl --since "6 hours ago" --no-pager -o short-unix 2>/dev/null); _kod=$?
+    if [ "$_kod" -ne 0 ]; then printf "HOD|%s|?|?\n" "$_sl"; continue; fi
+    # 🔴 ДЫРА 2 (там же): turn/start без end ПЕРЕЖИВАЕТ перезапуск службы — старт остаётся
+    # в журнале, конца нет, минуты растут, и на 25-й минуте пошла бы тревога о ходе,
+    # которого уже нет. За сутки таких пар шесть (dsh 2, iskra 4); не крикнуло только
+    # потому, что новый ход успевал начаться раньше — то есть по удаче, не по устройству.
+    # Лечение: ход считается только ПОСЛЕ последнего подъёма службы.
+    # 🔴 ПУСТОТУ ПРОВЕРЯЕМ ДО date, а не после (нашёл Вениамин, подтверждено замером):
+    # `date -d ""` возвращает ПОЛНОЧЬ СЕГОДНЯ и код 0 — значит «|| echo 0» здесь не
+    # срабатывает НИКОГДА. У неактивной службы ActiveEnterTimestamp пуст, и старт до
+    # полуночи посчитался бы «оборванным перезапуском» — молчание вместо разбора.
+    _ts=$(systemctl show $_sl -p ActiveEnterTimestamp --value 2>/dev/null)
+    if [ -n "$_ts" ]; then _podyom=$(date -d "$_ts" +%s 2>/dev/null || echo 0); else _podyom=0; fi
+    # 🔴 ПОРЯДОК, А НЕ ВРЕМЯ (нашлось на инструменте Искры 06.09, 01:5x):
+    # turn/end и turn/start приходят В ОДНУ СЕКУНДУ (замер: 1788648216.356766 и .357382),
+    # а `cut -d. -f1` отбрасывает доли — и сравнение времён даёт «завершён» там, где
+    # последним событием стоит СТАРТ. Её инструкция смотрела ПОРЯДОК и была права,
+    # мой замер по секундам — нет. Ошибка в сторону ПРОПУСКА: сторож промолчал бы о
+    # реально идущем ходе. Берём последнее событие по порядку в журнале.
+    _posl=$(printf "%s\n" "$_syroj" | grep -oE "type=turn/(start|end)" | tail -1)
+    _st=$(printf "%s\n" "$_syroj" | grep "type=turn/start" | tail -1 | cut -d. -f1)
+    _en=$(printf "%s\n" "$_syroj" | grep "type=turn/end" | tail -1 | cut -d. -f1)
+    # если последним пришёл end — ход закрыт, что бы ни говорили секунды
+    [ "$_posl" = "type=turn/end" ] && _en=$(( ${_st:-0} + 1 ))
+    if [ -z "$_st" ]; then printf "HOD|%s|0|0\n" "$_sl"; continue; fi
+    if [ "$_podyom" -gt 0 ] && [ "$_st" -lt "$_podyom" ]; then printf "HOD|%s|0|0\n" "$_sl"; continue; fi
+    if [ -n "$_en" ] && [ "$_en" -ge "$_st" ]; then printf "HOD|%s|0|0\n" "$_sl"; continue; fi
+    _min=$(( ( $(date +%s) - _st ) / 60 ))
+    _pisem=$($S journalctl -u $_sl --since "@$_st" --no-pager 2>/dev/null | grep -c "type=agent/inbox/spliced")
+    # 🔴 ПРИЗНАК ЖИВОСТИ ХОДА (07.09.2026, постоянная санкция владельца 06.09 23:59:
+    #   «сторож сработал — сразу улучшай, чтобы сообщение было честнее»).
+    #   Было: сторож видел ТОЛЬКО длительность и честно писал «не знаю, полезен ли ход» —
+    #   и владелец вынужден был спрашивать руками «работает или завис?».
+    #   Признак РАЗЛИЧАЕТ, проверено на живых службах: без хода внешних соединений 0
+    #   (только телеграм 149.154.* и localhost), при идущем ходе — соединение к провайдеру.
+    _p=$(systemctl show -p MainPID --value "$_sl" 2>/dev/null)
+    if [ -z "$_p" ] || [ "$_p" = "0" ]; then
+      _pr="slepota|процесс службы не найден (MainPID пуст)"
+    elif ! $S test -r "/proc/$_p/status"; then
+      _pr="slepota|нет доступа к /proc/$_p"
+    else
+      # 🔴 ДВЕ ПРАВКИ ПОСЛЕ ЛОЖНО-КРАСНОГО 07.09 00:16 (поймала Забава):
+      #  (1) считать по ВСЕЙ cgroup службы: работа может идти в потомке, у главного 0;
+      #  (2) ОДНОМОМЕНТНЫЙ СРЕЗ НЕ ОТЛИЧАЕТ ПАУЗУ ОТ ЗАВИСАНИЯ. Соединение к провайдеру
+      #      живёт только на время запроса; между вызовами внешних 0 при живом ходе.
+      #      Поэтому при нуле — ВТОРАЯ проба через 20 с, и лишь два нуля подряд значат беду.
+      _schet_vnesh() {
+        local _c=0 _q
+        for _q in $(cat "/sys/fs/cgroup/system.slice/$_sl/cgroup.procs" 2>/dev/null || echo "$_p"); do
+          _c=$(( _c + $($S ss -tnp 2>/dev/null | grep "pid=$_q," | awk "{print \$5}" | grep -vcE "^127\.|^149\.154\.") ))
+        done
+        echo "$_c"
+      }
+      _vnesh=$(_schet_vnesh)
+      # ноль — вторая проба после общей паузы (за циклом); строку HOD этого агента печатает она
+      if [ "${_vnesh:-0}" -eq 0 ]; then _otlozh="$_otlozh $_sl|$_p|$_min|$_pisem"; continue; fi
+      _pr_iz_vnesh
+    fi
+    # 🔴 ВЕЛИЧИНА СМЕНЕНА 07.09.2026 (нашла Забава замером): ДЛИТЕЛЬНОСТЬ ХОДА — ПРИЗНАК,
+    #   А НЕ СОСТОЯНИЕ. Ход Петровича длился 65 мин и был ЗДОРОВ (123 события, 20 шагов,
+    #   ответ доставлен). Длительность одинаково велика у полезного долгого запроса и у
+    #   зависшего. Состояние говорит МОЛЧАНИЕ: пока строки идут, ход работает.
+    #   ПОРОГ 900 с — снят по журналу за сутки, не назначен: тишина между строками
+    #   dsh медиана 0 с, 99% 1 с, максимум 515 с; iskra медиана 0 с, 99% 99 с, максимум 518 с;
+    #   разрывов >600 с за сутки НОЛЬ у обоих. 900 = запас 1,7х от наибольшего законного.
+    _hod_pechat
+  done
+  if [ -n "$_otlozh" ]; then
+    sleep 20
+    for _z in $_otlozh; do
+      IFS="|" read -r _sl _p _min _pisem <<< "$_z"
+      _vnesh=$(_schet_vnesh); _pr_iz_vnesh; _hod_pechat
+    done
+  fi
+  # 🔴 Однородность ОПОРЫ МОНТАЖА (заведено 05.09.2026 по решению Забавы).
+  # Публикаций больше нет -> тарбол единственная опора восстановления боевого каталога.
+  # Ссылка на номер из реестра означает: при восстановлении пакет пойдёт в сеть за тем,
+  # что мы намеренно не публикуем. Заметить это можно было бы только ПРИ восстановлении.
+  M=/opt/agent-plugins/package.json
+  if [ -r "$M" ]; then
+    printf "MANIFEST|%s/%s\n" "$(grep -c agent-plugins-tarbally "$M")" "$(grep -c dsh-pamyat "$M")"
+  else
+    printf "MANIFEST|?\n"
+  fi
+  # 🔴 Версия ядра В БОЮ — из СТРОКИ ПОДЪЁМА журнала, а не с диска (правка 05.09.2026).
+  # Диск и бой расходятся: перезапуск в один момент, диск снимается в другой, между ними
+  # диск успевает измениться. Утверждать про бой по диску — врать о предмете.
+  # 🔴 cut, а НЕ awk: одинарные кавычки awk закрывают внешний блок ssh, и $2 уходит под
+  # set -u локального шелла. Сломал этим сторож 05.09 в 22:33, откатил, переделал.
+  # Пусто -> СЛЕПОТА, а не «версии нет»: строка подъёма могла уехать из окна журнала.
+  # B-N-1443 (02.10.2026, Заря): журнал — от подъёма службы, а не весь (5,6 с → 0,08 с; строка версии пишется через 2 с после подъёма).
+  # Нет метки подъёма (служба не активна) — весь журнал, как прежде.
+  _iskra_ot=$(systemctl show iskra.service -p ActiveEnterTimestamp --value 2>/dev/null)
+  printf "YADRO_BOJ|%s\n" "$($S journalctl -u iskra.service ${_iskra_ot:+--since "$_iskra_ot"} --no-pager -o cat 2>/dev/null \
+    | grep -oE "dsh-pamyat-core [0-9]+\.[0-9]+\.[0-9]+[-a-z0-9.]*" | tail -1 | cut -d" " -f2)"
+  # B-N-1462 (03.10.2026, Заря): пауза агента по /stop — договор ред. 2: /var/lib/dsh-pauza/<агент>/pauza.json; подкаталог — учётка службы
+  # агента (поле реестра polzovatel), 755; файл 644; пока пауза стоит, канал обновляет updated не реже 5 мин; снятие — файл удалён.
+  # Пауза — только если файлу можно верить: владелец каталога = учётка агента, файла = учётка агента или root, без записи g/o;
+  # JSON разобран; updated не старше 15 мин и не из будущего (> +60 с). Иначе PAUZA_BEDA (тревога, это НЕ пауза). Каталог переменной — только для стенда.
+  # ⚠️ ГРАНИЦА: «пишет только своя учётка» защищает от ошибки соседа, а НЕ от умысла — у агентов sudo ALL, подделать файл может любой.
+  for _agent in $(printf "%s" "$_ramka" | jq -r ".doma | keys[]"); do
+    _pd="${SADIK_WATCH_PAUZA_DIR:-/var/lib/dsh-pauza}/$_agent"; _pf="$_pd/pauza.json"
+    $S test -e "$_pf" || continue
+    _pu=$(agent-registry pole "$_agent" polzovatel --json 2>/dev/null | jq -r "strings")
+    read -r _dv _dp <<< "$($S stat -c "%U %a" "$_pd" 2>/dev/null)"; read -r _fv _fp <<< "$($S stat -c "%U %a" "$_pf" 2>/dev/null)"
+    _np=""
+    [ -n "$_pu" ] && [ "${_dv:-}" = "$_pu" ] || _np="$_np каталог: владелец ${_dv:-?}, а не ${_pu:-? (нет в реестре)};"
+    [ -n "$_pu" ] && { [ "${_fv:-}" = "$_pu" ] || [ "${_fv:-}" = root ]; } || _np="$_np файл: владелец ${_fv:-?}, а не ${_pu:-?};"
+    case "${_dp:-}" in [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) [ $(( 8#$_dp & 8#022 )) -eq 0 ] || _np="$_np каталог: права $_dp (запись g/o);" ;; *) _np="$_np каталог: права не прочитаны;" ;; esac
+    case "${_fp:-}" in [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) [ $(( 8#$_fp & 8#022 )) -eq 0 ] || _np="$_np файл: права $_fp (запись g/o);" ;; *) _np="$_np файл: права не прочитаны;" ;; esac
+    if [ -n "$_np" ]; then printf "PAUZA_BEDA|%s|недоверен:%s\n" "$_agent" "$(printf "%s" "$_np" | tr "|" "/")"; continue; fi
+    if ! _pj=$($S cat "$_pf" 2>&1); then
+      printf "PAUZA_BEDA|%s|нечитаем: %s\n" "$_agent" "$(printf "%s" "$_pj" | head -1 | tr "|;" "//" | cut -c1-120)"; continue
+    fi
+    if ! _pz=$(printf "%s" "$_pj" | jq -r "if type != \"object\" then error(\"не объект\") elif (.paused|type) != \"boolean\" then error(\"поле paused не true/false\") elif .paused then [(.since // \"?\"), (.queue.letters // \"?\"), (.queue.tasks // \"?\"), (.updated // \"\")] | map(tostring | gsub(\"[|;\n]\"; \"/\")) | join(\";\") else \"\" end" 2>&1); then
+      printf "PAUZA_BEDA|%s|нечитаем: %s\n" "$_agent" "$(printf "%s" "$_pz" | head -1 | tr "|;" "//" | cut -c1-120)"; continue
+    fi
+    [ -n "$_pz" ] || continue
+    _pup="${_pz##*;}"; _pz="${_pz%;*}"
+    # пустую строку date -d читает как полночь — пустоту проверяем ДО date
+    _pus=""; [ -n "$_pup" ] && _pus=$(date -d "$_pup" +%s 2>/dev/null)
+    if [ -z "$_pus" ]; then printf "PAUZA_BEDA|%s|нечитаем: поле updated «%s» не разобрано\n" "$_agent" "$_pup"; continue; fi
+    if [ $(( _pus - $(date +%s) )) -gt 60 ]; then printf "PAUZA_BEDA|%s|недоверен: время из будущего (updated %s)\n" "$_agent" "$_pup"; continue; fi
+    if [ $(( $(date +%s) - _pus )) -gt 900 ]; then printf "PAUZA_BEDA|%s|устарел с %s\n" "$_agent" "$_pup"; continue; fi
+    _psv="$(agent-registry pole "$_agent" sluzhba --json 2>/dev/null | jq -r "strings") $(agent-registry pole "$_agent" zavisit_ot --json 2>/dev/null | jq -r ".[]?" | tr "\n" " ")"
+    printf "PAUZA|%s|%s;%s\n" "$_agent" "$_pz" "$_psv"
+  done
+  # свежесть УСПЕШНОГО события: последняя строка журнала службы, не статус
+  for u in $(agent-registry sluzhby); do
+    t=$($S journalctl -u $u -n 1 --no-pager -o short-unix 2>/dev/null | awk "{print \$1}" | cut -d. -f1)
+    # B-N-860 (25.09.2026): к свежести — состояние службы (обрыв кричит сразу, а не через порог тишины) и срок квоты Codex
+    # из отказа «try again at <дата>» за 7 суток. Разделитель «;» ВНУТРИ третьего поля: число полей строки для чтения не меняется.
+    st=$(systemctl is-active $u 2>/dev/null)
+    # B-N-1443 (02.10.2026, Заря): квоту ищем по КУРСОРУ журнала службы — за прогон читается только новое; неделя по всем службам
+    # стоила 190 из 245–285 с. Курсор и последняя найденная квота (время отказа, срок) живут в состоянии сторожа и приходят сюда
+    # строкой _kursory. Курсора нет или journalctl его не принял — окно 7 суток, один раз. Квота старше 7 суток забывается, как прежде.
+    _z=$(printf "%s\n" "$_kursory" | awk -F"|" -v u="$u" "\$1==u" | tail -1)
+    IFS="|" read -r _x _kc _ke _kv <<< "$_z"
+    _jk=1
+    # B-N-1443 r4b: отказ — только из строк шлюза. Матч ПОЛЯ SYSLOG_IDENTIFIER=node: команда sudo агента, порождённого шлюзом, пишется в журнал
+    # шлюза с идентификатором sudo и может нести полную строку срока (находка Искры: у @iskra 14 таких строк за 7 суток). Префикс шлюза — второй рубеж, ровно в одном месте: в строке, откуда берётся срок.
+    [ -n "$_kc" ] && { _j=$($S journalctl -u $u SYSLOG_IDENTIFIER=node --after-cursor "$_kc" --show-cursor --no-pager -o short-unix 2>/dev/null | grep -E "^-- cursor: |try again at "; exit "${PIPESTATUS[0]}"); _jk=$?; }
+    if [ "$_jk" -ne 0 ]; then
+      _kp="kursora-net"; [ -n "$_kc" ] && _kp="kursor-sbroshen"
+      _j=$($S journalctl -u $u SYSLOG_IDENTIFIER=node --since -7d --show-cursor --no-pager -o short-unix 2>/dev/null | grep -E "^-- cursor: |try again at "); _kc=""; _ke=""; _kv=""
+      # строк node за 7 суток нет (petrovich.service: идентификатор dsh) — следить нечего, строки «курсора нет» не пишем: иначе она шла бы каждый прогон
+      case "$_kp|$_j" in kursor-sbroshen*|*"-- cursor: "*) printf "KVOTA_PROHOD|%s|%s\n" "$u" "$_kp" ;; esac
+    fi
+    _n=$(printf "%s\n" "$_j" | sed -n "s/^-- cursor: //p" | tail -1); [ -n "$_n" ] && _kc="$_n"
+    _n=$(printf "%s\n" "$_j" | grep -E "\[(dsh-)?subscription-gateway [^]]*\] .*сбой вызова: .*try again at [A-Z][a-z]+ [0-9]+(st|nd|rd|th)?, [0-9]{4} [0-9]{1,2}:[0-9]{2} [AP]M" | tail -1)
+    [ -n "$_n" ] && { _ke=$(printf "%s" "$_n" | cut -d. -f1); _kv=$(printf "%s" "$_n" | grep -oE "try again at [A-Z][a-z]+ [0-9]+(st|nd|rd|th)?, [0-9]{4} [0-9]{1,2}:[0-9]{2} [AP]M" | tail -1 | cut -c14-); }
+    case "$_ke" in ""|*[!0-9]*) _ke=""; _kv="" ;; *) [ "$_ke" -lt $(( $(date +%s) - 604800 )) ] && { _ke=""; _kv=""; } ;; esac
+    # срок прошёл — квота гаснет. Разбор срока тот же, что снаружи у SVEZH (пояса нет — читаю как UTC); не разобрался — держит правило 7 суток.
+    if [ -n "$_kv" ]; then
+      _ks=$(TZ=UTC date -d "$(printf "%s" "$_kv" | sed -E "s/([0-9]+)(st|nd|rd|th)?,/\1/")" +%s 2>/dev/null)
+      case "$_ks" in ""|*[!0-9]*) ;; *) [ "$_ks" -le "$(date +%s)" ] && { _ke=""; _kv=""; } ;; esac
+    fi
+    kv="$_kv"
+    [ -n "$_kc" ] && printf "KURSOR|%s|%s|%s|%s\n" "$u" "$_kc" "$_ke" "$_kv"
+    printf "SVEZH|%s|%s;%s;%s\n" "$u" "${t:-нет}" "${st:-?}" "$kv"
+    # Отказ хода по длине промпта. Признак — СОБЫТИЕ, а не оценка: предупредить заранее
+    # нечем (занятость известна ПОСЛЕ вызова, отказ происходит НА вызове — замер Искры
+    # 05.09: отказ 07:06:27, ближайшая тревога о пороге за 9 часов до него).
+    # 🔴 СЛЕПОТА ОТДЕЛЬНО ОТ «ОТКАЗОВ НЕТ» (05.09.2026, правило владельца 21:12).
+    # Соседние ветки этого же сторожа (SVEZH, BAZA) слепоту называют вслух, а эта молчала:
+    # недоступный журнал давал «нет», неотличимое от чистого окна. Сейчас журнал читается
+    # и без sudo (замер: 2922 строки обоими способами) — беда не наступила, но признак
+    # обязан различать сам, а не полагаться на нынешнюю раскладку прав.
+    # 🔴 «-- No entries --» — ОДНА СТРОКА, А НЕ НОЛЬ. Первая редакция этой правки считала
+    # её содержимым, и ветка слепоты была мертва: проба показала «рубеж поставлен» вместо
+    # «журнал пуст». Та же грабля уже описана в podyom-uzla на sadik — отсеиваем явно.
+    vsego=$($S journalctl -u $u --since "-'"$OKNO_OTKAZA"'" --no-pager 2>/dev/null | grep -cv "^-- No entries --$")
+    d=$($S journalctl -u $u --since "-'"$OKNO_OTKAZA"'" --no-pager -o short-unix 2>/dev/null | grep -i "Prompt is too long" | tail -1 | awk "{print \$1}" | cut -d. -f1)
+    if [ "${vsego:-0}" -eq 0 ]; then
+      printf "OTKAZDLINA|%s|SLEPOTA\n" "$u"
+    else
+      printf "OTKAZDLINA|%s|%s\n" "$u" "${d:-нет}"
+    fi
+    # B-P-114 (25.09.2026, Заря): ОБРЫВ ПО ЛИМИТУ ПОДПИСКИ — событием из журнала шлюза, а не счётом в памяти шлюза: счёт «3 отказа подряд»
+    # (gateway.mjs) обнуляется перезапуском — Марк упёрся в «usage limit» 4 раза за 24–25.09, тревога не ушла ни разу. Строка — только СВОЯ
+    # строка шлюза («node[pid]: [subscription-gateway …] 🔴 сбой вызова: …»): чужие sudo-команды с тем же текстом в журнале шлюза не в счёт.
+    # Длительность хода — от последнего «мост подключён»/«подсказка:» до отказа: лимит обрывает ход за секунды, а снаружи это похоже на работу.
+    case "$u" in *gateway*)
+      lim=$($S journalctl -u $u --since "-'"$OKNO_OTKAZA"'" --no-pager -o short-unix 2>/dev/null | awk -v IGNORECASE=1 "/node\\[[0-9]+\\]: \\[(dsh-)?subscription-gateway [^]]*\\] (мост подключён|подсказка:)/ {s=\$1} /node\\[[0-9]+\\]: \\[(dsh-)?subscription-gateway [^]]*\\] 🔴 сбой вызова: .*(hit your (session|usage|weekly)|usage limit|rate limit|try again at|resets [0-9])/ {f=\$1; st=s; t=\$0} END {if (f) {sub(/.*сбой вызова: /, \"\", t); gsub(/[|;]/, \"/\", t); printf \"%s;%s;%s\", f, st, substr(t, 1, 200)}}")
+      printf "OTKAZLIMIT|%s|%s\n" "$u" "${lim:-нет}" ;;
+    esac
+  done
+' 2>/dev/null)"; _kod_ssh=$?
+if [ "$_kod_ssh" -ne 0 ]; then
+  # 🔴 РАЗЛИЧАЕМ ЧУЖУЮ БЕДУ И СВОЮ (класс Искры 05.09: третий исход, заведённый ради
+  # честности, укрыл поломку). 22:33:40 эта самая строка вышла НЕ из-за машины, а из-за
+  # МОЕЙ ошибки в скрипте (line 150: $2: unbound variable) — и отправила бы проверять
+  # канал и ключ, когда ломался наш собственный код. Ошибка была рядом в журнале,
+  # но сама тревога о ней молчала.
+  # Признак: ssh отвечает кодом 255 при беде связи; иной ненулевой код — беда НА той
+  # стороне; а если мы сюда попали при коде 0, значит упали мы сами.
+  # 🔴 06.09: тексты РАЗНЫЕ по режиму. В местном режиме «беда канала или ключа» была бы
+  # ложью — канала нет вовсе; а код 255 не может появиться в принципе.
+  _diagnostika=$(printf '%s\n' "$SREZ" | sed -n 's/^REGISTRY_ERROR|//p')
+  trevoga "срез от $HOST не получен: режим local=$MESTNO, команда сбора вернула код $_kod_ssh. ${_diagnostika:-Подробная причина не установлена; stderr команды оставлен в журнале.}"
+
+  exit 2
+fi
+
+[ -z "$SREZ" ] && { trevoga "срез от $HOST пуст: команда сбора вернула код 0, строк данных не получено. Причина не установлена."; exit 2; }
+
+SEYCHAS=$(date +%s); BEDY=0
+GR_OBRYV=""; GR_TISHINA=""; GR_TISHINA_MIN=""; GR_KVOTA=""; KVOTA_DO=""   # B-N-860: группы служб (set -u)
+declare -A PAUZA_SL=()   # B-N-1462: служба → «<агент> на паузе по /stop с …»; строки PAUZA идут в срезе раньше SVEZH
+GR_PAUZA=""; GR_PAUZA_TXT=""   # B-N-1462: агенты, чей файл паузы устарел / нечитаем / недоверен — тревога, это не пауза
+KURSORY_NOV=""   # B-N-1443: новое состояние курсоров квоты, пишется после разбора
+KV_SBROS=""; KV_NET=""   # B-N-1443: службы, у которых квота искалась полным проходом 7 суток, по причине
+# B-N-1337: состав mesh по умолчанию «не мерено» — срез без строки MESH не должен давать ложный отбой; ветка MESH его перекрывает.
+GR_MESH="не мерено"; GR_MESH_TXT="mesh awg9: строки MESH в срезе НЕТ — рукопожатие не мерено"
+# D-N-1651: правило 72 по умолчанию «не мерено» — срез без строки RUTCP не должен давать ложный отбой (как MESH).
+GR_RUTCP="не мерено"; GR_RUTCP_TXT="TCP на 46.19.64.6: строки RUTCP в срезе НЕТ — правило 72 не мерено"
+# B-N-1660: RU split по умолчанию «не мерено» — срез без строки RUSPLIT не должен давать ложный отбой.
+GR_RUSPLIT="не мерено"; GR_RUSPLIT_TXT="RU split: строки RUSPLIT в срезе НЕТ — не мерено"
+# B-N-1675: белый список Варвары по умолчанию «не мерено» — срез без строки BELYJ не должен давать ложный отбой.
+GR_BELYJ="не мерено"; GR_BELYJ_TXT="белый список Варвары: строки BELYJ в срезе НЕТ — не мерено"
+# B-N-1679: немота песочницы по умолчанию «не мерено» — срез без строки NEMOTA не должен давать ложный отбой.
+GR_NEMOTA="не мерено"; GR_NEMOTA_TXT="песочница Варвары: строки NEMOTA в срезе НЕТ — не мерено"
+
+# Граница печатается КАЖДЫЙ прогон, а не однажды в шапке: журнал читают выборочно.
+[ "$MESTNO" = "1" ] && log "   режим МЕСТНЫЙ (на sadik): проба «машина недоступна» НЕ ведётся — её может делать только внешний наблюдатель"
+
+# ── 2. Службы: свежесть события, а не is-active ──────────────────────────────────
+while IFS='|' read -r vid a b; do
+  case "$vid" in
+    UNCOVERED)
+      log "⚠️ НЕПОКРЫТО: $a — $b; проверки дома/базы и хода этого агента не выполнены"
+      BEDY=$((BEDY+1)) ;;
+    iskra.service|petrovich.service)
+      if [ "$a" != "active" ]; then
+        # 🔴 07.09.2026: disabled/masked — это ЧЬЁ-ТО РЕШЕНИЕ, а не отказ службы.
+        #    Без различения сторож кричит «не active» сутками (случай 07.09: запертая
+        #    до 11.09 служба дала бы 4 суток крика), и тревогу перестают читать.
+        #    Тревогу НЕ гасим — предмет другой, текст другой.
+        _en="$(systemctl is-enabled "$vid" 2>/dev/null)"
+        case "$_en" in
+          disabled|masked)
+            trevoga "$vid не active и ЗАПЕРТА НАМЕРЕННО ($_en) — это не отказ, а решение; проверить, кто и зачем" ;;
+          *)
+            trevoga "$vid не active (сейчас: ${a:-пусто})" ;;
+        esac
+        BEDY=$((BEDY+1))
+      fi ;;
+    SVEZH)
+      IFS=';' read -r _t _st _kv <<<"$b"
+      if [ -n "$_st" ] && [ "$_st" != "active" ] && [ "$_st" != "?" ] && [ "$a" != "iskra.service" ] && [ "$a" != "petrovich.service" ]; then
+        # iskra/dsh — своя ветка «не active» выше; здесь остальные службы и шлюзы
+        GR_OBRYV="$GR_OBRYV${GR_OBRYV:+, }$a ($_st)"; BEDY=$((BEDY+1))
+      elif [ "$_t" = "нет" ]; then
+        trevoga "$a: журнал пуст — событий не видно вовсе"; BEDY=$((BEDY+1))
+      else
+        MIN=$(( (SEYCHAS - _t) / 60 ))
+        if [ "$MIN" -gt "$PORog_TISHINY_MIN" ] && [ "$_st" = "active" ] && [ -n "${PAUZA_SL[$a]:-}" ]; then
+          log "   $a молчит $MIN мин — ${PAUZA_SL[$a]}; тревога не идёт"
+        elif [ "$MIN" -gt "$PORog_TISHINY_MIN" ]; then
+          _srok=0; [ -n "$_kv" ] && _srok=$(TZ=UTC date -d "$(printf '%s' "$_kv" | sed -E 's/([0-9]+)(st|nd|rd|th)?,/\1/')" +%s 2>/dev/null || echo 0)
+          if [ "$_srok" -gt "$SEYCHAS" ]; then
+            GR_KVOTA="$GR_KVOTA${GR_KVOTA:+, }$a"; KVOTA_DO="$_kv"
+          else
+            GR_TISHINA="$GR_TISHINA${GR_TISHINA:+, }$a"; GR_TISHINA_MIN="$GR_TISHINA_MIN${GR_TISHINA_MIN:+, }$a $MIN мин"
+            BEDY=$((BEDY+1))
+          fi
+        fi
+      fi ;;
+    OTKAZDLINA)
+      # Тревога только на НОВОЕ событие: храним время последнего виденного отказа.
+      # 🔴 Первый прогон НЕ кричит об историческом отказе — он только запоминает рубеж
+      # и говорит об этом. Иначе заведение сторожа само выглядит как авария.
+      PRED_OD="$SOST/otkaz-dliny-$(printf '%s' "$a" | tr -c 'a-zA-Z0-9' '-').txt"
+      # 🔴 РУБЕЖ СТАВИТСЯ ВРЕМЕНЕМ УСТАНОВКИ, А НЕ ВРЕМЕНЕМ ПЕРВОГО НАЙДЕННОГО ОТКАЗА.
+      # Первая редакция писала рубеж при первом ОБНАРУЖЕНИИ события — и тем самым
+      # проглатывала первый НАСТОЯЩИЙ отказ: файла ещё нет, значит «запомнил и промолчал».
+      # Защита от крика о прошлом съедала ровно то событие, ради которого заведена.
+      # Поймано приёмкой этой же правки, до боевого прогона.
+      if [ ! -f "$PRED_OD" ]; then
+        printf '%s' "$SEYCHAS" > "$PRED_OD"
+        log "$a: рубеж отказов по длине поставлен по времени установки ($(date -d "@$SEYCHAS" '+%F %T')); всё, что случится позже, будет названо"
+      fi
+      if [ "$b" = "SLEPOTA" ]; then
+        log "⚠️ $a: журнал за $OKNO_OTKAZA ПУСТ — отказы по длине проверить нечем. Это «не смотрели», а не «их нет»"
+      elif [ "$b" = "нет" ]; then
+        :   # за окно отказов нет — молчим, строки «нет отказов» не пишем
+      else
+        STAR_OD=$(cat "$PRED_OD" 2>/dev/null || echo 0)
+        if [ "$b" -gt "$STAR_OD" ]; then
+          # B-N-977: отметка «сказано» — ТОЛЬКО после успеха канала (как OTKAZLIMIT, класс B-H-105). Прежде trevoga глушила
+          # отказ канала (|| true), отметка ставилась всё равно — несказанная тревога больше не повторялась.
+          _td="$a: ход оборван ПО ДЛИНЕ ПРОМПТА в $(date -d "@$b" '+%F %T') — предупредить заранее нечем: занятость известна ПОСЛЕ вызова, а отказ происходит НА вызове"
+          log "🔴 $_td"; BEDY=$((BEDY+1))
+          if kanal "$_td"; then printf '%s' "$b" > "$PRED_OD"
+          else log "🔴 тревога об обрыве по длине НЕ ушла ни одним каналом — отметку не ставлю, повторю в следующий такт"; fi
+        fi
+      fi ;;
+    OTKAZLIMIT)
+      # B-P-114: тревога на НОВОЕ событие (время отказа новее отметки); рубеж первого прогона — время установки (как OTKAZDLINA).
+      # Отметка «сказано» — ТОЛЬКО после успеха канала (класс B-H-105): отказ канала — повтор в следующий такт, а не молчание.
+      # ⚠️ НЕ ЛОВИТ: лимит, чей текст не подходит под маску (hit your … / usage limit / rate limit / try again at / resets N); отказ старше окна OKNO_OTKAZA.
+      PRED_OL="$SOST/otkaz-limita-$(printf '%s' "$a" | tr -c 'a-zA-Z0-9' '-').txt"
+      if [ ! -f "$PRED_OL" ]; then
+        printf '%s' "$SEYCHAS" > "$PRED_OL"
+        log "$a: рубеж обрывов по лимиту поставлен по времени установки ($(date -d "@$SEYCHAS" '+%F %T')); всё, что случится позже, будет сказано"
+      fi
+      if [ "$b" != "нет" ]; then
+        IFS=';' read -r _lf _ls _lt <<<"$b"; _lf=${_lf%.*}; _ls=${_ls%.*}
+        STAR_OL=$(cat "$PRED_OL" 2>/dev/null || echo 0)
+        if [ "${_lf:-0}" -gt "$STAR_OL" ]; then
+          _dl=""; [ -n "$_ls" ] && [ "$_ls" -le "$_lf" ] && _dl=" (ход длился $((_lf - _ls)) с: запрос → отказ)"
+          _tl="$a: ход оборван ЛИМИТОМ ПОДПИСКИ в $(date -d "@$_lf" '+%F %T')$_dl — «$_lt». Это не работа и не тишина: до срока лимита каждый ход агента кончится так же"
+          log "🔴 $_tl"; BEDY=$((BEDY+1))
+          if kanal "$_tl"; then printf '%s' "$_lf" > "$PRED_OL"
+          else log "🔴 тревога об обрыве по лимиту НЕ ушла ни одним каналом — отметку не ставлю, повторю в следующий такт"; fi
+        fi
+      fi ;;
+    BAZA)
+      # 🔴 Имя состояния — от ПОЛНОГО пути, а не от имени каталога.
+      # Первый живой прогон дал ЛОЖНУЮ тревогу «база уменьшилась: было 31, стало 1»:
+      # /opt/iskra/pamyat/ и /opt/petrovich/pamyat/ давали ОДНО имя baza-pamyat, и счёт одной
+      # базы сравнивался с числом другой. Наш класс «одно имя — два разных предмета».
+      PRED="$SOST/baza$(printf '%s' "$a" | tr -c 'a-zA-Z0-9' '-').txt"
+      if [ "$b" = "?" ]; then
+        log "   база $a: прочитать не смог (нет прав или файла) — это не «ноль записей»"
+      else
+        _zapisat=1
+        if [ -f "$PRED" ]; then
+          STAR=$(cat "$PRED")
+          # B-N-977: прежний счёт перезаписывается после «уменьшилась» ТОЛЬКО при успехе канала — иначе следующий такт
+          # сравнит с уже меньшим числом, и несказанная тревога больше не прозвучит (класс B-H-105).
+          if [ "$b" -lt "$STAR" ]; then
+            _tb="база $a УМЕНЬШИЛАСЬ: было $STAR, стало $b"
+            log "🔴 $_tb"; BEDY=$((BEDY+1))
+            kanal "$_tb" || { _zapisat=0; log "🔴 тревога об уменьшении базы НЕ ушла ни одним каналом — прежний счёт $STAR оставлен, повторю в следующий такт"; }
+          fi
+        fi
+        [ "$_zapisat" = 1 ] && echo "$b" > "$PRED"
+        log "   база $a: записей $b"
+      fi ;;
+    MESH)
+      # 🔴 22.09.2026 (Михалыч; перенесено B-N-1337). ПОВОД: 22.09 туннель sadik→vps-ru встал ОДНОСТОРОННЕ, обрыв заметил
+      # человек. Порог из предмета: PersistentKeepalive=25 ⇒ живое рукопожатие раз в ~2 мин; 600 с = пять пропущенных циклов.
+      # ⚠️ ЧЕГО НЕ ЛОВИТ: рукопожатие живо, а SSH закрыт фильтром — другая беда; молчание здесь о ней ничего не говорит.
+      # Тревога — через gruppa mesh-awg9 ниже (условие Вениамина 06:05Z по B-N-860): журнал каждый такт, канал — смена состава и раз в час.
+      GR_MESH=""; GR_MESH_TXT=""
+      if [ "$b" = "-1" ]; then
+        GR_MESH="нет вовсе"; GR_MESH_TXT="mesh $a: рукопожатия с vps-ru (46.19.64.6) НЕТ ВОВСЕ — туннель не поднят или пира с этим адресом нет"; BEDY=$((BEDY+1))
+      elif [ "$b" -gt 600 ]; then
+        GR_MESH="встал"; GR_MESH_TXT="mesh $a: рукопожатие $((b/60)) мин назад (порог 10 мин) — канал sadik→vps-ru встал"; BEDY=$((BEDY+1))
+      else
+        log "   mesh $a: рукопожатие ${b} с назад — канал жив"
+      fi ;;
+    BELYJ)
+      # 🔴 05.10.2026 B-N-1675 (Михалыч; ворота Вениамин). ТОЛЬКО ТРЕВОГА. ⚠️ ЧЕГО НЕ ЛОВИТ: строку, которая разобралась,
+      # но НЕ ТА (опечатка в цифрах номера — пропустит чужой номер, а свой замаскирует); смысл списка; иные гостевые
+      # Иностранные номера (тел: +<код≠7>, ≥8 цифр) — принятое состояние: в журнал строкой, НЕ тревога. Граница: «+7…» любой
+      # длины — российский; иностранный номер с опечаткой не отличим от верного (оба «принятое»).
+      # настройки. Маска при сломанном списке не слабеет (прячет больше) — поэтому остывание 6 ч, не час.
+      GR_BELYJ=""; GR_BELYJ_TXT=""
+      case "$a" in
+        ok:*) log "   белый список Варвары: ${a#ok:}" ;;
+        bad:*) GR_BELYJ="${a#bad:}"; GR_BELYJ_TXT="белый список Варвары: ${a#bad:} — маска ПДн шлюза varvara прячет эти значения от модели (гостю и рабочему режиму). Проверка: блок BELYJ sadik-watch (тем же разборщиком от учётки varvara)"; BEDY=$((BEDY+1)) ;;
+        *) GR_BELYJ="не мерено"; GR_BELYJ_TXT="белый список Варвары: проверка не состоялась (${a#nemer:}) — состояние неизвестно" ;;
+      esac ;;
+    NEMOTA)
+      # 🔴 06.10.2026 B-N-1679 сторож немоты песочницы Варвары. ТОЛЬКО ТРЕВОГА. ⚠️ ЧЕГО НЕ ЛОВИТ: (а) проба — свой профиль bwrap,
+      # не точный профиль платформы (иные аргументы платформы не видны); сеть и абстрактные сокеты песочницы — не предмет;
+      # (б) только отказы, которые мост печатает «🔴 bash для …: … bwrap: »; при 0 вызовов bash за час (б) молчит по построению.
+      GR_NEMOTA=""; GR_NEMOTA_TXT=""; _nmo=${b%/*}; _nmu=${b#*/}
+      if [ "$a" != "ok" ] && [ "${a#nemer:}" = "$a" ]; then
+        GR_NEMOTA="(а) ${a%; }"; GR_NEMOTA_TXT="песочница Варвары НЕ в порядке: ${a%; }. Следствие: bash Варвары молча не работает или журнал снова открыт из песочницы. Принятая обёртка — файл метки выпуска из записи реестра, ставящей /usr/local/bin/bwrap-bez-zhurnala (B-N-1679; A-N-1948 №5)"; BEDY=$((BEDY+1))
+      elif [ "${_nmo:-0}" -ge 3 ] 2>/dev/null && [ "${_nmu:-0}" -eq 0 ] 2>/dev/null; then
+        GR_NEMOTA="(б) отказов ${_nmo}, успехов 0"; GR_NEMOTA_TXT="bash Варвары весь отказывает: за 1 ч отказов «bwrap:» ${_nmo}, успехов 0 (журнал varvara.service)"; BEDY=$((BEDY+1))
+      elif [ "${a#nemer:}" != "$a" ]; then
+        _nmn="${a%; }"; GR_NEMOTA="не мерено"; GR_NEMOTA_TXT="песочница Варвары: проверка ledger не состоялась (${_nmn#nemer:}) — состояние неизвестно, это НЕ здоровье"
+      else
+        log "   песочница Варвары: обёртка, профиль, проба — в порядке; за 1 ч bash: отказов bwrap ${_nmo}, успехов ${_nmu}"
+      fi ;;
+    RUSPLIT)
+      # 🔴 05.10.2026 B-N-1660. ТОЛЬКО ТРЕВОГА. ⚠️ ЧЕГО НЕ ЛОВИТ: метка есть, а awg-ru мёртв (рукопожатие — не здесь);
+      # строку «ct direction reply return» не требую; полноту набора сверх порога; IPv6; форвард.
+      GR_RUSPLIT=""; GR_RUSPLIT_TXT=""
+      if [ "$a" = "ok" ]; then
+        log "   RU split: пометка, набор, правило 60, таблица 225, список — в порядке"
+      else
+        GR_RUSPLIT="$a"; GR_RUSPLIT_TXT="RU split НЕ работает: ${a%; } — российские сети идут не через awg-ru. Лечение: systemctl restart ru-split.service (пуст/стар список — сначала systemctl start ru-cidr-update.service)"; BEDY=$((BEDY+1))
+      fi ;;
+    RUTCP)
+      # 🔴 05.10.2026 D-N-1651. ПОВОД: PostUp awg-ru.conf ставит правило 72 с «|| true» — отказ молчит (Вениамин 09:47Z).
+      # Без правила TCP на 46.19.64.6 упирается в REJECT killswitch: сайты на vps-ru (ostrov.center) и SSH на его
+      # внешний адрес с sadik недоступны — Варвара теряет сайт как источник знаний. Признак двойной: правило ровно одно
+      # И маршрут TCP → awg-ru (второе ловит пустую таблицу 225, когда awg-ru упал). ТОЛЬКО ТРЕВОГА, не чиню.
+      # ⚠️ ЧЕГО НЕ ЛОВИТ: маршрут верен, а vps-ru не отвечает; IPv6; другие адреса RU; чужое правило рядом в pref 72.
+      GR_RUTCP=""; GR_RUTCP_TXT=""
+      if [ "$a" = "1" ] && [ "$b" = "awg-ru" ]; then
+        log "   правило 72: TCP на 46.19.64.6 через awg-ru — в порядке"
+      else
+        GR_RUTCP="правил $a, выход $b"; GR_RUTCP_TXT="TCP на внешний адрес vps-ru (46.19.64.6) НЕ через awg-ru: правил $a (норма 1), выход $b (норма awg-ru) — сайты на vps-ru и SSH на его внешний адрес упираются в killswitch. Лечение: systemctl restart awg-quick@awg-ru или ip -4 rule add to 46.19.64.6/32 ipproto tcp iif lo lookup 225 priority 72"; BEDY=$((BEDY+1))
+      fi ;;
+    MESTO)
+      [ "$a" -ge "$PORog_MESTA_PROC" ] && { trevoga "место на / занято ${a}% (порог ${PORog_MESTA_PROC}%)"; BEDY=$((BEDY+1)); } ;;
+    PAUZA)
+      # B-N-1462: a = агент, b = «с;писем;заданий;службы»
+      IFS=";" read -r _ps _pl _pt _psv <<<"$b"
+      log "   ⏸ $a на паузе по /stop с $_ps, в очереди писем $_pl, заданий $_pt — тишина его служб ($_psv) тревоги не даёт"
+      for _x in $_psv; do PAUZA_SL[$_x]="$a на паузе по /stop с $_ps, в очереди писем $_pl, заданий $_pt"; done ;;
+    PAUZA_BEDA)
+      GR_PAUZA="$GR_PAUZA${GR_PAUZA:+, }$a"; GR_PAUZA_TXT="$GR_PAUZA_TXT${GR_PAUZA_TXT:+; }$a — $b"; BEDY=$((BEDY+1)) ;;
+    KVOTA_PROHOD)
+      case "$b" in kursor-sbroshen) KV_SBROS="$KV_SBROS${KV_SBROS:+, }$a" ;; *) KV_NET="$KV_NET${KV_NET:+, }$a" ;; esac ;;
+    KURSOR)
+      # B-N-1443: a = служба, b = «курсор|время отказа|срок» — в новое состояние курсоров
+      KURSORY_NOV="$KURSORY_NOV$a|$b"$'\n' ;;
+    HOD)
+      # строка среза читается как «IFS=| read -r vid a b»: a = служба, b = «минуты|письма»
+      _sl="$a"; _min="${b%%|*}"; _ost="${b#*|}"; _pisem="${_ost%%|*}"
+      # признак живости хода: <вид>|<пояснение>; вида нет — старый формат строки
+      _prv="${_ost#*|}"; _vid="${_prv%%|*}"; _poyas="${_prv#*|}"
+      _tiho="${_poyas##*|}"; _poyas="${_poyas%|*}"
+      case "$_tiho" in *[!0-9]*) _tiho="?" ;; esac
+      [ -z "$_tiho" ] && _tiho="?"
+      case "$_prv" in "$_pisem") _vid=""; _poyas="" ;; esac
+      case "$_vid" in
+        rabota)    _hvost_zhiv="✅ признак жизни: $_poyas" ;;
+        zavisanie) _hvost_zhiv="🔴 признак жизни: $_poyas" ;;
+        slepota)   _hvost_zhiv="⚠️ признак снять не удалось: $_poyas" ;;
+        *)         _hvost_zhiv="⚠️ признак живости не пришёл" ;;
+      esac
+      if [ "$_min" = "?" ]; then
+        trevoga "ход $_sl: журнал НЕ ЧИТАЕТСЯ — это про ДОСТУП, а не про ход"
+        BEDY=$((BEDY+1))
+      elif [ "$_tiho" = "?" ] && [ "$_min" -ge 25 ]; then
+        # 🔴 СЛЕПОТА НЕ МОЛЧИТ (07.09.2026, нашёл сам четвёртой порчей): если величина
+        #   молчания не снялась, прежняя правка просто НЕ КРИЧАЛА — то есть слепота
+        #   выглядела как «всё в порядке». Порог 25 мин здесь только чтобы не кричать
+        #   о каждом коротком ходе: короткий ход без величины безвреден.
+        trevoga "⚠️ СТОРОЖ СЛЕП ПО МОЛЧАНИЮ у $_sl: величину тишины снять не удалось (ход идёт $_min мин, писем $_pisem). Это про ДОСТУП к журналу, а не про состояние хода. $_hvost_zhiv"
+        BEDY=$((BEDY+1))
+      elif [ "$_tiho" != "?" ] && [ "$_tiho" -ge 900 ]; then
+        # 🔴 ТРЕВОГА ПО МОЛЧАНИЮ, а не по длительности (07.09.2026).
+        trevoga "🔴 ХОД МОЛЧИТ у $_sl: ни строки $_tiho с (порог 900), сам ход идёт $_min мин, писем $_pisem. $_hvost_zhiv"
+        BEDY=$((BEDY+1))
+      elif [ "$_min" -ge 180 ]; then
+        # 🔴 ДЛИТЕЛЬНОСТЬ БОЛЬШЕ НЕ ПОВОД ДЛЯ ТРЕВОГИ САМА ПО СЕБЕ (07.09.2026).
+        #   Было 25 мин — и кричало на ЗДОРОВОМ ходе в 65 мин (замер Забавы: 123 события,
+        #   ответ доставлен). Осталась только страховка от бесконечного хода, который
+        #   ПИШЕТ строки (молчания нет, поэтому ветка выше не сработает). 180 мин — втрое
+        #   больше самого длинного наблюдённого законного хода (65 мин).
+        trevoga "⚠️ ОЧЕНЬ ДОЛГИЙ ХОД у $_sl: идёт $_min мин, но НЕ молчит (тишина $_tiho с) — это не зависание, проверьте смысл вручную. Писем $_pisem. $_hvost_zhiv"
+        BEDY=$((BEDY+1))
+      fi ;;
+    MANIFEST)
+      if [ "$a" = "?" ]; then
+        trevoga "манифест общего каталога НЕ ПРОЧИТАН — это про ДОСТУП, а не про однородность опоры"
+        BEDY=$((BEDY+1))
+      else
+        _post=${a%%/*}; _vsego=${a##*/}
+        if [ "$_post" != "$_vsego" ]; then
+          trevoga "опора монтажа НЕОДНОРОДНА: из $_vsego пакетов памяти только $_post ссылаются на постоянный каталог тарболов. Остальные при восстановлении пойдут в реестр, которого для нас больше нет — и это вскроется в худший момент"
+          BEDY=$((BEDY+1))
+        fi
+      fi ;;
+    YADRO_DISK)
+      # 🔴 ЗАЧЕМ: у Искры боевой путь идёт ссылками прямо в рабочий каталог, между правкой файла
+      # и боем нет ни одного шага. При Restart=on-failure ПАДЕНИЕ процесса поднимает то, что
+      # лежит на диске — то есть решение о подъёме перестаёт быть чьим-либо (находка Вениамин
+      # и Искры 04.09). Сторож обязан заметить такой подъём и назвать его вслух.
+      OZHID="$SOST/ozhidaemyj-start-iskra.txt"
+      TREV="$SOST/trevoga-start-iskra.txt"   # формат: тактов|первый_такт_unix|последний_алерт_unix
+      NOV_START="$(printf '%s\n' "$SREZ" | awk -F'|' '$1=="iskra.service"{print $3}')"
+      if [ -z "$NOV_START" ]; then
+        # Г2: пустота — ответ ПРО КАНАЛ, а не про предмет. Молчание тут соврало бы «перезапуска не было».
+        log "   старт iskra.service: снять не смог — исход НЕИЗВЕСТЕН (это НЕ «перезапуска не было»)"
+      elif [ ! -f "$OZHID" ]; then
+        # Г1: первый такт после правки состояния — ОПОРНЫЙ. Не тревога и НЕ молчание.
+        # Молча принять текущее за эталон нельзя: сторож, заведённый после ЧУЖОГО подъёма,
+        # узаконил бы его. Поэтому строка с прямым предупреждением.
+        printf '%s' "$NOV_START" > "$OZHID"
+        log "   ОПОРНЫЙ ТАКТ: принят старт «$NOV_START» как ожидаемый, сравнивать было не с чем. Если этот подъём НЕ наш — разбирать руками."
+      elif [ "$NOV_START" = "$(cat "$OZHID")" ]; then
+        rm -f "$TREV"
+      # 🔴 п.125: квитанция читалась ТОЛЬКО из файла Искры, а подъёмы её узла делаю Я.
+      # Тревога висела у того, кто не может её закрыть (26 тактов к моменту находки).
+      # Второй источник — МОЯ квитанция: кто поднял, тот и подтверждает.
+      elif [ -f "$SOST/moya-kvitanciya.txt" ] \
+           && MOYA="$(cat "$SOST/moya-kvitanciya.txt" 2>/dev/null)" \
+           && MOYA_S="$(date -d "$MOYA" +%s 2>/dev/null)" && [ -n "$MOYA_S" ] \
+           && NOV_S2="$(date -d "$NOV_START" +%s 2>/dev/null)" && [ -n "$NOV_S2" ] \
+           && [ "$MOYA_S" = "$NOV_S2" ]; then
+        log "   подъём подтверждён МОЕЙ квитанцией ($MOYA) — поднимал я, тревога снята"
+        printf '%s' "$NOV_START" > "$OZHID"
+        rm -f "$TREV"
+      elif KVIT="$(snyat "sed -n 's/^PODYOM_PODTVERZHDEN=//p' /opt/iskra/workspace/SOSTOYANIE-ISKRY.txt")" \
+           && KVIT="$(printf '%s' "$KVIT" | sed 's/[[:space:]]*#.*$//; s/[[:space:]]*$//')" \
+           && [ -n "$KVIT" ] \
+           && KVIT_S="$(date -d "$KVIT" +%s 2>/dev/null)" && [ -n "$KVIT_S" ] \
+           && NOV_S="$(date -d "$NOV_START" +%s 2>/dev/null)" && [ -n "$NOV_S" ] \
+           && [ "$KVIT_S" = "$NOV_S" ]; then
+        # 🔴 КВИТАНЦИЯ ИСКРЫ (05.09.2026, её половина + моя). До этого подтверждение клалось
+        # ТОЛЬКО рукой (--podtverdit), и половина схемы держалась на памяти поднимающего.
+        # Теперь тот, кто пережил подъём, сам пишет строку в свой файл состояния, а сторож
+        # её читает. Предмет не новый: файл уже существовал и уже читался.
+        # 🔴 ЧЕГО КВИТАНЦИЯ НЕ ДОКАЗЫВАЕТ — АВТОРСТВА (найдено Забавой 05.09 на моём же случае).
+        # Строка «PODTVERDILA=iskra» ставится в обычный файл на sadik, а sudo там есть у всех
+        # троих. Я сам 05.09 испортил её пробой и ВОССТАНОВИЛ своей рукой — содержимое верное,
+        # а подпись после этого недостоверна. Значит механизм проверяет НАЛИЧИЕ СТРОКИ, а не
+        # ФАКТ РАЗБОРА, и защиты от подделки у него нет по устройству прав.
+        # Оставляем как есть НАМЕРЕННО: неподделываемого признака у нас нет (sudo общий), а
+        # выдуманная защита была бы хуже — она создала бы видимость доказанного авторства.
+        # Держится на добросовестности, и это сказано вслух, а не подразумевается.
+        # ⚠️ ГРАНИЦЫ, названные ЕЮ и соблюдаемые здесь буквально:
+        #   квитанция значит «подъём РАЗОБРАН ИСКРОЙ» — и только;
+        #   она НЕ значит «подъём был законным» (это решает координатор);
+        #   она НЕ значит «состав верный» (это решает приёмка).
+        # Поэтому в журнал пишем именно то, что подтверждено, а не «всё хорошо».
+        printf '%s' "$NOV_START" > "$OZHID"
+        rm -f "$TREV"
+        log "   подъём «$NOV_START» ПОДТВЕРЖДЁН квитанцией Искры (разобран ЕЮ; законность — за координатором, состав — за приёмкой)"
+      else
+        # ⚠️ Сюда попадаем и когда квитанции НЕТ, и когда её НЕ УДАЛОСЬ ПРОЧЕСТЬ — это разные
+        # вещи, и различаем их вслух: молчание строки = «Искра ещё не смотрела», отказ канала
+        # = «спросить не смогли». Ни то, ни другое не гасит тревогу — гасит только совпадение.
+        if [ -z "${KVIT+x}" ]; then
+          log "   квитанция: канал до $HOST не ответил — это НЕ «не подтверждено»"
+        elif [ -z "$KVIT" ]; then
+          log "   квитанция: строки нет — Искра ещё не разбирала этот подъём"
+        else
+          log "   квитанция: есть, но про ДРУГОЙ старт («$KVIT») — этот подъём ею не разобран"
+          # 🔴 формы времени РАЗНЫЕ: она пишет ISO (2026-09-05T11:01:42Z), systemd отдаёт
+          # «Sat 2026-09-05 11:01:42 UTC». Сравнение строк не сошлось бы НИКОГДА — сверяем
+          # обе через date +%s. И срезаем комментарий после значения: она пишет пояснение
+          # в той же строке, и без среза оно уезжало в значение.
+        fi
+        # Тревога ПОВТОРЯЕТСЯ каждый такт, пока подъём не подтверждён рукой.
+        # 🔴 06.09.2026, ЧЕТВЁРТОЕ ПОЛЕ — СЧЁТ УСПЕШНЫХ ОТПРАВОК (решение Вениамина, принято Забавой).
+        # Прежде «первые 3 подряд» считались по ТАКТАМ: канал лежал три первых такта — все три
+        # бесплатных окна съедены отказами, дальше раз в час. Та же природа, что у отметки времени.
+        # Счёт ведётся ОТДЕЛЬНЫМ полем, `_n` НЕ переопределяется: на первое число опирается формат
+        # файла и текст тревоги, менять его смысл значит соврать всем, кто его читает.
+        # Старый файл из трёх полей читается как есть: пустое четвёртое = ноль успехов.
+        _n=1; _perv="$SEYCHAS"; _posl=0; _usp=0
+        if [ -f "$TREV" ]; then
+          IFS='|' read -r _n _perv _posl _usp < "$TREV"
+          _n=$((_n+1))
+          [ -n "$_usp" ] || _usp=0
+        fi
+        # Г4: текст «ПЕРЕЗАПУСКАЛАСЬ» НЕ МЕНЯЕТСЯ — на нём может стоять чужой измеритель.
+        # Счётчик приписывается ОТДЕЛЬНОЙ частью строки, после разделителя.
+        _boj="$(printf "%s\n" "$SREZ" | awk -F"|" "\$1==\"YADRO_BOJ\"{print \$2}")"
+        _txt="iskra.service ПЕРЕЗАПУСКАЛАСЬ (было «$(cat "$OZHID")», стало «$NOV_START»). Если это не наш подъём — сработал автоперезапуск. В бою (строка подъёма): ${_boj:-СЛЕПОТА: строки подъёма в окне журнала нет} · на диске сейчас: ${a:-?} — при следующем перезапуске уедет он"
+        _txt="$_txt · закрывается: строкой PODYOM_PODTVERZHDEN=<время> в файле Искры ЛИБО моей квитанцией (<SOST>/moya-kvitanciya.txt), если поднимал я · не подтверждено $_n тактов, с $(date -d "@$_perv" '+%F %T' 2>/dev/null || echo '?')"
+        # 🔴 07.09.2026: ПОРОГ СЕРИИ. Такт 10 мин, подавление уже «раз в час».
+        #    36 тактов = 6 часов, за которые НИ ОДИН из двух закрывающих путей
+        #    не сработал ни разу ⇒ это не «ещё не разобрали», а неработающий
+        #    механизм закрытия. Число назначено ПО УСТРОЙСТВУ (период подавления
+        #    x6), а не по ряду: ряда законных серий нет — за всю глубину журнала
+        #    закрытие ровно одно. Граница названа, число пересмотреть по ряду,
+        #    когда он появится.
+        [ "$_n" -ge 36 ] && _txt="$_txt · 🔴 НЕ ЗАКРЫТО $_n ТАКТОВ ПОДРЯД (>6 ч) — закрывающий механизм НЕ РАБОТАЕТ"
+        log "🔴 $_txt"
+        # Г3: в ЖУРНАЛ каждый такт (журнал не устаёт), в ТЕЛЕГРАМ первые 3 подряд, дальше
+        # не чаще раза в час. Без этого 72 сообщения в сутки — тревогу замьютят, и мы
+        # получим обратную беду: сигнал есть, а его перестали читать.
+        if [ "$_usp" -lt 3 ] || [ $(( SEYCHAS - _posl )) -ge 3600 ]; then
+          # 🔴 06.09.2026: ОТМЕТКА ТОЛЬКО ПРИ УСПЕХЕ. Прежде `_posl` ставился по факту ПОПЫТКИ:
+          # канал отказал — сторож записывал «я сообщил» и молчал час, и следующий отказ снова
+          # продлевал молчание. Отказ САМ СЕБЯ прятал; механизм становился тем тише, чем хуже
+          # предмет. Цена нового поведения названа и принята (Забава, 06.09): при долгом отказе
+          # попытки идут каждый такт — шум в журнале, но не в телеграме, туда и так ничего не шло.
+          _kod=0
+          kanal "$_txt" || _kod=$?
+          if [ "$_kod" -eq 0 ]; then
+            _posl="$SEYCHAS"; _usp=$(( _usp + 1 ))
+          else
+            log "⚠️ канал тревог НЕ принял сообщение (код $_kod) — отметка об отправке НЕ обновлена, следующий такт попробует снова"
+          fi
+        fi
+        printf '%s|%s|%s|%s' "$_n" "$_perv" "$_posl" "$_usp" > "$TREV"
+        BEDY=$((BEDY+1))
+      fi
+      log "   ядро на диске (главный вход): ${a:-?}" ;;
+  esac
+done <<< "$SREZ"
+# B-N-1443: курсоры квоты — новым файлом рядом и mv; срез без строк KURSOR прежний файл не стирает.
+[ -n "$KURSORY_NOV" ] && printf '%s' "$KURSORY_NOV" > "$KURSORY_F.nov" && mv -f "$KURSORY_F.nov" "$KURSORY_F"
+[ -n "$KV_SBROS" ] && log "   квота Codex: курсор сброшен (journalctl его не принял) — полный проход 7 суток: $KV_SBROS"
+[ -n "$KV_NET" ] && log "   квота Codex: курсора нет (первый прогон, новая служба или строка отброшена) — полный проход 7 суток: $KV_NET"
+
+# ── 2б. Группы служб (B-N-860): обрыв — сразу и раз в час; тишина — на смену состава и раз в 6 ч; квота — только на смену.
+gruppa obryv   "$GR_OBRYV"   "ОБРЫВ: служба не active — $GR_OBRYV" 3600
+gruppa pauza   "$GR_PAUZA"   "файл паузы: $GR_PAUZA_TXT — это НЕ пауза, тишина судится как прежде" 3600
+gruppa tishina "$GR_TISHINA" "молчат дольше $PORog_TISHINY_MIN мин (процесс жив, событий нет): $GR_TISHINA_MIN" 21600
+# B-N-1337: mesh awg9 — как обрыв службы, раз в час (канал встал — та же срочность, что служба не active).
+gruppa mesh-awg9 "$GR_MESH" "$GR_MESH_TXT" 3600
+# D-N-1651: правило 72 — как mesh: сразу на смену состава и раз в час, пока не в порядке.
+gruppa ru-tcp-72 "$GR_RUTCP" "$GR_RUTCP_TXT" 3600
+# B-N-1660: RU split — сразу на смену состава и раз в час, пока не в порядке.
+gruppa ru-split "$GR_RUSPLIT" "$GR_RUSPLIT_TXT" 3600
+# B-N-1675: белый список Варвары — на смену состава и раз в 6 ч, пока не в порядке (маска при поломке прячет больше, не меньше).
+gruppa belyj-varvary "$GR_BELYJ" "$GR_BELYJ_TXT" 21600
+# B-N-1679: немота песочницы Варвары — сразу на смену состава и раз в час, пока не в порядке.
+gruppa nemota-varvary "$GR_NEMOTA" "$GR_NEMOTA_TXT" 3600
+gruppa kvota   "$GR_KVOTA"   "молчат ПО КВОТЕ Codex до $KVOTA_DO (срок из отказа «usage limit», пояс не указан — читаю как UTC): $GR_KVOTA — не беда, до срока не повторяю" 0
+
+# ── 2в. СТОРОЖ НАД СТОРОЖАМИ (B-N-884, 25.09.2026): свежесть последнего УСПЕШНОГО прогона суточных сторожей ─────────────
+# 🔴 ЗАЧЕМ. vse-stendy-boevye (03:40Z) и dve-kopii-watch (06:47Z) ходят раз в сутки, и их собственной жизни никто не видел:
+#   (а) таймер не сработал вовсе — тишина неотличима от «всё зелёное»; (б) юнит failed (у обёртки обходчика — немой канал
+#   тревог) — тревоги нет по построению, а ветка 2 выше смотрит только службы агентов из agent-registry sluzhby.
+# Перечень — ДАННЫМИ: /etc/agent-registry/storozha-sutochnye.txt (SADIK_SUTOCHNYE), «юнит срок_часов».
+# Признак — ЖУРНАЛ systemd, не ExecMainExitTimestamp: тот обнуляется перезагрузкой, журнал постоянный (/var/log/journal).
+#   последний «done» (JOB_TYPE=start) старше срока → «просрочен»; «done» нет вовсе → «прогона нет»; is-failed → «failed».
+#   ⚠️ «done» = прогон СОСТОЯЛСЯ, не «был зелёным»: у сторожей с SuccessExitStatus=1 2 красный итог тоже «done» (INFO Вениамина).
+# ЗОВУЩИЙ СТЕНДА ЭТОЙ ВЕТКИ: dorabotki/stendy/stend-storozha-nad-storozhami.sh — рука при правке sadik-watch (в ночной обход не
+#   входит: ~10 мин, сам sadik-watch ~74 с, при пределе обходчика 120 с на стенд).
+#   Юнит в activating (прогон идёт) — свежесть этого такта не судится, НО (B-N-1828, 08.10.2026, Аврора; ворота Вениамина 08:51Z):
+#   activating дольше срок_часов от ВХОДА в него (InactiveExitTimestamp; у oneshot ActiveEnter пуст, StateChange сдвигается на смене
+#   подсостояния — проверено на живом oneshot 08:48Z) → «застрял»; метка не прочитана → «zastryal-slepo», не тишина. Пока юнит висит,
+#   таймер следующий прогон не начнёт — за сроком прогон уже пропущен. Дыра реальная: 37 из 77 сторожей перечня без TimeoutStartSec.
+# Тревога — групповая (gruppa): смена состава сразу, напоминание раз в 6 ч; отметка — только при успехе канала.
+# ⚠️ ЧЕГО НЕ ЛОВИТ: застрявшего в activating — ДО срока от входа: худший случай от последнего «done» ≈ (вход − done) + срок, до ~2×срок —
+#   суточный 26 ч → до ~52 ч, недельный 170 ч → до ~340 ч (решение Забавы 08:51Z: ловим «застрял навсегда», без новой настройки);
+#   deactivating/reloading; петлю перезапусков (каждый старт — новая метка входа); прыжок часов (метка realtime); «успешный» прогон, ничего не проверивший; отказ ОБОИХ —
+#   канала тревог и самого sadik-watch (его жизнь видна только голосом «жив» раз в 7 суток, раздел 3). При отказе канала
+#   тревога остаётся в журнале и повторяется каждый такт до успеха — второго канала здесь нет (см. П7 B-N-884).
+SUTOCHNYE="${SADIK_SUTOCHNYE:-/etc/agent-registry/storozha-sutochnye.txt}"
+GR_SUT=""; GR_SUT_TXT=""; V_PERECHNE=" "; NE_VNESENY=" "
+if ! sut_spisok=$(grep -vE '^[[:space:]]*(#|$)' "$SUTOCHNYE" 2>/dev/null) || [ ! -r "$SUTOCHNYE" ]; then
+  GR_SUT="ПЕРЕЧЕНЬ"; GR_SUT_TXT="перечень суточных сторожей не прочитан: $SUTOCHNYE — чью жизнь проверять, неизвестно"; BEDY=$((BEDY+1))
+else
+  while read -r _u _srok _; do
+    [ -n "$_u" ] || continue
+    # B-N-1068: «!<юнит> <причина>» — осознанно НЕ внесён (для проверки полноты ниже); срока у такой строки нет.
+    case "$_u" in '!'*) NE_VNESENY="$NE_VNESENY${_u#!} "; continue ;; esac
+    V_PERECHNE="$V_PERECHNE$_u "
+    if ! [[ "$_srok" =~ ^[1-9][0-9]*s?$ ]]; then
+      GR_SUT="$GR_SUT${GR_SUT:+ }$_u:строка"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }$_u — строка перечня негодна (срок «${_srok}»)"; BEDY=$((BEDY+1)); continue
+    fi
+    case "$_srok" in *s) _srok_s=${_srok%s}; _srok_label="$_srok_s с" ;; *) _srok_s=$(( _srok * 3600 )); _srok_label="$_srok ч" ;; esac
+    if systemctl is-failed --quiet "$_u" 2>/dev/null; then
+      # 4 не зелёное. Общий helper сам проверяет запись, срок и текущую invocation юнита.
+      case "$_u" in registry-watchdog.service|vypusk-okno-watch.service|zhivaya-versiya-watch.service|dve-kopii-watch.service)
+        _mo_out=$(timeout -k 1s 10s "${MONTAZH_OKNO_BIN:-/usr/local/sbin/montazh-okno}" yunit-otlozheno --avto-montazh "$_u" 2>/dev/null); _mo_code=$?
+        if [ "$_mo_code" = 4 ] || [ "$_mo_code" = 6 ]; then log "   $_u — $_mo_out (не зелёный исход прежнего прогона)"; continue; fi ;;
+      esac
+      GR_SUT="$GR_SUT${GR_SUT:+ }$_u:failed"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }$_u — FAILED"; BEDY=$((BEDY+1)); continue
+    fi
+    if [ "$(systemctl show "$_u" -p ActiveState --value 2>/dev/null)" = activating ]; then
+      _vh=$(systemctl show "$_u" -p InactiveExitTimestamp --timestamp=unix --value 2>/dev/null); _vh="${_vh#@}"
+      if ! [[ "$_vh" =~ ^[1-9][0-9]*s?$ ]]; then
+        GR_SUT="$GR_SUT${GR_SUT:+ }$_u:zastryal-slepo"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }$_u — в activating, момент входа не прочитан (InactiveExitTimestamp «${_vh}») — застрял ли, неизвестно"; BEDY=$((BEDY+1))
+      elif [ $(( SEYCHAS - _vh )) -gt "$_srok_s" ]; then
+        GR_SUT="$GR_SUT${GR_SUT:+ }$_u:zastryal"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }$_u — прогон идёт $(( (SEYCHAS - _vh) / 3600 )) ч (с $(TZ=Europe/Moscow date -d "@$_vh" '+%d.%m %H:%M') МСК) при сроке $_srok_label — застрял в activating"; BEDY=$((BEDY+1))
+      else
+        log "   $_u — прогон идёт $(( (SEYCHAS - _vh) / 60 )) мин (срок $_srok_label), свежесть в этом такте не сужу"
+      fi
+      continue
+    fi
+    _t=$(journalctl UNIT="$_u" JOB_TYPE=start JOB_RESULT=done -o json -n 1 --no-pager -q 2>/dev/null | jq -r '.__REALTIME_TIMESTAMP // empty' 2>/dev/null | tail -1)
+    if [ -z "$_t" ]; then
+      GR_SUT="$GR_SUT${GR_SUT:+ }$_u:net-progona"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }$_u — состоявшегося прогона в журнале НЕТ"; BEDY=$((BEDY+1)); continue
+    fi
+    _vozr=$(( SEYCHAS - _t / 1000000 ))
+    if [ "$_vozr" -gt "$_srok_s" ]; then
+      GR_SUT="$GR_SUT${GR_SUT:+ }$_u:prosrochen"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }$_u — последний прогон состоялся $(( _vozr / 3600 )) ч назад при сроке $_srok_label"; BEDY=$((BEDY+1))
+    else
+      log "   суточный сторож $_u: прогон состоялся $(( _vozr / 3600 )) ч назад (срок $_srok_label)"
+    fi
+  done <<< "$sut_spisok"
+  # ── B-N-1068 (26.09.2026, Заря; слово Забавы 14:40Z): ПОЛНОТА ПЕРЕЧНЯ. Перечень — данные, руками: новый таймер без строки молчал бы
+  #   (dsh-compact-watch был failed 6 ч, читателя не было — B-N-1060/1062). Наш таймер = файл юнита в /etc/systemd/system (шаблон
+  #   @.timer — тоже); его служба обязана иметь строку перечня либо «!<служба> <причина>». Иначе — красное в той же группе.
+  #   Список таймеров пуст/не получен — СЛЕПОТА полноты, не «всё внесено».
+  # ⚠️ НЕ ЛОВИТ: таймеры вне /etc/systemd/system (дистрибутивные, /usr/lib); службы без таймера (зовут руками, cron, Wants=);
+  #   «!»-строку, чья служба давно исчезла (молча лишняя).
+  # A-N-1948 №5 (дельта Забавы 04:12Z): ЗАМАСКИРОВАННЫЙ таймер — решение, а не забытая строка. list-timers --all его ДАЁТ, но вместо
+  #   службы «-» (прежний комментарий «не даёт» был неверен), и сторож требовал «!- причина». Теперь masked (LoadState или
+  #   UnitFileState) — отдельный счёт «замаскировано N: <имена>» в строке полноты, не красное. Служба «-» БЕЗ маски (юнит битый
+  #   или не загрузился; LOW Вениамина 04:27Z) — не маска: красная строка «служба не определена: <таймер>».
+  #   ⚠️ НЕ ЛОВИТ: маску, поставленную не тем таймером (решение — человека); размаскировку без строки перечня — она снова краснеет.
+  _tmr=$(systemctl list-timers --all --no-legend --plain 2>/dev/null | awk 'NF>=2 {print $(NF-1), $NF}')
+  if [ -z "$_tmr" ]; then
+    GR_SUT="$GR_SUT${GR_SUT:+ }ПОЛНОТА:slepo"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }полнота перечня НЕ проверена: список таймеров пуст или не получен (это не «всё внесено»)"; BEDY=$((BEDY+1))
+  else
+    declare -A _akt=(); _nashih=0; _isk=0; _bez=0; _mask=0; _mask_im=""; _neopr=0
+    while read -r _tm _sv; do [ -n "$_tm" ] && _akt["$_tm"]="$_sv"; done <<< "$_tmr"
+    while read -r _id _fr _ls; do
+      case "$_fr" in /etc/systemd/system/*) ;; *) continue ;; esac
+      _sv="${_akt[$_id]:-}"; [ -n "$_sv" ] || continue
+      _nashih=$((_nashih+1))
+      if [ "$_ls" = masked ]; then _mask=$((_mask+1)); _mask_im="$_mask_im${_mask_im:+, }$_id"; continue; fi
+      if [ "$_sv" = - ]; then
+        _neopr=$((_neopr+1))
+        GR_SUT="$GR_SUT${GR_SUT:+ }$_id:sluzhba-neopr"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }служба не определена: $_id — таймер наш ($_fr), в list-timers службы нет («-»), маски нет: юнит битый или не загрузился"; BEDY=$((BEDY+1))
+        continue
+      fi
+      case "$V_PERECHNE" in *" $_sv "*) continue ;; esac
+      case "$NE_VNESENY" in *" $_sv "*) _isk=$((_isk+1)); continue ;; esac
+      _bez=$((_bez+1))
+      GR_SUT="$GR_SUT${GR_SUT:+ }$_sv:net-stroki"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }$_sv — таймер $_id наш ($_fr), строки в перечне НЕТ (и нет «!$_sv причина»)"; BEDY=$((BEDY+1))
+    done < <(systemctl show -p Id -p FragmentPath -p LoadState -p UnitFileState -- "${!_akt[@]}" 2>/dev/null \
+             | awk 'BEGIN{RS=""; FS="\n"} {id=""; fr=""; ms="-"; for (i=1; i<=NF; i++) { if ($i ~ /^Id=/) id=substr($i,4); if ($i ~ /^FragmentPath=/) fr=substr($i,14); if ($i == "LoadState=masked" || $i == "UnitFileState=masked") ms="masked" } if (id != "") print id, (fr == "" ? "-" : fr), ms}')
+    log "   полнота перечня: наших таймеров $_nashih · исключено «!» $_isk · замаскировано $_mask${_mask_im:+: $_mask_im} · служба не определена $_neopr · без строки $_bez"
+    if [ "$_nashih" -eq 0 ]; then   # таймеры есть, а наших 0 — не прочитаны пути юнитов (show отказал), это слепота
+      GR_SUT="$GR_SUT${GR_SUT:+ }ПОЛНОТА:slepo"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }полнота перечня НЕ проверена: таймеров ${#_akt[@]}, а наших (файл в /etc/systemd/system) 0 — пути юнитов не прочитаны"; BEDY=$((BEDY+1))
+    fi
+  fi
+fi
+gruppa sutochnye "$GR_SUT" "СТОРОЖ НАД СТОРОЖАМИ: $GR_SUT_TXT" 21600
+
+# A-N-1146 BEGIN: independent reader; masked timer is an explicit disabled state.
+_mem_text=$(timeout --kill-after=5s 20s /usr/bin/python3 -I -S -B /usr/local/lib/dsh-pamyat-obsluzhivanie/heartbeat.py 2>&1); _mem_rc=$?
+if [ "$_mem_rc" -eq 0 ]; then
+  log "   обслуживание памяти: $_mem_text"
+  gruppa pamyat-obsluzhivanie "" "" 21600
+else
+  BEDY=$((BEDY+1))
+  gruppa pamyat-obsluzhivanie "code=$_mem_rc" "Обслуживание памяти: $_mem_text (код $_mem_rc)" 21600
+fi
+# A-N-1146 END
+
+# B-N-1913 BEGIN: члены групп-шлюзов прав (limity-vhod, agent-button, claudeoauth) = эталону /etc/agent-registry/gruppy-prav.conf
+# (sysusers или явный список). Повод B-N-1908: nobody двое суток в limity-vhod вне sysusers, никто не видел. Проверка только
+# читает; тревога — по СМЕНЕ состава (gruppa), напоминание раз в 6 ч, «снова в порядке» при уходе. Слепота — тоже тревога.
+# ⚠️ ЧЕГО НЕ ЛОВИТ: см. шапку gruppy-prav-watch (NSS вне файлов, ACL мимо групп, группы вне конфига, вход-выход между тактами).
+GRUPPY_PRAV="${SADIK_GRUPPY_PRAV_BIN:-/usr/local/libexec/gruppy-prav-watch}"
+_gp_text=$(timeout --kill-after=5s 20s /usr/bin/python3 -ISB "$GRUPPY_PRAV" 2>&1); _gp_rc=$?
+_gp_sost=$(printf '%s\n' "$_gp_text" | sed -n 's/^СОСТАВ: //p' | tail -1)
+if [ "$_gp_rc" -eq 0 ]; then
+  log "   группы прав: $(printf '%s\n' "$_gp_text" | grep -c '^ok ') групп сходятся с эталоном"
+  gruppa gruppy-prav "" "" 21600
+else
+  BEDY=$((BEDY+1))
+  gruppa gruppy-prav "${_gp_sost:-kod=$_gp_rc}" "ГРУППЫ ПРАВ (код $_gp_rc): $(printf '%s\n' "$_gp_text" | grep -E '^(ЛИШНИЙ|НЕДОСТАЁТ|СЛЕПОТА)' | tr '\n' ';' | cut -c1-600)" 21600
+fi
+# B-N-1913 END
+
+# A-N-1549 BEGIN: настройка канала agent-alert — каждый такт, без отправки (agent-alert --proverit-nastrojku: 0 — годна, 2 — нет).
+# Иной код или ответ без признака режима (старая редакция agent-alert, нет файла, зависание) — «проверка не состоялась», тоже беда.
+# ⚠️ ЧЕГО НЕ ЛОВИТ: сторож ходит от root, а root читает любой файл — «токен не читается учёткой агента» отсюда не видно;
+#   принимает ли Telegram токен и есть ли чат — знает только отправка.
+AGENT_ALERT_PROVERKA="${SADIK_AGENT_ALERT_BIN:-/usr/local/bin/agent-alert}"
+_aa_text=$(timeout --kill-after=5s 20s "$AGENT_ALERT_PROVERKA" --proverit-nastrojku 2>&1); _aa_rc=$?
+if [ "$_aa_rc" -eq 0 ] && printf '%s\n' "$_aa_text" | grep -q '^НАСТРОЙКА ГОДНА'; then
+  log "   канал agent-alert: $_aa_text"
+  gruppa agent-alert-nastrojka "" "" 21600
+else
+  BEDY=$((BEDY+1))
+  case "$_aa_text" in *'ОТКАЗ НАСТРОЙКИ'*) _aa_sut="настройка негодна" ;; *) _aa_sut="проверка настройки не состоялась" ;; esac
+  gruppa agent-alert-nastrojka "code=$_aa_rc" "Канал agent-alert ($AGENT_ALERT_PROVERKA): $_aa_sut — $(printf '%s' "$_aa_text" | tr '\n' ' ' | cut -c1-300) (код $_aa_rc)" 21600
+fi
+# A-N-1549 END
+
+# B-N-1646 BEGIN: ГОСТЕВЫЕ ПРАВИЛА ВАРВАРЫ (Искра; ворота Вениамина; сводный кандидат B-N-1657). Загрузчик инструкций гостевого
+# пресета пропускает пропавший/нечитаемый файл МОЛЧА — гостю остаётся запасная строка персоны. Вставка varvara.service
+# (80-gostevye-pravila.conf) кричит только при старте; здесь — каждый такт, плюс подмена содержимого: сумма сверяется с
+# AGENTS.md.prinyato (sha256 последней ПРИНЯТОЙ редакции; кладёт рука, принявшая правку, — не сторож).
+# Чтение — ОТ varvara (root прочтёт и то, что Варвара не может). Местная проверка, как A-N-1146/A-N-1549/2г: смысл только при MESTNO=1.
+# ⚠️ ЧЕГО НЕ ЛОВИТ: правильную по сумме, но вредную по смыслу редакцию (её принимает человек); живую подачу файла моделью;
+#   подмену самой отметки .prinyato рукой root (сумма сойдётся с подменённым файлом).
+GP="${SADIK_GOSTI_PRAVILA:-/etc/varvara/gosti/AGENTS.md}"; GPP="$GP.prinyato"; _gp_sost=""
+if ! runuser -u varvara -- test -r "$GP" 2>/dev/null; then _gp_sost="нет или не читается учёткой varvara"
+elif [ "$(sha256sum "$GP" | cut -c1-64)" != "$(cut -c1-64 "$GPP" 2>/dev/null)" ]; then _gp_sost="сумма ≠ принятой ($GPP)"
+fi
+if [ -z "$_gp_sost" ]; then log "   гостевые правила Варвары: $GP читается учёткой varvara, сумма = принятой"; else BEDY=$((BEDY+1)); fi
+gruppa gostevye-pravila "$_gp_sost" "Варвара: гостевые правила $GP — $_gp_sost (B-N-1646)" 86400
+# B-N-1646 END
+
+# ── 2г. РЕЕСТР ПЛАГИНОВ ПРАВЛЕН МИМО pravka (B-N-898, 25.09.2026) ────────────────────────────────────────────────────────
+# 🔴 ЗАЧЕМ. 25.09 07:38–12:46Z plugins.yaml правили 25 раз install+mv мимо `agent-plugins pravka` — без её проверок (форма,
+#   повторы ключей, разделы, убыль, копия, приёмка чтением), и этого не видел никто. С B-N-898 pravka пишет в журнал
+#   «pravka: установлено <реестр> sha256 <полный> …» (logger -t agent-plugins).
+# Признак: sha256 ЖИВОГО файла ≠ sha последней такой строки → «правлен мимо pravka» с последним коммитом git; строк нет вовсе →
+#   «установок pravka в журнале нет». Состав группы — живой sha[:16]: новая правка мимо — новая тревога; вернули через
+#   pravka — «снова в порядке».
+# ⚠️ ЧЕГО НЕ ЛОВИТ: правку pravka-ой, а потом «откат руками» того же содержимого (sha совпадёт); правку, которую pravka
+#   поставила неверно по смыслу (её судит verify); журнал, обрезанный ротацией journald до последней установки — тогда
+#   ложное «нет установок» (громко, не тихо). Реестр агентов agents.yaml — не здесь (у него pravka нет).
+# 🔴 ТОЛЬКО _UID=0 (условие Вениамина 25.09): тег -t agent-plugins поставит любая учётка (`logger -t agent-plugins …` от
+#   iskra/zarya) и навсегда погасит тревогу. _UID journald пишет сам по отправителю; pravka ставит только под root.
+#   Не ловит: подложную строку от root (любой sudo logger) — это рука с правом писать и сам реестр.
+REESTR_PL="${SADIK_REESTR_PLAGINOV:-/etc/agent-registry/plugins.yaml}"
+GR_PRAVKA=""; GR_PRAVKA_TXT=""
+_zhiv=$(sha256sum "$REESTR_PL" 2>/dev/null | cut -d' ' -f1)
+_posl=$(journalctl -t agent-plugins _UID=0 -o cat --no-pager -q 2>/dev/null | grep -aF "pravka: установлено $REESTR_PL sha256 " | tail -1 | sed -n 's/.* sha256 \([0-9a-f]\{64\}\).*/\1/p')
+_kommit=$(git --no-optional-locks -C "$(dirname "$REESTR_PL")" log -1 --format='%h %ad «%s»' --date=format-local:%d.%m\ %H:%MZ -- "$(basename "$REESTR_PL")" 2>/dev/null | cut -c1-120)
+if [ -z "$_zhiv" ]; then
+  GR_PRAVKA="ne-prochitan"; GR_PRAVKA_TXT="реестр плагинов не прочитан: $REESTR_PL"; BEDY=$((BEDY+1))
+elif [ -z "$_posl" ]; then
+  GR_PRAVKA="${_zhiv:0:16}"; GR_PRAVKA_TXT="реестр плагинов: установок pravka в журнале НЕТ — живой ${_zhiv:0:16} поставлен мимо неё (последний коммит: ${_kommit:-не найден})"; BEDY=$((BEDY+1))
+elif [ "$_zhiv" != "$_posl" ]; then
+  GR_PRAVKA="${_zhiv:0:16}"; GR_PRAVKA_TXT="реестр плагинов ПРАВЛЕН МИМО pravka: живой ${_zhiv:0:16}, последняя установка pravka ${_posl:0:16} (последний коммит: ${_kommit:-не найден})"; BEDY=$((BEDY+1))
+else
+  log "   реестр плагинов: живой ${_zhiv:0:16} = последняя установка pravka"
+fi
+gruppa pravka "$GR_PRAVKA" "$GR_PRAVKA_TXT" 21600
+
+# ── 2в. ROOT-КАТАЛОГ ГОЛОСА В /var/tmp (B-N-1822, 08.10.2026, Аврора; граница Зари B-N-1691b, оценка Вениамина) ──────
+# Порча — по коду и замеру Зари (zamer-var-tmp.sh): VoiceTempStore без своего baseDirectory кладёт <база>/dsh-voice-<uid>
+#   (dsh-telegram-multiagent src/voice-temp.js:29); стенд под root оставляет /var/tmp/dsh-voice-0. Стенды telegram этого
+#   НЕ ловят (при порче зелёные). Рабочие каталоги агентов dsh-voice-<их uid> законны — идут в охват, не в беду.
+# Признак: /var/tmp/dsh-voice-* с владельцем uid 0 или с именем dsh-voice-0. Журнал — каждый такт «охват N · root K»;
+#   канал — через gruppa: смена состава, «снова в порядке» после уборки, напоминание раз в 6 ч. find отказал — СЛЕПОТА, не ноль.
+# Номер «2в» совпадает с блоком «СТОРОЖ НАД СТОРОЖАМИ» — переименование отдельно (решение Забавы 08:51Z: стенд голоса ищет заголовок).
+# ⚠️ ЧЕГО НЕ ЛОВИТ: root-остатки стендов под ДРУГИМИ именами и в /tmp; каталог, созданный и убранный между тактами (10 мин);
+#   стенды ночного обхода — у него PrivateTmp=yes, их /var/tmp частный и в настоящий не попадает по построению.
+VAR_TMP="${SADIK_VAR_TMP:-/var/tmp}"; GR_VOICE=""; GR_VOICE_TXT=""
+_vt=$(snyat "find '$VAR_TMP' -maxdepth 1 -name 'dsh-voice-*' -printf '%U %f\n'"); _vk=$?
+if [ "$_vk" -ne 0 ]; then
+  GR_VOICE="slepo"; GR_VOICE_TXT="СЛЕПОТА: $VAR_TMP/dsh-voice-* не прочитан (find код $_vk) — это не «root-каталогов нет»"; BEDY=$((BEDY+1))
+  log "   $VAR_TMP голоса: СЛЕПОТА (find код $_vk)"
+else
+  _vohv=$(printf '%s\n' "$_vt" | awk 'NF' | wc -l)
+  GR_VOICE=$(printf '%s\n' "$_vt" | awk 'NF && ($1 == 0 || $2 == "dsh-voice-0") {print $2}' | sort | paste -sd' ')
+  log "   $VAR_TMP голоса: охват $_vohv · root $(printf '%s' "$GR_VOICE" | wc -w)${GR_VOICE:+ — $GR_VOICE}"
+  [ -n "$GR_VOICE" ] && { GR_VOICE_TXT="$VAR_TMP: каталог голоса от root — $GR_VOICE (стенд под root без своего каталога; убрать после сверки)"; BEDY=$((BEDY+1)); }
+fi
+gruppa voice-root "$GR_VOICE" "$GR_VOICE_TXT" 21600
+
+# ── 3. Голос жизни: молчание сторожа должно быть отличимо от молчания беды ──────
+# 🔴 B-N-988 (26.09.2026): прежде здесь раз в сутки писалась строка «жив» в СВОЙ журнал — читателя у неё не было (FARM п.8),
+#   а за таймером sadik-watch снаружи не следит никто (его нет ни в watchdog.conf, ни в storozha-sutochnye.txt). Теперь —
+#   голос человеку через kanal раз в GOLOS_SUTOK суток, по образцу registry-watchdog (HEARTBEAT_DAYS). Нет отметки — первый
+#   такт говорит «голос заведён». Отметка — ТОЛЬКО при успехе канала: отказ повторяется каждый такт, не глушит себя на 7 суток.
+# ⚠️ ЧЕГО НЕ ЛОВИТ: смерть сторожа видна лишь как ОТСУТСТВИЕ голоса — читатель этого отсутствия человек, не механизм;
+#   «таймер активен, но не срабатывает» и выключенный таймер — до 7 суток тишины. Про здоровье машины голос не говорит.
+GOLOS_SUTOK="${SADIK_GOLOS_SUTOK:-7}"; GOLOS="$SOST/posledniy-golos"
+_golos_bylo=$(cat "$GOLOS" 2>/dev/null)
+if ! [[ "$_golos_bylo" =~ ^[0-9]+$ ]]; then _golos_povod="голос жизни заведён"
+elif [ $(( SEYCHAS - _golos_bylo )) -ge $(( GOLOS_SUTOK * 86400 )) ]; then _golos_povod="жив, молчал $(( (SEYCHAS - _golos_bylo) / 86400 )) сут."
+else _golos_povod=""; fi
+if [ -n "$_golos_povod" ]; then
+  _kod=0
+  kanal "🟢 $_golos_povod: такты идут (этот — $(date -u -d "@$SEYCHAS" '+%d.%m %H:%MZ'), бед в такте: $BEDY). Следующий голос — через $GOLOS_SUTOK сут.; молчание дольше — сторож умер. Это не отчёт о здоровье машины." || _kod=$?
+  if [ "$_kod" -eq 0 ]; then printf '%s' "$SEYCHAS" > "$GOLOS"; log "голос жизни сказан ($_golos_povod)"
+  else log "⚠️ голос жизни НЕ принят каналом (код $_kod) — отметка НЕ обновлена, повтор в следующий такт"; fi
+fi
+[ "$BEDY" -eq 0 ] && log "бед не найдено (это НЕ «на машине всё хорошо» — только по перечисленным выше признакам)"
+exit 0

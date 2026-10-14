@@ -1,45 +1,25 @@
-# dsh-pamyat
+# dsh-pamyat · agent memory set (English page)
 
-**A name for a set.** This metapackage carries no code — it declares which six
-memory packages were built and checked TOGETHER, at which exact versions, and by
-what means that was verified.
+**Version:** 3.1.4
 
-    dsh-pamyat-core      0.1.0-alpha.40   store, journal, write policy
-    dsh-pamyat-omega     0.1.0-alpha.10   long-term memory provider
-    dsh-pamyat-secretary 0.1.0-alpha.16    compaction summaries → records
-    dsh-pamyat-byudzhet  0.1.0-alpha.8    incoming budget: what to lift back
-    dsh-pamyat-nudzh     0.1.0-alpha.12    spend accounting: time to compact?
-    dsh-pamyat-restore   0.1.0-alpha.18   knowledge back into context: post-compaction summary and briefing
+The main documentation of this package is **bilingual** and lives in [README.md](README.md): every paragraph there is given in Russian and then in English. This page exists because the package's stand checks that *both* `README.md` and `README.en.md` name exactly the members and versions declared in `sostav.json` — a lone English page used to fall seven versions behind unnoticed.
 
-## 🔴 Exact versions, no ranges
+**One name for nine agent-memory packages that were built and verified together — at exact versions, with a checksum for each.**
 
-A name behind which different people get different sets is **worse than no name**:
-such sets diverge silently. Hence exact versions, and a probe that rejects any range.
+    dsh-pamyat-core        3.1.2             store, decision journal, write policy
+    dsh-pamyat-omega       3.1.2             long-term memory over MCP with delivery confirmation
+    dsh-pamyat-secretary   3.1.2             compaction summaries → memory records
+    dsh-pamyat-byudzhet    3.1.2             incoming budget: what to lift into context
+    dsh-pamyat-nudzh       3.1.2             spend accounting: is it time to compact
+    dsh-pamyat-restore     3.1.2             knowledge restore after compaction and briefing
+    dsh-pamyat-storozha    3.1.3             memory watchdog: fill stages, compaction notice
+    dsh-pamyat-kompakt-dsh 3.1.2             own summary inside the platform compaction
+    dsh-pamyat-kompakt     3.1.2             window count and summary by own model (installed as a directory)
 
-## 🔴 The composition is verified, not declared
+```bash
+STEND_POLKA=<archive-shelf> STEND_PLAGINY=<plugins-dir> npm test   # expected: "итог: 11 из 11" (total: 11 of 11), exit code 0; unset variables — exit 2
+```
 
-`sostav.json` holds a version and a **subject sum** per package; the stand checks
-them against the facts on disk on every run.
+Further reading: [README.md](README.md) · [Architecture](docs/ARCHITECTURE.md) · [Settings](docs/SETTINGS.md) · [Guards](docs/GUARDS.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Changelog](CHANGELOG.md)
 
-**"8 of 8" means the accounting adds up, NOT that the set is fit to publish.** The stand compares what is declared against what is on disk; the fitness of each member is outside what it can judge.
-
-## How to re-check the sums
-
-    summa-predmeta            file sum d4fc96426534a870
-
-That is all. **There is deliberately no description of the method here.**
-
-🔴 Any command written into documentation is a SECOND implementation of the
-method. On 2026-09-03 we diverged three times in one hour on a single format:
-field order inside the hashed line, the trailing newline, the sort locale. Each
-fork changed the number silently, and none of them survives being described in
-prose. A command in the docs drifts from the tool at its first edit — and nobody
-notices, because **documentation is never executed**.
-
-⚠️ Change the tool only under a NEW FILE NAME, never in place.
-
-## Testing
-
-    npm test
-
-Eight probes; the first runs against a known-good subject.
+Authors: the Iia-arg team. License: MIT ([LICENSE](LICENSE)).

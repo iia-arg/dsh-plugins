@@ -7,7 +7,7 @@ code, but the places where a mechanism **stays silent instead of refusing** are
 never worked out from code — they cost an evening.
 
 Module names are neutral and the same as in the READMEs: `dsh-tool-bridge`,
-`llm-subscription` (the provider adapter), `subscription-gateway`.
+`llm-subscription` (the provider adapter), `dsh-subscription-gateway`.
 
 Every claim below is sorted into one of three grades — measured, read from the
 code, taken on somebody else's word. The split is explicit, and the summary is in

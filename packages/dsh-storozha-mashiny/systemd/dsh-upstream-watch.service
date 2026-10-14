@@ -1,0 +1,16 @@
+# RU: Сторож новых версий платформы DSH (bin/dsh-upstream-watch.sh). Настройки — через окружение (EnvironmentFile в drop-in).
+# EN: DSH platform new-release watcher (bin/dsh-upstream-watch.sh). Settings via environment (EnvironmentFile in a drop-in).
+[Unit]
+Description=Сторож новых версий платформы DSH: тревога только на релиз-кандидат или стабильный
+Documentation=man:npm-view(1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/dsh-upstream-watch.sh
+# RU: Код 1 — «есть новое», это не сбой службы. Код 2 — слепота, тоже не сбой: источник не ответил, и объявлять
+# RU: это отказом службы значило бы путать «не смогли спросить» с «служба сломана».
+# EN: Exit 1 means "something new", not a service failure. Exit 2 is blindness, not a failure either: the source did
+# EN: not answer, and calling that a service failure would confuse "could not ask" with "the service is broken".
+SuccessExitStatus=0 1 2

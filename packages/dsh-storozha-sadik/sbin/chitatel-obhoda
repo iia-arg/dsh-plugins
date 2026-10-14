@@ -1,0 +1,231 @@
+#!/usr/bin/python3 -I
+# chitatel-obhoda — ЧИТАТЕЛЬ НОЧНОГО ОБХОДА СТЕНДОВ (B-N-1741, Аврора, 07.10.2026).
+#
+# 🔴 ЗАЧЕМ. Ночной обход (vse-stendy-boevye.timer, 03:40 UTC) при неожиданном красном шлёт тревогу владельцу через
+#   agent-alert — это событие, и оно гаснет к утру. Стенды переключателя краснели две ночи подряд (06.10, 07.10),
+#   наряда не родилось ни одного: шага «утром разобрать красное» не было. Этот сторож читает ИТОГ ночи и кладёт
+#   координатору ОДНО письмо — работу, а не аварию.
+#
+# ЧТО ДЕЛАЕТ (root, по таймеру 04:50–10:50 UTC раз в час; ночь прочитана — дальше молчит до следующей):
+#   ночь = запуск vse-stendy-boevye.service в [срабатывание таймера, +120 с]; ручные прогоны днём — не ночи, не читаются.
+#   Вывод ночи — строки обёртки (SYSLOG_IDENTIFIER=vse-stendy-po-tajmeru.sh) этого запуска (_SYSTEMD_INVOCATION_ID).
+#   Из них: «🔴 НЕОЖИДАННО: стенд (…, код N) — причина» + хвост вывода стенда, строки охвата, «ОЖИДАЕМО: …».
+#   B-N-1754: строки «↳ » под стендом — пояснения его провала (метит обходчик) — идут в письмо «пояснения: …», ≤400 знаков на стенд.
+#   «N-я ночь подряд» — по тем же строкам прежних ночей в журнале (до 14 ночей назад, пропуск ночи рвёт счёт).
+# КОГДА ПИСЬМО: есть неожиданное или охват — КАЖДУЮ ночь, с пометкой «N-я ночь подряд» (состояние держится — наряд
+#   держится; одно письмо уже однажды не прочли). Неожиданного нет, а прошлой ночью было — одно письмо «снято».
+#   Зелёное после зелёного — письма нет. Ожидаемое (исключения) письма само не вызывает, но в письме перечислено.
+#   Ночного прогона нет (таймер не сработал) или прогон кончился без итога — письмо.
+# 🔴 СВЕРКА РАЗБОРА: число неожиданных/ожидаемых по строкам ≠ числу в «ИТОГ ТАЙМЕРА» → письмо с пометкой и код 2:
+#   формат обхода сменился, перечень в письме неполон.
+# ЧИТАТЕЛЬ: координатор (письмо). Код ≠0 — юнит failed ⇒ сторож упавших служб машины.
+# ⚠️ ЧЕГО НЕ ЛОВИТ: красное ручных прогонов днём · ночь, сдвинутую сменой OnCalendar (старые ночи перестанут
+#   узнаваться — счёт «подряд» начнётся заново) · смысл красного (не судит, кто прав — стенд или предмет; ничего не чинит)
+#   · недельный обход (vse-stendy-nedelnye) · ночь старше 26 ч без нового срабатывания называет «прогона нет» раз в сутки.
+# Коды: 0 — ночь прочитана (письмо положено или слать нечего) или прогон ещё идёт · 1 — канал отказал (отметка не
+#   записана, повтор в следующий час) · 2 — слепота (журнал/таймер не читаются, не настроено, разбор разошёлся).
+#   Неизвестный довод — отказ 2.
+import calendar, json, os, re, subprocess, sys, time, traceback
+
+def _krah(t, v, tb):   # падение сторожа — слепота (2), а не «канал отказал» (1), которым Python кончает по умолчанию
+    traceback.print_exception(t, v, tb); print('🔴 СЛЕПОТА: сторож упал'); os._exit(2)
+sys.excepthook = _krah
+E = os.environ
+if len(sys.argv) > 1:
+    print(f'ОТКАЗ: доводов не принимаю ({" ".join(sys.argv[1:])}) — запуск: systemctl start chitatel-obhoda.service', file=sys.stderr)
+    sys.exit(2)
+SOST = E.get('CHO_SOST', '/var/lib/chitatel-obhoda')
+TELL = E.get('CHO_TELL_BIN', '/usr/local/bin/tell-komu')
+JCTL = E.get('CHO_JOURNALCTL', 'journalctl')
+SCTL = E.get('CHO_SYSTEMCTL', 'systemctl')
+KOREN = E.get('CHO_KOREN', '')          # дом агента, через щель которого уходит письмо
+ADRESAT = E.get('CHO_ADRESAT', '')      # родительный падеж: dlya-<адресат>-…
+SHAPKA = E.get('CHO_SHAPKA', f'{os.uname().nodename} · chitatel-obhoda (root, щель {KOREN}) → координатору · НОЧНОЙ ОБХОД СТЕНДОВ')
+ISTOCHNIK = E.get('CHO_ISTOCHNIK', '')  # только стенд: каталог <ГГГГ-ММ-ДД>.txt (вывод ночи) вместо журнала
+SEYCHAS = int(E.get('CHO_SEYCHAS') or time.time())  # только стенд
+UNIT, TIMER, TAG = 'vse-stendy-boevye.service', 'vse-stendy-boevye.timer', 'vse-stendy-po-tajmeru.sh'
+MSG_START = '7d4958e842da4a758f6c1cdc7b36dcc5'   # systemd «Starting <unit>»
+OKNO, GLUBINA, SUTKI = 120, 14, 86400
+# Длина письма в знаках: проверенная глубина канала tell-komu (A2A_PROVERENO_DO, проба #269 20.09.2026) − запас 560.
+# Выше неё доставка не мерилась; лишнее — в полном файле, путь в письме.
+PREDEL = int(E.get('A2A_PROVERENO_DO', '5560')) - 560
+
+def slepota(t):
+    print(f'🔴 СЛЕПОТА: {t}'); sys.exit(2)
+
+if not (KOREN and ADRESAT):
+    slepota('не настроено — CHO_KOREN (дом агента-отправителя) и CHO_ADRESAT (адресат) обязательны; ничего не шлю')
+
+def run(args):
+    r = subprocess.run(args, capture_output=True, text=True, errors='replace', timeout=180)  # обход режет строки по байтам
+    return r.returncode, r.stdout
+
+def den(ts): return time.strftime('%Y-%m-%d', time.gmtime(ts))
+
+# --- ночи: {дата: (метка прогона, текст вывода)}, дата сегодняшней ночи, срабатывание таймера (стенд — None)
+def nochi_iz_kataloga():
+    imena = sorted(f for f in os.listdir(ISTOCHNIK) if re.fullmatch(r'\d{4}-\d\d-\d\d\.txt', f))
+    if not imena: slepota(f'в {ISTOCHNIK} нет ночей')
+    n = {}
+    for f in imena:
+        with open(os.path.join(ISTOCHNIK, f), encoding='utf-8', errors='replace') as fh: t = fh.read()
+        n[f[:10]] = ('stend-' + f[:10] + '-' + str(len(t)), t)
+    return n, imena[-1][:10], None
+
+def nochi_iz_zhurnala():
+    rc, t = run([SCTL, 'show', TIMER, '-p', 'LastTriggerUSec', '--value'])
+    rc2, ts = run(['date', '-u', '-d', t.strip(), '+%s']) if rc == 0 and t.strip() not in ('', 'n/a') else (1, '')
+    if rc2 != 0 or not ts.strip().isdigit(): slepota(f'срабатывание {TIMER} не прочитано ({t.strip()!r})')
+    trig = int(ts)
+    rc, out = run([JCTL, '-u', UNIT, f'MESSAGE_ID={MSG_START}', '--since', f'@{trig - (GLUBINA + 1) * SUTKI}',
+                   '-o', 'json', '--no-pager', '-q'])
+    if rc != 0: slepota(f'журнал {UNIT} не прочитан (код {rc})')
+    tod, zapuski = trig % SUTKI, {}
+    for s in out.splitlines():
+        try: j = json.loads(s); z = int(j['__REALTIME_TIMESTAMP']) // 10**6; inv = j['INVOCATION_ID']
+        except (ValueError, KeyError): continue
+        if 0 <= (z - tod) % SUTKI <= OKNO: zapuski.setdefault(den(z), inv)
+    n = {}
+    for d, inv in zapuski.items():
+        rc, t = run([JCTL, f'_SYSTEMD_INVOCATION_ID={inv}', f'SYSLOG_IDENTIFIER={TAG}', '-o', 'cat', '--no-pager', '-q'])
+        if rc != 0: slepota(f'вывод прогона {d} ({inv}) не прочитан (код {rc})')
+        n[d] = (inv, t)
+    return n, den(trig), trig
+
+nochi, segodnya, trig = nochi_iz_kataloga() if ISTOCHNIK else nochi_iz_zhurnala()
+
+RE_N = re.compile(r'🔴 НЕОЖИДАННО: (\S+) \(выпуск [^,]*, код (\d+)\) — (.*)$')
+RE_O = re.compile(r'ОЖИДАЕМО: (\S+) \(выпуск [^)]*\) · код (\d+)')
+RE_H = re.compile(r'🔴 (В ПЕРЕЧНЕ ЕСТЬ, НА ДИСКЕ НЕТ|НА ДИСКЕ ЕСТЬ, В ПЕРЕЧНЕ НЕТ|В ПЕРЕЧНЕ ЕСТЬ, ОБХОДОМ НЕ ПРОГНАН[^:]*): (\S+)$')
+RE_ITOG = re.compile(r'ИТОГ ТАЙМЕРА: обходчик код (\d+) · стендов (\S+) · расхождений (\d+) · слепот (\d+) '
+                     r'\(ожидаемых (\d+), неожиданных (\d+)\)')
+RE_UBIT = re.compile(r'🔴 обходчик стендов \S+: код (124|137).*')
+VAZHNOE = re.compile(r'FAIL|❌|СЛЕПОТА|Error|ОТКАЗ|итог')
+POYASN = 400   # знаков пояснений на стенд (B-N-1754); письмо целиком держит PREDEL
+
+def razbor(t):
+    """{'N': {стенд: что}, 'H': {путь: вид}, 'O': {стенд: что}, 'itog': строка|None, 'chisla': (ож, неож)|None}"""
+    r = {'N': {}, 'H': {}, 'O': {}, 'itog': None, 'chisla': None}
+    stroki = t.splitlines()
+    for s in stroki:
+        if m := RE_ITOG.search(s): r['itog'] = s[m.start():].strip(); r['chisla'] = (int(m[5]), int(m[6]))
+        elif m := RE_UBIT.search(s): r['itog'] = m[0].strip()
+        elif m := RE_N.search(s): r['N'][m[1]] = f'код {m[2]}, {m[3].strip()[:120]}'
+        elif m := RE_H.search(s): r['H'][m[2]] = m[1]
+        elif m := RE_O.search(s): r['O'][m[1]] = f'код {m[2]}'
+    for k in r['N']:   # хвост вывода стенда, который обходчик кладёт строками «  <имя>: …»
+        b = re.escape(k.rsplit('/', 1)[-1])
+        hv = [m[1] for s in stroki if (m := re.match(r'\s+' + b + r':\s*(.*\S)', s))]
+        po = [' '.join(x[1:].split()) for x in hv if x.startswith('↳')]   # B-N-1754: пояснения провала (обходчик метит «↳ »)
+        hv = [x for x in hv if not x.startswith('↳')]
+        hv = [x for x in hv if VAZHNOE.search(x)][:2] or hv[-2:]
+        if hv: r['N'][k] += ' · ' + ' | '.join(f'«{x[:140]}»' for x in hv)
+        # B-N-1754 r2: пояснения — целыми строками в POYASN знаков; не влезло — «(показано K из M)», M — от обходчика,
+        # если он сам не показал всё (его строка «↳ (показано k из m)»), иначе — сколько строк пришло.
+        vsego = len(po)
+        if po and (m := re.fullmatch(r'\(показано \d+ из (\d+)\)', po[-1])): po, vsego = po[:-1], int(m[1])
+        if po and POYASN > 0:
+            vzyato = []
+            for x in po:
+                if len('; '.join(vzyato + [x])) > POYASN: break
+                vzyato.append(x)
+            vzyato = vzyato or [po[0][:POYASN - 1] + '…']   # первая строка сама длиннее предела — обрезком
+            r['N'][k] += ' · пояснения: ' + '; '.join(vzyato) + (f' (показано {len(vzyato)} из {vsego})' if len(vzyato) < vsego else '')
+    return r
+
+R = {d: razbor(t) for d, (_, t) in nochi.items()}
+
+def dnej_nazad(d, k): return den(calendar.timegm(time.strptime(d, '%Y-%m-%d')) - k * SUTKI)
+
+def podryad(klyuch, vid):
+    """сколько ночей подряд (включая сегодняшнюю) ключ красен; пропуск ночи рвёт счёт"""
+    n = 1
+    while n <= GLUBINA:
+        d = dnej_nazad(segodnya, n)
+        if d not in R: break
+        r = R[d]
+        if not (klyuch in r['H'] if vid == 'H' else klyuch in r['N'] or klyuch in r['O']): break
+        n += 1
+    return n
+
+def metka(n): return 'впервые' if n == 1 else (f'{n}-я ночь подряд (с {dnej_nazad(segodnya, n - 1)})' if n <= GLUBINA else f'≥{GLUBINA + 1} ночей подряд')
+
+os.makedirs(os.path.join(SOST, 'polnye'), exist_ok=True)
+OTM = os.path.join(SOST, 'prochitano')
+prochitano = open(OTM, encoding='utf-8').read().strip() if os.path.exists(OTM) else ''
+
+telo, kratko, kod = [], None, 0
+if trig is not None and SEYCHAS - trig > SUTKI + 2 * 3600:
+    klyuch = 'net-' + den(SEYCHAS)
+    telo.append(f'🔴 НОЧНОГО ПРОГОНА НЕТ: {TIMER} последний раз сработал {time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime(trig))}'
+                f' — больше суток назад. Обход этой ночью не шёл.')
+elif segodnya not in nochi:
+    klyuch = 'net-' + segodnya
+    telo.append(f'🔴 НОЧНОГО ПРОГОНА НЕТ: таймер сработал {segodnya}, а запуска {UNIT} в {OKNO} с после него в журнале нет.')
+else:
+    klyuch = nochi[segodnya][0]
+    r = R[segodnya]
+    if r['itog'] is None:
+        rc, akt = run([SCTL, 'show', UNIT, '-p', 'InvocationID', '-p', 'ActiveState']) if not ISTOCHNIK else (1, '')
+        if f'InvocationID={klyuch}' in akt and re.search(r'ActiveState=(activating|active|deactivating)', akt):
+            print(f'   ночь {segodnya}: прогон {klyuch} ещё идёт — прочту в следующий час'); sys.exit(0)
+        telo.append(f'🔴 Ночь {segodnya}: прогон {klyuch} кончился БЕЗ строки итога — обход оборван или формат сменился;'
+                    f' что красно, не установлено.')
+    else:
+        vchera = R.get(dnej_nazad(segodnya, 1))
+        snyato = sorted((set(vchera['N']) | set(vchera['H'])) - set(r['N']) - set(r['H'])) if vchera else []
+        sverka = ''
+        if r['chisla'] is None:
+            sverka = 'итог без чисел ожидаемых/неожиданных'
+        elif r['chisla'] != (len(r['O']), len(r['N'])):
+            sverka = (f'в итоге ожидаемых {r["chisla"][0]}, неожиданных {r["chisla"][1]}; разобрано строк — '
+                      f'{len(r["O"])} и {len(r["N"])}')
+        if sverka: kod = 2
+        if r['N'] or r['H'] or snyato or sverka:
+            nach = [f'Ночь {segodnya} · {r["itog"]}']
+            if sverka: nach.append(f'🔴 РАЗБОР РАЗОШЁЛСЯ С ИТОГОМ ({sverka}) — формат обхода сменился, перечень ниже НЕПОЛОН.')
+            neozh = [f'• {k} · {v} · {metka(podryad(k, "N"))}' for k, v in sorted(r['N'].items())]
+            ohvat = [f'• {v}: {k} · {metka(podryad(k, "H"))}' for k, v in sorted(r['H'].items())]
+            ozh = [(k, v, podryad(k, 'O')) for k, v in sorted(r['O'].items())]
+            z_n = [f'НЕОЖИДАННО — {len(neozh)} (стенд · что красное · с какой ночи):'] if neozh else []
+            z_h = [f'ОХВАТ — {len(ohvat)} (стенд не в перечне или не прогнан):'] if ohvat else []
+            sny = [f'СНЯТО — {len(snyato)} (прошлой ночью неожиданно красны, этой — нет):'] + [f'• {k}' for k in snyato] if snyato else []
+            net = [] if neozh or ohvat else ['Неожиданного этой ночью нет.']
+            z_o = f'Под исключением — {len(ozh)} (письма не вызывают)'
+            konec = ['Граница: читаю только ночной прогон; ничего не чиню и не сужу, кто неправ — стенд или предмет.'
+                     ' Письмо повторяется каждую ночь, пока неожиданное держится.']
+            telo = nach + z_n + neozh + z_h + ohvat + sny + net + ([z_o + ':'] + [f'• {k} · {v} · {metka(n)}' for k, v, n in ozh] if ozh else []) + konec
+            # письмо короче полного: охват больше 10 — числом, ожидаемое — одной строкой; хвост неожиданного — по пределу ниже
+            kratko = (nach + z_n, neozh, z_h + (ohvat if len(ohvat) <= 10 else ['• перечень — в полном файле']) + sny + net
+                      + ([z_o + ': ' + ', '.join(f'{k} ({n})' for k, _, n in ozh)] if ozh else []) + konec)
+
+if klyuch == prochitano:
+    print(f'   ночь {segodnya}: уже прочитана ({klyuch}) — письма не повторяю'); sys.exit(kod)
+if not telo:
+    print(f'   ночь {segodnya}: {R[segodnya]["itog"]} — неожиданного нет, прошлой ночью тоже — письма нет')
+else:
+    polnyj = os.path.join(SOST, f'noch-{segodnya}.md')
+    with open(polnyj, 'w', encoding='utf-8') as fh: fh.write(SHAPKA + '\n' + '\n'.join(telo) + '\n')
+    for f in os.listdir(SOST):   # свои полные файлы старше глубины счёта — убрать (зеркала tell-komu в polnye не трогаю)
+        if re.fullmatch(r'noch-\d{4}-\d\d-\d\d\.md', f) and f[5:15] < dnej_nazad(segodnya, GLUBINA):
+            os.remove(os.path.join(SOST, f))
+    golova, spisok, ostalnoe = kratko or (telo, [], [])
+    hvost = [f'Полный перечень: {os.uname().nodename}:{polnyj}']
+    def pismo(n):   # первые n строк неожиданного; не влезло — хвост списка уходит в полный файл
+        ewe = [f'• … ещё {len(spisok) - n} — в полном файле'] if n < len(spisok) else []
+        return SHAPKA + '\n' + '\n'.join(golova + spisok[:n] + ewe + ostalnoe + hvost) + '\n'
+    n = len(spisok)
+    while n > 0 and len(pismo(n)) > PREDEL: n -= 1
+    pis = os.path.join(SOST, f'dlya-{ADRESAT}-nochnoj-obhod.md')
+    with open(pis, 'w', encoding='utf-8') as fh: fh.write(pismo(n))
+    env = dict(E, DSH_HOME=os.path.join(KOREN, '.dsh'), HOME=KOREN, A2A_ZERKALO=os.path.join(SOST, 'polnye'))
+    p = subprocess.run([TELL, pis], capture_output=True, text=True, errors='replace', timeout=60, env=env)
+    vyv = (p.stdout + p.stderr).strip().splitlines()
+    if p.returncode != 0:
+        print(f'🔴 письмо координатору НЕ положено ({TELL}, код {p.returncode}: {(vyv[-1] if vyv else "")[:160]})'
+              f' — отметка не записана, повтор в следующий час')
+        sys.exit(1)
+    print(f'   ночь {segodnya}: письмо положено — {next((x for x in vyv if x.startswith("положено")), "?")[:200]}')
+with open(OTM + '.new', 'w', encoding='utf-8') as fh: fh.write(klyuch + '\n')
+os.replace(OTM + '.new', OTM)
+sys.exit(kod)

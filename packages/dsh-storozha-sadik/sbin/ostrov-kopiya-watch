@@ -1,0 +1,252 @@
+#!/usr/bin/env python3
+"""ostrov-kopiya-watch — сторож отставания копии API Острова для стендов (B-N-2018, Аврора, 12.10.2026; находка Зари 17:27Z,
+слово владельца 12.10 20:06 МСК «исправляйте сразу все найденные проблемы»).
+
+ЗАЧЕМ. Копию /opt/agent-plugins-stend/ostrov-api ставит только рука (dsh-tool-bridge tools/kopiya-ostrov-api.sh). После
+релиза Марка сайт уходит вперёд, а стенды моста Варвары (stend-ostrov-api, stend-saved-plans, stend-owner-private-context)
+сверяют копию с сайтом и слепнут каждую ночь до обновления (stend-crm-caller — с dsh-tool-bridge 3.1.2; до него на устаревшей
+копии молча тестирует старый API) — зовущего у обновления не было.
+ЧТО ДЕЛАЕТ (такт — таймер, раз в час): релиз копии (ISTOCHNIK «релиз X» и manifest.json artifact — обязаны совпасть) против
+release из health сайта. Разошлось → тревога с ГОТОВЫМИ строками обновления: архив релиза на полке, если он уже есть; иначе
+каталог релиза Марка ищется по manifest.json с artifact = релизу сайта (только чтение) и даётся строка сборки архива
+(candidate/app + deployment/manifest.json, без __pycache__ — как Заря 12.10) и строка установщика. Пути в строках — shlex.quote.
+Новый deployment/candidate-*.tar (manifest.json + app/) читается без распаковки: artifact, состав, SHA256, server.py и
+отсутствие файла-родителя сверены до готовой строки установки; негодный tar назван в отказе без такой строки.
+НЕ ОБНОВЛЯЕТ сам (вариант А, не Б): каталог релиза — рабочая область Марка, путь каждый раз новый; решение ставить — рука.
+ТРЕВОГИ: «разошлось» — сразу, та же пара релизов — повтор раз в сутки; «снова в порядке» — один раз. СЛЕПОТА (не «в порядке»):
+копия не читается / ISTOCHNIK ≠ manifest / health не ответил, не JSON, без release — сразу; повтор раз в сутки по КЛАССУ
+(копия / health), текст ошибки — только в теле: мигание разными ошибками health не плодит тревог. Слепота ушла — одна «снова видит».
+Отметка в состоянии — только при доставленной тревоге (канал отказал — следующий такт повторит).
+ЧЕГО НЕ ЛОВИТ: что архив побайтно тот, что стоит на сайте (связь — только номер релиза; состав и суммы сверяет установщик);
+отставание внутри часа; сайт откатили назад (тоже «разошлось», строка поставит старый релиз — читать глазами); вторую копию в
+ином каталоге; что стенды после обновления зелёные (это ночной обход).
+ОСТАНОВКА: ничего не пишет кроме своего состояния; код 0 — такт прошёл (исходы — в канале и выводе), иное — такт упал (failed
+юнита читает sadik-watch по storozha-sutochnye.txt).
+"""
+import glob
+import contextlib
+import hashlib
+import json
+import os
+import pathlib
+import re
+import shlex
+import stat
+import subprocess
+import sys
+import time
+import tarfile
+import urllib.request
+
+KOPIYA = os.environ.get("OKW_KOPIYA", "/opt/agent-plugins-stend/ostrov-api")
+HEALTH = os.environ.get("OKW_HEALTH", "http://192.168.99.3:4215/internal/v1/assistant/health")
+KATALOG = os.environ.get("OKW_KATALOG", "/var/lib/ostrov-kopiya-watch")
+KANAL = os.environ.get("OKW_KANAL", "/usr/local/bin/agent-alert")
+RELIZY = os.environ.get("OKW_RELIZY", "/opt/marc/workspace/*/deployment/manifest.json:/opt/marc/workspace/*/*/deployment/manifest.json:/opt/marc/workspace/*/deployment/candidate-*.tar:/opt/marc/workspace/*/*/deployment/candidate-*.tar")
+ARHIVY = os.environ.get("OKW_ARHIVY", "/var/backups/montazh/*/ostrov-api-{rel}-raskladka.tar.gz")
+POLKA = os.environ.get("OKW_POLKA", "/var/backups/montazh/ostrov-api-kopiya")
+USTANOVSHCHIK = "/opt/varvara/plugins/dsh-tool-bridge/tools/kopiya-ostrov-api.sh"
+SOST = os.path.join(KATALOG, "sostoyanie.json")
+POVTOR_S = 86400
+REL = re.compile(r"[0-9a-f]{12}")
+PREDEL = 2 << 20
+
+
+def chitat(put):
+    fd = os.open(put, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb") as f:
+        if not os.path.isfile(put) or os.fstat(f.fileno()).st_size > PREDEL:
+            raise ValueError("не обычный файл или больше 2 МБ")
+        return f.read()
+
+
+def reliz_kopii():
+    ist = chitat(os.path.join(KOPIYA, "ISTOCHNIK")).decode("utf-8", "replace")
+    m = re.search(r"^релиз (\S+)$", ist, re.M)
+    a = json.loads(chitat(os.path.join(KOPIYA, "manifest.json"))).get("artifact")
+    r = m.group(1) if m else None
+    if not (r and REL.fullmatch(r)):
+        raise ValueError(f"в ISTOCHNIK нет строки «релиз <12 hex>»")
+    if a != r:
+        raise ValueError(f"ISTOCHNIK релиз {r} ≠ manifest.json artifact {a!r}")
+    return r
+
+
+def reliz_sajta():
+    with urllib.request.urlopen(HEALTH, timeout=10) as o:
+        if o.status != 200:
+            raise ValueError(f"HTTP {o.status}")
+        d = json.loads(o.read(1 << 16))
+    r = d.get("release") if isinstance(d, dict) else None
+    if not (isinstance(r, str) and REL.fullmatch(r)):
+        raise ValueError(f"в ответе нет release из 12 hex: {str(r)[:40]!r}")
+    return r
+
+
+def sverit_tar(put, rel):
+    with contextlib.ExitStack() as stack:
+        stream = stack.enter_context(os.fdopen(os.open(put, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb"))
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("не обычный архив")
+        t = stack.enter_context(tarfile.open(fileobj=stream, mode="r:*"))
+        members = {}
+        for item in t.getmembers():
+            name = item.name
+            while name.startswith("./"):
+                name = name[2:]
+            if name in ("", ".") and item.isdir():
+                continue
+            p = pathlib.PurePosixPath(name)
+            if p.is_absolute() or ".." in p.parts:
+                raise ValueError(f"опасный путь {item.name}")
+            name = str(p)
+            if name in members:
+                raise ValueError(f"повтор имени {name}")
+            members[name] = item
+        forms = [(a, m) for a, m in [("candidate/app", "deployment/manifest.json"), ("app", "manifest.json")]
+                 if m in members and any(n == a or n.startswith(a + "/") for n in members)]
+        if len(forms) != 1:
+            raise ValueError("чужая/неоднозначная форма архива: нужен app + manifest.json либо candidate/app + deployment/manifest.json")
+        app, manifest = forms[0]
+        item = members[manifest]
+        if not item.isfile() or item.size > PREDEL:
+            raise ValueError(f"манифест {manifest} не обычный файл или больше 2 МБ")
+        m = json.load(t.extractfile(item))
+        if m.get("artifact") != rel:
+            raise ValueError(f"манифест artifact {m.get('artifact')!r} ≠ релизу сайта {rel}")
+        files = {}
+        for name, item in members.items():
+            if name == app or name.startswith(app + "/"):
+                if item.isdir():
+                    continue
+                if not item.isfile():
+                    raise ValueError(f"нерегулярный предмет {name}")
+                files[name[len(app) + 1:]] = item
+        if not isinstance(m.get("files"), dict) or set(files) != set(m["files"]):
+            expected = set(m["files"]) if isinstance(m.get("files"), dict) else set()
+            raise ValueError(f"состав app ≠ манифесту: лишние {sorted(set(files) - expected)[:3]}, нет {sorted(expected - set(files))[:3]}")
+        if "server.py" not in files:
+            raise ValueError("манифест без server.py")
+        for name in members:
+            if name.startswith(app + "/"):
+                relative = name[len(app) + 1:]
+                if any(str(parent) in files for parent in pathlib.PurePosixPath(relative).parents):
+                    raise ValueError(f"{relative}: родитель — файл вместо каталога")
+        for name, item in files.items():
+            if hashlib.file_digest(t.extractfile(item), "sha256").hexdigest() != m["files"][name]:
+                raise ValueError(f"{name}: сумма ≠ манифесту")
+
+
+def stroki(rel):
+    q = shlex.quote
+    ust = f"sudo bash {q(USTANOVSHCHIK)} {{arh}} {rel} {q(KOPIYA)}"
+    arh = sorted(glob.glob(ARHIVY.format(rel=rel)), key=lambda p: os.path.getmtime(p), reverse=True)
+    if arh:
+        return f"архив релиза уже на полке: {arh[0]}", [ust.format(arh=q(arh[0]))]
+    naideno, smotreno, otkazy = [], 0, []
+    for g in RELIZY.split(":"):
+        for p in glob.glob(g):
+            smotreno += 1
+            if p.endswith((".tar", ".tar.gz")):
+                try:
+                    sverit_tar(p, rel)
+                except Exception as e:
+                    otkazy.append(f"отказ: архив {p}: {e}")
+                    continue
+                return f"архив релиза Марка (состав и sha256 сверены): {p}", [ust.format(arh=q(p))]
+            try:
+                if json.loads(chitat(p)).get("artifact") != rel:
+                    continue
+            except Exception:
+                continue
+            kat = os.path.dirname(os.path.dirname(p))
+            if os.path.isdir(os.path.join(kat, "candidate", "app")):
+                naideno.append((os.path.getmtime(p), kat))
+    if not naideno:
+        return (f"каталог/архив релиза {rel} не найден: предметов просмотрено {smotreno} ({RELIZY}) — архив нужен от Марка"
+                + ("\n" + "\n".join(otkazy[:3]) if otkazy else ""),
+                [] if otkazy else [ust.format(arh="<архив релиза .tar или .tar.gz>")])
+    naideno.sort(reverse=True)
+    kat = naideno[0][1]
+    novyj = os.path.join(POLKA, f"ostrov-api-{rel}-raskladka.tar.gz")
+    pro = f"каталог релиза Марка (только чтение): {kat}" + (f"; ещё с тем же релизом {len(naideno) - 1}" if len(naideno) > 1 else "")
+    return pro, [f"sudo install -d -m 0755 {q(POLKA)}",
+                 f"sudo tar -czf {q(novyj)} --exclude=__pycache__ -C {q(kat)} candidate/app deployment/manifest.json",
+                 ust.format(arh=q(novyj))]
+
+
+def poslat(text):
+    try:
+        return subprocess.run([KANAL, "--plain", "--", text], capture_output=True, text=True, timeout=60).returncode == 0
+    except Exception as e:
+        print(f"[ostrov-kopiya-watch] канал не отработал: {e}", file=sys.stderr)
+        return False
+
+
+def pora(otm, klyuch, seichas):
+    return not otm or otm.get("klyuch") != klyuch or seichas - otm.get("t", 0) >= POVTOR_S
+
+
+def main():
+    os.makedirs(KATALOG, mode=0o750, exist_ok=True)
+    try:
+        s = json.load(open(SOST, encoding="utf-8"))
+    except FileNotFoundError:
+        s = {}
+    seichas = time.time()
+    slepo, kop, sajt = [], None, None
+    try:
+        kop = reliz_kopii()
+    except Exception as e:
+        slepo.append(("копия", f"копия {KOPIYA}: {e}"))
+    try:
+        sajt = reliz_sajta()
+    except Exception as e:
+        slepo.append(("health", f"health {HEALTH}: {e}"))
+    isxod, itog = "", []
+    dosh = lambda ok: "доставлена" if ok else "🔴 НЕ ДОШЛА"
+    if slepo:
+        isxod = "СЛЕПОТА: " + " | ".join(t for _, t in slepo)
+        kl = "+".join(sorted({k for k, _ in slepo}))   # ключ — класс, не текст: мигание ошибок health не плодит тревог
+        if pora(s.get("slepota"), kl, seichas):
+            ok = poslat("🔴 СЛЕПОТА ostrov-kopiya-watch — это НЕ «копия свежая» (B-N-2018):\n" + "\n".join("• " + t for _, t in slepo))
+            itog.append("слепота " + dosh(ok))
+            if ok:
+                s["slepota"] = {"klyuch": kl, "t": seichas}
+    else:
+        if s.get("slepota"):
+            ok = poslat(f"🟢 ostrov-kopiya-watch снова видит копию и сайт (была слепота: {s['slepota']['klyuch']}); "
+                        f"копия {kop}, сайт {sajt} (B-N-2018).")
+            itog.append("«снова видит» " + dosh(ok))
+            if ok:
+                s.pop("slepota")
+        if kop == sajt:
+            isxod = "в порядке"
+            if s.get("beda"):
+                ok = poslat(f"🟢 Копия API Острова для стендов снова в порядке: релиз копии = сайта {sajt} (было {s['beda']['klyuch']}; B-N-2018).")
+                itog.append("«снова в порядке» " + dosh(ok))
+                if ok:
+                    s.pop("beda")
+        else:
+            kl = f"{kop}→{sajt}"
+            isxod = f"РАЗОШЛОСЬ: копия {kop}, сайт {sajt}"
+            if pora(s.get("beda"), kl, seichas):
+                pro, cmd = stroki(sajt)
+                ok = poslat(f"🔴 Копия API Острова для стендов ОТСТАЛА от сайта (B-N-2018): копия {kop}, сайт {sajt}.\n"
+                            f"Пока не обновлена, стенды моста Варвары на копии слепнут (stend-ostrov-api, stend-saved-plans, "
+                            f"stend-owner-private-context; stend-crm-caller — с dsh-tool-bridge 3.1.2, а до него он на устаревшей не слепнет, "
+                            f"а молча тестирует старый API). Сам не обновляю — решение руки.\n{pro}\nСтроки обновления (root):\n"
+                            + "\n".join(cmd) + "\nУстановщик сверит архив с манифестом и откажет кодом 2, если не сошлось.")
+                itog.append("разошлось " + dosh(ok))
+                if ok:
+                    s["beda"] = {"klyuch": kl, "t": seichas}
+    tmp = SOST + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(s, f, ensure_ascii=False)
+    os.replace(tmp, SOST)
+    print(f"такт: {isxod}; тревога: {'; '.join(itog) or 'не нужна'}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,11 @@
+[Unit]
+Description=Заслон лимита Codex-подписок — каждые 10 мин (по истории 90→100 % не быстрее 1 ч)
+
+[Timer]
+OnBootSec=5min
+OnCalendar=*-*-* *:03/10:00 UTC
+AccuracySec=30s
+Unit=codex-limit-watch.service
+
+[Install]
+WantedBy=timers.target

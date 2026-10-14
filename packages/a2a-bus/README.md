@@ -1,128 +1,249 @@
-# a2a-bus — let agents on one machine talk to each other, without giving up isolation
+Английская версия: [README.en.md](README.en.md) · ниже — русский текст
 
-Several agents live on one machine. Each runs as its **own system user** — that is the isolation:
-an agent cannot read another one's files, memory, or conversations.
+# a2a-bus
 
-Now they need to write to each other directly, on this machine, and the owner needs to see both
-sides of every exchange in his own chat with each agent.
+**Версия:** 3.1.2
 
-This is **not a harness plugin**. It is a machine service: a spool directory per agent, a postman
-that runs from `root`, and one command to enroll a new agent.
+## Назначение
 
-## The problem, stated honestly
+Почтовая шина для агентов одной машины. Изоляция файлов действует между системными учётками; несколько агентов на одном UID не получают изоляцию друг от друга средствами шины. Отправитель кладёт письмо в ящик получателя `/var/spool/a2a/<учётка>`. В ящик можно писать, но нельзя смотреть его содержимое. Почтальон работает от root, каждые 5 с переписывает письмо в собственность получателя (режим 0600) и показывает его владельцу в личном чате получателя через `tell-owner`. В пакете также лежат отправитель `a2a-send`, `tell-owner`, читатель реестра агентов `agent-registry` с шаблонами раскладки, заведение агента в шину и приёмка нового агента.
 
-The obvious design is a shared directory everyone can write to. It fails in a way that is not
-obvious: to *deliver* a letter the receiver must read a file the sender owns, and file permissions
-are granted by the **owner** of the file, not by the directory. So either the sender keeps the
-letter readable — and then every member of the group can read it — or the receiver cannot open it
-at all.
+## Что ставится и куда
 
-Our answer: **each agent owns a mailbox nobody else can list.** Senders may drop a file in
-(`--wx`, write and traverse, no read), and cannot see what else is there. A postman running as
-`root` then does the one thing that requires root and nothing else: it **changes the owner** of the
-letter to the receiver. After that the letter is the receiver's own file, and the sender has lost
-access to it.
+Ниже указана штатная раскладка sadik. Это служебный пакет исходников, не npm-плагин. Реестр и шаблоны раскладки содержат настройки машины; проверьте их перед переносом на другой узел.
 
+| Файл в пакете | Путь на машине | Режим / владелец | Что это |
+|---|---|---|---|
+| `sbin/a2a-pochtalon.py` | `/usr/local/sbin/a2a-pochtalon.py` | 0755 root:root | почтальон: переносит письма в собственность получателя и уведомляет владельца |
+| `sbin/a2a-zavesti` | `/usr/local/sbin/a2a-zavesti` | 0755 root:root | заводит агента в шину: группа, членство, ящик, проверка |
+| `sbin/a2a-proba-novichka` | `/usr/local/sbin/a2a-proba-novichka` | 0755 root:root | приёмка заведённого агента |
+| `bin/a2a-send` | `/usr/local/bin/a2a-send` | 0755 root:root | отправитель: кладёт письмо в ящик, даёт строку «→ кому» |
+| `bin/tell-owner` | `/usr/local/bin/tell-owner` | 0755 root:root | сообщение владельцу через бота вызвавшей учётки |
+| `bin/agent-registry` | `/usr/local/bin/agent-registry` | 0755 root:root | читатель реестра агентов (Python) |
+| `lib/a2a-bus/outgoing_mirror.py` | `/usr/local/lib/a2a-bus/outgoing_mirror.py` | 0644 root:root | полная запись отправленного письма для режима owner-all |
+| `lib/a2a-bus/v2_with_mirror.py` | `/usr/local/lib/a2a-bus/v2_with_mirror.py` | 0644 root:root | обёртка над внешним `a2a-v2.py` для `a2a-send --v2` |
+| `systemd/a2a-pochtalon.service` | `/etc/systemd/system/a2a-pochtalon.service` | 0644 root:root | oneshot-служба почтальона от root |
+| `systemd/a2a-pochtalon.timer` | `/etc/systemd/system/a2a-pochtalon.timer` | 0644 root:root | таймер: `OnBootSec=30s`, `OnUnitInactiveSec=5s` |
+| `systemd/a2a-pochtalon.service.d/60-python-padenie-70.conf` | `/etc/systemd/system/a2a-pochtalon.service.d/60-python-padenie-70.conf` | 0644 root:root | запуск почтальона через `python-padenie-70`: непойманное исключение — код 70, юнит failed |
+| `systemd/a2a-pochtalon.service.d/70-predel-v-chat.conf` | `/etc/systemd/system/a2a-pochtalon.service.d/70-predel-v-chat.conf` | 0644 root:root | `A2A_PREDEL_V_CHAT=3800` |
+| `share/agent-registry/shablony-raskladki/{codex,sdk-claude}/*.tmpl` | `/etc/agent-registry/shablony-raskladki/<семейство>/*.tmpl` | 0644 root:root, каталоги 0755 при установке ниже; на существующей машине сохраняйте согласованную группу реестра | шаблоны A/B/C/M для `agent-registry sobrat`/`verify` (что в них — ниже, «Шаблоны раскладки»). Путь задаёт поле реестра `mashina.raskladka_obshchee.shablony` |
+| `test/stend-outgoing-mirror.py` | не ставится | — | стенд отправителя |
+| `test/stend-13-21.py` | не ставится | — | генератор, общие ACL и корень машины |
+| `test/stend-alpha.py` | не ставится | — | sender/registry/root-почтальон на частных копиях |
+| `test/stend-limit-owner.py` | не ставится | — | предел среды native/v2 и integer owner R3 |
+| `LICENSE` | не ставится | — | лицензия MIT |
+| — (создаёт `a2a-zavesti`) | `/var/spool/a2a` | 0755 root:root | корень ящиков |
+| — (создаёт `a2a-zavesti`) | `/var/spool/a2a/<учётка>` | 1730 `<учётка>`:a2a-pochta | ящик: владелец читает и пишет, группа только кладёт |
+| — (создаёт `a2a-zavesti`) | группа `a2a-pochta` | — | группа отправителей |
+
+`a2a-send` ищет помощники по пути `$(dirname "$0")/../lib/a2a-bus/`. Поэтому `bin/` и `lib/` ставятся под общий префикс (`/usr/local`).
+
+### Шаблоны раскладки
+
+- `codex/M.tmpl` (профиль Codex): сервер MCP `omega` берёт Bearer из переменной окружения шлюза `OMEGA_MCP_API_KEY` (`bearer_token_env_var`; её даёт drop-in шлюза с `EnvironmentFile=/etc/omega/mcp-klyuch.env`), значения в шаблоне нет. Без переменной падает только этот сервер: «MCP startup failed: Environment variable OMEGA_MCP_API_KEY … is not set». Та же переменная исключена из окружения shell-команд Codex (`shell_environment_policy.exclude`) — от процесса шлюза она не прячется.
+- `codex/B.tmpl`: плагин `@deepseek-ai/dsh-command-compact` (ручной компакт тем же двигателем).
+- `codex/A.tmpl` и `sdk-claude/A.tmpl`: блок `sledPodyomov` — только когда сборка его вывела (см. `sled_podyomov` выше).
+- `sdk-claude/A.tmpl` для гостя (`GOST: true`): плагин `fs-sandbox` — пути и префиксы сессий, закрытые для инструментов модели (ящики, сессии, ключи, состояние API); ввод-вывод службы он не меняет.
+- `sdk-claude/C.tmpl` для гостя: пустая `GATEWAY_LIMITY_VHOD=` — у гостя нет группы, дающей запись лимитов в приёмную `dsh-limity`.
+
+## Установка
+
+### Перед установкой
+
+Нужны Linux, Bash, Python 3 с PyYAML, `sudo`, `curl`, `logger`, `timeout`, `install`, `id`, `getent`, `groupadd`, `usermod`, `stat` и systemd. На Debian/Ubuntu модуль PyYAML даёт пакет `python3-yaml`. Зависимость `python-padenie-70` из dsh-storozha-mashiny ставится до drop-in `60-python-padenie-70.conf`; `agent-alert` из dsh-trevogi нужен для машинных тревог. Node нужен только для теста читателя копий.
+
+Системная учётка агента должна уже существовать. Владелец машины заранее создаёт `/etc/agent-registry/agents.yaml`: это намерение, утилиты шины его не редактируют. Минимальная запись для клички `demo` и отличающейся учётки `demosvc`:
+
+```yaml
+agenty:
+  - imya: demo
+    namerenie:
+      polzovatel: demosvc
+      dom: /srv/demosvc
+      kanal:
+        tip: telegram
+        rezhim_dostavki: personal
+        yashchik: /var/spool/a2a/demosvc
 ```
-/var/spool/a2a/<agent>     drwx-wx--T   <agent>:a2a-post
-                           owner: read+write     sender: drop only, no listing
-```
 
-## What is here
+Это минимальный пример для почты, не полный реестр для `verify`/`sobrat`. При такой записи `a2a-zavesti demo` создаёт ящик по учётке `demosvc`; `kanal.yashchik` указывает тот же путь. `agent-registry pole demo polzovatel --json` должен вернуть `"demosvc"`. Нужны отдельные записи отправителя и получателя; для owner-all отправитель также должен иметь правильные `dom`, `polzovatel` и `kanal`. У общей учётки требуются явные отдельные ящики агентов и отдельная проверка их читателей: ящик общей учётки не доказывает маршрут к конкретному агенту.
 
-| File | What it is |
-|---|---|
-| `sbin/a2a-pochtalon.py` | the postman: transfers ownership, enforces size and count limits, notifies the owner |
-| `sbin/a2a-zavesti` | enroll an agent into the bus in one command — mailbox and group in a single step, with verification |
-| `sbin/a2a-proba-novichka` | acceptance probe: does a letter arrive, is a foreign mailbox refused, does the round trip work |
-| `systemd/` | the service and a timer that runs it every 5 seconds |
-
-Everything is configured through environment variables (`A2A_KOREN`, `A2A_TELL_BIN`,
-`A2A_REESTR_BIN`, and the limits). Nothing about our machines is baked in.
-
-## What this does NOT do
-
-- **It does not deliver the letter into the agent's turn.** That is your channel module's job; the
-  bus only puts the file where the receiver can read it.
-- **It does not read letter contents.** The postman never opens the body.
-- **It does not make the mailbox a private place.** Permissions on a *file* are granted by its
-  owner: any file the owner himself makes world-readable will be readable by everyone in the group.
-  The bus protects you from other people's curiosity, not from your own carelessness.
-- **The sender name in the filename is a hint, not a credential.** Forging it is trivial. Real
-  provenance is what the postman saw — the file's owner before transfer. Never grant rights based
-  on that name.
-- It is not a security boundary against a hostile local root.
-
-## Install
-
-There is nothing to `npm install` here: this lives in the system, and a package manager would put
-it where it cannot run — while looking like a successful install. Copy it by hand:
+До копирования unit/drop-in проверьте обязательные зависимости; эти команды ничего не устанавливают:
 
 ```sh
-install -m 0755 sbin/a2a-pochtalon.py sbin/a2a-zavesti sbin/a2a-proba-novichka /usr/local/sbin/
-install -m 0644 systemd/a2a-pochtalon.{service,timer} /etc/systemd/system/
-groupadd -f a2a-post
-install -d -m 0755 -o root -g root /var/spool/a2a
-systemctl daemon-reload && systemctl enable --now a2a-pochtalon.timer
-a2a-zavesti <agent-system-user>          # per agent
-a2a-proba-novichka <agent-system-user>   # prove it, don't assume it
+python3 -c 'import yaml' &&
+test -x /usr/local/bin/python-padenie-70 &&
+test -r /etc/agent-registry/agents.yaml
 ```
 
-## Three traps we walked into, so you don't have to
+Если проверка вернула ненулевой код, устраните причину до установки службы.
 
-**`chmod` with a numeric mode keeps the directory's setgid bit.** `chmod 1730` over `2730` yields
-`3730` — and returns success. We stepped on this twice; anyone following a written instruction
-would step on it every time. That is why enrollment is one command and not a list of steps:
-**if a procedure takes more than three steps, simplify the mechanism instead of writing a longer
-instruction.** A longer instruction just moves the trap onto the reader.
+### Копирование файлов
 
-**An acceptance check that reads one item out of N proves nothing.** Ours took the first file it
-found, got a correct one, and passed a planted broken letter. Count what you checked and say the
-number out loud: "read 1 of 5" is honest, "OK" is not.
+npm здесь не участвует. Файлы копируются руками от root. Порядок обязателен: сначала `bin/agent-registry`, затем оба помощника `lib/a2a-bus/*`, затем `bin/a2a-send`. Новое зеркало со старым реестром не узнаёт штатное отсутствие отправителя по машинному маркеру и даёт код 4 после укладки; письмо нельзя повторять автоматически. При откате сначала верните прежние mirror-helper, затем прежний реестр; новое зеркало нельзя оставлять со старым реестром.
 
-**A check can be blind in the tester's hands and healthy in production.** Our health check ran as
-`root` in production — green — and as an ordinary user on the test bench — red. Name the subject
-explicitly (`id -u`, then `sudo -n` when needed) instead of assuming whose hands run it.
+```sh
+install -m 0755 bin/agent-registry /usr/local/bin/
+install -d -m 0755 /usr/local/lib/a2a-bus
+install -m 0644 lib/a2a-bus/outgoing_mirror.py lib/a2a-bus/v2_with_mirror.py /usr/local/lib/a2a-bus/
+install -m 0755 bin/a2a-send bin/tell-owner /usr/local/bin/
+install -m 0755 sbin/a2a-pochtalon.py sbin/a2a-zavesti sbin/a2a-proba-novichka /usr/local/sbin/
+install -m 0644 systemd/a2a-pochtalon.service systemd/a2a-pochtalon.timer /etc/systemd/system/
+install -d -m 0755 /etc/systemd/system/a2a-pochtalon.service.d
+install -m 0644 systemd/a2a-pochtalon.service.d/*.conf /etc/systemd/system/a2a-pochtalon.service.d/
+systemctl daemon-reload
+systemctl enable --now a2a-pochtalon.timer
+```
 
-## License
+Для `sobrat`/`verify` установите семь шаблонов в каталог реестра (на sadik — `/etc/agent-registry/shablony-raskladki`); это не запуск службы:
 
-MIT, same as the rest of this repository.
+```sh
+install -d -m 0755 /etc/agent-registry/shablony-raskladki/codex /etc/agent-registry/shablony-raskladki/sdk-claude
+install -m 0644 share/agent-registry/shablony-raskladki/codex/*.tmpl /etc/agent-registry/shablony-raskladki/codex/
+install -m 0644 share/agent-registry/shablony-raskladki/sdk-claude/*.tmpl /etc/agent-registry/shablony-raskladki/sdk-claude/
+```
 
-## Sender side: `bin/a2a-send`, `bin/tell-owner`, `bin/agent-registry`
+Шаблоны раскладки кладутся в каталог, который указан в поле реестра `mashina.raskladka_obshchee.shablony`. На рабочей машине это `/etc/agent-registry/shablony-raskladki`.
 
-Until 2026-09-04 these three lived only on the machine and the README pointed at them as
-external (`A2A_SEND_BIN`, `A2A_TELL_BIN`, `A2A_REESTR_BIN`). They are published here as they run
-in production, with private names in comments replaced by `<agent>` / "one machine". Install by
-hand next to the postman: `install -m 0755 bin/a2a-send bin/tell-owner /usr/local/bin/` and
-`install -m 0755 bin/agent-registry /usr/local/bin/`.
+Заведение агента (от root; аргумент — кличка агента из реестра, а не системная учётка):
 
-**`a2a-send <recipient> ["text"]`** — puts a letter into the recipient's mailbox and shows the
-"→ to whom" line to the owner through `tell-owner`. Writes under a dot-name and renames
-atomically (the postman skips dot-files, so it never picks up a half-written letter); sets
-`umask 077` only around the write — this is the one place where the pre-transfer window is
-closed. **Give private text on stdin, not as an argument**: an argument is visible to every user
-of the machine in `/proc/<pid>/cmdline` (measured 2 of 2); text longer than `A2A_PREDEL_ARGV`
-(default 500) as an argument is refused outright. There is no `-f` flag on purpose.
-**If you arrived with instructions that mention `-f` or a 3 500-character limit — that is a
-different courier under the same name** (a fleet's own tool on another machine). Same name, same
-path, different machine, different interface: the name does not identify the tool; the
-content does (size, checksum, presence of the flag). The code carries the same warning at the
-place where someone once called it with `-f`. Exit codes:
-`0` delivered and the owner saw it · `1` not delivered · `3` bad call or recipient · `4` delivered,
-but the visibility line did not go out. `--bez-kopii` suppresses the owner copy (for technical
-acknowledgements). Environment: `A2A_KOREN` (`/var/spool/a2a`), `A2A_PREDEL_V_CHAT` (900),
-`A2A_PREDEL_ARGV` (500), `A2A_TELL_BIN`, `A2A_REESTR_BIN`.
+```sh
+a2a-zavesti <кличка>          # группа a2a-pochta, членство, ящик 1730 <учётка>:a2a-pochta
+a2a-proba-novichka <кличка>   # приёмка; письма — в подставном корне, см. «Проверка»
+```
 
-**`tell-owner "text"` / `echo text | tell-owner`** — a message to the owner's private chat from
-the calling agent's **own** bot. Which bot is decided by the calling system user:
-`/etc/agent-tell/<user>.conf` (variables `TOKEN_FILE`, `CHAT_ID`), so an agent cannot write in
-someone else's name even by accident. No config or empty message — exit `1` and a loud line,
-never silence: an unsent report looks like "the agent did not report".
+`a2a-zavesti` намеренно не создаёт системную учётку, не правит реестр, не заводит бота и не перезапускает платформу агента. Новую группу живой процесс агента получит только после перезапуска его платформы. До перезапуска агент письма получает, но отправлять не может.
 
-**`agent-registry`** — a read-only reader of the machine's agent registry (Python).
-Sub-commands: `kto <user>` — the nickname for a system user (the postman uses this for the owner notification); `list`, `sluzhby` (services and dependencies per agent), `pole <agent>
-<field> [--json]`, `mashina [--json]` (machine-wide paths — paths only, never secret values),
-`obshchee [--json]`, `pokrytie [--json]` (the whole backup-coverage frame in one call), `fakt`,
-`verify` (intent vs fact: mismatch → `1`, blindness → `2`). It changes nothing and guesses
-nothing: a missing field is a loud refusal with a non-zero code, not a default. In a pipeline
-take its exit code via `PIPESTATUS` or `set -o pipefail` — `... --json | jq` returns jq's code.
+## Настройка
+
+### Переменные окружения
+
+| Переменная | Кто читает | Умолчание | Смысл |
+|---|---|---|---|
+| `A2A_KOREN` | почтальон, `a2a-send`, `a2a-zavesti`, `a2a-proba-novichka` | `/var/spool/a2a` | корень ящиков |
+| `A2A_TELL_BIN` | почтальон, `a2a-send` | `/usr/local/bin/tell-owner` | чем показывать письмо владельцу |
+| `A2A_REESTR_BIN` | почтальон, `a2a-send`, `a2a-zavesti`, `a2a-proba-novichka`, `outgoing_mirror.py` | `/usr/local/bin/agent-registry` | читатель реестра |
+| `A2A_ALERT_BIN` | почтальон | `/usr/local/bin/agent-alert` | тревога машины, когда в ящике лежит «не письмо» |
+| `A2A_PREDEL_V_CHAT` | почтальон (в единицах UTF-16), `a2a-send` (в знаках) | `900` | сколько текста письма показывать в чате. Почтальон дополнительно режет до 4096 единиц UTF-16 вместе с шапкой и хвостом |
+| `A2A_PREDEL_UVEDOMLENIYA_S` | почтальон | `15` | сколько секунд ждать `tell-owner` |
+| `A2A_PREDEL_BAJT` | почтальон, `a2a-send` v1, `v2_with_mirror.py` | `1048576` | полный файл: v1 — конверт, UTF-8 тело и финальный LF; v2 — фактический wire. Sender/v2 отказывают до публикации, почтальон оставляет превышение на месте. У native sender и `--v2` допустимо 1…1048576 Б; превышение 1048576 даёт код 3 до публикации, среда может только уменьшать предел; значение задаётся согласованно |
+| `A2A_PREDEL_PISEM` | почтальон | `100` | сколько писем на ящик за прогон |
+| `A2A_PREDEL_ARGV` | `a2a-send` | `500` | предел знаков для `--text` |
+| `A2A_GRUPPA` | `a2a-zavesti`, `a2a-proba-novichka` | `a2a-pochta` | группа шины |
+| `A2A_POCHTALON_BIN` | `a2a-proba-novichka` | `/usr/local/sbin/a2a-pochtalon.py` | какого почтальона звать |
+| `A2A_SOSED` | `a2a-proba-novichka` | первый по имени ящик, чьё имя = владелец, владелец ≠ новичок и в группе шины | учётка соседа для проб «чужое отказом» и «обратно» |
+| `A2A_V2_HELPER` | `v2_with_mirror.py` | `/usr/local/libexec/a2a-v2.py` | внешний издатель протокола v2 |
+| `HOME`, `DSH_HOME` | `outgoing_mirror.py` | — | по ним определяется отправитель. `DSH_HOME` обязан быть абсолютным путём `…/.dsh` |
+| `AGENTS_REGISTRY` | `agent-registry` | `/etc/agent-registry/agents.yaml` | файл реестра |
+| `WATCHDOG_CONF` | `agent-registry verify` | `/etc/agent-watchdog/watchdog.conf` | откуда брать `SERVICES` сторожа машины |
+| `AGENT_REGISTRY_KATALOG_C` | `agent-registry verify` | `/etc/claude-oauth` | каталог файлов окружения шлюзов `instance-<агент>.env` для сверки «живое-C». Подмена только для стенда реестра |
+| `AGENT_REGISTRY_YUNIT_C` | `agent-registry verify` | `claude-oauth-gateway@{}.service` | шаблон имени юнита шлюза (`{}` — имя агента) для той же сверки. Подмена только для стенда |
+
+Если задана `AGENT_REGISTRY_KATALOG_C` или `AGENT_REGISTRY_YUNIT_C`, `verify` печатает строку «подстановка <имя>=<значение>»: забытая подмена иначе дала бы ложное зелёное. Сверка «живое-C» (`GATEWAY_TOKEN_FILE` в env шлюза = в окружении живого процесса) у гостя (`GOST: true`) сравнивает имя файла токена (номер подписки) и требует, чтобы каталог был `/run/credentials/<юнит>` или `RuntimeDirectory` юнита: гость получает копию одной подписки в `RuntimeDirectory`. У остальных путь сравнивается целиком.
+
+Drop-in файлы службы входят в пакет (`systemd/a2a-pochtalon.service.d/`): `70-predel-v-chat.conf` задаёт `A2A_PREDEL_V_CHAT=3800`, а `60-python-padenie-70.conf` запускает почтальона через `/usr/local/bin/python-padenie-70` из пакета dsh-storozha-mashiny.
+
+### Файлы и поля реестра
+
+- `/etc/agent-tell/<учётка>.conf` — настройка `tell-owner`. Файл читается пассивно, без исполнения shell. Разрешены только `TOKEN_FILE` (абсолютный путь к файлу токена) и `CHAT_ID` (ненулевой целый ID чата); полная грамматика и требования к файлу — в разделе `tell-owner` ниже. Бот выбирается по `id -un` вызвавшего, поэтому почтальон зовёт `sudo -n -u <получатель> tell-owner`.
+- Поля реестра, которые проверяет `agent-registry sobrat` (сборка раскладки из шаблонов):
+  - `mashina.imya` — обязательная непустая строка имени общего системного корня для сборки. Она включается в `SISTEMNYE_KORNI` вместе с именами не-гостевых агентов; нет поля, пустая строка или неверный тип — отказ сборки с причиной, без подстановки `sadik`. Список гостевых корней этим не меняется.
+  - `mashina.raskladka_obshchee.vladelec_telegram` — обязательный положительный целый Telegram ID владельца, не строка и не bool. `_f_parametry` передаёт его целым числом как `VLADELEC_TELEGRAM` для `@@VLADELEC_TELEGRAM@@`. Нет поля, нецелое значение, 0 или отрицательное — отказ сборки с причиной; прежний ID по умолчанию не подставляется.
+  - `mashina.raskladka_obshchee.postanovshchiki_celey` — обязательный список непустых имён постановщиков целей. `[]` допустим и означает явно пустой список; отсутствие поля отличается от `[]` и даёт отказ. Генератор передаёт список как `GOAL_A2A_SENDERS` для `@@GOAL_A2A_SENDERS@@`. Оба поля задаются в общей настройке машины; шаблоны и генератор обновляются согласованно. `_f_json_yaml` кодирует список для inline `goalA2ASenders: @@GOAL_A2A_SENDERS@@`: печатный и astral Unicode сохраняется, YAML-опасные DEL/C1/LS/PS экранируются. Owner-ID вставляется без кавычек; поля общей ACL нельзя переопределять отличиями агента. Данные реестра, генератор и оба A-шаблона обновляются одним согласованным окном.
+  - `OSTROV_API` (отличие агента) — только для `GOST: true` семейства `sdk-claude`: `false` или объект `baseUrl`, `keyFile`, `botId` и необязательный `requestKeyDir`. `baseUrl` — только `http://` (клиент моста ходит по HTTP; `https` отвергается), без userinfo, пути и query; `botId` — 1..16 цифр; `keyFile` и `requestKeyDir` — абсолютные пути без «..».
+  - `PDF_BLANKI` (отличие) — каталог фирменных бланков PDF канала (`pdfTemplatesDir`), тоже только для `GOST: true` семейства `sdk-claude`.
+  - `namerenie.podpiska: podpiska-N` — своя подписка агента. `verify` ведёт для такого агента строку «подписка-своя»: ждёт в env шлюза `/etc/claude-oauth/token-podpiska-N` и сам файл. Общая проверка подписки такого агента не считает.
+  - `mashina.raskladka_obshchee.sled_podyomov` — путь следа подъёмов; в профиль A он попадает как `sledPodyomov` и только агентам области `podyom-uzla` (служба `<имя>.service`, учётка `<имя>`, дом `/opt/<имя>`), гостю — нет.
+  - `ceny` в D переносится только для той модели, для которой цены сняты (`ceny.model` = модель сводки); иначе каталог цен не переносится, причина — в stderr.
+  - `sobrat` отказывает, если в собранном профиле A нет `thresholdRatio` или рядом с ним `retainRatio` не меньше `thresholdRatio` (то же правило, что платформа применяет при подъёме).
+- Поля реестра, которые читает шина: `polzovatel` (учётка агента), `kanal.yashchik` (явный ящик; если поля нет — `$A2A_KOREN/<polzovatel>`), `kanal.tip` и `kanal.rezhim_dostavki` (`owner-all` / `personal` / `broadcast`; по ним решается, кто делает копию письма владельцу), `dom` (сверка контекста отправителя в `outgoing_mirror.py`).
+
+### a2a-send
+
+Вызов: `a2a-send [--bez-kopii] <агент> [--text "текст"]`. Без `--text` текст берётся из stdin. Протокол v2 вызывается как `a2a-send --v2 …`, аргументы передаются в `a2a-v2.py`. Другие доводы, в том числе голый текст аргументом, отвергаются с кодом 3.
+
+| Код | Смысл |
+|---|---|
+| 0 | письмо положено локально; это не получение агентом и не обязательное подтверждение Telegram. Дальше выбран один из маршрутов: уведомление отправителя, ожидаемая копия получателя owner-all, полная запись отправителя owner-all или `--bez-kopii` |
+| 1 | письмо не положено: нет ящика, не записалось, не переименовалось, легло пустым |
+| 3 | ошибка вызова или получателя, в том числе чужой ящик в `kanal.yashchik`. Отказ происходит до укладки |
+| 4 | письмо положено, но копия владельцу или полная запись отправителя не подтверждена. Повторять письмо не нужно |
+
+Ветка v1 оставляет одну строку `logger -t a2a-send` с исходом. Ветка --v2 выполняет ранний exec до установки этой ловушки и такой записи не обещает. Тело письма в журнал не пишется.
+
+### Коды остальных утилит
+
+| Утилита | Коды |
+|---|---|
+| `a2a-pochtalon.py` | 0 — всё перенесено или нечего переносить; 1 — часть писем не перенесена и оставлена на месте (в юните `SuccessExitStatus=1`); 2 — слепота: не root, корень не читается или в нём нет ящиков |
+| `a2a-zavesti` | 0 — готово; 1 — есть отказы шагов; 2 — неверный вызов, reader/python недоступны, ошибка загрузчика или malformed JSON до действий; 3 — агента или учётки нет; 4 — не root |
+| `tell-owner` | 0 — успех без вывода либо справка в stdout; 1 — ошибка текста/config/token/CHAT_ID, транспорта или Telegram в stderr; 2 — неизвестный первый ключ в stderr |
+| `agent-registry` | подкоманды `list`, `sluzhby`, `pole <агент> <поле> [--json]`, `kto <учётка> [--json]`, `mashina [--json]`, `obshchee [--json]`, `pokrytie [--json]`, `pokrytie --json --s-nepolnymi`, `fakt`, `verify`, `sobrat [--kuda <новый-каталог>]`. Коды: 0 — ок; 1 — `verify`: расхождение; 2 — реестр недоступен, нет `python3-yaml`, `verify`: не проверено, `sobrat`: есть несобранное; 3 — отказ: нет агента или поля, неверные доводы; 4 — `pokrytie --s-nepolnymi`: рамка неполная |
+
+`agent-registry pole` при отсутствии агента или поля возвращает код 3 с пустым stdout и отдельной строкой stderr `agent-registry-error: agent-not-found` либо `agent-registry-error: field-not-found`. Человеческая строка сохраняется, но протоколом не является. Ошибка загрузчика/реестра возвращает 2, не эти маркеры. В текущем `a2a-send` отказ реестра на стадии выбора адресата преобразуется в код 3 до укладки, причина отказа сохраняется в stderr; ошибка source-копии после укладки — код 4. `a2a-zavesti` и `a2a-proba-novichka` не разбирают эти stderr-маркеры: обе ветки registry-кода 3 отказывают до изменений, вызывающий решает только по коду (заведение — 3, проба — 1); недоступный загрузчик/реестр — 2. Маркеры остаются видимой человеку диагностикой.
+
+### Полные записи отправителя и стадии доставки
+
+В owner-all после укладки сохраняется `~/a2a/polnye/agent-outgoing-<sha256>.json`, 0600: тело, адресат и ключ SHA256(адресат + перевод строки + тело). Читатель `prepareSentCopies` входит в dsh-telegram-multiagent и отдельно ставит копию владельцу в очередь. Создание записи не подтверждает Telegram. В a2a-bus нет автоматической ротации этих записей; старые записи не пересылаются автоматически.
+
+В personal полная запись пропускается. Неизвестный отправитель, отсутствующее поле `kanal` и JSON null дают именованный пропуск необязательной source-копии. Для personal и другого режима, кроме буквального owner-all, проверки dom/UID/cwd этой копии не требуются; это не доказывает успешность legacy-уведомления владельца. В текущем коде имя отправителя — basename(parent(DSH_HOME)) при заданном DSH_HOME, иначе basename(HOME), не результат kto по UID. Для owner-all это имя должно совпасть с imya, dom — с этим каталогом, а polzovatel — с текущей учёткой. Пример demo/demosvc выше относится к personal; для owner-all demo нужен дом с basename demo, принадлежащий учётке demosvc. У установленного owner-all неверные UID/home/cwd и отказ проверки реестра дают код 4 после укладки. Отказ запуска/загрузчика/реестра без точного маркера не становится штатным пропуском и после укладки даёт код 4. Не повторяйте положенное письмо автоматически.
+
+`a2a-send --v2 …` требует внешнего издателя `/usr/local/libexec/a2a-v2.py` из dsh-pochta; внутренний договор — callable `main`/`put`/`wire`. Проверяйте его при обновлении издателя. `A2A_KOREN` не настраивает внешний v2-издатель. Предел сырого тела зеркала — 1048576 Б, сериализованной JSON-записи — 8388608 Б. При обычной отправке v1 предел самого письма учитывает конверт: максимум тела = `A2A_PREDEL_BAJT − длина конверта delivery-v1 в байтах − 1 Б финального LF`; при умолчании — 1048484 Б. Это производная величина, не отдельная настройка; v2 считает свой actual wire. Значение A2A_PREDEL_BAJT выше 1048576 или негодное отвергается до публикации; увеличивать предел окружением нельзя.
+
+## Проверка
+
+### Стенды модуля 08
+
+`python3 -B test/stend-13-21.py` проверяет пакетные генератор и шаблоны: обязательные owner/goals, отказ переопределения общих ACL агентом, общий корень машины и префикс тревоги. Нужен `python3-yaml`, root не требуется. `sudo python3 -B test/stend-alpha.py` проверяет отправитель, реестр и root-почтальон на частных ящиках; транспорт и logger подставные. Ему нужны root, `python3-yaml` и v2-издатель из соседнего `../dsh-pochta/libexec/a2a-v2.py` либо явный `STEND_A2A_V2_SOURCE` (в раскладке машины — `/usr/local/libexec/a2a-v2.py`). `M08_PACKAGE` необязательно выбирает явную копию исходников; без него оба стенда читают свой пакет. `sudo python3 -B test/stend-limit-owner.py` исполняет ровно семь R3-проверок верхнего лимита native/v2 и целого ID; ему нужны оба соседних пакетных стенда и их предпосылки, включая root и v2-источник. Импорт файла сам не запускает suite. Коды новых стендов: 0 — проверки исполнены и прошли; 1 — провал; 2 — слепота из-за отсутствующих предпосылок. Они не отправляют живые письма, не вызывают модель и не перезапускают службы. В обходе зарегистрируйте все три имени; `stend-alpha.py` и `stend-limit-owner.py` — от root с явным v2-источником.
+
+### test/stend-outgoing-mirror.py
+
+Запуск: `python3 -B test/stend-outgoing-mirror.py` из каталога пакета. Это unittest. Код 0 — все случаи прошли, 1 — есть провал. Стенд гоняет пакетный `bin/a2a-send` на временном каталоге с подставными реестром и `tell-owner`. Боевые ящики и боты не используются. Что проверяется:
+
+- полную запись owner-all, ключ операции, режим 0600 и однократность записи;
+- пропуск записи для `personal` и для неопознанного отправителя;
+- код 4 при чужом cwd и при отказе реестра;
+- отсутствие записи, если письмо не легло;
+- путь `--v2` через подставной издатель и отказ при неполном интерфейсе издателя;
+- перенос sender/lib под одним префиксом; нормативный порядок обновления — registry → оба helper → sender.
+- максимальное тело v1 с учётом конверта и чтение настоящим читателем канала; unknownsender-фикстура использует ASCII-маркер реестра.
+
+Касание системы: при каждой отправке `a2a-send` пишет строку в системный журнал (`logger -t a2a-send`). Случай `test_maximum_json_escaping_record_has_actual_reader` требует `node` и соседний пакет `../dsh-telegram-multiagent/src/sent-copies.js`.
+
+### sbin/a2a-proba-novichka
+
+Запуск от root: `a2a-proba-novichka <кличка>`. Коды: 0 — сошлось, 1 — расхождение, 2 — слепота или выполнены не все проверки (по канарейке). Без второго агента в шине стенд ждёт 8 проверок, с ним — 11.
+
+**Стенд не пишет в боевые ящики и не зовёт боевого почтальона.** Письма кладёт рука отправителя (`sudo -u`, формат курьера) в подставной корень `mktemp -d` с ящиками режима 1730; почтальон идёт по этому корню с заглушками вместо `tell-owner` и `agent-alert`. Боевой корень только читается: режим ящика новичка, выбор соседа, проверка «посторонний не пишет» от `nobody` (`test -w`). Цена: `a2a-send` и боевой почтальон этой приёмкой не проверяются.
+
+### Почтальон на машине
+
+Проверять по журналу: `journalctl -u a2a-pochtalon.service`. Каждый успешный перенос оставляет строку «перенесено …», каждый отказ — строку с «🔴 … ОСТАВЛЕНО», а показ владельцу — строку «владельцу показано (чат …)». Состояние таймера: `systemctl list-timers a2a-pochtalon.timer`.
+
+### tell-owner
+
+Используйте stdin для частного текста: `printf '%s' 'сообщение' | tell-owner`. Короткий текст, начинающийся с дефиса: `tell-owner -- '-сообщение'`. `-h`/`--help` дают код 0 и справку в stdout; неизвестный первый ключ — код 2 в stderr. Пустой текст, ошибка конфигурации, токена, CHAT_ID, транспорта или отказ Telegram — код 1 в stderr. Успех — код 0 без вывода. Ключ после первого аргумента остаётся текстом; проверяйте код возврата, не только наличие вывода.
+
+`/etc/agent-tell/<учётка>.conf` читается пассивно: это UTF-8 файл, обычный (не симлинк/FIFO), владелец UID 0, без записи group/other, размер не больше 16384 байт. Тип, владелец, права и размер проверяются по открытому fd до чтения того же fd. Например, допустимы 0644 либо 0640 с группой, которой нужен только доступ на чтение. Обе пары обязательны ровно по одному разу: `TOKEN_FILE=<абсолютный путь>` и `CHAT_ID=<ненулевой целый ID>` (необязательный минус, без ведущих нулей). Допустимы кавычки, пробелы вокруг `=`, пустые строки и `#`-комментарии. `export`, неизвестные и повторные ключи отвергаются. Нет `source`/`eval` или выполнения команд: shell-подстановки не разворачиваются; символы в допустимом абсолютном пути читаются буквально как данные. Ошибки — в stderr.
+
+Конфиг создаёт администратор, пакет его не создаёт; `a2a-zavesti` только сообщает о наличии. Каталог `/etc/agent-tell` — root:root 0755; файл — root:root 0644 либо root:<группа агента> 0640 с проверенным чтением от учётки агента.
+
+Токен остаётся в отдельном файле по пути `TOKEN_FILE`; значение токена не передаётся в argv и не записывается в README. `ProtectHome=true` сохраняется: конфиг и токен размещают вне `/home`, `/root` и `/run/user` — конфиг обычно в `/etc/agent-tell`, токен в `/etc/dsh-telegram`, с чтением только нужной учётке. Администратор даёт файлу токена доступ только нужной учётке: например root:<группа агента> 0640, без групповой/общей записи и с доступным для прохода каталогом. Каталоги на пути должны исключать непривилегированную подмену файла. Сам `tell-owner` проверяет доступность и непустоту токена, а не его владельца/права. Это договор монтажа, не новая программная защита и не замер живых путей.
+
+## Ограничения
+
+- «Доставлено» у `a2a-send` означает «положено в ящик». Почтальон может перенести письмо до 5 с спустя, а при сбое позже. В ход агента письмо попадает только через модуль связи, не через шину.
+- Пока письмо принадлежит отправителю, его может прочитать любой член группы, знающий имя файла. Это окно закрывает только `umask 077` у отправителя.
+- Почтальон не следует симлинкам и не выходит за `/var/spool/a2a`. Каталоги, ссылки и устройства в ящиках он пропускает. Старые письма не удаляет. Письма крупнее `A2A_PREDEL_BAJT` оставляет на месте.
+- Если имя файла не по образцу курьера, учётка в имени не равна владельцу файла или первая строка не конверт, почтальон считает файл «не письмом». Такой файл переименовывается в `.ne-pismo-…`, не переносится и не показывается; владелец получает строку без содержимого и тревогу. Секрет внутри настоящего письма курьера почтальон не ловит.
+- Отправителем считается владелец файла, а не имя в файле или конверт. Конверт `[delivery-v1 id=…]` служит только для учёта и подлинность не подтверждает.
+- Почтальон пытается показать письмо владельцу; в owner-all полный показ делает канал получателя. Это попытка уведомления, а не гарантия доставки Telegram. В текущей v1-ветке `--bez-kopii` гасит только прямой legacy-вызов tell-owner у отправителя; полная запись owner-all и её читатель этим флагом не отключаются.
+- Отказ уведомления доставку не отменяет. Без `/etc/agent-tell/<учётка>.conf` письма ходят, но владелец переписки этого агента не видит.
+- `tell-owner "текст"` аргументом оставляет текст в строке запуска самого скрипта и в журнале sudo. Закрыт только вариант через stdin. Ключ, переданный не первым доводом, уходит в текст.
+- `--text` виден в `/proc/<pid>/cmdline`, пока идёт вызов. От утечки секрета предел `A2A_PREDEL_ARGV` не защищает.
+- Если `kanal.yashchik` не задан, а учётка общая для нескольких агентов, `a2a-send` предупреждает, но кладёт письмо в общий ящик, который может никто не читать.
+- `v2_with_mirror.py` зависит от внутренних имён `main`/`put`/`wire` внешнего `/usr/local/libexec/a2a-v2.py`, который в пакет не входит. Если в издателе этих имён нет, отправка отвергается с кодом 3.
+- `agent-registry` ничего не пишет в боевые пути. `sobrat --kuda` создаёт новый каталог и кладёт сборку в него; каталоги под `/etc`, `/opt`, `/usr`, `/var/spool`, `/var/lib` отвергаются. `verify` проверяет совпадение намерения с машиной, а не здоровье агентов. Известные пробелы: токен не проверяется, доставка тоже, агенты вне корней реестра не видны.
+- Дефис в имени учётки поддержан не всей шиной: почтальон разбирает имя по UID владельца, но текущий разбор spool в dsh-telegram-multiagent и издатель v2 dsh-pochta ещё режут/запрещают дефисы. Это граница соседних клиентов, а не поддержка всего маршрута.
+- Зависимости: `python3`, `python3-yaml` (для `agent-registry`), `bash`, `curl`, `sudo`, `logger`, `timeout`, `/usr/local/bin/agent-alert`. Для `--v2` нужен `/usr/local/libexec/a2a-v2.py`.
+- Drop-in `60-python-padenie-70.conf` требует `/usr/local/bin/python-padenie-70` (пакет dsh-storozha-mashiny): без него почтальон не запустится.

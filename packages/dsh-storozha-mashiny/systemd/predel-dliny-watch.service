@@ -1,0 +1,9 @@
+# RU: Одиночный экземпляр сторожа предела длины. UNIT и KOMU обязательны (drop-in), без них отказ 2.
+# RU: Для нескольких агентов — шаблон predel-dliny-watch@.service.
+# EN: Single instance of the prompt-length watcher. UNIT and KOMU are required (drop-in), otherwise exit 2.
+# EN: For several agents use the template predel-dliny-watch@.service.
+[Unit]
+Description=Сторож отказа по длине промпта (событие, не предсказание)
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/predel-dliny-watch

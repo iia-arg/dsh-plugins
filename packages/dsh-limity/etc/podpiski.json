@@ -1,0 +1,77 @@
+[
+ {
+  "provajder": "claude",
+  "nomer": 1,
+  "kluch": "podpiska-1",
+  "organizaciya": "00000000-0000-4000-8000-000000000001",
+  "vkl": true,
+  "podpis": "Клод-1 (Забава)",
+  "poryadok": 0,
+  "sposob": "claude_usage",
+  "zamer": "limity-zamer-p1",
+  "zamer_katalog": "/var/lib/dsh-limity-zamer/p1",
+  "token_shlyuza": "/etc/claude-oauth/token-podpiska-1",
+  "email": "fixture1@example.invalid"
+ },
+ {
+  "provajder": "claude",
+  "nomer": 2,
+  "kluch": "podpiska-2",
+  "organizaciya": "00000000-0000-4000-8000-000000000002",
+  "vkl": true,
+  "podpis": "Клод-2 (MomICan)",
+  "poryadok": 1,
+  "sposob": "claude_usage",
+  "zamer": "limity-zamer-p2",
+  "zamer_katalog": "/var/lib/dsh-limity-zamer/p2",
+  "token_shlyuza": "/etc/claude-oauth/token-podpiska-2",
+  "email": "fixture2@example.invalid"
+ },
+ {
+  "provajder": "claude",
+  "nomer": 3,
+  "kluch": "podpiska-5",
+  "organizaciya": "00000000-0000-4000-8000-000000000003",
+  "zametka": "Claude-подписка 3 лежит под ключом podpiska-5 (podpiska-3/4 — исторически Codex), 05.10.2026",
+  "vkl": true,
+  "podpis": "Клод-3 (Med)",
+  "poryadok": 2,
+  "sposob": "claude_usage",
+  "zamer": "limity-zamer-p3",
+  "zamer_katalog": "/var/lib/dsh-limity-zamer/p3",
+  "token_shlyuza": "/etc/claude-oauth/token-podpiska-3"
+ },
+ {
+  "provajder": "codex",
+  "nomer": 3,
+  "kluch": "podpiska-3",
+  "organizaciya": "00000000-0000-4000-8000-000000000004",
+  "tarif": "pro",
+  "vkl": true,
+  "podpis": "Кодекс-1 (MomICan)",
+  "poryadok": 3,
+  "sposob": "codex_limit_watch"
+ },
+ {
+  "provajder": "codex",
+  "nomer": 4,
+  "kluch": "podpiska-4",
+  "organizaciya": "00000000-0000-4000-8000-000000000004",
+  "tarif": "pro",
+  "vkl": true,
+  "podpis": "Кодекс-2 (Med)",
+  "poryadok": 4,
+  "sposob": "codex_limit_watch"
+ },
+ {
+  "provajder": "deepseek",
+  "nomer": 1,
+  "kluch": "deepseek-1",
+  "podpis": "DeepSeek",
+  "poryadok": 5,
+  "sposob": "deepseek_balance",
+  "klyuch_fajl": "/etc/dsh-klyuchi/deepseek",
+  "porog_ostatka": 50,
+  "valyuta_poroga": "CNY"
+ }
+]

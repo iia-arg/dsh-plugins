@@ -1,369 +1,202 @@
-# dsh-pamyat-core
+# dsh-pamyat-core — оперативная память агента · Operational agent memory
 
-Оперативная память агента для платформы DSH: локальное хранилище, журнал решений
-и политика записи по классам. **Ноль внешних зависимостей.**
+Локальное ядро памяти DSH: SQLite-записи, журнал решений, фильтрация входа, политика подтверждения, отношения между знаниями и очередь доставки в долговременный слой.
 
-Это основа семейства `dsh-pamyat-*`. Своих швов ядра пакет не занимает — он даёт
-сервис `pamyat`, на который становятся остальные пакеты (секретарь, восстановление
-после компакта, гигиена, бюджет, ночной проход, поиск).
+The local DSH memory core: SQLite records, a decision journal, input filtering, approval policy, relationships between knowledge items, and a delivery queue for long-term storage.
 
-## Зачем
+## Зачем нужно · Why it exists
 
-В ядре DSH памяти нет: есть журнал сессии и компакция, но нет ни хранения знаний,
-ни выдачи их в начале сессии. Этот пакет закрывает основу.
+Сессия может закончиться или сжаться, а проверенное решение должно остаться. При этом пустая память может означать четыре разных вещи: записей ещё нет, запись запрещена политикой, вход отвергнут фильтром или хранилище недоступно. Ядро сохраняет данные и причины отдельно, чтобы инженер мог различить эти состояния.
 
-## Устройство
+A session can end or be compacted while a verified decision needs to survive. Empty memory can mean four different things: no records yet, a policy refusal, rejected input, or unavailable storage. The core retains both data and decision reasons so an engineer can distinguish these states.
 
-| Часть | Что делает |
-|---|---|
-| хранилище | локальный SQLite на встроенном `node:sqlite` |
-| журнал | каждое **решение** о записи, включая отказы и их природу |
-| политика | какие классы пишутся сами, какие требуют подтверждения |
+Ядро работает без внешней службы памяти. Долговременный провайдер — дополнительный слой; секретарь выделяет знания из диалогов, а восстановитель выбирает их для нового хода. Эти пакеты используют службу `ctx.pamyat`, не вторую копию локальной базы.
 
-## Главное свойство: отказ не притворяется пустотой
+The core works without an external memory service. A long-term provider is an additional layer; a secretary extracts knowledge from conversations, and a restore plugin selects it for a new turn. These packages use `ctx.pamyat`, rather than another copy of the local database.
 
-Пакет построен вокруг одного различения. «Память ничего не записала» может
-означать разные вещи, и лечатся они по-разному:
+## Место в системе · System placement
 
-| природа | что случилось | это решение или поломка |
-|---|---|---|
-| — | записывать было нечего | норма |
-| `otkazano-chelovekom` | человек не разрешил | решение |
-| `otmeneno` | подтверждение прервано до ответа | ни то ни другое: спросить снова |
-| `net-kanala` | канала подтверждения нет | поломка установки |
-| `net-sluzhby` | служба подтверждения не поддерживается сборкой | поломка установки |
-| `net-agenta` | вызов идёт вне агента, спрашивать некого | поломка установки |
-| `ne-predyavleno` | вызывающий не спрашивал подтверждения | чинить вызывающего |
-
-Природы взяты **буквально из исходника ядра** (`dsh-tools`, `lib/index.js`), а не
-придуманы: ядро само отказывает по-разному, «чтобы модель могла отличить
-человеческое „нет“ от отсутствующего канала подтверждения». Наш слой это
-различение **проносит дальше**, а не схлопывает в «не записали». Схлопнешь — и
-сломанная установка будет выглядеть как осторожный человек.
-
-🔴 **Три имени — НАШИ, а не ядра.** `not-supported`, `no-agent` и
-`ne-predyavleno` платформа не возвращает никогда: их подставляет вызывающий,
-описывая случай, до службы подтверждения не дошедший. Не ждите их от ядра.
-
-**Неизвестный исход — отказ с кодом, а не «человек».** Если ядро добавит новый
-исход, пакет это заметит и скажет, вместо того чтобы молча приписать его
-человеку.
-
-## Вера в знание: пустота — не ноль
-
-У записи есть необязательное поле `vera` (0..1) — на нём стоит гейтинг при
-выдаче знаний (использовать / проверить / пропустить).
-
-🔴 **Поле допускает пустоту намеренно.** `null` значит «веру не измеряли», и это
-**не то же самое**, что `0` — измеренное недоверие. Схлопнешь их — и знание,
-которое никто не оценивал, станет неотличимо от признанного негодным, а ветка
-«проверить» потеряет смысл.
-
-Негодное значение (вне 0..1, не число) **отвергается с кодом**, а не
-подменяется нулём: подмена превратила бы ошибку вызывающего в тихое искажение
-данных.
-
-Старые базы мигрируют добавлением столбца; строкам, записанным до появления
-поля, вера **не приписывается** — они её не имели.
-
-
-## Происхождение записи: рубеж, а не нулевое умолчание
-
-У записи есть необязательное поле `proishozhdenie` и рубеж — номер записи, на
-котором механизм отметки был заведён. Рубеж лежит **в базе** (таблица
-`nastrojki`), а не константой в коде: база уезжает на другую машину и
-откатывается из копии, и число в исходнике разошлось бы с данными молча.
-
-Статус спрашивается словом, а не сравнением числа —
-`statusProishozhdeniya(zapis)` даёт три РАЗНЫЕ строки:
-
-| статус | когда | что означает |
-|---|---|---|
-| `do-protokola` | `id ≤ рубежа` | механизма не было, когда запись легла — не упрёк записи |
-| `ne-ustanovleno` | `id > рубежа`, поле пусто | механизм был, происхождение не проставлено |
-| `uroven` | поле проставлено | измерение, число говорит само за себя |
-
-🔴 **Нулевое умолчание отменено намеренно.** Приписать старым записям `0`
-значило бы объявить недоверенной всю накопленную память — одним `ALTER` и молча.
-Ноль означает «механизм был и не справился», а к записям до рубежа он не
-применялся вовсе.
-
-🔴 **«До протокола» — навсегда.** Проставить уровень записи ниже рубежа нельзя:
-вызов ОТКАЗЫВАЕТ. Иначе любая старая запись отмывается до доверенной простой
-перезаписью, не покидая системы.
-
-⚠️ **Ограничение, без которого рубеж врёт:** он действителен, пока ряд `id` —
-наш собственный. **Ввоз с сохранением чужих `id` запрещён**: чужая запись с
-малым номером легла бы ниже рубежа и получила привилегию нашей старой памяти.
-Ввозимые записи получают наши `id` и статус по номеру не наследуют.
-
-⚠️ Сортировка выдачи полем **не меняется**: «до протокола» сортируется
-нейтрально — ровно так, как эти записи сортировались до введения поля.
-
-## Ворота внутри сервиса, а не в правиле для вызывающего
-
-Политика не справка, которую можно не спросить: `zapisat` применяет её сам.
-Класс, требующий подтверждения, без предъявленного подтверждения **не пишется**,
-а отказ уходит в журнал с природой. Защита, которую можно не позвать, держится
-на дисциплине звонящего, а не на устройстве.
-
-То же правило и для самого хранилища: если `node:sqlite` недоступен или база не
-открылась, сервис существует, но **каждый** вызов отказывает с внятным текстом,
-а причина один раз кричит в журнал платформы. Молчаливой работы «без записи»
-здесь нет по построению.
-
-## Настройка
-
-Всё, что пользователь может захотеть иначе, вынесено в конфигурацию — в коде
-остались только умолчания как значения схемы, не рассыпанные литералы.
-
-| ключ | умолчание | смысл |
-|---|---|---|
-| `putBazy` | — (обязателен) | путь к файлу базы |
-| `agent` | — (обязателен) | имя агента: на машине их несколько, память у каждого своя |
-| `sprashivat` | `ogranichenie`, `navyk` | классы, требующие подтверждения |
-| `chtenieSkolko` | `20` | сколько записей отдавать за раз при чтении |
-| `zhurnalSkolko` | `20` | сколько строк журнала отдавать за раз |
-| `otvechayushchegoNet` | `false` | на узле НЕКОГО спрашивать: классы `ask` пишутся с отметкой в записи |
-
-`putBazy` и `agent` обязательны намеренно: публикуемый код не знает про машины,
-на которых его запустят, и не вправе угадывать за установщика. Отсутствие ключа
-отличает «настройка не доехала» от «выбрано другое значение».
-
-ℹ️ Настройки долговременного слоя живут в его собственном пакете, а не здесь:
-ключ должен лежать в том пакете, который его исполняет. Ключ, описанный там, где
-его никто не читает, — тихий ноль: «настройка не доехала» становится неотличима
-от «выключено».
-
-### Что настройкой НЕ является — и почему
-
-Настраивается то, что пользователь мог бы захотеть иначе. То, что защищает его
-от тихой поломки, настройкой быть не должно: однажды её выключат.
-
-1. **Имена таблиц и схема базы.** Пользовательского случая нет, а настраиваемое
-   имя даёт способ молча развести схему и данные: старая база просто перестанет
-   находиться, и это будет выглядеть как пустая память.
-2. **Буквальные исходы подтверждения ядра.** Это чужой протокол, а не наше
-   решение — его можно только прочитать в исходнике платформы. Настраиваемый
-   литерал протокола есть способ разойтись с платформой, ничего не заметив.
-3. **Поведение при отказе** («нет источника → не пишем и кричим»). Настраиваемый
-   fail-closed означает, что защиту можно выключить настройкой.
-
-## Как звать — по одному живому примеру на функцию
-
-```js
-const pamyat = ctx.get('pamyat');           // сервис объявлен пакетом
-
-// записать обычное знание
-const id = pamyat.zapisat({
-  klass: 'zametka',
-  soderzhim: 'краткая мысль, которую надо пережить сессию',
-  istochnik: 'session#42',                  // ссылка на место в журнале сессии
-});
-
-// записать класс, требующий подтверждения: исход ядра передаётся как есть
-pamyat.zapisat({
-  klass: 'navyk',
-  soderzhim: 'приём, годный другим агентам',
-  podtverzhdenie: 'allowed-once',           // 'rejected' | 'cancelled' | 'unavailable' | …
-});
-
-// прочитать: аргумент — ОБЪЕКТ, не позиционные значения
-const poslednie = pamyat.prochitat({ klass: 'zametka', skolko: 5 });
-const vse = pamyat.prochitat({});           // все классы, предел из настройки
-
-// решить, не записывая
-const { reshenie, pochemu } = pamyat.reshit('navyk');   // 'ask' | 'auto'
-
-// отметить отказ, пришедший извне
-pamyat.otmetitOtkaz({
-  klass: 'navyk',
-  priroda: 'otkazano-chelovekom',
-  pochemu: 'человек не разрешил',
-});
-
-// «почему память пуста» — сводка журнала
-const { zapisano, otkloneno, poPrirode } = pamyat.svodka();
-
-// жива ли память вообще
-if (!pamyat.dostupna()) console.error(pamyat.pochemuNedostupna());
+```mermaid
+flowchart LR
+    A["Агент и сессия · Agent and session"] --> S["Секретарь · Secretary"]
+    S --> C["ctx.pamyat · Memory core"]
+    C --> F["Фильтр и политика · Filter and policy"]
+    F --> DB[("SQLite: записи и журнал · Records and journal")]
+    C --> Q[("Очередь доставки · Delivery queue")]
+    Q --> L["Долговременный провайдер · Long-term provider"]
+    DB --> R["Восстановитель · Restore plugin"]
+    R --> A
 ```
 
-⚠️ Частые ошибки при первом вызове (замечены на приёмке): поле называется
-`soderzhim`, а не `soderzhanie`; `prochitat` принимает ОБЪЕКТ, а не
-позиционные аргументы; имя агента берётся из настройки и в вызовах не
-передаётся. Все три отказывают громко, с кодом, — но стоят попытки.
+## Установка и требования · Installation and requirements
 
-## Знаемое про вывод
+**Откуда ставить.** Пакет публикуется в npm выпуском 3.1.2 (порядок и окно — по решению владельца). До выхода в реестре npm лежит старая редакция `0.1.0-alpha.*` (замер 10.10.2026, `npm view dsh-pamyat-core version`): `npm install dsh-pamyat-core` поставит её, а не описанную здесь. До выпуска ставьте из дерева исходников: `npm pack <дерево>/packages/dsh-pamyat-core` и затем `npm install ./dsh-pamyat-core-<версия>.tgz`.
 
-Пакет кричит **только через `console.error`**, развилки нет. Причина важная, и
-прежняя редакция этого раздела была **неверна** — здесь стояло «платформа не
-даёт плагину `ctx.logger` (проверено 02.09)».
+**Where to install from.** The package is published to npm with release 3.1.2 (order and window — by the owner's decision). Until then the npm registry holds an old `0.1.0-alpha.*` edition (measured 10.10.2026, `npm view dsh-pamyat-core version`): `npm install dsh-pamyat-core` installs that one, not the one described here. Until the release, install from the source tree: `npm pack <дерево>/packages/dsh-pamyat-core`, then `npm install ./dsh-pamyat-core-<версия>.tgz`.
 
-Как на самом деле, замер на воротах 03.09, cordis 4.0.1: `ctx.logger`
-**создаётся каждому Context** (`cordis/lib/index.js:1687`), то есть он ЕСТЬ и
-вызов `.error()` проходит без ошибки. Но единственный встроенный экспортер
-(`LoggerService`, там же 582–605) складывает сообщение в кольцевой буфер на
-1000 штук, а DSH своего экспортера не ставит — **в поток не уходит ничего**.
+Нужны Node.js 22+ с рабочим `node:sqlite`, DSH с peer-диапазонами Cordis `^4.0.1` и Schemastery `^3.18.1`, каталог базы с правом записи у пользователя платформы. SQLite встроен в Node; отдельный сервер базы и нативный npm-драйвер не нужны. На старых сборках Node поддержка встроенного SQLite может требовать флага запуска; сначала проверь импорт ниже.
 
-Отсюда два следствия, за которыми сюда и стоит заглядывать:
+Requirements: Node.js 22+ with working `node:sqlite`, a DSH deployment with peer ranges Cordis `^4.0.1` and Schemastery `^3.18.1`, and a database directory writable by the platform account. SQLite is built into Node; no separate database server or native npm driver is required. Older Node builds may require a startup flag for built-in SQLite; verify the import first.
 
-1. **Проверять наличие канала бесполезно.** Функция есть, вызов успешен, звука
-   нет. Годен только путь, прослеженный до конца — до места, где строку
-   прочтёт человек. У службы `stderr` идёт в системный журнал; это проверено
-   пробой, а не рассуждением.
-2. **Обновление платформы может вернуть звук логгеру** — и тогда появится
-   двойная печать. Если DSH заведёт экспортер, этот раздел переписать вместе с
-   `krik()`, а не поверх.
+```sh
+node --input-type=module -e "import('node:sqlite').then(() => console.log('SQLite available'))"
+npm pack <дерево>/packages/dsh-pamyat-core   # до выпуска 3.1.2 — из дерева · until release 3.1.2 — from the tree
+npm install ./dsh-pamyat-core-<версия>.tgz
+```
 
-⚠️ Про пометку «проверено» в наших текстах: она обязана называть **способ**, а
-не только дату. «Проверено 02.09» перепроверить нельзя, и следующий читатель
-просто поверит. Способ здесь: вызвать `krik` под настоящим `Context` и ждать
-строку в `stderr` процесса — стенд `stend-krik-zvuchit` делает ровно это.
+В каталоге разработки пакет подключается обычным механизмом плагинов DSH. Команда `npm install` делает пакет доступным Node, но сама не включает его в профиль и не создаёт постоянную память агента.
 
+In a development directory, load the package through DSH's normal plugin configuration. `npm install` makes it available to Node; it does not activate it in a profile or create persistent agent memory by itself.
 
-## Привратник спроса разрешения: включение = «человека рядом нет»
+## Быстрый старт · Quick start
 
-Ключ `otvechatNaSprosRazresheniya` по умолчанию **выключен**, и это не осторожность, а
-устройство: пока он выключен, пакет в цепочку разрешений не встаёт вовсе.
+Добавь одну строку плагина и задай отдельную базу и стабильное логическое имя агента. Пример пути нейтральный: создай его с правами пользователя своей платформы, не используй каталог другого агента.
 
-🔴 **ГРАНИЦА, названная здесь, а не в переписке (замечание приёмки З3, 06.09.2026).**
-Отвечающий разрешает **любой** инструмент, включая расширение прав песочницы. Ветки отказа
-в коде нет вовсе и заводить её нельзя: платформа нормализует чужое слово в `unavailable`,
-и привратник без права отказывать стал бы отказывать всем — снаружи это неотличимо от
-«отвечающего нет».
+Add one plugin row and configure a separate database and a stable logical agent name. The example path is neutral: create it with permissions for your platform account, and do not use another agent's directory.
 
-Значит включение ключа означает ровно одно: **человека рядом нет, и мы разрешаем всё**.
-Это замысел владельца, а не побочное следствие. Включать — только там, где такой ответ
-действительно верен.
+```yaml
+- name: dsh-pamyat-core
+  id: memory-core
+  config:
+    agent: example-agent
+    putBazy: /var/lib/example-memory/core.db
+    chtenieSkolko: 20
+    otvechayushchegoNet: false
+    otvechatNaSprosRazresheniya: false
+    isklyuchitSessii: []
+```
 
-⚠️ **Что молчание счётчика НЕ означает.** «Спросов ноль» имеет четыре причины, и они
-неразличимы снаружи: спросов не было · нас опередил другой отвечающий · мы не в той области
-видимости · политика сессии решила вопрос до цепочки. Итог печатается на первом спросе и
-далее каждый десятый — чтобы участие в цепочке было видно из журнала, а не только при
-выгрузке процесса (при падении её не бывает).
+После загрузки найди в stderr платформы строку версии и путь базы. Затем вызови службу из интеграционного кода: `ctx.get('pamyat').dostupna()` должна вернуть `true`. Проверь сохранение записью класса `fakt`, чтением возвращённого id и отдельным чтением базы после перезапуска. Проверка регистрации плагина не доказывает сохранение записи.
 
-## Фильтр входа: невидимые знаки и секреты (Э5.2)
+After loading, find the version and database path in platform stderr. Then call the service from integration code: `ctx.get('pamyat').dostupna()` must return `true`. Verify persistence by writing a `fakt` record, reading its returned ID, and reading the database again after a restart. Plugin registration alone does not prove that a record was saved.
 
-Врезан **первыми строками** `zapisat()`, до всякой развилки. У функции семь точек выхода и
-две ветки, ведущие к настоящей записи; фильтр «перед записью» одну из них пропустил бы, и
-дыра выглядела бы закрытой.
+```js
+const memory = ctx.get('pamyat');
+if (!memory.dostupna()) throw new Error(memory.pochemuNedostupna());
+const id = memory.zapisat({
+  klass: 'fakt',
+  soderzhim: 'Интеграционная проверка хранилища · Storage integration check',
+  istochnik: 'example:integration-check',
+});
+console.log(id, memory.poIstochniku('example:integration-check'));
+```
 
-| что | режим | что делает |
-|---|---|---|
-| невидимые и bidi, TAG-символы | fail-open | чистит, ставит отметку `ochistka` в САМОЙ записи |
-| секреты (объявленные, энтропийные, структурные, hex иной длины) | fail-closed | отвергает, в журнал класс и позиция — **никогда значение** |
-| служебные поля `klass`, `istochnik` | fail-closed | нормализует NFC; при невидимых — **отказ, не чистка** |
-| сам фильтр сломан | fail-closed | запись не производится вовсе |
+Это пример интеграции для разработчика плагина, а не обещание нового инструмента модели. В ядре модели выдаются `pamyat_otnoshenie` и `pamyat_ocenit`; обычную запись вызывает секретарь или другая интеграция через службу.
 
-Несимметрия намеренная: по невидимым фильтр fail-open, но **сломанный** фильтр —
-fail-closed. Иначе поломка молча открывает ворота.
+This is an integration example for a plugin developer, not an additional model tool. The core exposes `pamyat_otnoshenie` and `pamyat_ocenit` to the model; the secretary or another integration writes records through the service.
 
-Отказ в служебном поле — не придирка: невидимый знак в `klass` не совпал бы с перечнем
-классов, запись ушла бы «вне перечня» громко и законно, а знание в долговременную память не
-поехало бы. Тихая потеря под видом штатного отказа.
+## Настройки · Settings
 
-🔴 **Чего фильтр не закрывает — три предела и одна дыра.** Полностью в шапке
-`src/filtr-vhoda.js`; коротко: пересказ моделью чужого текста (текстовым фильтром не берётся
-вовсе), омоглифы, base64-блоб — пределы; **hex-ключ длиной ровно 32/40/64 знака** — дыра:
-по виду он неотличим от md5/sha1/sha256, а суммы у нас в каждом отчёте.
+| Ключ · Key | Назначение · Purpose |
+|---|---|
+| `putBazy`, `agent` | База и логическая граница агента · Database and logical agent boundary |
+| `sprashivat` | Классы, требующие подтверждения · Classes requiring approval |
+| `klassyZnaniy` | Классы настоящих знаний для выдачи и доставки · Knowledge classes for retrieval and delivery |
+| `chtenieSkolko` | Число записей при обычном чтении · Default retrieval count |
+| `otvechayushchegoNet` | Объявление отсутствия канала подтверждения · Explicit absence of an approval channel |
+| `otvechatNaSprosRazresheniya` | Разрешающий обработчик запросов подтверждения · Approval-granting request handler |
+| `isklyuchitSessii` | Префиксы сессий, исключённых из памяти · Session prefixes excluded from memory |
+| `sledPodyomov` | След внешней обёртки загрузки · External startup-wrapper trace |
+| `predelZnakov`, `predelyZnakovPoKlassam` | Устаревшая совместимость, не действующий предел · Legacy compatibility, not an active size limit |
+| `maskirovatObrazcy` | Маска образцов секретов на пути записи, по умолчанию включена · Secret-sample masking on writes, on by default |
+| `zhurnalSkolko` | Снят из Config (A-N-1870): не читался никогда; в профиле игнорируется · Removed from Config: never read; ignored in a profile |
+| `koren` | Не читается (A-N-1870): корень долговременной доставки — всегда `agent`; ключ в профиле ничего не меняет · Not read (A-N-1870): the long-term delivery root is always `agent`; a profile key changes nothing |
 
-⚠️ **Метка происхождения ставится, но никем не читается; суждение — Э5.3, не сделано.**
+Подробные типы, умолчания, примеры и последствия находятся в [SETTINGS](docs/SETTINGS.md). Не путай отсутствие канала подтверждения с разрешением всех запросов: это разные настройки и разные последствия.
 
-Пороги проверены прогоном по настоящим записям базы, а не на воображаемом тексте: первая
-редакция блокировала 5 записей из 6 (пути, составные имена, фраза о том, где лежит ключ).
-Цена канарейки фильтра — 0,93 мкс на вызов, около 19% от цены одной записи в базу.
+Types, defaults, examples, and consequences are documented in [SETTINGS](docs/SETTINGS.md). Do not confuse the absence of an approval channel with granting every approval request: these are different settings with different effects.
 
-## Проверка
+## Как работает · How it works
 
-    npm test
+Перед записью ядро проверяет доступность базы и исправность фильтра. Оно нормализует и проверяет поля, распознаёт известные формы секретов, очищает служебные остатки и сохраняет диагностические отметки. Маскирование не является доказательством отсутствия секретов: распознавание ограничено реализованными шаблонами и эвристиками.
 
-Четыре стенда, 31 проба. В каждом стенде первая проба — на **заведомо исправном**
-предмете: если она красная, стенд негоден и остальные пробы ничего не значат.
-Каждая защита проверена **порчей**: нет модуля, не открылась база, не задан путь,
-неполная запись, неполная отметка, класс не задан.
+Before a write, the core checks database availability and filter health. It normalizes and validates fields, recognizes known secret formats, removes service artifacts, and retains diagnostic annotations. Masking is not proof that no secret remains: detection is limited to the implemented patterns and heuristics.
 
-## Посылки
+Политика определяется классом. По умолчанию `ogranichenie` и `navyk` требуют подтверждения; пустой `sprashivat` возвращает это умолчание. Отказ человека, отмена вопроса, отсутствие канала и неизвестный результат не объединяются в одно состояние. На узле без отвечающего знания могут приниматься с явной отметкой `bez_podtverzhdeniya`.
 
-**Проверено делом на стенде разработки (02.09.2026):**
-`node:sqlite` работает на Node 24.19 (создание таблицы, запись, чтение); все 23
-пробы зелёные; форма плагина (`name` / `Config` / `apply`, `ctx.provide`) и схема настройки
-(`z.object` из `@deepseek-ai/schemastery`) взяты из живого образца; поведение подтверждения — из типов
-`@deepseek-ai/dsh-tools@0.1.1-rc.2`, скачанных из реестра именно в той версии,
-что стоит на стенде.
+Policy is determined by the knowledge class. By default, `ogranichenie` and `navyk` require approval; an empty `sprashivat` restores that default. A human refusal, cancelled request, missing channel, and unknown result remain distinct. On a node without an approver, records may be accepted with an explicit `bez_podtverzhdeniya` annotation.
 
-**Принято без проверки:**
-работа пакета на живом узле DSH (смонтирован не был — это вторая ступень
-приёмки, руки сопровождающего стенд); поведение `ctx.logger` (в поддельном ctx он подменён);
-что `ctx.provide` в 0.1.1-rc.2 ведёт себя так же, как в образце (образец с той же
-машины, но версия платформы в нём не проверялась построчно).
+Запись знания и её локальный журнал решения выполняются в одной SQLite-базе под SAVEPOINT. Ошибка на любом шаге откатывает эту локальную группу. Доставка внешнему провайдеру отдельна от локальной транзакции: сеть нельзя включить в этот SAVEPOINT.
 
-## Очередь доставки в долговременный слой
+A knowledge record and its local decision journal are written to the same SQLite database under a SAVEPOINT. A failure at either step rolls back that local group. Delivery to an external provider is separate from the local transaction: the network cannot participate in this SAVEPOINT.
 
-Недоставленное не теряется: запись остаётся в оперативном слое и встаёт в
-очередь. Ночной проход (или рука) зовёт `dostavitOtlozhennoe()` и получает
-отчёт **числами**, а не текстом.
+Если провайдер смонтирован, но доставка не удалась, запись остаётся локально и попадает в очередь. Если провайдер вообще не смонтирован, очередь не создаётся: журнал явно отмечает локальное сохранение без долговременного слоя. Неопределённый исход `moglo-dojti-bez-id` не повторяется записью: предыдущая попытка могла уже создать запись. Если долговременный слой умеет искать по телу (`poTelu`), а тело не короче 80 знаков, проход очереди ищет его в корне агента: ровно одна находка снимает запись с очереди как доставленную, несколько — отметка `dubl` в журнале, и запись ждёт оператора. За один проход очереди выполняется не более одной допустимой попытки записи на строку; предел попыток накоплен в базе между проходами. Исчерпанные записи остаются различимыми. Своего таймера у ядра нет: проход очереди запускает вызывающая интеграция либо само ядро — после подтверждённой доставки новой записи, не чаще раза в час на процесс и без наложения проходов.
 
-🔴 **Природа отказа решает, что делать, и потому хранится в очереди.**
+If the provider is installed but delivery fails, the record remains local and enters a queue. If no provider is installed, no queue item is created: the journal explicitly records local-only storage. An ambiguous `moglo-dojti-bez-id` outcome is not retried by writing: the previous attempt may already have created a record. If the long-term layer supports body search (`poTelu`) and the body is at least 80 characters long, the queue pass searches for it in the agent's root: exactly one match removes the item from the queue as delivered, several matches are journaled as `dubl` and the item waits for an operator. A queue pass makes at most one eligible write attempt per item; the attempt budget is accumulated in the database across passes. Exhausted items remain distinguishable. The core has no timer of its own: a queue pass is started by the calling integration or by the core itself after a confirmed delivery of a new record, at most once an hour per process and never overlapping.
 
-| природа | что случилось | что делает повтор |
-|---|---|---|
-| `ne-otpravleno` | связи не было до вызова | пишет заново, дубля не будет |
-| `ne-najdeno` | спросили, записи нет | пишет заново, дубля не будет |
-| `moglo-dojti-id-est` | опознаватель есть, чтение не удалось | **спрашивает**, не пишет |
-| `moglo-dojti-bez-id` | отправка была, опознавателя нет | **не трогает вовсе** |
+Доверие по событиям и числовая `vera` — разные слои. Отмена, потеря опоры, уточнение и подтверждение формируют состояние доверия при чтении. Оценка модели применяется только к записи приветствия, выданной в текущем процессе, один раз на конкретную выдачу; `null` означает отсутствие измерения, а не нулевую веру.
 
-🔴 **Почему последняя строка — не недоделка.** Отправка была, опознавателя нет,
-поиска по источнику у хранилища нет — значит вопрос «легло ли» **машинно
-неразрешим**. Любой автоповтор здесь либо теряет знание, либо заводит второй
-экземпляр. Дубль хуже: недоставку видно по очереди и по числу в отчёте, а дубль
-растворяется в поиске и выглядит знанием. Такие записи ждут человека и
-**считаются отдельно** — иначе «ничего не делаем» читается как забывчивость.
+Event-derived trust and numeric `vera` are separate layers. Cancellation, lost support, refinement, and confirmation determine a trust state at read time. A model rating is accepted only for a welcome record issued in the current process, once per issuance; `null` means no measurement, not zero trust.
 
-⚠️ **Попытки не тратятся, если мы не спрашивали.** Недоступность слоя и неудача
-чтения не увеличивают счётчик: иначе предел выгорел бы за одну ночь чужого
-простоя, и живое знание было бы объявлено исчерпанным.
+Исключённые по `isklyuchitSessii` сессии распознаются общей службой. Восстановитель, долговременная подача и секретарь должны спрашивать эту службу на своих входах. Прямые модельные инструменты ядра также отказывают для исключённой сессии; отсутствие интеграции потребителя нельзя заменить одной строкой настройки.
 
-⚠️ **Исчерпание не удаляет запись.** При достижении предела (по умолчанию 5)
-повторы прекращаются, флаг выставляется, крик звучит **один раз** — но запись
-остаётся в очереди. Удалить молча значит потерять знание и не узнать об этом.
+Sessions excluded by `isklyuchitSessii` are classified by the shared service. Restore, long-term injection, and secretary integrations must consult that service at their entry points. The core's model tools also refuse excluded sessions; a configuration entry alone cannot replace a missing consumer integration.
 
-⚠️ **На узле без долговременного слоя очередь не заводится вовсе.** Слой
-объявлен необязательным; расти вечно и без потребителя очередь не должна —
-механизм, который не может опустеть, перестают читать.
+## Проверки и эксплуатация · Verification and operations
 
-## Границы
+`npm test` вызывает все файлы `test/stend-*.mjs` через общий обходчик. Код `0` означает зелёный результат, `1` — расхождение, `2` — слепоту; слепота одного стенда не обрывает остальные. Часть контрактных стендов требует соседние пакеты или внешние данные: их отсутствие нужно указать, а не считать зелёным результатом.
 
-* Требуется **Node >= 22**: `node:sqlite` помечен экспериментальным.
-* Пакет не дистиллирует, не инжектирует контекст, не объявляет инструменты
-  модели и не ходит в сеть — всё это другие пакеты семейства.
-* Журнал фиксирует **решение**, а не доставку: он не доказывает, что знание
-  доехало до долговременного слоя. Что осталось доставить — отвечает **очередь**
-  (`ocheredDostavki()`), это разные предметы: журнал неизменяем и говорит «что
-  происходило», очередь меняется и говорит «что осталось сделать».
+`npm test` runs all `test/stend-*.mjs` files through the shared runner. Exit `0` means success, `1` a mismatch, and `2` insufficient visibility; one blind test does not stop the others. Some contract tests require adjacent packages or external data: report missing prerequisites rather than treating them as successful checks.
 
-## Лицензия
+Счёт состояний доверия для внешнего сторожа — `node src/schet-doveriya.mjs <агент>=<абсолютный путь к pamyat.db> [...]`. Имя агента — `[a-z][a-z0-9_-]*`, путь — абсолютный; иначе «ОТКАЗ: формат …» и код 2 до чтения баз. База открывается только на чтение (`readOnly`), схема не мигрирует. На каждую базу — строка `доверие <агент>: знаний N · <состояние> N · … · otmenena_id [...]`; база не прочиталась — `доверие <агент>: СЛЕПОТА — …; это «не измерено», не ноль`, остальные базы считаются дальше. Код `0` — сосчитаны все, `2` — неверные доводы или хоть одна база не прочиталась. Команда не планирует запуски и не шлёт тревог; состояние доверия — не проверка истинности знания.
 
-MIT
+Trust-state count for an external watcher — `node src/schet-doveriya.mjs <агент>=<absolute path to pamyat.db> [...]`. The agent name is `[a-z][a-z0-9_-]*`, the path absolute; otherwise «ОТКАЗ: формат …» (refusal: format) and exit 2 before any database is read. The database is opened read-only (`readOnly`), the schema is not migrated. One line per database: `доверие <агент>: знаний N · <state> N · … · otmenena_id [...]`; a database that could not be read gives `доверие <агент>: СЛЕПОТА — …; это «не измерено», не ноль` (blindness: not measured, not zero), and the remaining databases are still counted. Exit `0` — all counted, `2` — invalid arguments or at least one database unreadable. The command neither schedules runs nor sends alerts; trust state is not a test of knowledge truth.
 
-## На чём проверяли
+Схемы, контракты и таблицы находятся в [ARCHITECTURE](docs/ARCHITECTURE.md); защиты, вызывающие и ограничения — в [GUARDS](docs/GUARDS.md); диагностика — в [TROUBLESHOOTING](docs/TROUBLESHOOTING.md).
 
-Стенды этого пакета гонялись на `@deepseek-ai/cordis` 4.0.1 и `@deepseek-ai/schemastery` 3.18.1 (Node v24.19.0).
-Это ЗАМЕР, а не обещание совместимости: на других версиях мы не гоняли. Требование в `peerDependencies` записано как `^` — по договору semver, а не по нашему замеру.
+Diagrams, contracts, and tables are in [ARCHITECTURE](docs/ARCHITECTURE.md); guards, callers, and limits are in [GUARDS](docs/GUARDS.md); diagnosis is in [TROUBLESHOOTING](docs/TROUBLESHOOTING.md).
 
-## Метки в реестре npm — не источник правды о приёмке
+## Границы · Limitations
 
-Читающий метки `dist-tags` этого пакета видит **состояние раздачи**, а не результат приёмки.
-Различие существенное, и вот в чём:
+Это логическая граница памяти, не изоляция операционной системы. Пользователь с доступом к SQLite-файлу может читать или менять записи. Ядро не шифрует базу, не заменяет резервное копирование, не устанавливает внешние systemd-сторожа и не гарантирует семантическую истинность знания. Встроенный фильтр требует отдельной оценки на твоих данных.
 
-- **`latest`** показывает, что раздаётся сейчас. Между вердиктом приёмки и переводом метки
-  проходит время, и метку переводит **рука**, а не приёмка сама. Метка может отставать.
-- **`neprinyato`** ставилась вручную и с 05.09.2026 больше **не ведётся**. Поэтому
-  **отсутствие этой метки не означает ничего** — ни принятости, ни непринятости. Там, где
-  она ещё стоит, она указывает на версию, по которой есть вердикт отказа либо вердикта нет.
+This is a logical memory boundary, not operating-system isolation. Anyone with access to the SQLite file can read or modify records. The core does not encrypt the database, replace backups, install external systemd monitors, or guarantee semantic truth. Evaluate the built-in filter separately against your own data.
 
-**Источник правды о приёмке** — вердикт в дереве репозитория (`docs/MEMORY-AND-A2A.md`,
-§5.1.6 и §1.3) и файл принятых сумм. Метку следует сверять с ними, а не наоборот.
+## Лицензия и авторство · License and authorship
 
-⚠️ Правка этого README доходит до реестра только со **следующим выпуском** пакета: в
-опубликованном тарболе лежит тот текст, что был на момент публикации.
+MIT (`"license": "MIT"` в `package.json`, текст — [LICENSE](LICENSE); в `files` файл не назван, но npm кладёт его в архив пакета сам); Iia-arg team. Исходники и общая документация семейства: [репозиторий системы](https://github.com/iia-arg/dsh-plugins). В рабочем дереве соседние пакеты описывают провайдер, секретаря и восстановление отдельно.
+
+MIT (`"license": "MIT"` in `package.json`, text in [LICENSE](LICENSE); the file is not listed in `files`, but npm adds it to the package archive by itself); Iia-arg team. Source and family documentation: [system repository](https://github.com/iia-arg/dsh-plugins). In the source tree, adjacent packages document the provider, secretary, and restore integration separately.
+
+## Договоры отказа, очереди и диагностики · Refusal, queue and diagnostic contracts
+
+Природы подтверждения: `otkazano-chelovekom`, `otmeneno`, `net-kanala`, `net-sluzhby`, `net-agenta`, `ne-predyavleno`. Первые четыре внешних исхода — allowed-once/rejected/cancelled/unavailable; пред-исходы not-supported/no-agent/ne-predyavleno — НАШИ имена для ситуаций до обращения к службе, а не дополнительные ответы платформы.
+
+Approval classifications are `otkazano-chelovekom`, `otmeneno`, `net-kanala`, `net-sluzhby`, `net-agenta`, and `ne-predyavleno`. The four external outcomes are allowed-once/rejected/cancelled/unavailable; not-supported/no-agent/ne-predyavleno are names of OURS for situations before contacting approval, not additional platform replies.
+
+Очередь различает `ne-otpravleno`, `ne-najdeno`, `moglo-dojti-id-est`, `moglo-dojti-bez-id`. Без опознавателя вопрос «сохранилось ли» неразрешим автоматическим повтором: не получен адрес предмета для отдельного чтения, а повторная запись может создать дубль. Поэтому записью такой исход не повторяется. Если слой умеет `poTelu` и тело не короче 80 знаков, проход ищет тело целиком в корне агента: одна находка снимает запись как доставленную, несколько — отметка `dubl`; без `poTelu`, при коротком теле, при нуле или нескольких находках нужна сверка оператором. С id возможен read-back.
+
+The queue distinguishes `ne-otpravleno`, `ne-najdeno`, `moglo-dojti-id-est`, and `moglo-dojti-bez-id`. Without an identifier, arrival is not decidable by machine using a blind retry: there is no address for an independent read, and another write may create a duplicate. Such an outcome is therefore never retried by writing. If the layer supports `poTelu` and the body is at least 80 characters long, the pass searches for the whole body in the agent's root: one match removes the item as delivered, several are marked `dubl`; without `poTelu`, with a short body, or with zero or several matches, operator reconciliation is needed. A known ID enables read-back.
+
+Поле `vera` сохраняет пустоту намеренно: пустота — не ноль. Число вычисляется из оценок; событие получения/выдачи записи не становится оценкой автоматически.
+
+`vera` retains absence deliberately: empty is not zero, and null means never measured. Its number is derived from ratings; receipt or issuance is not automatically a rating.
+
+В применяемой интеграции логгер ЕСТЬ: `ctx.logger` создаётся Cordis для Context, но наличие метода не доказывает, что установлен вывод буфера. Поэтому сообщения ядра идут через console.error. Способ контроля — `test/stend-krik-zvuchit.mjs`, проверяющий фактический звук stderr; в собственной установке отдельно проверь путь от stderr до читаемого журнала.
+
+A logger is created for every Context by Cordis, but its presence does not prove that an exporter reads the ring buffer. The core therefore reports through console.error. `test/stend-krik-zvuchit.mjs` checks actual stderr output; separately verify the stderr-to-readable-log path in your deployment.
+
+Имя таблицы, буквальный исход чужого протокола и обязательный отказ при неизвестном вводе НЕ является пользовательской настройкой. Эти инварианты NOT configurable: их изменение потребовало бы нового контракта данных, а не косметического переключателя.
+
+Table names, literal upstream outcomes, and mandatory refusal of unknown input are NOT configurable. Changing these invariants requires a new data contract rather than a cosmetic switch.
+
+```js
+const memory = ctx.get('pamyat');
+console.log(memory.dostupna(), memory.reshit('fakt'));
+console.log(memory.prochitat({ skolko: 1 }), memory.svodka());
+memory.otmetitOtkaz({
+  klass: 'fakt', priroda: 'example-diagnostic',
+  pochemu: 'Тестовая отметка журнала · Fixture journal event',
+  istochnik: 'example:diagnostic',
+});
+```
+
+Последняя строка примера пишет отметку журнала, а не знание; запускай её на тестовой базе. Предыдущий пример `zapisat` показывает запись знания отдельно от её чтения и сводки.
+
+The last call writes a journal event, not knowledge; run it against a test database. The earlier `zapisat` example demonstrates a knowledge write separately from reading and summary.
+
+## Проверенная ОС · Verified operating system
+
+Документационные проверки и названные стенды этого кандидата выполнялись на Linux. Поддержку иной ОС и переносимость файловых/процессных операций отдельно не проверяли; каталог памяти и секретов должен быть доступен только назначенной учётке.
+
+Documentation checks and the named stands for this candidate ran on Linux. Other operating systems and file/process-operation portability were not separately verified; memory and secret directories need the designated account's access policy.

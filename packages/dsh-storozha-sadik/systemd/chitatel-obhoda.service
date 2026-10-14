@@ -1,0 +1,16 @@
+[Unit]
+Description=Читатель ночного обхода стендов: неожиданное красное ночи → письмо координатору, «N-я ночь подряд» (B-N-1741)
+After=vse-stendy-boevye.service
+
+[Service]
+Type=oneshot
+# root: журнал всех юнитов и щель агента-отправителя (как zadaniya-prervany-watch).
+User=root
+StateDirectory=chitatel-obhoda
+StateDirectoryMode=0750
+# A-N-1948 №5 (№8): «-» — без файла юнит доходит до читателя, и тот отказывает кодом 2 С ПРИЧИНОЙ («не настроено — CHO_KOREN
+# и CHO_ADRESAT обязательны»), а не systemd без причины (result 'resources'). Образец — etc/default/chitatel-obhoda.example пакета.
+EnvironmentFile=-/etc/default/chitatel-obhoda
+ExecStart=/usr/local/sbin/chitatel-obhoda
+# Коды 1 (канал отказал) и 2 (слепота) — failed ⇒ ветка 2в sadik-watch (строка в storozha-sutochnye.txt).
+TimeoutStartSec=300

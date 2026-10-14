@@ -1,0 +1,2 @@
+import {Store} from '../src/store.mjs';import {TelegramQueue} from '../src/telegram-queue.mjs';
+const s=new Store(process.env.TEST_STATE,{telegram:'-202',vk:'123',instagram:'456',threads:'789'});const q=new TelegramQueue(s,{approvalChatId:-101,botId:77});process.send('ready');process.once('message',()=>{try{process.send(q.processUpdate(JSON.parse(process.env.TEST_UPDATE)))}catch{process.send({error:true})}finally{process.exit(0)}});

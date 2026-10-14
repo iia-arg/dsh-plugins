@@ -1,0 +1,14 @@
+# RU: Только пути токена/чата, никаких значений секретов. Комментарий с начала строки.
+# EN: Token/chat paths only, no secret values. Comments start at column zero.
+AGENT_ALERT_TOKEN_FILE=/etc/dsh-trevogi/token
+AGENT_ALERT_CHAT_FILE=/etc/dsh-trevogi/chat-id
+AGENT_ALERT_HVOST=/var/log/dsh-trevogi/poslednie.log
+AGENT_ALERT_POPYTOK=3
+AGENT_ALERT_PAUZY=5 15
+AGENT_ALERT_TAJMAUT=20
+AGENT_ALERT_HVOST_PREDEL=20000000
+AGENT_ALERT_HVOST_STROK=200
+OTKAZ_KLYUCH_KURSOR=/var/lib/dsh-trevogi/otkaz-klyuch/kursor
+OTKAZ_KLYUCH_KANAL=/usr/local/bin/agent-alert
+# RU: OTKAZ_KLYUCH_HOST по умолчанию — короткое имя этой машины.
+# EN: OTKAZ_KLYUCH_HOST defaults to this machine's short hostname.

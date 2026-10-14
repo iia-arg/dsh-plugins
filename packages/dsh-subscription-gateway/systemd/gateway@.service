@@ -1,0 +1,20 @@
+# RU: Шаблон deployment: проверить учётку, реальные пути и приоритет drop-in перед монтажом. Описанные права относятся к живому процессу шлюза.
+# EN: Deployment template: verify account, actual paths and drop-in precedence before installation. These permissions apply to the live gateway process.
+[Unit]
+Description=Subscription gateway — agent instance %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+SupplementaryGroups=gateway-token
+EnvironmentFile=/etc/subscription-gateway/instance-%i.env
+Environment=GATEWAY_TOKEN_FILE=/etc/subscription-gateway/token
+ExecStart=/usr/local/bin/node /srv/subscription-gateway/gateway.mjs
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Read-only lock/archive/disk check. Never consults the hidden npm lock or network."""
+import argparse, base64, hashlib, json, os, tarfile
+from pathlib import Path, PurePosixPath
+
+
+def tree(path):
+    result = {}
+    for parent, dirs, files in os.walk(path, followlinks=False, onerror=lambda e: (_ for _ in ()).throw(e)):
+        for name in dirs[:] + files:
+            p = Path(parent) / name
+            rel = p.relative_to(path).as_posix()
+            if p.is_symlink():
+                result[rel] = ('link', os.readlink(p))
+                if name in dirs: dirs.remove(name)
+            elif p.is_file(): result[rel] = ('file', hashlib.sha256(p.read_bytes()).hexdigest())
+            elif not p.is_dir(): raise ValueError(f'неподдерживаемый объект {p}')
+    return result
+
+
+def archive_tree(path, integrity):
+    raw = path.read_bytes()
+    if not isinstance(integrity, str): raise ValueError('нет integrity архива в lock')
+    verified = False
+    for token in integrity.split():
+        algorithm, digest = token.split('-', 1)
+        if algorithm not in ('sha512', 'sha256', 'sha1'): continue
+        if base64.b64encode(hashlib.new(algorithm, raw).digest()).decode() == digest: verified = True
+    if not verified: raise ValueError('integrity архива не совпала с lock')
+    result = {}
+    with tarfile.open(path) as archive:
+        for member in archive:
+            if member.isdir(): continue
+            parts = PurePosixPath(member.name).parts
+            if not parts or parts[0] != 'package' or '..' in parts: raise ValueError('небезопасный путь архива')
+            name = '/'.join(parts[1:])
+            if not name or name in result: raise ValueError('пустой/повторный путь архива')
+            if member.isfile(): result[name] = ('file', hashlib.sha256(archive.extractfile(member).read()).hexdigest())
+            elif member.issym(): result[name] = ('link', member.linkname)
+            else: raise ValueError(f'неподдерживаемый тип архива {name}')
+    if 'package.json' not in result: raise ValueError('в архиве нет package.json')
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('root', nargs='?', default='/opt/agent-plugins')
+    parser.add_argument('--shelf', help='полка для registry tgz: <имя-без-scope>-<версия>.tgz')
+    args = parser.parse_args()
+    root = Path(args.root).resolve(); shelf = Path(args.shelf).resolve() if args.shelf else root.parent / 'agent-plugins-tarbally'
+    try:
+        lock = json.loads((root / 'package-lock.json').read_text())['packages']
+        entries = {k:v for k,v in lock.items() if k.startswith('node_modules/')}
+        if not entries: raise ValueError('пустой перечень пакетов lock')
+    except Exception as e:
+        print(f'СЛЕПОТА lock: {e}\nпакетов 0 · сошлось 0 · разошлось 0 · слепота 1'); return 2
+    # Корень lock (packages[""]) против package.json. npm ci 11.x корень не сверяет (ci.js validateLockfile — по деревьям); строка — про честность записи lock, не про установку.
+    # Сверяются имена и спецификаторы четырёх полей зависимостей; удовлетворяет ли версия спецификатору — не проверяется.
+    root_bad = root_blind = 0
+    try:
+        manifest = json.loads((root / 'package.json').read_text()); top = lock.get('')
+        if not isinstance(top, dict): raise ValueError('нет корня packages[""] в lock')
+        compared = 0
+        for field in ('dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'):
+            want = manifest.get(field) or {}; have = top.get(field) or {}
+            if not isinstance(want, dict) or not isinstance(have, dict): raise ValueError(f'{field} не объект')
+            compared += len(want.keys() | have.keys())
+            found = [f'{name}: лишний в lock, нет в package.json' for name in sorted(have.keys() - want.keys())]
+            found += [f'{name}: нет в lock, есть в package.json' for name in sorted(want.keys() - have.keys())]
+            found += [f'{name}: спецификатор package.json {want[name]}, lock {have[name]}' for name in sorted(want.keys() & have.keys()) if want[name] != have[name]]
+            for message in found: print(f'РАСХОЖДЕНИЕ корень lock {field} {message}')
+            root_bad += len(found)
+        print(f'корень lock: зависимостей {compared} · расхождений {root_bad}')
+    except Exception as e:
+        root_blind = 1; print(f'СЛЕПОТА корень lock: {e}')
+    good = bad = blind = 0
+    extras = set()
+    try:
+        installed = set()
+        for path in (root / 'node_modules').iterdir():
+            # npm metadata and command links are not packages.
+            if path.name.startswith('.'): continue
+            if path.name.startswith('@'):
+                if path.is_symlink() or not path.is_dir():
+                    raise ValueError(f'непрочитанная область scope {path}')
+                for child in path.iterdir():
+                    installed.add(child.relative_to(root).as_posix())
+            else:
+                installed.add(path.relative_to(root).as_posix())
+        extras = installed - entries.keys()
+        for location in sorted(extras):
+            print(f'РАСХОЖДЕНИЕ {location}: лишний пакет, отсутствует в lock')
+        bad += len(extras)
+    except Exception as e:
+        blind += 1
+        print(f'СЛЕПОТА обход node_modules: {e}')
+    for location, entry in sorted(entries.items()):
+        differences = []; unknown = []
+        try:
+            if '..' in PurePosixPath(location).parts: raise ValueError('путь пакета выходит из области')
+            path = root / location
+            version = entry.get('version')
+            if entry.get('link'):
+                target = entry.get('resolved')
+                if not isinstance(target, str): raise ValueError('нет цели ссылки')
+                expected = (root / target).resolve()
+                if not expected.is_relative_to(root): raise ValueError('цель ссылки вне root: не проверена')
+                version = lock.get(target, {}).get('version')
+                if not path.is_symlink() or path.resolve() != expected: differences.append(f'цель ссылки: ожидалась {target}')
+            elif path.is_symlink(): differences.append('каталог подменён ссылкой')
+            if not isinstance(version, str): raise ValueError('нет версии в lock')
+            try:
+                actual = json.loads((path / 'package.json').read_text()).get('version')
+                if actual != version: differences.append(f'версия {actual}, lock {version}')
+            except FileNotFoundError: differences.append('нет package.json на диске')
+            if not entry.get('link'):
+                resolved = entry.get('resolved', '')
+                if resolved.startswith('file:'): archive = root / resolved[5:]
+                elif resolved.startswith('https://'):
+                    name = location.rsplit('/', 1)[-1]; archive = shelf / f'{name}-{version}.tgz'
+                else: raise ValueError(f'неподдерживаемый источник {resolved}')
+                try: expected_files = archive_tree(archive, entry.get('integrity'))
+                except Exception as e: unknown.append(f'архив {archive}: {e}'); expected_files = None
+                if expected_files is not None:
+                    if not path.is_dir(): differences.append('нет каталога пакета')
+                    else:
+                        disk = tree(path)
+                        differences += ['лишний '+n for n in sorted(disk.keys()-expected_files.keys())]
+                        differences += ['нет '+n for n in sorted(expected_files.keys()-disk.keys())]
+                        differences += ['разный '+n for n in sorted(disk.keys() & expected_files.keys()) if disk[n]!=expected_files[n]]
+        except Exception as e: unknown.append(str(e))
+        for message in differences: print(f'РАСХОЖДЕНИЕ {location}: {message}')
+        for message in unknown: print(f'СЛЕПОТА {location}: {message}')
+        if unknown: blind += 1
+        elif differences: bad += 1
+        else: good += 1
+    print(f'пакетов {len(entries) + len(extras)} · сошлось {good} · разошлось {bad} · слепота {blind}')
+    return 2 if blind or root_blind else 1 if bad or root_bad else 0
+
+if __name__ == '__main__': raise SystemExit(main())

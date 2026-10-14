@@ -1,0 +1,530 @@
+{
+  "group": {
+    "exclusive": false,
+    "week": "2027-06-05",
+    "end": "2027-06-12",
+    "season": "high",
+    "version": 1,
+    "group": 20,
+    "adults": 20,
+    "teens": 0,
+    "childSettings": {
+      "baseDiscount": 0,
+      "discountMode": "sequential",
+      "durationDiscounts": [
+        {
+          "days": 5,
+          "percent": 10
+        },
+        {
+          "days": 8,
+          "percent": 15
+        },
+        {
+          "days": 14,
+          "percent": 25
+        },
+        {
+          "days": 28,
+          "percent": 40
+        }
+      ],
+      "childFreeUnder": 6,
+      "childDiscountUnder": 13,
+      "childDiscount": 50,
+      "bathPrice": 3000,
+      "bathHours": 3,
+      "bathCapacity": 10,
+      "bathSessionsPerWeek": 2,
+      "bathFreeAfterDays": 7,
+      "bathFreePerWeek": 1,
+      "includedActivities": "Лодки, сапы, велосипед, йога или цигун по утрам — без дополнительной оплаты."
+    },
+    "policyVersion": 3,
+    "mainMasters": 2,
+    "extraTeam": 0,
+    "discountedTeam": 0,
+    "fullTeam": 0,
+    "eligibleGuests": 20,
+    "attendees": 22,
+    "teamSettings": {
+      "mainHousingDiscount": 100,
+      "mainFoodDiscount": 100,
+      "extraHousingDiscount": 100,
+      "extraFoodDiscount": 0
+    },
+    "settlement": {
+      "adults": 20,
+      "teens": 0,
+      "mainMasters": 2,
+      "extraTeam": 0,
+      "attendees": 22,
+      "allocated": 22,
+      "missing": 0,
+      "surplus": 0,
+      "complete": true
+    },
+    "compositionComplete": true,
+    "allocated": 22,
+    "foodDays": 7,
+    "grossHousingTotal": 959000,
+    "housingTotal": 854000.0,
+    "mainHousingDiscountAmount": 105000.0,
+    "extraHousingDiscountAmount": 0.0,
+    "childHousingDiscountAmount": 0,
+    "grossFoodTotal": 431200,
+    "foodTotal": 392000.0,
+    "mainFoodDiscountAmount": 39200.0,
+    "extraFoodDiscountAmount": 0.0,
+    "childFoodDiscountAmount": 0.0,
+    "childDiscountAmount": 0.0,
+    "teamHousingAllocation": [
+      {
+        "role": "main",
+        "resource": "double-room",
+        "occupancy": 2,
+        "rate": 7500,
+        "name": "Прямоугольные дома: комнаты",
+        "discountPercent": 100
+      },
+      {
+        "role": "main",
+        "resource": "double-room",
+        "occupancy": 2,
+        "rate": 7500,
+        "name": "Прямоугольные дома: комнаты",
+        "discountPercent": 100
+      }
+    ],
+    "housingBenefits": [
+      {
+        "role": "main",
+        "resource": "double-room",
+        "occupancy": 2,
+        "rate": 7500,
+        "name": "Прямоугольные дома: комнаты",
+        "discountPercent": 100,
+        "places": 2,
+        "gross": 105000,
+        "discount": 105000.0,
+        "net": 0.0
+      }
+    ],
+    "activityTotal": 387000,
+    "optionTotal": 28000,
+    "total": 1661000.0,
+    "lines": [
+      {
+        "kind": "housing",
+        "label": "Купольные домики: 5 × 2 чел. × 7 ночей",
+        "rate": 5500,
+        "amount": 385000
+      },
+      {
+        "kind": "housing",
+        "label": "Треугольные домики A-frame: 4 × 2 чел. × 7 ночей",
+        "rate": 6500,
+        "amount": 364000
+      },
+      {
+        "kind": "housing",
+        "label": "Прямоугольные дома: комнаты: 2 × 2 чел. × 7 ночей",
+        "rate": 7500,
+        "amount": 210000
+      },
+      {
+        "kind": "discount",
+        "label": "Основные мастера · Прямоугольные дома: комнаты, по 2 чел.: 2 мест × 7500 ₽ × 7 ночей = 105000 ₽. Скидка 100% (105000,00 ₽); к оплате 0,00 ₽",
+        "amount": -105000.0
+      },
+      {
+        "kind": "food",
+        "label": "Питание всех участников и команды: 22 × 7 дней",
+        "amount": 431200
+      },
+      {
+        "kind": "discount",
+        "label": "Основные мастера · питание: 2 × 2800 ₽ × 7 дней = 39200 ₽. Скидка 100% (39200,00 ₽); к оплате 0,00 ₽",
+        "amount": -39200.0
+      },
+      {
+        "kind": "activity",
+        "label": "05.06 18:00–21:00 · Большой Купол · 180 м²",
+        "rate": 18000,
+        "amount": 18000
+      },
+      {
+        "kind": "activity",
+        "label": "06.06 08:00–11:00 · Большой Купол · 180 м²",
+        "rate": 18000,
+        "amount": 18000
+      },
+      {
+        "kind": "activity",
+        "label": "06.06 18:00–21:00 · Большой Купол · 180 м²",
+        "rate": 18000,
+        "amount": 18000
+      },
+      {
+        "kind": "activity",
+        "label": "07.06 08:00–11:00 · Большой Купол · 180 м²",
+        "rate": 18000,
+        "amount": 18000
+      },
+      {
+        "kind": "activity",
+        "label": "07.06 18:00–21:00 · Большой Купол · 180 м²",
+        "rate": 18000,
+        "amount": 18000
+      },
+      {
+        "kind": "activity",
+        "label": "08.06 08:00–11:00 · Большой Купол · 180 м²",
+        "rate": 18000,
+        "amount": 18000
+      },
+      {
+        "kind": "activity",
+        "label": "08.06 18:00–21:00 · Большой Купол · 180 м²",
+        "rate": 18000,
+        "amount": 18000
+      },
+      {
+        "kind": "activity",
+        "label": "09.06 08:00–11:00 · Большой Купол · 180 м²",
+        "rate": 18000,
+        "amount": 18000
+      },
+      {
+        "kind": "activity",
+        "label": "09.06 18:00–21:00 · Большой Купол · 180 м²",
+        "rate": 18000,
+        "amount": 18000
+      },
+      {
+        "kind": "activity",
+        "label": "10.06 08:00–11:00 · Большой Купол · 180 м²",
+        "rate": 18000,
+        "amount": 18000
+      },
+      {
+        "kind": "activity",
+        "label": "10.06 18:00–21:00 · Большой Купол · 180 м²",
+        "rate": 18000,
+        "amount": 18000
+      },
+      {
+        "kind": "activity",
+        "label": "11.06 08:00–11:00 · Большой Купол · 180 м²",
+        "rate": 18000,
+        "amount": 18000
+      },
+      {
+        "kind": "activity",
+        "label": "11.06 18:00–21:00 · Большой Купол · 180 м²",
+        "rate": 18000,
+        "amount": 18000
+      },
+      {
+        "kind": "activity",
+        "label": "07.06 12:00–16:00 · Баня",
+        "rate": 30000,
+        "amount": 30000
+      },
+      {
+        "kind": "option",
+        "label": "07.06 12:00–16:00 · Опция: Горячая купель",
+        "rate": 7000,
+        "amount": 7000
+      },
+      {
+        "kind": "activity",
+        "label": "07.06 18:00–22:00 · Баня",
+        "rate": 30000,
+        "amount": 30000
+      },
+      {
+        "kind": "option",
+        "label": "07.06 18:00–22:00 · Опция: Горячая купель",
+        "rate": 7000,
+        "amount": 7000
+      },
+      {
+        "kind": "activity",
+        "label": "11.06 12:00–16:00 · Баня",
+        "rate": 30000,
+        "amount": 30000
+      },
+      {
+        "kind": "option",
+        "label": "11.06 12:00–16:00 · Опция: Горячая купель",
+        "rate": 7000,
+        "amount": 7000
+      },
+      {
+        "kind": "activity",
+        "label": "11.06 18:00–22:00 · Баня",
+        "rate": 30000,
+        "amount": 30000
+      },
+      {
+        "kind": "option",
+        "label": "11.06 18:00–22:00 · Опция: Горячая купель",
+        "rate": 7000,
+        "amount": 7000
+      },
+      {
+        "kind": "activity",
+        "label": "06.06 12:00–15:00 · Музыкальная гостиная · около 48 м²",
+        "rate": 7000,
+        "amount": 7000
+      },
+      {
+        "kind": "activity",
+        "label": "08.06 12:00–15:00 · Вытянутый зал · 73 м²",
+        "rate": 9000,
+        "amount": 9000
+      },
+      {
+        "kind": "activity",
+        "label": "09.06 12:00–15:00 · Кинозал над баней · около 60 м²",
+        "rate": 6000,
+        "amount": 6000
+      },
+      {
+        "kind": "activity",
+        "label": "10.06 12:00–15:00 · Зал над столовой · около 127 м²",
+        "rate": 11000,
+        "amount": 11000
+      }
+    ],
+    "warnings": [
+      "Баня: в слот до 15 человек; гостей 20 и мастеров 2, всего 22 человек — разделите на подгруппы.",
+      "Музыкальная гостиная · около 48 м²: в слот до 20 человек; гостей 20 и мастеров 2, всего 22 человек — разделите на подгруппы.",
+      "Кинозал над баней · около 60 м²: в слот до 15 человек; гостей 20 и мастеров 2, всего 22 человек — разделите на подгруппы."
+    ],
+    "organizer": "",
+    "title": ""
+  },
+  "biggroup": {
+    "kind": "biggroup",
+    "policyVersion": 3,
+    "exclusive": true,
+    "version": 1,
+    "week": "2027-06-05",
+    "end": "2027-06-12",
+    "season": "high",
+    "group": 25,
+    "adults": 25,
+    "teens": 0,
+    "mainMasters": 2,
+    "extraTeam": 2,
+    "discountedTeam": 2,
+    "fullTeam": 0,
+    "eligibleGuests": 25,
+    "attendees": 29,
+    "days": 7,
+    "foodDays": 7,
+    "organizer": "Тестовая Мария",
+    "title": "Пробный расчёт",
+    "dailyRate": 10000,
+    "fullTotal": 2030000,
+    "childDiscountAmount": 0.0,
+    "mainTeamDiscountAmount": 140000.0,
+    "extraTeamDiscountAmount": 70000.0,
+    "discountPercent": 0,
+    "discountAmount": 0.0,
+    "total": 1820000.0,
+    "lines": [
+      {
+        "label": "Пакет: 25 взрослых + 0 подростков + 2 основных мастеров + 2 дополнительных × 7 суток × 10000 ₽",
+        "amount": 2030000
+      },
+      {
+        "label": "Основные мастера: 2 × 70000 ₽ = 140000 ₽; скидка 100% (140000,00 ₽); к оплате 0,00 ₽",
+        "amount": -140000.0
+      },
+      {
+        "label": "Льготная дополнительная команда: 2 × 70000 ₽ = 140000 ₽; скидка 50% (70000,00 ₽); к оплате 70000,00 ₽",
+        "amount": -70000.0
+      },
+      {
+        "label": "Скидка по числу взрослых 0%",
+        "amount": 0.0
+      }
+    ],
+    "bathDays": 3,
+    "settings": {
+      "dailyRates": {
+        "low": 6000,
+        "medium": 8000,
+        "high": 10000
+      },
+      "minimumGuests": 25,
+      "maximumGuests": 60,
+      "discounts": [
+        {
+          "guests": 35,
+          "percent": 5
+        },
+        {
+          "guests": 40,
+          "percent": 10
+        },
+        {
+          "guests": 46,
+          "percent": 15
+        }
+      ],
+      "bathDays": 3,
+      "freeOrganizers": 2,
+      "discountedMasters": 2,
+      "masterDiscount": 50,
+      "mainDiscount": 100,
+      "childPolicy": "whole_package"
+    },
+    "childSettings": {
+      "baseDiscount": 0,
+      "discountMode": "sequential",
+      "durationDiscounts": [
+        {
+          "days": 5,
+          "percent": 10
+        },
+        {
+          "days": 8,
+          "percent": 15
+        },
+        {
+          "days": 14,
+          "percent": 25
+        },
+        {
+          "days": 28,
+          "percent": 40
+        }
+      ],
+      "childFreeUnder": 6,
+      "childDiscountUnder": 13,
+      "childDiscount": 50,
+      "bathPrice": 3000,
+      "bathHours": 3,
+      "bathCapacity": 10,
+      "bathSessionsPerWeek": 2,
+      "bathFreeAfterDays": 7,
+      "bathFreePerWeek": 1,
+      "includedActivities": "Лодки, сапы, велосипед, йога или цигун по утрам — без дополнительной оплаты."
+    },
+    "warnings": [
+      "Неделя и расселение подтверждаются сотрудником. Индивидуальное размещение — с доплатой по согласованию; эта доплата не включена в предварительный итог."
+    ]
+  },
+  "resident": {
+    "kind": "resident",
+    "name": "Тестовая Анна",
+    "version": 1,
+    "arrival": "2027-06-01",
+    "departure": "2027-06-04",
+    "nights": 3,
+    "adults": 2,
+    "children": [
+      7
+    ],
+    "guests": 3,
+    "payingGuests": 2.5,
+    "resource": "mixed",
+    "resourceName": "Малые резидентские дома, Треугольные домики A-frame",
+    "rooms": [
+      {
+        "occupancy": 2,
+        "payingGuests": 2.0,
+        "resource": "resident",
+        "resourceName": "Малые резидентские дома",
+        "adults": 2,
+        "children": []
+      },
+      {
+        "occupancy": 1,
+        "payingGuests": 0.5,
+        "resource": "a-frame",
+        "resourceName": "Треугольные домики A-frame",
+        "adults": 0,
+        "children": [
+          7
+        ]
+      }
+    ],
+    "grossHousingTotal": 78000,
+    "grossFoodTotal": 25200,
+    "childDiscountAmount": 17700.0,
+    "housingTotal": 64500.0,
+    "foodTotal": 21000.0,
+    "subtotal": 85500.0,
+    "residentDiscountPercent": 0,
+    "residentDiscountAmount": 0.0,
+    "durationDiscountPercent": 0,
+    "durationDiscountDays": 0,
+    "durationDiscountAmount": 0.0,
+    "discountMode": "sequential",
+    "freeBathVisits": 0,
+    "bathVisits": 1,
+    "bathTotal": 9000,
+    "total": 94500.0,
+    "lines": [
+      {
+        "date": "2027-06-01",
+        "season": "high",
+        "housing": 21500.0,
+        "food": 7000.0
+      },
+      {
+        "date": "2027-06-02",
+        "season": "high",
+        "housing": 21500.0,
+        "food": 7000.0
+      },
+      {
+        "date": "2027-06-03",
+        "season": "high",
+        "housing": 21500.0,
+        "food": 7000.0
+      }
+    ],
+    "warnings": [
+      "Расчёт не подтверждает свободные места. Размещение и даты согласует сотрудник центра.",
+      "Общая баня по расписанию; посещения и места нужно согласовать. Детские льготы относятся только к проживанию и питанию."
+    ],
+    "settings": {
+      "baseDiscount": 0,
+      "discountMode": "sequential",
+      "durationDiscounts": [
+        {
+          "days": 5,
+          "percent": 10
+        },
+        {
+          "days": 8,
+          "percent": 15
+        },
+        {
+          "days": 14,
+          "percent": 25
+        },
+        {
+          "days": 28,
+          "percent": 40
+        }
+      ],
+      "childFreeUnder": 6,
+      "childDiscountUnder": 13,
+      "childDiscount": 50,
+      "bathPrice": 3000,
+      "bathHours": 3,
+      "bathCapacity": 10,
+      "bathSessionsPerWeek": 2,
+      "bathFreeAfterDays": 7,
+      "bathFreePerWeek": 1,
+      "includedActivities": "Лодки, сапы, велосипед, йога или цигун по утрам — без дополнительной оплаты."
+    }
+  }
+}

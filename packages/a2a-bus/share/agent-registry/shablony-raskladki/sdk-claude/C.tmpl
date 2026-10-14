@@ -1,0 +1,25 @@
+# Окружение шлюза подписки агента @@IMYA@@ (юнит claude-oauth-gateway, экземпляр @@IMYA@@) — семейство sdk-claude. B-H-081 Ш6.
+# СЕКРЕТОВ ЗНАЧЕНИЕМ ЗДЕСЬ НЕТ: токен подписки — путём к файлу; ключ OMEGA — именем ${OMEGA_MCP_API_KEY} (значение — drop-in службы).
+# GATEWAY_TOKEN_FILE — ЖИВОЕ поле: его держит pereklyuchatel-podpiski (/switch); сборка берёт его из текущего env, namerenie.podpiska — только начальное.
+GATEWAY_PORT=@@PORT_SHLYUZA@@
+GATEWAY_POSTAVSHIK=anthropic
+GATEWAY_WORK_DIR=@@DOM@@
+KOMPAKT_AGENT=@@KOMPAKT_AGENT@@
+GATEWAY_TOKEN_FILE=@@TOKEN_FILE@@
+GATEWAY_MAX_TURNS=200
+GATEWAY_EFFORT=high
+GATEWAY_DAVLENIE=storozh,signal
+GATEWAY_PAMYAT_BAZA=@@DOM@@/pamyat/pamyat.db
+@@ESLI SVOJ@@
+GATEWAY_MCP={"omega":{"type":"http","url":"http://127.0.0.1:8377/mcp","headers":{"Authorization":"Bearer ${OMEGA_MCP_API_KEY}"}}}
+@@/ESLI SVOJ@@
+@@ESLI GOST@@
+# B-N-1476: гость — шлюз не даёт модели встроенные инструменты движка (Bash/Read/Write SDK от учётки шлюза с claudeoauth)
+GATEWAY_INSTRUMENTY_DVIZHKA=net
+# B-N-1776 такт 2 (07.10.2026; условие Вениамина 17:56Z): у гостя нет группы claudeoauth (drop-in 95-gost.conf) — запись лимитов в приёмную dsh-limity выключена (подписку меряют другие шлюзы)
+GATEWAY_LIMITY_VHOD=
+@@/ESLI GOST@@
+@@ESLI BAZA_SESSIJ_YAVNO@@
+# база сессий шлюза — своя (B-N-749): по умолчанию модуль пишет в базу Искры
+GATEWAY_BAZA_SESSIJ=/var/lib/claude-oauth-gateway-@@IMYA@@/sessii.db
+@@/ESLI BAZA_SESSIJ_YAVNO@@

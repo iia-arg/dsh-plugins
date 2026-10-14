@@ -1,17 +1,9 @@
-// Стенд write-through в долговременную память (Э3.1).
-//
-// 🔴 ГЛАВНОЕ ЗДЕСЬ — РАЗНЫЕ ПРИРОДЫ У РАЗНЫХ ОТКАЗОВ. «Канала нет», «служба не смонтирована»
-// и «позвал, но не подтвердилось» лечатся по-разному: первое — установкой, второе — правкой
-// профиля, третье — разбором на стороне провайдера. Схлопни их в один «не удалось» — и
-// пришедший по журналу пойдёт чинить не то.
-// 🔴 ПЛАТФОРМЫ МОЖЕТ НЕ БЫТЬ У ПОЛУЧАТЕЛЯ — ЭТО СЛЕПОТА, А НЕ РАСХОЖДЕНИЕ (05.09.2026,
-// замечание приёмки). Статический импорт падал ДО входа в код, с кодом 1: получатель
-// чистой установки читал «стенды провалились, пакет сломан», хотя проверить было нечем.
-// Код 1 у нас важнее слепоты, поэтому весь `npm test` уходил в красное на исправном пакете.
-let Context, apply, name, Config;
+// RU: Проверяем write-through и различаем причины отказа: нет канала — нужна установка; служба не смонтирована — настройка профиля; вызов без подтверждения — проверка провайдера. Отсутствие платформы означает слепоту проверки, а не дефект пакета; статический импорт не должен превращать её в код 1.
+// EN: Test write-through and distinguish failure causes: missing channel requires installation; unmounted service requires profile configuration; an unconfirmed call requires provider inspection. A missing platform means the test cannot observe its subject, not that the package is broken; a static import must not turn that into exit code 1.
+let Context, apply, name, Config, KLASSY_ZNANIY_UMOLCHANIE;
 try {
   ;({ Context } = await import('@deepseek-ai/cordis'));
-  ;({ apply, name, Config } = await import('../src/index.js'));
+  ;({ apply, name, Config, KLASSY_ZNANIY_UMOLCHANIE } = await import('../src/index.js'));
 } catch (e) {
   const net = e?.code === 'ERR_MODULE_NOT_FOUND';
   console.log(`СЛЕПОТА: предмет не загрузился — ${net ? 'платформа (@deepseek-ai/cordis) не установлена' : String(e?.message ?? e).slice(0, 160)}`);
@@ -22,28 +14,38 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+// RU: Каждый mkdtemp создаём через vremennyj(): уборка выполняется при обычном выходе, исключении, process.exit и SIGTERM/SIGINT, включая timeout 120. SIGKILL не перехватывается; временные файлы дочернего процесса убирает сам дочерний процесс.
+// EN: Create every mkdtemp through vremennyj(): cleanup runs on normal exit, exceptions, process.exit, and SIGTERM/SIGINT, including timeout 120. SIGKILL cannot be intercepted; a child process must clean up its own temporary files.
+import { mkdtempSync as mkdtempSync_, rmSync as rmSync_ } from 'node:fs'
+const VREMENNYE = []
+const vremennyj = (...a) => { const k = mkdtempSync_(...a); VREMENNYE.push(k); return k }
+process.on('exit', () => { for (const k of VREMENNYE) rmSync_(k, { recursive: true, force: true }) })
+process.on('SIGTERM', () => process.exit(143)); process.on('SIGINT', () => process.exit(130))
 
 let ok = 0, bed = 0, slepot = 0;
-// 🔴 ПРИРОДА ТЕЛА ПРОВЕРЯЕТСЯ, А НЕ ПОДРАЗУМЕВАЕТСЯ (05.09.2026). Прогонщик синхронный:
-// он ждать не умеет. Тело, написанное ожидающим, вернёт промис — try его НЕ поймает,
-// проба зачтётся мгновенно, а брошенное внутри уйдёт в никуда. Такая проба не может
-// покраснеть НИКОГДА, ни на каких данных: это не ложно-зелёное, это отсутствие проверки
-// под видом проверки. Замер 05.09: семь стендов ядра из десяти зеленели на подложенном
-// падении в ожидающем теле — действующих async-тел не было ни одного, беда была впереди.
-// Здесь она закрыта устройством: вернуло промис — это ОТКАЗ пробы, а не её успех.
+// RU: Прогонщик синхронный и не ждёт промис: async-тело могло бы зачесть успех до исключения внутри. Возвращённый промис означает отказ пробы.
+// EN: The runner is synchronous and does not await promises: an async body could record success before an inner exception. A returned promise fails the probe.
 const proba = (imya, f) => { try {
     const vernulos = f();
     if (vernulos && typeof vernulos.then === 'function') {
       throw new Error('тело пробы ОЖИДАЮЩЕЕ, а прогонщик синхронный — ждать не умеет. ' +
                       'Вынеси ожидание наружу либо сделай прогонщик ожидающим');
     }
+    // RU: Тело пробы должно бросить ошибку или вернуть undefined. Любое другое значение, включая строку, false, 0, null и объект, означает отказ: игнорирование возврата даёт ложный успех. Проверка obyortka-krasneet подставляет заведомо ложную пробу в копию и сравнивает коды выхода.
+    // EN: The probe body must throw an error or return undefined. Any other value, including a string, false, 0, null, or an object, means failure: ignoring returns produces false success. The obyortka-krasneet check injects a deliberately failing probe into a copy and compares exit codes.
+    if (vernulos !== undefined && vernulos !== true) {
+      throw new Error('тело пробы ВЕРНУЛО «' + String(vernulos).slice(0, 60) +
+                      '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы. ' +
+                      'Бросай ошибку либо ничего не возвращай');
+    }
     ok++; console.log('  ok   ' + imya) }
   catch (e) { bed++; console.log('  FAIL ' + imya + ' — ' + e.message) } };
 
-const kat = mkdtempSync(join(tmpdir(), 'stend-dolgo-'));
+const kat = vremennyj(join(tmpdir(), 'stend-dolgo-'));
 let putBazy = '';
 
-/** Поднять ядро с подставным долговременным слоем. */
+// RU: Поднимаем ядро с подставным долговременным слоем.
+// EN: Start the core with a fake long-term layer.
 async function podnyat({ dolgo = null, nastrojka = {} } = {}) {
   const koren = new Context();
   koren.provide('logger'); koren.logger = { error: () => {} };
@@ -56,9 +58,8 @@ async function podnyat({ dolgo = null, nastrojka = {} } = {}) {
   return koren;
 }
 
-// Журнал читаем ПРЯМО ИЗ БАЗЫ: служба отдаёт только сводку по природам, а нам нужны
-// отдельные записи с причиной. Читаем другим средством, чем писали, — тем же путём туда и
-// обратно мы перенесли бы слепое пятно из работы в проверку.
+// RU: Читаем отдельные строки журнала прямо из базы независимым способом: служба возвращает лишь сводку причин.
+// EN: Read individual journal rows directly from the database through an independent path; the service returns only a cause summary.
 const zhurnalZapisi = (k) => {
   const put = k.pamyat.gdeBaza?.() ?? putBazy;
   const db = new DatabaseSync(put, { readOnly: true });
@@ -67,7 +68,8 @@ const zhurnalZapisi = (k) => {
   return r;
 };
 
-// [0] КОНТРОЛЬ НА ИСПРАВНОМ: класс НЕ из перечня в долговременную не идёт вовсе.
+// RU: Исправный контроль: класс вне перечня не отправляется в долговременную память.
+// EN: Healthy control: a class outside the list is not sent to long-term memory.
 {
   const zvali = [];
   const k = await podnyat({ dolgo: { dostupna: () => true, pochemuNedostupna: () => '',
@@ -79,7 +81,8 @@ const zhurnalZapisi = (k) => {
   });
 }
 
-// [A] класс из перечня, слой доступен → доставлено, в журнале исход и id
+// RU: Класс из перечня и доступный слой: доставка подтверждена, журнал содержит исход и id.
+// EN: Listed class and available layer: delivery is confirmed, and the journal contains the outcome and id.
 {
   const zvali = [];
   const k = await podnyat({ dolgo: { dostupna: () => true, pochemuNedostupna: () => '',
@@ -100,12 +103,8 @@ const zhurnalZapisi = (k) => {
   });
 }
 
-// [B] слой недоступен → ПРИРОДА «недоступен», оперативный слой цел.
-// 🔴 04.09.2026: исход здесь стал `ne-otpravleno` (прежде `ne-udalos-proverit`).
-// Проба этого не заметила, потому что смотрит на ПРИРОДУ, а не на исход, — и это
-// верно по замыслу: природа отвечает «что чинить». Заголовок же называл исход и
-// пережил свою причину; текст, объясняющий проверку, врёт дольше, чем сама
-// проверка, потому что его никто не прогоняет.
+// RU: Недоступный слой даёт причину недоступности и исход ne-otpravleno; оперативная запись сохраняется. Проверяем причину, определяющую лечение, отдельно от исхода.
+// EN: An unavailable layer records the unavailability cause and ne-otpravleno outcome; the working-memory record survives. Check the cause that determines the remedy separately from the outcome.
 {
   const k = await podnyat({ dolgo: { dostupna: () => false,
     pochemuNedostupna: () => 'служба OMEGA не отвечает',
@@ -123,7 +122,8 @@ const zhurnalZapisi = (k) => {
   });
 }
 
-// [C] слой ответил, но без подтверждения → ne-najdeno, ПРИРОДА ОТЛИЧАЕТСЯ от [B]
+// RU: Ответ без подтверждения даёт ne-najdeno; причина отличается от недоступного слоя.
+// EN: A reply without confirmation gives ne-najdeno; its cause differs from an unavailable layer.
 {
   const k = await podnyat({ dolgo: { dostupna: () => true, pochemuNedostupna: () => '',
     sohranit: async () => ({ sostoyanie: 'ne-najdeno', pochemu: 'записал, но чтением не подтвердилось' }) } });
@@ -139,7 +139,8 @@ const zhurnalZapisi = (k) => {
   });
 }
 
-// [D] служба не смонтирована вовсе → своя природа, не молчание
+// RU: Несмонтированная служба оставляет отдельную причину в журнале.
+// EN: An unmounted service leaves its own journal cause.
 {
   const k = await podnyat({ dolgo: null });
   k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание', istochnik: 's#1-2' });
@@ -151,7 +152,8 @@ const zhurnalZapisi = (k) => {
   });
 }
 
-// [E] 🔴 ВТОРАЯ ВЕТКА ЗАПИСИ: класс, требующий подтверждения, на узле без отвечающего
+// RU: Проверяем вторую ветку записи: класс требует подтверждения, но отвечающего нет.
+// EN: Test the second write branch: the class requires confirmation but no confirmer is available.
 {
   const zvali = [];
   const k = await podnyat({
@@ -168,9 +170,8 @@ const zhurnalZapisi = (k) => {
   });
 }
 
-// [F] 🔴 «ВНЕ ПЕРЕЧНЯ» ОТМЕЧАЕТСЯ В ЖУРНАЛЕ. Молчание этой ветки делало «класс не из
-// перечня знаний» неотличимым от «долговременный слой не позвали»: в обоих случаях в
-// журнале не появлялось ничего, и разбирающий не мог узнать, решение это или сбой.
+// RU: Класс вне перечня должен оставить след в журнале: иначе решение не отправлять неотличимо от отсутствующего вызова слоя.
+// EN: A class outside the list must leave a journal entry; otherwise the decision not to send is indistinguishable from a missing layer call.
 {
   const k = await podnyat({ dolgo: { dostupna: () => true, pochemuNedostupna: () => '',
     sohranit: async () => ({ sostoyanie: 'dostavleno', id: 'mem-x' }) } });
@@ -184,25 +185,25 @@ const zhurnalZapisi = (k) => {
   });
 }
 
-// [G] 🔴 ПЕРЕЧНИ ДВУХ ПАКЕТОВ СОГЛАСОВАНЫ. Секретарь выбирает классы для статей, ядро решает,
-// какие из них уедут в долговременную память. Разойдись они — часть знаний останется только
-// в оперативном слое, и НИКТО об этом не узнает: у обоих пакетов свой список верен, а дыра
-// между ними невидима каждому по отдельности.
-//
-// ГДЕ НЕ ПРИМЕНЯЕТСЯ: соседний пакет может быть не установлен — тогда СЛЕПОТА, а не «сошлось».
+// RU: Сверяем перечень классов секретаря с перечнем долговременной доставки ядра: расхождение оставит часть знаний только в оперативном слое. Нет соседнего пакета — слепота, а не успех.
+// EN: Compare the secretary’s class list with the core’s long-term delivery list; divergence leaves some knowledge only in working memory. A missing adjacent package means an unobservable test, not success.
 {
   let klassySecretarya = null;
   for (const put of ['../../dsh-pamyat-secretary/src/promty.js',
                      '../node_modules/dsh-pamyat-secretary/src/promty.js']) {
     try { ({ KLASSY: klassySecretarya } = await import(new URL(put, import.meta.url).href)); break; }
-    catch { /* ищем дальше */ }
+    catch { /* RU: Продолжаем поиск.
+ * EN: Continue searching.
+ */ }
   }
   if (!klassySecretarya) {
     slepot++;
     console.log('  СЛЕПОТА: пакет секретаря не найден рядом — согласованность перечней не проверена');
     console.log('    Это НЕ «сошлось»: проверка не состоялась. Поставьте dsh-pamyat-secretary рядом.');
   } else {
-    const nashi = new Config({ putBazy: join(kat, 'x.db'), agent: 'proba' }).klassyZnaniy ?? [];
+    // RU: Умолчание перечня хранится в константе модуля. Схема возвращает undefined для отсутствующего ключа, чтобы отличать доставленную настройку от умолчания.
+    // EN: The module constant holds the default class list. The schema returns undefined for an absent key to distinguish supplied configuration from the default.
+    const nashi = KLASSY_ZNANIY_UMOLCHANIE;
     proba('[G] все классы секретаря входят в klassyZnaniy ядра', () => {
       const lishnie = klassySecretarya.filter((x) => !nashi.includes(x));
       if (lishnie.length) {
@@ -213,31 +214,20 @@ const zhurnalZapisi = (k) => {
   }
 }
 
-// ── П-ЕДИНСТВЕННОСТЬ: ЯДРО ЗАПИРАЕТ ПО РЕШЕНИЮ ФИЛЬТРА, А НЕ ПО СВОЕМУ СПИСКУ ──
-// 🔴 ЗАЧЕМ. Решение «какой класс запирает» отдано наружу функцией rezhim(), и index.js
-// зовёт ЕЁ. Проверить это чтением нельзя: список, повторённый в потребителе, выглядит
-// точно так же, пока значения совпадают. Проверяется ПОРЧЕЙ (приём предложен приёмкой 04.09.2026):
-// подменить rezhim в копии ядра — покраснеть обязаны ОБА стенда, фильтра и этот.
-// Краснеет один — правда всё ещё в двух местах.
-// Эта проба и есть вторая половина пары; без неё порча краснит только фильтр, и
-// единственность правды остаётся ОБЪЯВЛЕННОЙ, а не проверенной.
-// ⚠️ Ожидание вынесено НАРУЖУ пробы: прогонщик синхронный и ждать не умеет — тело с
-// await он засчитал бы мгновенно, что бы внутри ни случилось. Поймал сам прогонщик.
+// RU: Проверяем единственность решения rezhim(): подмена в копии ядра должна уронить и стенд фильтра, и стенд записи. Один отказ означает две независимые таблицы правил. Ожидание выполняется вне синхронного тела пробы.
+// EN: Test rezhim() as the sole decision source: mutating it in a core copy must fail both the filter and write suites. Only one failure indicates two independent rule tables. Await outside the synchronous probe body.
 const kEdinstv = await podnyat();
 proba('П-единственность: объявленный секрет ОТВЕРГАЕТСЯ через zapisat, не только фильтром', () => {
   let otkaz = null;
   try {
-    // 🔴 КЛАСС ВНЕ ОБЛАСТИ МАСКИ намеренно. С 06.09.2026 у классов ЗНАНИЙ и сводок
-    // объявленный секрет не рвёт запись, а теряет ЗНАЧЕНИЕ (маска образцов, пара П24 в
-    // стенде фильтра). Эта проба — про то, что запирание живёт в zapisat, а не только в
-    // фильтре, и потому берёт класс, которого маска не касается.
+    // RU: Берём класс вне маски знаний и сводок, чтобы проверить отказ в zapisat, а не замену объявленного значения.
+    // EN: Use a class outside knowledge and summary masking to test rejection in zapisat rather than declared-value replacement.
     kEdinstv.pamyat.zapisat({ klass: 'proba-vne-maski', soderzhim: 'password = Xk9#mQ2$vL8p', istochnik: 's#1-2' });
   } catch (e) { otkaz = e; }
   if (!otkaz) throw new Error('запись с объявленным секретом ПРОШЛА — ядро не заперло');
   const tekst = String(otkaz.message ?? otkaz);
-  // Признак ищет КЛАСС в тексте отказа, а не слово «секрет»: класс говорит, ЧЕМ поймано,
-  // и именно он приходит из rezhim(). Первая редакция искала 'SEKRET' заглавными и
-  // покраснела на исправном отказе — признак был про мою догадку о тексте, не про предмет.
+  // RU: Ищем класс в тексте отказа: он приходит из rezhim() и показывает сработавшее правило; слово SEKRET этого не доказывает.
+  // EN: Look for the class in the rejection text: it comes from rezhim() and identifies the matching rule; the word SEKRET cannot prove this.
   if (!tekst.includes('obyavlennyj')) throw new Error('отказ есть, но класс не назван: ' + tekst.slice(0, 70));
 });
 

@@ -1,0 +1,7 @@
+[Unit]
+Description=Update RU-CIDR nft set (ru_split/ru_v4) from RIPE delegated-stats
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ru-cidr-update.sh

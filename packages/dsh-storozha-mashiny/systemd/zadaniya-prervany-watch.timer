@@ -1,0 +1,12 @@
+# RU: Раз в час, в :23 (вне круглых минут соседних таймеров).
+# EN: Hourly at :23 (away from the round minutes of neighbouring timers).
+[Unit]
+Description=Раз в час: читатель прерванных дистилляций
+
+[Timer]
+OnCalendar=*-*-* *:23:00
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

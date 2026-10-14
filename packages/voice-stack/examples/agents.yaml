@@ -1,0 +1,6 @@
+agenty:
+  - imya: voice-agent
+    namerenie:
+      platforma: dsh
+      dom: /opt/<agent-home>
+      polzovatel: voice-agent

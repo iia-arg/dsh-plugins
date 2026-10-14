@@ -1,0 +1,201 @@
+#!/opt/omega/venv/bin/python3
+# -*- coding: utf-8 -*-
+"""СТОРОЖ РАСЩЕПЛЕНИЯ ОТМЕНЫ: растёт ли число записей, где колонка status говорит
+«активна», а metadata говорит «отменена». Коды: 0 чисто · 3 РОСТ · 2 слепота.
+
+🔴 ПОЧЕМУ РОСТ — 3, А НЕ 1 (находка ворот #244, замер 22.09.2026). Код 1 ЗАНЯТ
+СИСТЕМОЙ и занят наглухо: `sudo -n` схлопывает в него ВСЕ свои отказы —
+нет пути → 1 · не исполняем → 1 · НЕТ ПРАВА → 1 (проверено тремя пробами).
+Оставь мы 1 за «рост» — первая же неудача монтажа или отнятое sudo пришли бы
+владельцу письмом «расщепление выросло». Отказ, неотличимый от СРАБАТЫВАНИЯ,
+хуже немоты: немота прячет беду, ложный крик ведёт чинить не то.
+⚠️ И проверки `test -x` перед вызовом НЕДОСТАТОЧНО: она ловит «нет пути» и
+«не исполняем», но НЕ ловит отказ прав — файл на месте, а sudo вернёт 1.
+
+🔴 ЗАЧЕМ. Восстановление памяти из копии расщепляет один факт на два носителя:
+metadata.superseded уцелевает, а колонка status у всех отменённых становится
+'active'. Замер 21.09.2026 на стенде (боевая база не тронута): 968 → 0 в колонке
+при 968 → 968 в metadata. Снаружи исход восстановления — «восстановлено N записей»,
+то есть УСПЕХ: тела не теряются, теряется всё, что вокруг тела.
+
+🔴 ПОЧЕМУ СТОРОЖИМ СОСТОЯНИЕ, А НЕ СОБЫТИЕ. События «восстановление» чужой код
+(omega) нам не даёт, а править его мы не будем. Осталась бы дисциплина «не забыть
+позвать» — а она не защита. Рост числа ловит и восстановление, и любой иной путь
+расщепления, о котором мы не думали. ЦЕНА, названная заранее: сторож скажет
+«выросло на N», но НЕ скажет, какой именно перенос виноват. Событие точнее,
+состояние полнее; выбрано полнее.
+
+🔴 ПОЧЕМУ ИМЕННО invalid_active_records, А НЕ ОБЩИЙ СЧЁТЧИК. Общий
+supersede_inconsistencies ЗАШУМЛЁН: на здоровой базе он уже 963 (пометка отмены
+без ребра — рёбра ставятся редко, 5 из 968). Ноля у него нет, различить рост
+нечем. Определение взято ИЗ КОДА пакета, не из замысла:
+    reliability_audit.py:124  if status == "active" and metadata.get("superseded")
+                                  reasons.append("active_with_superseded_metadata")
+
+ЧЕГО ЭТОТ СТОРОЖ НЕ ВИДИТ (говорить вслух, иначе зелёное прочтут шире):
+  last_accessed (4319→0) · valid_until (973→0) · счётчики обращений ·
+  подмену node_id/created_at/updated_at · переписанное происхождение (project).
+«Зелёное» здесь значит «расщепление не выросло», а НЕ «восстановление полное».
+"""
+# EN: SPLIT-SUPERSEDE WATCHER: does the number of records grow where the status column says "active" while
+#     metadata says "superseded". Codes: 0 clean · 3 GROWTH · 2 blindness.
+#     🔴 WHY GROWTH IS 3, NOT 1 (gate finding #244, measured 22.09.2026). Code 1 is TAKEN BY THE SYSTEM, and
+#     taken completely: `sudo -n` collapses ALL its refusals into it — no path → 1 · not executable → 1 · NO
+#     RIGHT → 1 (verified by three probes). Had we kept 1 for "growth", the first deployment failure or a
+#     revoked sudo would reach the owner as a letter "the split has grown". A refusal indistinguishable from a
+#     TRIGGER is worse than silence: silence hides trouble, a false shout leads to fixing the wrong thing. ⚠️
+#     And a `test -x` check before the call is NOT ENOUGH: it catches "no path" and "not executable" but NOT a
+#     permission refusal — the file is in place, yet sudo returns 1.
+#     🔴 WHY. Restoring memory from a copy splits one fact across two carriers: metadata.superseded survives,
+#     while the status column of all superseded records becomes 'active'. Measured 21.09.2026 on a stand (the
+#     production base untouched): 968 → 0 in the column with 968 → 968 in metadata. From outside the restore
+#     outcome is "N records restored", i.e. SUCCESS: the bodies are not lost, everything around the body is.
+#     🔴 WHY WE WATCH THE STATE, NOT THE EVENT. Foreign code (omega) does not give us a "restore" event, and we
+#     will not edit it. What would remain is the discipline "do not forget to call" — and that is not
+#     protection. Growth of the number catches both a restore and any other path to a split we have not thought
+#     of. THE PRICE, named in advance: the watcher will say "grew by N" but will NOT say which transfer is to
+#     blame. The event is more precise, the state more complete; the more complete was chosen.
+#     🔴 WHY EXACTLY invalid_active_records AND NOT THE GENERAL COUNTER. The general supersede_inconsistencies is
+#     NOISY: on a healthy base it is already 963 (a supersede mark without an edge — edges are set rarely, 5 of
+#     968). It has no zero, nothing to distinguish growth by. The definition is taken FROM THE PACKAGE CODE, not
+#     from intent: reliability_audit.py:124 if status == "active" and metadata.get("superseded") →
+#     reasons.append("active_with_superseded_metadata").
+#     WHAT THIS WATCHER DOES NOT SEE (say it aloud, otherwise green is read more broadly): last_accessed
+#     (4319→0) · valid_until (973→0) · access counters · substitution of node_id/created_at/updated_at ·
+#     rewritten provenance (project). "Green" here means "the split did not grow", NOT "the restore is
+#     complete".
+import json, os, subprocess, sys, tempfile
+
+BAZA   = os.environ.get("RASSHCH_BAZA",  "/var/lib/omega/.omega/omega.db")
+SOST   = os.environ.get("RASSHCH_SOST",  "/var/lib/rasshcheplenie-otmeny-watch/proshloe.json")
+ALERT  = os.environ.get("RASSHCH_ALERT", "/usr/local/bin/agent-alert")
+PRICHINA = "active_with_superseded_metadata"
+# С 30.09.2026 зовёт СВОЙ таймер rasshcheplenie-otmeny-watch.timer (раз в час); healthcheck реестра только
+# ЧИТАЕТ итог ITOG — прежде зовущим был сам healthcheck, и любой ручной --health забирал РОСТ раньше ночи.
+# EN: Since 30.09.2026 it is called by ITS OWN timer rasshcheplenie-otmeny-watch.timer (hourly); the registry
+#     healthcheck only READS the ITOG result — previously the healthcheck itself was the caller, and any manual
+#     --health took the GROWTH before the night run.
+ITOG   = os.environ.get("RASSHCH_ITOG", "/var/lib/rasshcheplenie-otmeny-watch/last.json")
+DOST   = "nechego"   # da — сказано; net — сказать было что, канал не подтвердил; nechego — говорить нечего · EN: da — said; net — there was something to say, the channel did not confirm; nechego — nothing to say
+
+def vyhod(kod, tekst):
+    print(tekst)
+    try:
+        import datetime
+        os.makedirs(os.path.dirname(ITOG), exist_ok=True)
+        fd, vrem = tempfile.mkstemp(dir=os.path.dirname(ITOG), prefix=".last-")
+        with os.fdopen(fd, "w") as f:
+            json.dump({"code": kod, "dostavleno": DOST, "text": tekst[-600:],
+                       "checked_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
+                      f, ensure_ascii=False)
+        os.chmod(vrem, 0o644)
+        os.replace(vrem, ITOG)
+    except Exception as e:
+        print(f"  ⚠️ итог {ITOG} не записан ({e}) — healthcheck назовёт сторожа молчащим")
+    sys.exit(kod)
+
+def skazat(tekst):
+    if not os.path.exists(ALERT):
+        print(f"  ⚠️ отправщик {ALERT} недоступен — тревога НЕ отправлена")
+        return False
+    try:
+        subprocess.run([ALERT, tekst], timeout=60, check=True)
+        return True
+    except Exception as e:
+        print(f"  ⚠️ тревога не ушла: {e}")
+        return False
+
+# ── 1. Замер ────────────────────────────────────────────────────────────────
+# EN: ── 1. Measurement
+sys.path.insert(0, "/opt/omega/venv/lib/python3.12/site-packages")
+try:
+    from omega.reliability_audit import audit_database
+except Exception as e:
+    vyhod(2, f"СЛЕПОТА: модуль аудита не импортируется — {e}")
+if not os.path.isfile(BAZA):
+    vyhod(2, f"СЛЕПОТА: базы памяти нет по пути {BAZA}")
+try:
+    otchyot = audit_database(BAZA)   # только чтение: ?mode=ro в самом аудите · EN: read only: ?mode=ro in the audit itself
+except Exception as e:
+    vyhod(2, f"СЛЕПОТА: аудит не отработал на {BAZA} — {e}")
+
+teper = sum(1 for z in otchyot.get("invalid_active_records", [])
+            if PRICHINA in (z.get("reasons") or []))
+vsego_zapisej = (otchyot.get("summary") or {}).get("memory_count", "?")
+print(f"  расщеплений ({PRICHINA}): {teper} · записей в базе: {vsego_zapisej}")
+
+# ── 2. Прежнее число ────────────────────────────────────────────────────────
+# EN: ── 2. Previous number
+proshloe = None
+if os.path.isfile(SOST):
+    try:
+        proshloe = int(json.load(open(SOST))["bylo"])
+    except Exception as e:
+        vyhod(2, f"СЛЕПОТА: состояние {SOST} не разбирается — {e}")
+
+def zapisat(n):
+    kat = os.path.dirname(SOST)
+    try:
+        os.makedirs(kat, exist_ok=True)
+        # временный + переименование: иначе при отказе записи сторож разучится молчать
+        # EN: temporary file + rename: otherwise on a write failure the watcher would forget how to stay silent
+        fd, vrem = tempfile.mkstemp(dir=kat, prefix=".tmp-")
+        with os.fdopen(fd, "w") as f:
+            json.dump({"bylo": n}, f)
+        os.replace(vrem, SOST)
+        return True
+    except Exception as e:
+        print(f"  ⚠️ состояние не сохранено ({e}) — следующий прогон сравнит не с тем")
+        return False
+
+# ── 3. Развилка ─────────────────────────────────────────────────────────────
+# EN: ── 3. Fork
+GRANICA = ("границы: сторож видит ТОЛЬКО расщепление отмены. НЕ видит last_accessed, "
+           "valid_until, счётчики обращений, подмену node_id/created_at и переписанное "
+           "происхождение. Зелёное = «не выросло», НЕ «восстановление полное»")
+
+UDERZH = f"🔴 УДЕРЖИВАЕТСЯ {teper} расщеплений (это НЕ ноль, просто не растёт). " if teper > 0 else ""
+
+if proshloe is None:
+    if not zapisat(teper):
+        # 🔴 Требование ворот #244: текст не смеет говорить «запомнено», когда не
+        # запомнено. Иначе выйдет ВЕЧНО-ПЕРВЫЙ замер: защита, которая не умеет
+        # сработать, а снаружи каждый раз зелёная.
+        # EN: 🔴 Gate requirement #244: the text must not say "remembered" when it was not remembered. Otherwise
+        #     we get an EVER-FIRST measurement: a protection that cannot fire, yet looks green from outside
+        #     every time.
+        vyhod(2, f"СЛЕПОТА: замер {teper} НЕ ЗАПОМНЕН — сравнения не будет, "
+                 f"следующий прогон снова будет первым. {GRANICA}")
+    vyhod(0, f"ПЕРВЫЙ ЗАМЕР: {teper} — сравнивать не с чем, число запомнено. {UDERZH}{GRANICA}")
+
+# 🔴 Требование ворот #244 (условие 2, вариант «б»). При РОСТЕ сторож
+# перезаписывает норму — значит крикнет ОДИН раз и замолчит на новом уровне.
+# Вариант «а» (держать базовый уровень до ручного сброса) отвергнут: он кричал бы
+# каждый прогон и требовал ДИСЦИПЛИНЫ ручного сброса, а дисциплина — не защита.
+# Взамен уровень печатается В КАЖДОМ исходе: молчание перестаёт скрывать, что
+# 968 расщеплений УДЕРЖИВАЮТСЯ. (UDERZH считается выше, до первой развилки.)
+# EN: 🔴 Gate requirement #244 (condition 2, variant "b"). On GROWTH the watcher overwrites the norm — so it
+#     shouts ONCE and goes silent at the new level. Variant "a" (keep the base level until a manual reset) was
+#     rejected: it would shout on every run and require the DISCIPLINE of a manual reset, and discipline is not
+#     protection. Instead the level is printed IN EVERY outcome: silence no longer hides that 968 splits are
+#     BEING HELD. (UDERZH is computed above, before the first fork.)
+
+if teper > proshloe:
+    # Условие приёмки: СНАЧАЛА сказать, ПОТОМ запомнить. Прежде уровень запоминался и
+    # при недоставке — рост был бы «сказан» только в выводе и больше не повторился.
+    # EN: Acceptance condition: FIRST say, THEN remember. Previously the level was remembered even on
+    #     non-delivery — the growth would be "said" only in the output and never repeated.
+    if skazat(f"🔴 память {os.uname().nodename}: РАСЩЕПЛЕНИЕ ОТМЕНЫ ВЫРОСЛО {proshloe} → {teper} "
+              f"(+{teper - proshloe}). Колонка status говорит «активна», metadata — «отменена». "
+              f"Обычная причина — восстановление базы из копии. {GRANICA}"):
+        DOST = "da"
+        zap = "запомнено" if zapisat(teper) else "НЕ запомнено — следующий прогон скажет снова"
+        vyhod(3, f"РОСТ: было {proshloe}, стало {teper} (+{teper - proshloe}) — сказано человеку, {zap}. {GRANICA}")
+    DOST = "net"
+    vyhod(3, f"РОСТ: было {proshloe}, стало {teper} (+{teper - proshloe}) — тревога НЕ доставлена, не запоминаю, скажу в следующий прогон. {GRANICA}")
+
+if teper < proshloe:
+    zapisat(teper)
+    vyhod(0, f"чисто: расщеплений {teper}, убыло с {proshloe} — кто-то починил. {UDERZH}{GRANICA}")
+
+vyhod(0, f"чисто: расщеплений {teper}, как и было. {UDERZH}{GRANICA}")

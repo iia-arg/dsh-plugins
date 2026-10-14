@@ -1,13 +1,5 @@
-/**
- * Стенд дистилляции: пять исходов вызова и толерантный разбор.
- *
- * 🔴 ПОДСТАВНОЙ СЕРВЕР, А НЕ ЖИВОЙ API. Стенд, зависящий от сети и чужой ставки,
- * краснеет от чужих причин и потому перестаёт читаться. Здесь проверяется НАШЕ
- * поведение на каждый вид ответа; что живой DeepSeek такие ответы даёт — отдельный
- * замер, он сделан вручную 03.09.2026 и записан в README.
- *
- * ГДЕ НЕ ПРИМЕНЯЕТСЯ: стенд не проверяет качество статьи и не ходит в сеть.
- */
+// RU: Проверяем пять исходов вызова и толерантный разбор на подставном HTTP-сервере. Стенд проверяет поведение пакета на ответы; качество статьи и ответы живого провайдера не проверяются.
+// EN: Test five call outcomes and tolerant parsing using a fake HTTP server. The suite tests package behavior for responses; article quality and live provider responses are outside coverage.
 let vzyat_klyuch, sprosit, razobrat_massiv;
 try {
   ({ vzyat_klyuch, sprosit, razobrat_massiv } = await import('../src/distillyaciya.js'));
@@ -18,21 +10,35 @@ try {
 }
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, unlinkSync, mkdtempSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+// RU: Временное создаём в отдельном mkdtemp и убираем через exit-хук и SIGTERM/SIGINT; общий фиксированный путь может остаться чужим или пережить прогон. SIGKILL уборку не выполнит.
+// EN: Create temporary files in a separate mkdtemp and clean them through the exit hook and SIGTERM/SIGINT; a shared fixed path may belong to another account or survive a run. SIGKILL cannot run cleanup.
+const KAT = mkdtempSync(join(tmpdir(), '.proba-distillyacii-'));
+process.on('exit', () => rmSync(KAT, { recursive: true, force: true }));
+process.on('SIGTERM', () => process.exit(143)); process.on('SIGINT', () => process.exit(130));
 
 console.log('стенд: ' + createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex').slice(0, 16));
 
 let vsego = 0, proshlo = 0;
 const proba = async (imya, f) => {
   vsego++;
-  try { await f(); proshlo++; console.log('  ✅ ' + imya); }
+  try {
+    const vernulos = await f();
+    // RU: Асинхронная обёртка должна учитывать возврат тела: любое значение кроме undefined означает отказ, включая строку, false, 0, null и объект. Игнорирование возврата даёт ложный успех.
+    // EN: The asynchronous wrapper must inspect the body’s return: any value except undefined fails, including a string, false, 0, null, and an object. Ignoring returns produces false success.
+    if (vernulos !== undefined && vernulos !== true) {
+      throw new Error('тело пробы ВЕРНУЛО «' + String(vernulos).slice(0, 60) +
+                      '», а обёртка судила по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы');
+    }
+    proshlo++; console.log('  ✅ ' + imya); }
   catch (e) { console.log('  ❌ ' + imya + ' — ' + String(e?.message ?? e).slice(0, 200)); }
 };
 
-/** Подставной сервер: отвечает тем, что ему велели. */
+// RU: Подставной сервер отдаёт ответ, заданный сценарием.
+// EN: The fake server returns the response selected by the scenario.
 let otvechat = () => ({ code: 200, telo: {} });
 const server = createServer((req, res) => {
   let body = '';
@@ -46,7 +52,8 @@ const server = createServer((req, res) => {
 await new Promise((g) => server.listen(0, '127.0.0.1', g));
 const ADRES = `http://127.0.0.1:${server.address().port}/v1/messages`;
 
-// ── 0. КОНТРОЛЬ НА ИСПРАВНОМ, ДО ПОРЧ ──────────────────────────────────────────
+// RU: Сначала проверяем заведомо исправный ответ, затем порчи.
+// EN: Test a known healthy response before mutations.
 await proba('0. обычный ответ → ok, текст взят из блока type=text', async () => {
   otvechat = () => ({ code: 200, telo: { content: [{ type: 'thinking', thinking: 'ду́маю…' }, { type: 'text', text: 'СТАТЬЯ' }], stop_reason: 'end_turn', usage: { output_tokens: 3 } } });
   const r = await sprosit({ klyuch: 'k', tekst: 'x', adres: ADRES });
@@ -54,35 +61,36 @@ await proba('0. обычный ответ → ok, текст взят из бл�
   if (r.tekst !== 'СТАТЬЯ') throw new Error('взят не тот блок: ' + JSON.stringify(r.tekst));
 });
 
-// 🔴 Именно тут ловится грабля «взяли первый блок»: если бы брали content[0],
-// сюда пришло бы рассуждение вместо статьи, и стенд был бы зелёным.
+// RU: Рассуждение перед статьёй проверяет выбор текстового блока: content[0] может быть рассуждением, а не статьёй.
+// EN: Reasoning before the article tests text-block selection: content[0] may contain reasoning rather than the article.
 await proba('0б. первый блок — thinking: он НЕ должен попасть в результат', async () => {
   otvechat = () => ({ code: 200, telo: { content: [{ type: 'thinking', thinking: 'ЭТО НЕ СТАТЬЯ' }, { type: 'text', text: 'вот статья' }], stop_reason: 'end_turn' } });
   const r = await sprosit({ klyuch: 'k', tekst: 'x', adres: ADRES });
   if (/НЕ СТАТЬЯ/.test(r.tekst)) throw new Error('в результат попало рассуждение');
 });
 
-// ── A. пусто по существу ───────────────────────────────────────────────────────
+// RU: Проверяем содержательно пустой ответ.
+// EN: Test a substantively empty response.
 await proba('A. модель ответила «НЕТ РЕЛЕВАНТНОГО» → ok, точная строка сохранена', async () => {
   otvechat = () => ({ code: 200, telo: { content: [{ type: 'text', text: 'НЕТ РЕЛЕВАНТНОГО' }], stop_reason: 'end_turn' } });
   const r = await sprosit({ klyuch: 'k', tekst: 'x', adres: ADRES });
   if (r.ishod !== 'ok' || r.tekst !== 'НЕТ РЕЛЕВАНТНОГО') throw new Error(r.ishod + '/' + r.tekst);
 });
 
-// ── B. не смогли спросить ──────────────────────────────────────────────────────
+// RU: Проверяем невозможность вызова провайдера.
+// EN: Test inability to call the provider.
 await proba('B. хост недоступен → ne-sprosili, и это НЕ «нечего извлекать»', async () => {
   const r = await sprosit({ klyuch: 'k', tekst: 'x', adres: 'http://127.0.0.1:1/v1/messages', tajmautMs: 3000 });
   if (r.ishod !== 'ne-sprosili') throw new Error('исход ' + r.ishod);
 });
 
 await proba('B2. ключ НЕ попадает в текст отказа', async () => {
-  const r = await sprosit({ klyuch: 'sk-ochen-sekretnyj-klyuch', tekst: 'x', adres: 'http://127.0.0.1:1/v1/messages', tajmautMs: 3000 });
+  const r = await sprosit({ klyuch: 'sk-ochen-sekretnyj-klyuch', tekst: 'x', adres: 'http://127.0.0.1:1/v1/messages', tajmautMs: 3000 }); // RU: Синтетический образец · EN: Synthetic sample; vorota-ob:dopusk=TOKEN
   if (/sk-ochen/.test(JSON.stringify(r))) throw new Error('ключ в ответе механизма');
 });
 
-// ── D. бюджет кончился — обязан сказать ПОЧЕМУ ─────────────────────────────────
-// 🔴 A и D обязаны РАЗЛИЧАТЬСЯ: «нечего извлекать» и «не смогла дочитать» —
-// разные новости, подавать одинаково нельзя.
+// RU: Исчерпание бюджета должно отличаться от пустого ответа и объяснять, почему текст не дочитан.
+// EN: Budget exhaustion must differ from an empty response and explain why reading did not finish.
 await proba('D. stop_reason=max_tokens без блока text → ne-dochitala, причина названа', async () => {
   otvechat = () => ({ code: 200, telo: { content: [{ type: 'thinking', thinking: 'долго думаю' }], stop_reason: 'max_tokens', usage: { output_tokens: 100 } } });
   const r = await sprosit({ klyuch: 'k', tekst: 'x', adres: ADRES, maxTokens: 100 });
@@ -97,10 +105,8 @@ await proba('D2. пусто с ИНЫМ stop_reason → pusto, причина н
   if (!/stop_sequence/.test(r.pochemu)) throw new Error('stop_reason не назван дословно');
 });
 
-// 🔴 ТРИ ОТКАЗА — ТРИ ПРИРОДЫ. Прежде 401, 402 и сетевой сбой возвращались одним
-// «ne-sprosili»: разбирающий видел «не смогла спросить» и не знал, ждать ли, менять ключ
-// или пополнять счёт. Проба ждала старую форму и честно покраснела на разведении — она
-// стерегла верное требование («код назван, а не «нечего извлекать»») в устаревшем виде.
+// RU: 401, 402 и сетевой отказ имеют разные причины: сменить ключ, пополнить баланс или разбирать сеть. Общий ne-sprosili скрывает лечение.
+// EN: 401, 402, and network failures have distinct causes: replace the key, replenish balance, or investigate networking. A shared ne-sprosili hides the remedy.
 await proba('HTTP 401 → своя природа klyuch-ne-prinyat, повтор не поможет', async () => {
   otvechat = () => ({ code: 401, telo: { error: 'bad key' } });
   const r = await sprosit({ klyuch: 'k', tekst: 'x', adres: ADRES });
@@ -123,7 +129,8 @@ await proba('HTTP 500 → ne-sprosili, НЕ окончательный: сеть
   if (r.okonchatelno) throw new Error('временный сбой помечен окончательным — заход оборвётся зря');
 });
 
-// ── C. толерантный разбор ──────────────────────────────────────────────────────
+// RU: Проверяем толерантный разбор.
+// EN: Test tolerant parsing.
 await proba('C. JSON в code-fence с пояснениями вокруг → разобран', async () => {
   const r = razobrat_massiv('Вот темы:\n```json\n[{"theme":"a","kind":"urok"}]\n```\nГотово.');
   if (!r.godno || r.spisok.length !== 1) throw new Error(JSON.stringify(r));
@@ -135,7 +142,8 @@ await proba('C2. не массив вовсе → отказ С ПРИЧИНОЙ
   if (!r.pochemu) throw new Error('причина не названа');
 });
 
-// ── E. ключ ────────────────────────────────────────────────────────────────────
+// RU: Проверяем источники ключа.
+// EN: Test key sources.
 await proba('E. файла ключа нет → отказ ДО вызова, с путём в причине', async () => {
   const r = vzyat_klyuch({ fajlKlyucha: '/net/takogo/fajla' });
   if (r.klyuch) throw new Error('ключ взялся ниоткуда');
@@ -143,20 +151,22 @@ await proba('E. файла ключа нет → отказ ДО вызова, �
 });
 
 await proba('E2. файл ключа ПУСТ → отказ, и это не «ключ есть»', async () => {
-  const f = join(tmpdir(), `proba-klyucha-${process.pid}`);
+  const f = join(KAT, 'proba-klyucha');
   writeFileSync(f, '   \n');
   try {
     const r = vzyat_klyuch({ fajlKlyucha: f });
     if (r.klyuch) throw new Error('пустой файл дал ключ');
-  } finally { try { unlinkSync(f); } catch { /* */ } }
+  } finally { try { unlinkSync(f); } catch { /* RU: Проверяем следующую форму ошибки чтения ключа.
+ * EN: Test the next key-read error shape.
+ */ } }
 });
 
-// 🔴 ПРИЧИНА НАЗЫВАЕТ И КОД, И ТЕКСТ — прежде выбирала одно из двух (долг 100).
-// Было `e?.code ?? e?.message`: `??` берёт первое не-null, то есть при непустом коде текст
-// терялся ЦЕЛИКОМ, а при пустом коде («» — найденное значение для `??`) терялось всё.
-// Читающему отказ нужны оба: код говорит, ЧТО за отказ, текст — про какой предмет.
+// RU: Причина должна содержать код и текст ошибки. Выбор через ?? теряет сообщение при заданном коде и не заменяет пустую строку.
+// EN: The cause must include both error code and message. Selecting with ?? loses the message when a code exists and does not replace an empty string.
 await proba('E-причина. чтение ключа несёт И код, И текст (не одно из двух)', async () => {
-  const r = vzyat_klyuch({ fajlKlyucha: tmpdir() });   // каталог вместо файла → EISDIR
+  const r = vzyat_klyuch({ fajlKlyucha: tmpdir() });   /* RU: Каталог вместо файла даёт EISDIR.
+ * EN: A directory in place of a file produces EISDIR.
+ */
   if (r.klyuch) throw new Error('каталог отдал ключ');
   if (!/EISDIR/.test(r.pochemu)) throw new Error('код отказа потерян: ' + r.pochemu);
   if (!/illegal operation|directory|каталог/i.test(r.pochemu))
@@ -183,9 +193,8 @@ await proba('E5. переменная не задана → отказ с ИМЕ
   if (!/NET_TAKOJ_PEREMENNOJ_E5/.test(r.pochemu)) throw new Error('имя не названо: ' + r.pochemu);
 });
 
-// 🔴 ПОРЯДОК ИСТОЧНИКОВ ПРОВЕРЯЕТСЯ ДЕЙСТВИЕМ, а не чтением: заданный файл, который не
-// читается, НЕ должен молча подменяться окружением — иначе пропажа файла маскируется
-// и выглядит исправной работой.
+// RU: Нечитаемый явно заданный файл ключа не подменяется окружением: иначе отказ источника скрывается.
+// EN: An explicitly configured unreadable key file must not fall back to the environment; that would hide the source failure.
 await proba('E6. заданный файл не читается → отказ, окружение его НЕ подменяет', async () => {
   process.env.PROBA_KLYUCHA_E6 = 'sk-podstavnoj-e6';
   try {

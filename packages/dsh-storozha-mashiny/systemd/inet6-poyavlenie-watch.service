@@ -1,0 +1,7 @@
+# RU: Сторож появления глобального IPv6 — условие остановки защиты v4-first.
+# EN: Watchdog for a global IPv6 appearing — the stop condition of the v4-first protection.
+[Unit]
+Description=Сторож появления глобального IPv6 · Global IPv6 appearance watchdog
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/inet6-poyavlenie-watch

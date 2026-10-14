@@ -1,0 +1,12 @@
+[Unit]
+Description=Сторож токена Codex подписки — ежечасно
+
+[Timer]
+OnBootSec=15min
+OnCalendar=*-*-* *:50:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=codex-auth-watch.service
+
+[Install]
+WantedBy=timers.target

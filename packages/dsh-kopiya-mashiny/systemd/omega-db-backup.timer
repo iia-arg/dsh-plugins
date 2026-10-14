@@ -1,0 +1,10 @@
+[Unit]
+Description=Копия базы памяти каждые 6 часов
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:20:00
+# Догнать пропущенное после простоя машины — иначе перезагрузка в неудачный час
+# съедает целый интервал без копии.
+Persistent=true
+AccuracySec=1min
+[Install]
+WantedBy=timers.target

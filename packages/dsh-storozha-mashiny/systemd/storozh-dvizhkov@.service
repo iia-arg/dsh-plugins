@@ -1,0 +1,20 @@
+[Unit]
+# RU: 1.0.1: сторож движков — ЭКЗЕМПЛЯР НА АГЕНТА (%i = имя агента). До 1.0.1 юнита не было: сторож не звал никто.
+# RU: Юнит шлюза агента задаётся drop-in'ом: SD_SHLYUZ_SLUZHBA=<юнит шлюза> (общим для шаблона, например
+# RU:    Environment=SD_SHLYUZ_SLUZHBA=<gateway>@%i.service, или экземплярным). Путь скрипта шлюза SD_SHLYUZ —
+# RU:    там же или в /etc/dsh-storozha-mashiny/dsh-storozha-mashiny.conf. Без них — «НЕ НАСТРОЕНО»/«СЛЕПОТА», код 2.
+# RU: ⚠️ ГРАНИЦА: новый агент — новый экземпляр (systemctl enable --now storozh-dvizhkov@<имя>.timer), не «из реестра».
+# EN: 1.0.1: engines watchdog — ONE INSTANCE PER AGENT (%i = agent name). Before 1.0.1 there was no unit: nobody called it.
+# EN: The agent's gateway unit comes from a drop-in (SD_SHLYUZ_SLUZHBA); the gateway script path SD_SHLYUZ — there or in the
+# EN: package settings file. Without them — "НЕ НАСТРОЕНО"/"СЛЕПОТА", exit 2. A new agent is a new instance, by hand.
+Description=Сторож движков: агент %i · Engines watchdog: agent %i
+[Service]
+Type=oneshot
+Environment=LC_ALL=C.UTF-8
+# RU: отметка перекрытия — СВОЯ у каждого экземпляра, иначе экземпляры затирают отметки друг друга
+# EN: the overlap mark is PER INSTANCE, otherwise instances overwrite each other
+StateDirectory=storozh-dvizhkov-%i
+StateDirectoryMode=0700
+UMask=0077
+Environment=SD_SOSTOYANIE=/var/lib/storozh-dvizhkov-%i/sostoyanie
+ExecStart=/usr/local/bin/storozh-dvizhkov.sh

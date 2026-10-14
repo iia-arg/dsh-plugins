@@ -1,0 +1,62 @@
+#!/bin/bash
+# kopiya-upala <юнит> <заголовок> — тревога об упавшем юните копии. Зовёт systemd через OnFailure=.
+# Один скрипт на три юнита тревоги (B-H-561, 24.09.2026; слил sadik-backup-failed.sh Авроры B-N-741 и
+# omega-db-backup-failed.sh Искры B-N-756 — код был один, различались заголовок и юнит):
+#   sadik-backup-failed.service     ← sadik-backup.service     (сборка копии sadik)
+#   backup-verify-failed.service    ← backup-verify.service    (приёмка копии sadik)
+#   omega-db-backup-failed.service  ← omega-db-backup.service  (копия базы памяти OMEGA)
+#
+# ЗАЧЕМ: убийство по TimeoutStartSec, OOM по MemoryMax и SIGKILL минуют собственные тревоги скриптов —
+# процесс умирает, не успев сказать. 24.09 03:20Z копия sadik упала 'oom-kill', и не сказал никто.
+# Смерть юнита видит только systemd, поэтому говорит тот, кого зовёт systemd.
+#
+# 🔴 КОГДА МОЛЧИТ: если сам юнит в ЭТОМ запуске напечатал «BACKUP_RESULT … notification=sent» — он уже
+# сказал человеку свой вердикт. Так делает приёмка: коды 1/2/4 у неё — штатные вердикты («копия негодна»,
+# «не готово»), и юнит падает ПОСЛЕ доставленной вести. Тревога «приёмка упала» поверх неё была бы
+# вестью не о том предмете. notification=failed / not_required, убийство до итога, падение без строки
+# итога — говорим. Строку ищем по InvocationID последнего запуска, а не по хвосту журнала юнита.
+#
+# ЧЕГО НЕ ЛОВИТ: юнит, который не запускался вовсе (таймер не сработал, машина лежала) — отказа нет,
+# звать некому; для копии sadik это видит приёмка по возрасту запуска (proverka-svezhesti-kopii.sh).
+# Зависание — только через TimeoutStartSec юнита. Смерть самого юнита тревоги — никто.
+# ДУБЛЬ НАМЕРЕННЫЙ: если скрипт копии сказал сам (fail() у sadik-backup.py) и строку итога не печатает,
+# тревога придёт дважды: Result 'exit-code' не различает «сказал» и «упал молча», а молчание дороже дубля.
+#
+# Команда — в файле, а не строкой в ExecStart: строкой systemd при каждой перечитке писал «Ignoring unknown
+# escape sequences» на \& в sed. Исполнялась она верно (проба Искры 24.09), но держалась на поведении
+# разборщика при ОШИБКЕ. Здесь экранирование видит только bash.
+#
+# Код: 0 — тревога доставлена или не требовалась; 1 — не доставлена (юнит тревоги сам попадает в failed);
+# 2 — отказ ввода.
+set -uo pipefail
+
+if [ $# -ne 2 ] || [ -z "$1" ] || [ -z "$2" ]; then
+  echo "ОТКАЗ: ожидаю kopiya-upala <юнит> <заголовок>; получено аргументов: $#"; exit 2
+fi
+UNIT=$1; ZAGOLOVOK=$2
+ALERT="${AGENT_ALERT_BIN:-/usr/local/bin/agent-alert}"
+
+# Разбор по имени, а не по порядку: systemctl show печатает свойства в своём порядке, не в запрошенном.
+declare -A P=()
+while IFS='=' read -r k v; do P[$k]=$v; done < <(systemctl show "$UNIT" -p Result -p ExecMainStatus \
+  -p ExecMainStartTimestamp -p ExecMainExitTimestamp -p InvocationID 2>/dev/null)
+
+itog=""
+if [ -n "${P[InvocationID]:-}" ]; then
+  itog=$(journalctl _SYSTEMD_INVOCATION_ID="${P[InvocationID]}" --no-pager -o cat 2>/dev/null | grep -F 'BACKUP_RESULT ' | tail -1)
+fi
+echo "падение $UNIT: result=${P[Result]:-?} status=${P[ExecMainStatus]:-?} итог запуска: ${itog:-нет строки итога}"
+case "$itog" in
+  *' notification=sent '*) echo "  юнит сам сказал человеку в этом запуске — молчу"; exit 0 ;;
+esac
+
+esc() { sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }
+hvost=$(journalctl -u "$UNIT" -n 6 --no-pager -o cat 2>/dev/null | esc)
+tekst="🔴 <b>$(printf '%s' "$ZAGOLOVOK" | esc)</b>: юнит $(printf '%s' "$UNIT" | esc) упал
+result=${P[Result]:-?} · status=${P[ExecMainStatus]:-?} · пущен ${P[ExecMainStartTimestamp]:-?} · конец ${P[ExecMainExitTimestamp]:-?}
+<code>${hvost:-журнал юнита пуст}</code>"
+
+if out=$("$ALERT" "$tekst" 2>&1); then
+  echo "  сказано человеку"; exit 0
+fi
+echo "  🔴 тревога НЕ доставлена: ${out:-причина не названа}"; exit 1

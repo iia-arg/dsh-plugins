@@ -1,0 +1,445 @@
+#!/usr/bin/env python3
+# B-N-738 · ИНСТРУМЕНТ ОКНА: перепаковка журналов сессий 0.1.1 перед DSH 0.2 (наряд Забавы 29.09 18:59Z; слово владельца 21:58 МСК:
+# «журналы ПЕРЕПИСЫВАЕМ со страховкой; 10 неоткрываемых — В СТРАХОВКУ»). Автор — Аврора; запускает рука окна ПОД root.
+#
+# ЧТО ДЕЛАЕТ с каждым журналом <DSH_HOME>/sessions/**/session.jsonl.zstd агента из реестра /etc/agent-registry/agents.yaml:
+#   источник письма {kind:'a2a'} → {kind:'agent-message', form:'relay', senderSessionId:'a2a:istoriya'} (форма telegram 1.5.48;
+#     мигратор 0.2 v2→v3 требует РОВНО эти три ключа — прочие ключи прежнего источника не переносятся, их счёт печатается);
+#   любой объект с type 'thinking' → 'reasoning' (закрытый список CONTENT_KINDS 0.2);
+#   в заголовок — agentPreset = пресет агента из его профиля (строка моста preset:), ЕСЛИ поля нет; есть — не трогаем.
+#   id, cwd, прочие поля заголовка — не меняются. Строки без замен остаются ПОБАЙТНО прежними. Заголовок — отдельным первым кадром zstd.
+#   Владелец, права и время изменения файла — как у оригинала; запись через временное имя в том же каталоге + rename.
+# НЕОТКРЫВАЕМЫЕ (10, перечень ниже по пути и сумме): каталог сессии целиком переносится в <страховка>/neotkryvaemye/<агент>/…, не удаляется.
+#
+# РЕЖИМЫ: --progon (только план и счёт, ничего не пишет) · --v-boj · --otkat <агент> (из страховки, побайтно).
+#   --agent <имя> (можно несколько) — ограничить; --strahovka <кат.> (умолч. /var/backups/montazh/B-N-738-zhurnaly);
+#   --koren <кат.> — КОПИЯ: все пути агента берутся под этим корнем (проба); служба в копии НЕ проверяется, проверка процессов — да.
+#     Корень, приводящий к боевым путям («/» или realpath(корень+DSH_HOME) = боевому DSH_HOME), — ОТКАЗ, код 2.
+#   Любое иное слово (в т.ч. --dry-run, -n, --check) — ОТКАЗ.
+# ОТКАЗ ПО АГЕНТУ (остальные идут дальше; код возврата 1): служба агента не остановлена (systemctl is-active ≠ inactive/failed) · есть
+#   процесс платформы DSH (аргумент …/dsh/lib/bin.js или файл dsh) с тем же DSH_HOME · есть процесс, держащий файл в sessions · пресет в профиле не ровно один ·
+#   сверка счёта после записи не сошлась (тогда временный файл удаляется, оригинал цел) · страховка уже есть и не совпадает с файлом.
+# ⚠️ ЧЕГО НЕ ЛОВИТ: платформу под иным именем бинаря (не …/dsh/lib/bin.js и не «dsh») или с относительным путём в argv, без открытого журнала; запись в журнал МЕЖДУ
+#   проверкой и rename (окно — секунды; поэтому службы стоят весь проход); откат ПОСЛЕ того, как 0.2 уже мигрировала журнал (0.2 пишет свой
+#   формат — откат вернёт файл 0.1.1, но не уберёт следов 0.2; это решение окна, а не инструмента).
+# ОСТАНОВКА: один проход по перечню, повторов нет; повторный --v-boj идемпотентен (уже перепакованное — пропуск, страховка не перезаписывается НИКОГДА).
+import hashlib, json, os, shutil, subprocess, sys, time
+
+SLUZHBA_STOIT = {'inactive', 'failed'}
+STRAHOVKA_UMOLCH = '/var/backups/montazh/B-N-738-zhurnaly'
+REESTR = '/etc/agent-registry/agents.yaml'
+ISTORIYA = {'kind': 'agent-message', 'form': 'relay', 'senderSessionId': 'a2a:istoriya'}
+# Неоткрываемые в 0.2 (прогон мелких сессий 29.09 ~18:0xZ; признаки сняты сканом 52 журналов 29.09 19:1xZ): агент, путь КАТАЛОГА сессии
+# относительно <DSH_HOME>/sessions, sha256 журнала. Сумма не сошлась — файл НЕ переносится (могли тронуть, это уже не тот предмет).
+NEOTKRYVAEMYE = [
+    ('iskra', '--opt-iskra-.dsh-profiles-bridgeprobe--/session-bridgeprobe-935442eb-d520-4534-b7a6-840efeac61ea', '2556e76bfcc4a84bf7518e0644f194ec4bdbe5f16d2c4e868425e238e8104328'),
+    ('iskra', '--opt-iskra-.dsh-profiles-bridgeprobe--/session-bridgeprobe-1865a914-dd62-471c-b7b2-bf5deec7c241', '9a98a321022a8ec05a13242372060513838b8b52718bbec4a7664b7f12bb0483'),
+    ('iskra', '--opt-iskra-.dsh-profiles-bridgeprobe--/session-bridgeprobe-196151a8-5d5a-448f-89f1-1f4f75529ccb', '5f3f9f0562b58be755aa9463b60dee02e1314feb2b4ee3875f49a84233b4d804'),
+    ('iskra', '--opt-iskra-.dsh-profiles-bridgeprobe--/session-bridgeprobe-882e22f4-066d-48cd-afd5-eca521cdf138', '873df40cc02d42e9e7a604ede3a96295df8a877197033b1cf055bb92528715f4'),
+    ('iskra', '--opt-iskra-.dsh-profiles-bridgeprobe--/session-bridgeprobe-41b2f71e-ffe2-4467-a693-12d66ca0c75e', 'befd34b5559509f67f96b88f051ac89bbca8f2839169179fd2aa48508cf9c701'),
+    ('iskra', '--opt-iskra-.dsh-profiles-bridgeprobe--/session-bridgeprobe-e2248c60-e1ee-42a3-8e7b-f55a0db2e9ce', '31047f62b552e2300f9760d730b89fa38f37a1380c68bcb72e18fb00fa2a8f83'),
+    ('iskra', '--opt-iskra-.dsh-profiles-bridgeprobe--/session-bridgeprobe-ae822603-553d-46d2-8e2f-5328d36ff5d8', 'c5cf6716f07cef0e4eb8d5f01d549f1bac3dc531498592a522116d13b6edaa4a'),
+    ('petrovich', '--opt-dsh-workspace--/762dabb4-4a1c-49ee-a8a3-333bd955ff6e', 'fc13ec1aef0bb08727c356d0b3e126a907a490ecc8a90aa7e6bd790595e7580d'),
+    ('petrovich', '--opt-dsh-workspace--/474b9bc1-4827-4eda-a6e0-0b34c12fb692', '4cd2a627e0a2da777e881a686a562330c24c50e98bc23289b5d22e758db2f79a'),
+    ('petrovich', '--opt-dsh-workspace--/d63bdf78-2fa9-4d81-9c21-b7bdd3e0a558', '1a11a43347a930b065ece0c83b5b59c19326fca68ad8ef38cef6eb14aa69ea2c'),
+]
+ZHURNAL = 'session.jsonl.zstd'
+
+
+def otkaz_vyzova(t):
+    print('perepak-okna: ' + t + ' — НИЧЕГО не сделано.\nФормат: --progon | --v-boj | --otkat <агент>  [--agent <имя>]… [--strahovka <кат.>] [--koren <кат.>]', file=sys.stderr)
+    sys.exit(2)
+
+
+def razobrat(argv):
+    a = {'rezhim': None, 'agenty': [], 'strahovka': STRAHOVKA_UMOLCH, 'koren': '', 'otkat': None}
+    i = 0
+    while i < len(argv):
+        w = argv[i]
+        if w in ('--progon', '--v-boj', '--otkat'):
+            if a['rezhim']: otkaz_vyzova('режим назван дважды')
+            a['rezhim'] = w
+            if w == '--otkat':
+                i += 1
+                if i >= len(argv) or argv[i].startswith('-'): otkaz_vyzova('--otkat требует имя агента')
+                a['otkat'] = argv[i]
+        elif w in ('--agent', '--strahovka', '--koren'):
+            i += 1
+            if i >= len(argv) or argv[i].startswith('-'): otkaz_vyzova(w + ' требует значение')
+            if w == '--agent': a['agenty'].append(argv[i])
+            else: a[w[2:]] = os.path.abspath(argv[i])
+        else:
+            otkaz_vyzova('неизвестное слово «' + w + '»')
+        i += 1
+    if not a['rezhim']: otkaz_vyzova('режим не назван')
+    return a
+
+
+def sha(put):
+    h = hashlib.sha256()
+    with open(put, 'rb') as f:
+        for b in iter(lambda: f.read(1 << 20), b''): h.update(b)
+    return h.hexdigest()
+
+
+def zstd(args, data=None):
+    r = subprocess.run(['zstd', '-q'] + args, input=data, capture_output=True)
+    if r.returncode != 0: raise RuntimeError('zstd ' + ' '.join(args) + ': ' + r.stderr.decode(errors='replace')[:200])
+    return r.stdout
+
+
+# ── агенты ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+def agenty_iz_reestra(koren):
+    import yaml
+    out = {}
+    # A-N-1948 №29: реестр не прочитан / не тот вид / у агента dsh нет namerenie.sluzhba — именованный отказ (код 2) ДО любого
+    # вызова systemctl; прежде — трасса TypeError («systemctl show None»), код 1.
+    try:
+        doc = yaml.safe_load(open(REESTR, encoding='utf-8'))
+    except OSError as e:
+        otkaz_vyzova(f'реестр {REESTR} не прочитан: {e.strerror}')
+    except yaml.YAMLError as e:
+        otkaz_vyzova(f'реестр {REESTR} не разобран: {str(e).splitlines()[0]}')
+    if not isinstance(doc, dict) or not isinstance(doc.get('agenty'), list):
+        otkaz_vyzova(f'в реестре {REESTR} нет списка agenty')
+    # Сначала проверка ВСЕГО реестра, потом systemctl (A-N-1948 №5 дельта-3: прежде проверка шла в том же цикле, и для агентов
+    # перед порченым systemctl show уже звался — «до любого systemctl» было неверно).
+    dsh = []
+    for ag in doc['agenty']:
+        n = ag.get('namerenie') or {}
+        if n.get('platforma') != 'dsh': continue
+        unit = n.get('sluzhba')
+        if not isinstance(unit, str) or not unit:
+            otkaz_vyzova(f"у агента {ag.get('imya')} в реестре {REESTR} нет namerenie.sluzhba")
+        dsh.append((ag, unit))
+    for ag, unit in dsh:
+        env = subprocess.run(['systemctl', 'show', unit, '-p', 'Environment', '--value'], capture_output=True, text=True).stdout.split()
+        dh = next((e.split('=', 1)[1] for e in env if e.startswith('DSH_HOME=')), None)
+        out[ag['imya']] = {'unit': unit, 'dsh_home_boj': dh, 'dsh_home': (koren + dh) if dh else None}
+    return out
+
+
+def preset_agenta(dh):
+    """Пресет — из строки моста (dsh-telegram-multiagent config.preset) профиля web агента. Не ровно один — None + причина."""
+    import yaml
+    put = os.path.join(dh, 'profiles', 'web', 'cordis.patch.yml')
+    try:
+        doc = yaml.safe_load(open(put, encoding='utf-8')) or []
+    except OSError as e:
+        return None, 'профиль не прочитан: ' + str(e)
+    naj = set()
+
+    def obojti(o):
+        if isinstance(o, dict):
+            if o.get('name') == 'dsh-telegram-multiagent' and isinstance(o.get('config'), dict) and o['config'].get('preset'):
+                naj.add(str(o['config']['preset']))
+            for v in o.values(): obojti(v)
+        elif isinstance(o, list):
+            for v in o: obojti(v)
+    obojti(doc)
+    return (naj.pop(), None) if len(naj) == 1 else (None, 'пресетов в строке моста ' + str(len(naj)) + ' (' + put + ')')
+
+
+def eto_dsh(argv):
+    """Процесс — платформа DSH: аргумент, чей настоящий путь кончается на /dsh/lib/bin.js, либо файл с именем dsh
+    (Петрович запущен как node …/node_modules/.bin/dsh web — признак по строке «dsh/lib/bin.js» его не видел, поймано --progon 29.09 19:05Z)."""
+    for x in argv:
+        x = x.decode(errors='replace')
+        if not x.startswith('/'): continue
+        r = os.path.realpath(x)
+        if r.endswith('/dsh/lib/bin.js') or os.path.basename(x) == 'dsh' or os.path.basename(r) == 'dsh': return True
+    return False
+
+
+def zanyato(ag, koren):
+    """Причины, по которым агента трогать нельзя. Пусто — можно."""
+    pr = []
+    if koren:
+        pr_sl = 'служба в копии НЕ проверяется (--koren)'
+    else:
+        st = subprocess.run(['systemctl', 'is-active', ag['unit']], capture_output=True, text=True).stdout.strip()
+        pr_sl = 'служба ' + ag['unit'] + ': ' + st
+        if st not in SLUZHBA_STOIT: pr.append(pr_sl)
+    dh = os.path.realpath(ag['dsh_home']); ses = os.path.join(dh, 'sessions') + '/'
+    for pid in filter(str.isdigit, os.listdir('/proc')):
+        try:
+            argv = open(f'/proc/{pid}/cmdline', 'rb').read().split(b'\0')
+            env = open(f'/proc/{pid}/environ', 'rb').read().split(b'\0')
+        except OSError:
+            continue
+        h = next((e[9:].decode(errors='replace') for e in env if e.startswith(b'DSH_HOME=')), None)
+        if h and os.path.realpath(h) == dh and eto_dsh(argv):
+            pr.append(f'процесс платформы pid {pid} с DSH_HOME={h}')
+        try:
+            for fd in os.listdir(f'/proc/{pid}/fd'):
+                try:
+                    if os.readlink(f'/proc/{pid}/fd/{fd}').startswith(ses): pr.append(f'pid {pid} держит {os.readlink(f"/proc/{pid}/fd/{fd}")}'); break
+                except OSError:
+                    pass
+        except OSError:
+            pass
+    return pr, pr_sl
+
+
+# ── перепаковка одного журнала ─────────────────────────────────────────────────────────────────────────────────────────────────
+def a2a_vezde(o):
+    n = 0
+    if isinstance(o, dict):
+        s = o.get('source')
+        if isinstance(s, dict) and s.get('kind') == 'a2a': n += 1
+        for v in o.values(): n += a2a_vezde(v)
+    elif isinstance(o, list):
+        for v in o: n += a2a_vezde(v)
+    return n
+
+
+def thinking_vezde(o):
+    n = 0
+    if isinstance(o, dict):
+        if o.get('type') == 'thinking': n += 1
+        for v in o.values(): n += thinking_vezde(v)
+    elif isinstance(o, list):
+        for v in o: n += thinking_vezde(v)
+    return n
+
+
+def perepakovat(syroe, preset):
+    """syroe — распакованный журнал (bytes). → (новый заголовок bytes, тело bytes, счёт) либо исключение с причиной."""
+    stroki = syroe.split(b'\n')
+    if stroki and stroki[-1] == b'': stroki.pop()
+    else: raise RuntimeError('журнал не кончается переводом строки — оборванная запись?')
+    hdr = json.loads(stroki[0])
+    if hdr.get('type') != 'session': raise RuntimeError('первая строка не заголовок session')
+    st = {'strok': len(stroki), 'a2a': 0, 'a2a_lishnie_klyuchi': 0, 'thinking': 0, 'strok_izmeneno': 0, 'tipy': {}, 'a2a_vne_mest': 0}
+
+    def fix(m):
+        s = m.get('source') if isinstance(m, dict) else None
+        if isinstance(s, dict) and s.get('kind') == 'a2a':
+            st['a2a_lishnie_klyuchi'] += len(set(s) - {'kind'}); m['source'] = dict(ISTORIYA); st['a2a'] += 1; return True
+        return False
+
+    def th(o):
+        ch = False
+        if isinstance(o, dict):
+            if o.get('type') == 'thinking': o['type'] = 'reasoning'; st['thinking'] += 1; ch = True
+            for v in o.values(): ch = th(v) or ch
+        elif isinstance(o, list):
+            for v in o: ch = th(v) or ch
+        return ch
+    telo = []
+    for l in stroki[1:]:
+        e = json.loads(l); t = str(e.get('type')); st['tipy'][t] = st['tipy'].get(t, 0) + 1
+        ch = False; d = e.get('data')
+        if isinstance(d, dict):
+            if e.get('type') == 'user/message': ch = fix(d) or ch
+            ch = fix(d.get('message')) or ch
+            for k in ('inserted', 'messages'):
+                for m in d.get(k) or []: ch = fix(m) or ch
+            ch = th(d) or ch
+        ost = a2a_vezde(e)
+        if ost: st['a2a_vne_mest'] += ost
+        if ch:
+            telo.append(json.dumps(e, ensure_ascii=False, separators=(',', ':')).encode()); st['strok_izmeneno'] += 1
+        else:
+            telo.append(l)
+    if st['a2a_vne_mest']: raise RuntimeError(f"источник a2a вне известных мест: {st['a2a_vne_mest']} — не трогаю, разобрать руками")
+    st['preset_byl'] = hdr.get('agentPreset')
+    if 'agentPreset' not in hdr: hdr['agentPreset'] = preset
+    novyj_hdr = json.dumps(hdr, ensure_ascii=False, separators=(',', ':')).encode() if st['preset_byl'] is None else stroki[0]
+    st['preset_stal'] = hdr['agentPreset']
+    return novyj_hdr + b'\n', b'\n'.join(telo) + b'\n', st
+
+
+def sverka(do_syroe, posle_syroe, st, preset):
+    """Сверка другим разбором: счёт типов событий равен, строк столько же, a2a/thinking не осталось, id/cwd на месте, неизменённые строки побайтно."""
+    a = do_syroe.split(b'\n'); b = posle_syroe.split(b'\n')
+    if len(a) != len(b): return f'строк {len(a)} → {len(b)}'
+    ha, hb = json.loads(a[0]), json.loads(b[0])
+    for k in ('id', 'cwd', 'createdAt', 'type', 'version'):
+        if ha.get(k) != hb.get(k): return f'заголовок: поле {k} изменилось'
+    if hb.get('agentPreset') is None: return 'в заголовке нет agentPreset'
+    tip_a, tip_b, raznyh = {}, {}, 0
+    ost_a2a = ost_th = 0
+    for x, y in zip(a[1:], b[1:]):
+        if not x: continue
+        ex, ey = json.loads(x), json.loads(y)
+        tip_a[ex.get('type')] = tip_a.get(ex.get('type'), 0) + 1; tip_b[ey.get('type')] = tip_b.get(ey.get('type'), 0) + 1
+        if x != y: raznyh += 1
+        ost_a2a += a2a_vezde(ey); ost_th += thinking_vezde(ey)
+    if tip_a != tip_b: return 'счёт типов событий разошёлся'
+    if raznyh != st['strok_izmeneno']: return f'изменённых строк {raznyh}, а замен было в {st["strok_izmeneno"]}'
+    if ost_a2a or ost_th: return f'осталось a2a {ost_a2a}, thinking {ost_th}'
+    return None
+
+
+def svodka_tipov(t):
+    g = {'user/message': 0, 'assistant': 0, 'tool': 0, 'compact': 0}
+    for k, v in t.items():
+        if k == 'user/message': g['user/message'] += v
+        elif 'assistant' in k: g['assistant'] += v
+        elif 'tool' in k: g['tool'] += v
+        if 'compact' in k: g['compact'] += v
+    return g
+
+
+# ── проход по агенту ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+def zapisat_manifest(kat, zapis):
+    os.makedirs(kat, mode=0o700, exist_ok=True)
+    with open(os.path.join(kat, 'manifest.jsonl'), 'a', encoding='utf-8') as f:
+        f.write(json.dumps(zapis, ensure_ascii=False) + '\n'); f.flush(); os.fsync(f.fileno())
+
+
+def manifest(kat):
+    p = os.path.join(kat, 'manifest.jsonl')
+    return [json.loads(l) for l in open(p, encoding='utf-8')] if os.path.exists(p) else []
+
+
+def zamenit_atomarno(put, dannye, st_orig):
+    tmp = os.path.join(os.path.dirname(put), f'.perepak-okna-{os.getpid()}.tmp')
+    with open(tmp, 'wb') as f:
+        f.write(dannye); f.flush(); os.fsync(f.fileno())
+    os.chown(tmp, st_orig.st_uid, st_orig.st_gid); os.chmod(tmp, st_orig.st_mode & 0o7777)
+    os.utime(tmp, ns=(st_orig.st_atime_ns, st_orig.st_mtime_ns))
+    return tmp
+
+
+def prohod(imya, ag, a, v_boj):
+    dh = ag['dsh_home']; ses = os.path.join(dh, 'sessions'); kat_s = os.path.join(a['strahovka'], imya)
+    otvet = {'agent': imya, 'otkaz': [], 'perepak': 0, 'bez_izmenenij': 0, 'uzhe': 0, 'pereneseno': 0, 'oshibki': [], 'schet': {}}
+    pr, pr_sl = zanyato(ag, a['koren']); otvet['sluzhba'] = pr_sl
+    preset, pr_p = preset_agenta(dh)
+    if pr_p: pr.append(pr_p)
+    otvet['preset'] = preset
+    if pr:
+        otvet['otkaz'] = pr
+        if v_boj: return otvet
+    mf = {m['rel']: m for m in manifest(kat_s)}
+    neotkr = {rel: s for ag_, rel, s in NEOTKRYVAEMYE if ag_ == imya}
+    pereneseno_seichas = set()
+    zhurnaly = sorted(os.path.relpath(os.path.join(r, ZHURNAL), ses) for r, _, f in os.walk(ses) if ZHURNAL in f)
+    otvet['zhurnalov'] = len(zhurnaly)
+    for rel in zhurnaly:
+        put = os.path.join(ses, rel); rel_kat = os.path.dirname(rel)
+        if rel_kat in neotkr:
+            if sha(put) != neotkr[rel_kat]:
+                otvet['oshibki'].append(f'{rel}: неоткрываемый, но сумма не та — НЕ переношу'); continue
+            kuda = os.path.join(a['strahovka'], 'neotkryvaemye', imya, rel_kat)
+            otvet['pereneseno'] += 1
+            if v_boj:
+                if os.path.exists(kuda): otvet['oshibki'].append(f'{rel}: в страховке уже есть {kuda} — не переношу'); otvet['pereneseno'] -= 1; continue
+                if os.stat(put).st_dev != os.stat(a['strahovka']).st_dev: otvet['oshibki'].append(f'{rel}: страховка на другой ФС — перенос не атомарен, отказ'); otvet['pereneseno'] -= 1; continue
+                os.makedirs(os.path.dirname(kuda), mode=0o700, exist_ok=True)
+                os.rename(os.path.join(ses, rel_kat), kuda); pereneseno_seichas.add(rel_kat)
+                if sha(os.path.join(kuda, ZHURNAL)) != neotkr[rel_kat]: otvet['oshibki'].append(f'{rel}: после переноса сумма не та!')
+                zapisat_manifest(os.path.join(a['strahovka'], 'neotkryvaemye', imya), {'rel': rel_kat, 'otkuda': os.path.join(ses, rel_kat), 'kuda': kuda, 'sha': neotkr[rel_kat], 'kogda': time.strftime('%FT%TZ', time.gmtime())})
+            continue
+        sha_do = sha(put); m = mf.get(rel)
+        if m and m['sha_posle'] == sha_do:
+            otvet['uzhe'] += 1; continue
+        if m and m['sha_do'] != sha_do:
+            otvet['oshibki'].append(f'{rel}: страховка есть ({m["sha_do"][:16]}), а файл другой ({sha_do[:16]}) — не трогаю'); continue
+        st_orig = os.stat(put)
+        try:
+            syroe = zstd(['-dc', put])
+            h, telo, st = perepakovat(syroe, preset or '?')
+        except Exception as e:
+            otvet['oshibki'].append(f'{rel}: {e}'); continue
+        g = svodka_tipov(st['tipy'])
+        for k, v in list(g.items()) + [('a2a', st['a2a']), ('thinking', st['thinking']), ('strok_izmeneno', st['strok_izmeneno'])]:
+            otvet['schet'][k] = otvet['schet'].get(k, 0) + v
+        if st['a2a'] == 0 and st['thinking'] == 0 and st['preset_byl'] is not None:
+            otvet['bez_izmenenij'] += 1; continue
+        if st['preset_byl'] not in (None, preset):
+            otvet['oshibki'].append(f'{rel}: в заголовке пресет «{st["preset_byl"]}», у агента «{preset}» — оставлен как был')
+        otvet['perepak'] += 1
+        if not v_boj: continue
+        # страховка: копия побайтно, сумма проверена ДО замены
+        kuda = os.path.join(kat_s, 'fajly', rel)
+        os.makedirs(os.path.dirname(kuda), mode=0o700, exist_ok=True)
+        if os.path.exists(kuda) and sha(kuda) != sha_do:
+            otvet['oshibki'].append(f'{rel}: в страховке другой файл — не перезаписываю, файл не трогаю'); otvet['perepak'] -= 1; continue
+        if not os.path.exists(kuda):
+            shutil.copyfile(put, kuda + '.tmp'); os.replace(kuda + '.tmp', kuda)
+        if sha(kuda) != sha_do:
+            otvet['oshibki'].append(f'{rel}: страховка не сошлась с оригиналом — файл не трогаю'); otvet['perepak'] -= 1; continue
+        novoe = zstd(['-c'], h) + zstd(['-c'], telo)
+        tmp = zamenit_atomarno(put, novoe, st_orig)
+        prichina = sverka(syroe, zstd(['-dc', tmp]), st, preset)
+        if prichina is None and sha(put) != sha_do: prichina = 'оригинал изменился во время перепаковки'
+        if prichina:
+            os.unlink(tmp); otvet['oshibki'].append(f'{rel}: СВЕРКА НЕ СОШЛАСЬ ({prichina}) — оригинал цел'); otvet['perepak'] -= 1; continue
+        sha_posle = sha(tmp)
+        zapisat_manifest(kat_s, {'rel': rel, 'put': put, 'sha_do': sha_do, 'sha_posle': sha_posle, 'uid': st_orig.st_uid, 'gid': st_orig.st_gid,
+                                 'mode': oct(st_orig.st_mode & 0o7777), 'mtime_ns': st_orig.st_mtime_ns, 'a2a': st['a2a'], 'thinking': st['thinking'],
+                                 'preset': st['preset_stal'], 'strok': st['strok'], 'tipy': g, 'kogda': time.strftime('%FT%TZ', time.gmtime())})
+        os.replace(tmp, put)
+    for rel_kat in neotkr:
+        if rel_kat not in pereneseno_seichas and not os.path.exists(os.path.join(ses, rel_kat, ZHURNAL)):
+            if os.path.exists(os.path.join(a['strahovka'], 'neotkryvaemye', imya, rel_kat)): otvet['uzhe'] += 1
+            else: otvet['oshibki'].append(f'неоткрываемый {rel_kat}: нет ни на месте, ни в страховке')
+    return otvet
+
+
+def otkat(imya, ag, a):
+    pr, pr_sl = zanyato(ag, a['koren'])
+    if pr: return {'agent': imya, 'otkaz': pr, 'sluzhba': pr_sl}
+    dh = ag['dsh_home']; ses = os.path.join(dh, 'sessions'); kat_s = os.path.join(a['strahovka'], imya)
+    otvet = {'agent': imya, 'otkaz': [], 'vozvrasheno': 0, 'uzhe': 0, 'vozvrasheno_neotkr': 0, 'oshibki': [], 'sluzhba': pr_sl}
+    for m in {x['rel']: x for x in manifest(kat_s)}.values():  # последняя запись на файл (повторный --v-boj после отката дописывает)
+        put = os.path.join(ses, m['rel']); kopiya = os.path.join(kat_s, 'fajly', m['rel'])
+        if not os.path.exists(put): otvet['oshibki'].append(f'{m["rel"]}: журнала нет на месте'); continue
+        s = sha(put)
+        if s == m['sha_do']: otvet['uzhe'] += 1; continue
+        if s != m['sha_posle']: otvet['oshibki'].append(f'{m["rel"]}: файл не тот, что записан инструментом ({s[:16]}) — после него писали; не трогаю'); continue
+        if sha(kopiya) != m['sha_do']: otvet['oshibki'].append(f'{m["rel"]}: страховка не сошлась — не трогаю'); continue
+        st_orig = os.stat(put)
+        tmp = zamenit_atomarno(put, open(kopiya, 'rb').read(), st_orig)
+        os.utime(tmp, ns=(st_orig.st_atime_ns, m['mtime_ns']))
+        if sha(tmp) != m['sha_do']: os.unlink(tmp); otvet['oshibki'].append(f'{m["rel"]}: временный файл не сошёлся'); continue
+        os.replace(tmp, put); otvet['vozvrasheno'] += 1
+    kat_n = os.path.join(a['strahovka'], 'neotkryvaemye', imya)
+    for m in manifest(kat_n):
+        if os.path.exists(m['otkuda']): otvet['uzhe'] += 1; continue
+        if not os.path.exists(m['kuda']): otvet['oshibki'].append(f'{m["rel"]}: нет ни на месте, ни в страховке'); continue
+        os.rename(m['kuda'], m['otkuda'])
+        if sha(os.path.join(m['otkuda'], ZHURNAL)) != m['sha']: otvet['oshibki'].append(f'{m["rel"]}: после возврата сумма не та!')
+        else: otvet['vozvrasheno_neotkr'] += 1
+    return otvet
+
+
+def main():
+    a = razobrat(sys.argv[1:])
+    os.umask(0o077)  # страховка — чужие переписки: файлы 600, каталоги 700
+    if os.geteuid() != 0: otkaz_vyzova('нужен root (журналы в чужих домах)')
+    vse = agenty_iz_reestra(a['koren'])
+    # Условие Вениамина 29.09 19:2xZ: --koren снимает проверку СЛУЖБЫ; корень, приводящий к боевым путям («/», ссылка на «/», «//»),
+    # снял бы замок молча. Такой корень — отказ всего вызова, код 2.
+    if a['koren']:
+        if os.path.realpath(a['koren']) == '/': otkaz_vyzova('--koren указывает на «/» — это боевые пути при выключенной проверке службы')
+        for n, ag in vse.items():
+            if ag['dsh_home_boj'] and os.path.realpath(ag['dsh_home']) == os.path.realpath(ag['dsh_home_boj']):
+                otkaz_vyzova(f"--koren даёт боевой DSH_HOME агента {n} ({ag['dsh_home_boj']}) при выключенной проверке службы")
+    if a['otkat']:
+        if a['otkat'] not in vse: otkaz_vyzova('агента «' + a['otkat'] + '» нет в реестре')
+        imena = [a['otkat']]
+    else:
+        for n in a['agenty']:
+            if n not in vse: otkaz_vyzova('агента «' + n + '» нет в реестре')
+        imena = a['agenty'] or list(vse)
+    print(f"perepak-okna {a['rezhim']}{' ' + a['otkat'] if a['otkat'] else ''} · {time.strftime('%FT%TZ', time.gmtime())} · корень «{a['koren'] or '/'}» · страховка {a['strahovka']}")
+    if a['rezhim'] != '--progon':
+        os.makedirs(a['strahovka'], mode=0o700, exist_ok=True)
+    plohih = 0
+    for n in imena:
+        ag = vse[n]
+        if not ag['dsh_home']:
+            print(json.dumps({'agent': n, 'otkaz': ['DSH_HOME службы ' + str(ag['unit']) + ' не найден']}, ensure_ascii=False)); plohih += 1; continue
+        r = otkat(n, ag, a) if a['otkat'] else prohod(n, ag, a, a['rezhim'] == '--v-boj')
+        plohih += bool(r['otkaz'] or r['oshibki'])
+        print(json.dumps(r, ensure_ascii=False))
+    print(f'ИТОГ: агентов {len(imena)}, с отказом или ошибкой {plohih}')
+    sys.exit(1 if plohih else 0)
+
+
+if __name__ == '__main__':
+    main()

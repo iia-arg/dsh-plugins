@@ -49,6 +49,9 @@ if [ $# -ne 1 ] || [ -z "${1:-}" ]; then
   exit 2
 fi
 agent="$1"
+case "$agent" in
+  -*) echo "a2a-zavesti: неизвестный ключ «$agent» — ничего не изменено" >&2; exit 2 ;;
+esac
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "a2a-zavesti: 🔴 нужен root: заведение ящика и правка группы — системные действия" >&2
@@ -56,7 +59,30 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # --- пользователь агента: единственный источник — реестр ---
-polzovatel="$("$REESTR" pole "$agent" polzovatel --json 2>/dev/null | tr -d '"')"
+if ! command -v "$REESTR" >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+  echo "a2a-zavesti: 🔴 нужен исполнимый $REESTR и python3 — ничего не изменено" >&2
+  exit 2
+fi
+polz_json="$("$REESTR" pole "$agent" polzovatel --json)"; kod_reestra=$?
+if [ "$kod_reestra" -ne 0 ]; then
+  echo "a2a-zavesti: 🔴 реестр отказал (код $kod_reestra) — ничего не изменено" >&2
+  [ "$kod_reestra" -eq 3 ] && exit 3
+  exit 2
+fi
+polzovatel="$(printf '%s' "$polz_json" | python3 -c '
+import json,re,sys
+try: v=json.load(sys.stdin)
+except ValueError: sys.exit(2)
+if not isinstance(v,str) or not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}\$?",v): sys.exit(3)
+print(v)' 2>/dev/null)"; kod_polz=$?
+if [ "$kod_polz" -eq 3 ]; then
+  echo "a2a-zavesti: 🔴 в реестре негодный polzovatel — ничего не изменено" >&2
+  exit 3
+fi
+if [ "$kod_polz" -ne 0 ]; then
+  echo "a2a-zavesti: 🔴 реестр отдал негодный polzovatel — ничего не изменено" >&2
+  exit 2
+fi
 if [ -z "$polzovatel" ]; then
   echo "a2a-zavesti: 🔴 в реестре нет агента «$agent» либо у него не задан polzovatel." >&2
   echo "             Сначала запись в /etc/agent-registry/agents.yaml, потом шина." >&2

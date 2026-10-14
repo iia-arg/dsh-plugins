@@ -1,0 +1,11 @@
+[Unit]
+Description=Сторож окна выпуска: бой = своему выпуску (метка версии боя) (тревога в @arg_dsh_alert_bot)
+Documentation=file:/opt/iskra/workspace/vypusk-storozh/vypusk-okno-watch.sh
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/vypusk-okno-watch.sh --avto-montazh
+# Код 1 — «бой разошёлся с меткой», это находка, а не сбой службы.
+# Код 2 — слепота (сверять нечем), тоже не сбой: «не смогли спросить» не равно «сломано».
+SuccessExitStatus=0 1 2

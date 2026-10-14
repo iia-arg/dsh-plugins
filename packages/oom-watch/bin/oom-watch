@@ -1,19 +1,30 @@
 #!/usr/bin/python3
 """oom-watch — сторож за МОЛЧАЛИВЫМИ убийствами по памяти.
+oom-watch — a watchdog for SILENT out-of-memory kills.
 
-Сигнал — ЯДЕРНЫЙ лог: он переживает пересоздание cgroup. Счётчик
+RU: Сигнал — ЯДЕРНЫЙ лог: он переживает пересоздание cgroup. Счётчик
 memory.events.oom_kill НЕ годится — он обнуляется, когда systemd пересоздаёт
 cgroup после рестарта, и убийство проходило бы молча (поймано намеренным
 испытанием).
+EN: The signal is the KERNEL journal: it survives the re-creation of a cgroup.
+The memory.events.oom_kill counter is NOT usable — it is reset when systemd
+re-creates the cgroup on restart, and the kill would pass silently (caught by a
+deliberate test).
 
-🔴 Ядро печатает ОДНО убийство НЕСКОЛЬКИМИ строками: служба (oom_memcg) в одной,
+RU: 🔴 Ядро печатает ОДНО убийство НЕСКОЛЬКИМИ строками: служба (oom_memcg) в одной,
 числа (anon-rss) — в другой, «Memory cgroup out of memory: Killed process».
 Склейка «последняя увиденная строка» при двух событиях подряд даёт ЛОЖНУЮ пару:
-имя одной службы с числами другой. Поэтому строки связываются ПО НОМЕРУ ПРОЦЕССА
-— он есть в обеих. Не связалось — «служба не определена», ближайшая НЕ
+имя одной службы с числами другой. Поэтому строки связываются по _BOOT_ID и НОМЕРУ ПРОЦЕССА
+— pid есть в обеих; пара потребляется один раз в порядке журнала. Не связалось — «служба не определена», ближайшая НЕ
 подставляется: молчание честнее уверенного вранья.
+EN: 🔴 The kernel prints ONE kill as SEVERAL lines: the unit (oom_memcg) in one,
+the numbers (anon-rss) in another, "Memory cgroup out of memory: Killed process".
+Pairing by "last line seen" yields a FALSE pair when two events come close:
+one unit's name with another unit's numbers. So the lines are joined by _BOOT_ID and PROCESS
+ID, once per preceding pair in journal order. No match — "unit not identified"; the nearest unit
+is NOT substituted: saying "unknown" is more honest than a confident lie.
 
-🔴 Убийств ДВА ВИДА, и опаснее — второй:
+RU: 🔴 Убийств ДВА ВИДА, и опаснее — второй:
   ГРУППОВОЙ  (constraint=CONSTRAINT_MEMCG): служба вышла за СВОЙ предел. Локально,
              почти всегда переживаемо, виновник очевиден.
   ГЛОБАЛЬНЫЙ (CONSTRAINT_NONE / CPUSET / MEMORY_POLICY): память кончилась на ВСЕЙ
@@ -25,13 +36,38 @@ cgroup после рестарта, и убийство проходило бы 
 «Out of memory (oom_kill_allocating_task)» — проверено по образу ядра 6.8).
 Имя службы: у группового — из oom_memcg (чей предел пробит), у глобального —
 из task_memcg (в чьей cgroup жила жертва).
+EN: 🔴 There are TWO KINDS of kill, and the second one is more dangerous:
+  CGROUP (constraint=CONSTRAINT_MEMCG): a unit went over ITS OWN limit. Local,
+         almost always survivable, the culprit is obvious.
+  GLOBAL (CONSTRAINT_NONE / CPUSET / MEMORY_POLICY): the WHOLE machine ran out
+         of memory and the kernel picked a victim itself. The victim can be
+         anything — including something with no limits at all. The victim has
+         NO "own limit": putting MemoryMax there and computing a percentage
+         would be a lie.
+They differ by the constraint field and by the prefix of the kill line (kernel
+template "%s: Killed process", where %s = "Memory cgroup out of memory" /
+"Out of memory" / "Out of memory (oom_kill_allocating_task)" — checked against
+a 6.8 kernel image). Unit name: for a cgroup kill from oom_memcg (whose limit
+was blown), for a global kill from task_memcg (whose cgroup the victim lived in).
 
-Настройка — только через окружение, чтобы файл был одинаков на всех машинах:
+RU: Настройка — только через окружение, чтобы файл был одинаков на всех машинах:
   OOM_WATCH_UNITS  — список юнитов через пробел; ПУСТО (умолчание) = тревожить на любой;
   OOM_WATCH_ALERT  — команда внешней тревоги, получает текст на stdin; пусто = только журнал;
   OOM_WATCH_STATE  — каталог состояния (умолчание /var/lib/oom-watch).
+EN: Configuration is environment-only, so the file is identical on every machine:
+  OOM_WATCH_UNITS  — space-separated unit list; EMPTY (default) = alert on any;
+  OOM_WATCH_ALERT  — external alert command, gets the text on stdin; empty = journal only;
+  OOM_WATCH_STATE  — state directory (default /var/lib/oom-watch).
+
+RU: Тексты тревог — по-русски намеренно: это интерфейс для операторов. Все тексты
+тревог об убийствах собраны в одной функции build_alert — переводить там.
+Подробно: README.md, docs/ARCHITECTURE.md, docs/SETTINGS.md, docs/GUARDS.md.
+EN: Alert texts are in Russian on purpose: they are the operators' interface.
+All kill-alert texts live in one function, build_alert — translate there.
+Details: README.md, docs/ARCHITECTURE.md, docs/SETTINGS.md, docs/GUARDS.md.
 """
 import json
+import html
 import os
 import re
 import socket
@@ -39,69 +75,218 @@ import subprocess
 import sys
 from datetime import datetime
 
-# Номер версии живёт В САМОМ файле и спрашивается у него: «oom-watch --version».
-# Причина: скрипт ставится копированием, и на машине не остаётся НИЧЕГО, по чему можно
-# отличить установленную версию от выпущенной. Номер в отдельном файле метаданных для
-# такого способа установки не доезжает вовсе.
-__version__ = "1.1.0"
+# RU: Номер версии живёт В САМОМ файле и спрашивается у него: «oom-watch --version».
+# RU: Причина: скрипт ставится копированием, и на машине не остаётся НИЧЕГО, по чему можно
+# RU: отличить установленную версию от выпущенной. Номер в отдельном файле метаданных для
+# RU: такого способа установки не доезжает вовсе.
+# EN: The version number lives IN the file itself and is asked from it: "oom-watch --version".
+# EN: Reason: the script is installed by copying, and nothing else is left on the machine
+# EN: to tell the installed version from a released one. A number kept in a separate
+# EN: metadata file never arrives with this way of installing.
+__version__ = "3.1.3"
 
-STATE_DIR = os.environ.get("OOM_WATCH_STATE", "/var/lib/oom-watch")
+# RU: Каталог состояния; в нём один файл — cursor (позиция в ядерном журнале).
+# RU: Создаётся сам (os.makedirs ниже); от root — права на /var/lib есть.
+# EN: State directory; it holds one file — cursor (the position in the kernel journal).
+# EN: Created automatically (os.makedirs below); running as root, /var/lib is writable.
+STATE_DIR = os.environ.get("OOM_WATCH_STATE") or "/var/lib/oom-watch"
 CURSOR = os.path.join(STATE_DIR, "cursor")
+# RU: Канал тревоги — ОДИН путь к исполняемому файлу. Аргументы не поддерживаются:
+# RU: строка целиком проверяется os.access и целиком же запускается как имя программы.
+# RU: Непустой путь обязан быть абсолютным; относительный даёт отказ2 до прохода.
+# EN: Alert channel — ONE path to an executable. Arguments are not supported: the whole
+# EN: string is checked with os.access and run as the program name as a whole.
+# EN: A nonempty path must be absolute; a relative one refuses2 before a pass.
 ALERT_CMD = os.environ.get("OOM_WATCH_ALERT", "")
-# Пустой список = тревожим на ЛЮБОЙ memory-cgroup OOM. Так безопаснее по умолчанию:
-# забытый в списке юнит — это молчание ровно там, где сторож и нужен.
+# RU: Пустой список = тревожим на ЛЮБОЙ memory-cgroup OOM. Так безопаснее по умолчанию:
+# RU: забытый в списке юнит — это молчание ровно там, где сторож и нужен.
+# RU: Сравнение — по точному имени с суффиксом .service (так его даёт unit_of).
+# EN: Empty list = alert on ANY memory-cgroup OOM. That is the safer default:
+# EN: a unit forgotten in the list is silence exactly where the watchdog is needed.
+# EN: Matching is by exact name including the .service suffix (as unit_of returns it).
 UNITS = os.environ.get("OOM_WATCH_UNITS", "").split()
+# RU: Имя машины — только для текста тревоги.
+# EN: Host name — used only in the alert text.
 HOST = socket.gethostname()
+# RU: Предел ожидания канала тревоги, секунды (04.10.2026). Таймер зовёт сторож раз в минуту;
+# RU: 20 с оставляют проходу время закончиться до следующего запуска даже при двух тревогах.
+# EN: Alert-channel wait limit, seconds (2026-10-04). The timer starts the watchdog once a
+# EN: minute; 20 s leaves the pass time to finish before the next start even with two alerts.
+ALERT_TIMEOUT = 20
 
 
+# RU: Проверить все доводы ДО прохода. Неизвестный довод не даёт читать журнал или сдвигать курсор.
+# EN: Validate every argument BEFORE the pass. Unknown arguments never read the journal or move the cursor.
+for argument in sys.argv[1:]:
+    if argument not in ("--version", "--help"):
+        print(f"неизвестный довод {argument!r}; допустимые: без доводов (проход), --version, --help", file=sys.stderr)
+        sys.exit(2)
 if "--version" in sys.argv[1:]:
     print(f"oom-watch {__version__}")
+    sys.exit(0)
+if "--help" in sys.argv[1:]:
+    print("oom-watch [--version | --help]\n"
+          "Без доводов: проход по ядерному журналу со сдвигом курсора.\n"
+          "--version: номер версии, без прохода.\n"
+          "--help: эта справка, без прохода.\n"
+          "Окружение: OOM_WATCH_STATE — каталог курсора; "
+          "OOM_WATCH_ALERT — команда тревоги; OOM_WATCH_UNITS — список юнитов.")
     sys.exit(0)
 
 
 def notify(text):
-    # Громко в журнал — ВСЕГДА (главный канал, не зависящий от сети).
+    """RU: Отдать текст тревоги: всегда в stderr (журнал службы), и в канал, если задан.
+
+    RU: Канал получает текст на STDIN, без аргументов. Сбой канала НЕ роняет сторож и НЕ
+    обрывает проход (04.10.2026): вызов ограничен ALERT_TIMEOUT секунд, любое исключение
+    при запуске (файл без шебанга — «Exec format error», нет прав) перехватывается. Любой
+    сбой (таймаут, исключение, код ≠ 0, неисполнимый путь) — одна строка «🔴 OOM-KILL:
+    тревога НЕ доставлена (<причина>) — остаётся только журнал» в stderr. Возвращает True,
+    если канал принял. Прежде исключение роняло проход ДО записи курсора (тревоги
+    повторялись каждую минуту, наружу не уходило ничего), а зависший канал держал oneshot.
+    Чего НЕ ловит: канал, который ответил кодом 0, но дальше не доставил.
+
+    EN: Deliver an alert text: always to stderr (the service journal), and to the channel
+    if one is set.
+
+    EN: The channel gets the text on STDIN, with no arguments. A channel failure does NOT
+    crash the watchdog and does NOT abort the pass (since 2026-10-04): the call is limited
+    to ALERT_TIMEOUT seconds and any launch exception (a file without a shebang — "Exec
+    format error", no permission) is caught. Any failure (timeout, exception, non-zero
+    exit, non-executable path) produces one stderr line "🔴 OOM-KILL: тревога НЕ доставлена
+    (<reason>) — остаётся только журнал". Returns True if the channel accepted. Before, an
+    exception aborted the pass BEFORE the cursor was saved (alerts repeated every minute,
+    nothing went out) and a hung channel held the oneshot. Does NOT catch: a channel that
+    exits 0 but does not deliver further.
+    """
+    # RU: Громко в журнал — ВСЕГДА (главный канал, не зависящий от сети).
+    # EN: Loudly into the journal — ALWAYS (the main channel, independent of the network).
     print(text, file=sys.stderr, end="")
     if not ALERT_CMD:
-        return
-    # Тревога наружу — если канал есть. Нет канала / не сработал — НЕ падаем и НЕ молчим.
+        return False
+    # RU: Тревога наружу — если канал есть. Нет канала / не сработал — НЕ падаем и НЕ молчим.
+    # EN: Outward alert — if a channel exists. Missing / failed channel — we do NOT crash and do NOT go silent.
     if os.access(ALERT_CMD, os.X_OK):
-        r = subprocess.run([ALERT_CMD], input=text, capture_output=True, text=True)
+        # RU: Вывод канала перехватывается и не печатается; судим по коду. Таймаут и перехват —
+        # RU: чтобы сбой канала не оборвал проход до записи курсора.
+        # EN: The channel's own output is captured and not printed; judged by exit code. Timeout
+        # EN: and catch — so a channel failure cannot abort the pass before the cursor is saved.
+        try:
+            r = subprocess.run([ALERT_CMD], input=text, capture_output=True, text=True,
+                               timeout=ALERT_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            print(f"🔴 OOM-KILL: тревога НЕ доставлена (канал {ALERT_CMD} не ответил за "
+                  f"{ALERT_TIMEOUT} с) — остаётся только журнал", file=sys.stderr)
+            return False
+        except Exception as e:
+            print(f"🔴 OOM-KILL: тревога НЕ доставлена (канал {ALERT_CMD} не запустился: "
+                  f"{type(e).__name__}: {e}) — остаётся только журнал", file=sys.stderr)
+            return False
         if r.returncode != 0:
-            print(f"🔴 OOM-KILL: канал тревоги {ALERT_CMD} не сработал — остаётся только журнал",
-                  file=sys.stderr)
-    else:
-        print(f"🔴 OOM-KILL: канал тревоги {ALERT_CMD} недоступен — остаётся только журнал",
-              file=sys.stderr)
+            print(f"🔴 OOM-KILL: тревога НЕ доставлена (канал {ALERT_CMD} ответил кодом "
+                  f"{r.returncode}) — остаётся только журнал", file=sys.stderr)
+            return False
+        return True
+    # RU: Путь задан, но не исполним (нет файла, нет бита x, относительный путь не найден
+    # RU: от текущего каталога). Пишем об этом в журнал при КАЖДОЙ тревоге.
+    # EN: A path is set but is not executable (no file or no x bit). Reported to the journal on EVERY alert.
+    print(f"🔴 OOM-KILL: тревога НЕ доставлена (канал {ALERT_CMD} недоступен) — остаётся "
+          f"только журнал", file=sys.stderr)
+    return False
 
 
 def current_cursor():
-    out = subprocess.run(["journalctl", "-k", "--no-pager", "-n", "1", "--show-cursor"],
-                         capture_output=True, text=True)
+    """RU: Курсор ПОСЛЕДНЕЙ записи ядерного журнала на этот момент.
+
+    RU: Не добыт — это СЛЕПОТА, а не «пусто»: journalctl не запустился (OSError), ответил
+    кодом ≠ 0 (нет прав — проверено: от учётки без прав код 1 без строки курсора) или
+    ответил кодом 0 без метки курсора. Во всех трёх случаях — тревога «СЛЕПОТА: …» через
+    notify и выход кодом 2, чтобы проход не считался успешным и юнит стал failed.
+    Чего НЕ ловит: тревога о слепоте уходит при КАЖДОМ запуске (раз в минуту по таймеру),
+    без памяти о том, что она уже сказана.
+
+    EN: The cursor of the LAST kernel-journal entry right now.
+
+    EN: Not obtained means BLINDNESS, not "empty": journalctl failed to start (OSError),
+    exited non-zero (no permission — verified: an unprivileged account gets exit 1 with no
+    cursor line) or exited 0 without a cursor line. In all three cases — a "СЛЕПОТА: …"
+    alert via notify and exit code 2, so the pass is not counted as a success and the unit
+    becomes failed. Does NOT catch: the blindness alert goes out on EVERY run (once a minute
+    by the timer), with no memory that it was already said.
+    """
+    try:
+        out = subprocess.run(["journalctl", "--no-pager", "-n", "1", "--show-cursor", "_TRANSPORT=kernel"],
+                             capture_output=True, text=True)
+    except OSError as error:
+        notify(f"СЛЕПОТА: не добыт курсор ядерного журнала: journalctl не запущен ({type(error).__name__}).\n")
+        sys.exit(2)
+    if out.returncode != 0:
+        notify(f"СЛЕПОТА: не добыт курсор ядерного журнала: journalctl код {out.returncode}.\n")
+        sys.exit(2)
     m = re.search(r"^-- cursor: (.*)$", out.stdout, re.M)
-    return m.group(1).strip() if m else ""
+    cursor = m.group(1).strip() if m else ""
+    if not cursor:
+        notify("СЛЕПОТА: не добыт курсор ядерного журнала: journalctl код 0, но метки cursor нет.\n")
+        sys.exit(2)
+    return cursor
 
 
 def unit_of(msg, key):
-    """Имя юнита из строки ядра по полю key (oom_memcg | task_memcg).
+    """RU: Имя юнита из строки ядра по полю key (oom_memcg | task_memcg).
 
-    🔴 Берём ПОСЛЕДНИЙ сегмент пути cgroup, а не «то, что сразу после /system.slice/».
+    RU: 🔴 Берём ПОСЛЕДНИЙ сегмент пути cgroup, а не «то, что сразу после /system.slice/».
     Юнит может лежать во вложенном slice — шаблонные юниты и всё, что systemd
     группирует: /system.slice/system-foo.slice/foo@bar.service. Привязка к первому
     сегменту давала бы для них неузнанное имя, фильтр по списку глушил бы тревогу,
     и сторож молчал бы ровно на тех службах, ради которых заведён.
+
+    RU: Чего НЕ ловит: если последний сегмент не оканчивается на .service (*.scope
+    пользовательских сессий, slice, корень «/», процесс во вложенной под-cgroup
+    службы), возвращается None — и тревога скажет «служба не определена», хотя
+    строки по pid сошлись.
+
+    EN: The unit name from a kernel line, by field key (oom_memcg | task_memcg).
+
+    EN: 🔴 We take the LAST segment of the cgroup path, not "whatever follows
+    /system.slice/". A unit may live in a nested slice — template units and anything
+    systemd groups: /system.slice/system-foo.slice/foo@bar.service. Anchoring to the
+    first segment would leave them unrecognised, the list filter would mute the
+    alert, and the watchdog would be silent exactly on the services it exists for.
+
+    EN: What it does NOT catch: if the last segment does not end in .service (*.scope
+    of user sessions, a slice, the root "/", a process in a nested sub-cgroup of a
+    service), None is returned — and the alert says "unit not identified" even
+    though the lines did pair by pid.
     """
+    # RU: Значение поля — до запятой или до конца строки.
+    # EN: The field value runs up to a comma or the end of the line.
     m = re.search(r"\b" + key + r"=(\S+?)(?:,|$)", msg or "")
     if not m:
         return None
-    seg = m.group(1).rstrip("/").split("/")[-1]
-    return seg if seg.endswith(".service") else None
+    path = m.group(1).rstrip("/")
+    seg = path.split("/")[-1]
+    if not seg.endswith(".service"): return None
+    return path if user_unit(path) else seg
+
+
+def user_unit(unit):
+    return bool(re.search(r"(?:^|/)user@\d+\.service(?:/|$)", unit or ""))
+
+
+def safe_text(value):
+    return html.escape("".join(c if c.isprintable() else " " for c in str(value)))
 
 
 def host_mem():
-    """Сколько памяти на машине СЕЙЧАС. Помечается как «сейчас», а не «на момент
+    """RU: Сколько памяти на машине СЕЙЧАС. Помечается как «сейчас», а не «на момент
     убийства»: в строках убийства этих чисел нет, а склеивать их с соседним
-    Mem-Info — та же ошибка «последней увиденной строки», от которой мы ушли."""
+    Mem-Info — та же ошибка «последней увиденной строки», от которой мы ушли.
+    Источник — /proc/meminfo (MemAvailable из MemTotal); любая ошибка — None.
+
+    EN: How much memory the machine has NOW. Labelled "now", not "at the time of the
+    kill": the kill lines carry no such numbers, and attaching the nearby Mem-Info
+    dump is the same "last line seen" error we moved away from.
+    Source — /proc/meminfo (MemAvailable of MemTotal); any error — None."""
     try:
         vals = {}
         with open("/proc/meminfo") as f:
@@ -117,7 +302,17 @@ def host_mem():
 
 
 def prop(unit, name):
-    """Прочитать свойство юнита; любая неудача — None, НЕ роняем тревогу."""
+    """RU: Прочитать свойство юнита; любая неудача — None, НЕ роняем тревогу.
+
+    RU: Читается ТЕКУЩЕЕ свойство через systemctl show (таймаут 3 с), а не то, что
+    было в момент убийства: если предел поменяли после, процент посчитается от нового.
+
+    EN: Read a unit property; any failure — None, the alert is NOT dropped.
+
+    EN: It reads the CURRENT property via systemctl show (3 s timeout), not the value
+    at the time of the kill: if the limit was changed afterwards, the percentage is
+    computed against the new one."""
+    if user_unit(unit): return None
     try:
         r = subprocess.run(["systemctl", "show", unit, "-p", name, "--value"],
                            capture_output=True, text=True, timeout=3)
@@ -127,7 +322,13 @@ def prop(unit, name):
         return None
 
 
+# RU: Форматтеры ниже печатают по-русски (ГБ/МБ/КБ/Б, «не задан», «не определено»):
+# RU: это часть текста тревоги, переводится вместе с build_alert.
+# EN: The formatters below print in Russian (GB/MB/KB/B units, "not set", "undetermined"):
+# EN: they are part of the alert text and are translated together with build_alert.
 def fmt_bytes(b):
+    """RU: Байты → строка с двоичными единицами (1 МБ = 1024² байт).
+    EN: Bytes → a string with binary units (1 MB = 1024² bytes)."""
     if b >= 1024 ** 3:
         return f"{b / 1024 ** 3:.1f} ГБ"
     if b >= 1024 ** 2:
@@ -137,10 +338,16 @@ def fmt_bytes(b):
     return f"{b} Б"
 
 
+# RU: Значения MemoryMax, означающие «предела нет». 18446744073709551615 = 2^64−1 —
+# RU: так systemd show печатает бесконечность в числовом виде.
+# EN: MemoryMax values that mean "no limit". 18446744073709551615 = 2^64−1 — the
+# EN: numeric form in which systemctl show prints infinity.
 NO_LIMIT = ("", None, "infinity", "max", "18446744073709551615")
 
 
 def fmt_kb(kb_str):
+    """RU: Строка «N» в килобайтах (как anon-rss у ядра) → человекочитаемо.
+    EN: A string "N" in kilobytes (as the kernel's anon-rss) → human-readable."""
     try:
         return fmt_bytes(int(kb_str) * 1024)
     except Exception:
@@ -148,6 +355,8 @@ def fmt_kb(kb_str):
 
 
 def fmt_memmax(val):
+    """RU: Значение MemoryMax (байты) → строка; «нет предела» → «не задан».
+    EN: A MemoryMax value (bytes) → string; "no limit" → «не задан» (not set)."""
     if val in NO_LIMIT:
         return "не задан"
     try:
@@ -157,6 +366,10 @@ def fmt_memmax(val):
 
 
 def fmt_restart(val):
+    """RU: Значение Restart= юнита → ответ на вопрос «поднимется ли сама».
+    Узнаёт no/always/on-failure; прочие значения печатаются как есть.
+    EN: The unit's Restart= value → the answer to "will it come back by itself".
+    Knows no/always/on-failure; other values are printed as they are."""
     if val in ("", None, "no"):
         return f"не перезапустится сама (Restart={val or 'no'})"
     if val == "always":
@@ -167,6 +380,10 @@ def fmt_restart(val):
 
 
 def fmt_time(ts_us):
+    """RU: __REALTIME_TIMESTAMP журнала (микросекунды) → местное время машины,
+    без указания пояса.
+    EN: A journal __REALTIME_TIMESTAMP (microseconds) → the machine's local time,
+    without a time-zone label."""
     try:
         return datetime.fromtimestamp(int(ts_us) / 1e6).strftime("%d.%m.%Y %H:%M:%S")
     except Exception:
@@ -174,35 +391,69 @@ def fmt_time(ts_us):
 
 
 def build_alert(kind, unit, task, pid, anon_kb, ts_us, constraint):
-    """Текст тревоги. Отвечает на вопрос «ну и что?», а не только «кого убили».
+    """RU: Текст тревоги. Отвечает на вопрос «ну и что?», а не только «кого убили».
 
-    Два вида говорят РАЗНЫМИ словами: у группового виноват предел службы, у
-    глобального предела нет вовсе и виновата машина целиком."""
+    RU: Два вида говорят РАЗНЫМИ словами: у группового виноват предел службы, у
+    глобального предела нет вовсе и виновата машина целиком.
+
+    RU: Тексты — по-русски намеренно: это интерфейс для операторов. Это ЕДИНСТВЕННОЕ
+    место, где собран текст тревоги об убийстве; переводить — здесь (и в fmt_*).
+    Процент «выбран на N%» — это anon-rss убитого процесса к ТЕКУЩЕМУ MemoryMax
+    службы; файловый кэш и память ядра в него не входят, поэтому он бывает < 100%.
+
+    EN: The alert text. Answers "so what?", not just "who was killed".
+
+    EN: The two kinds speak in DIFFERENT words: for a cgroup kill the unit's limit is
+    to blame; for a global kill there is no limit at all and the whole machine is
+    to blame.
+
+    EN: The texts are in Russian on purpose: they are the operators' interface. This
+    is the ONLY place where a kill-alert text is assembled; translate here (and in
+    fmt_*). The "выбран на N%" (used up N%) figure is the killed process's anon-rss
+    against the unit's CURRENT MemoryMax; page cache and kernel memory are not in it,
+    so it can be below 100%."""
+    # RU: Первая строка — вид убийства и имя машины.
+    # EN: First line — the kind of kill and the host name.
     if kind == "global":
-        lines = [f"🔴 ПАМЯТЬ КОНЧИЛАСЬ НА ВСЕЙ МАШИНЕ {HOST} — ядро выбрало жертву само"]
+        lines = [f"🔴 ПАМЯТЬ КОНЧИЛАСЬ НА ВСЕЙ МАШИНЕ {safe_text(HOST)} — ядро выбрало жертву само"]
     else:
-        lines = [f"🔴 Убийство по памяти на {HOST}: служба вышла за свой предел"]
+        lines = [f"🔴 Убийство по памяти на {safe_text(HOST)}: служба вышла за свой предел"]
 
+    # RU: Кто это по-человечески: Description и User юнита (пустой User = root).
+    # EN: Who this is in human terms: the unit's Description and User (empty User = root).
     if unit:
         role = "Служба жертвы" if kind == "global" else "Служба"
-        lines.append(f"{role}: {unit} — «{prop(unit, 'Description') or 'не определено'}»"
-                     f" (от имени {prop(unit, 'User') or 'root'})")
+        if user_unit(unit):
+            lines.append(f"{role}: {safe_text(unit)} — пользовательский менеджер, свойства не проверены")
+        else:
+            lines.append(f"{role}: {safe_text(unit)} — «{safe_text(prop(unit, 'Description') or 'не определено')}»"
+                         f" (от имени {safe_text(prop(unit, 'User') or 'root')})")
     else:
-        # Пара строк не сошлась по номеру процесса. Ближайшую службу НЕ подставляем.
+        # RU: Пара строк не сошлась по номеру процесса. Ближайшую службу НЕ подставляем.
+        # RU: Та же ветка срабатывает, если пара сошлась, но cgroup — не .service (см. unit_of).
+        # EN: The two lines did not pair by process id. The nearest unit is NOT substituted.
+        # EN: The same branch fires if they did pair but the cgroup is not a .service (see unit_of).
         lines.append("Служба: не определена (строки ядра не сошлись по номеру процесса)")
-    lines.append(f"Убит процесс: {task} (номер {pid}), занимал "
+    lines.append(f"Убит процесс: {safe_text(task)} (номер {pid}), занимал "
                  f"{fmt_kb(anon_kb) if anon_kb else 'не определено'}")
 
     if kind == "global":
-        # 🔴 Никакого «предела службы» и никакого процента: жертва СВОЙ предел не
-        # превышала, её выбрали за размер. Придуманный процент увёл бы разбор в
-        # настройку невиновной службы.
-        lines.append(f"Предела нет — убито при общей нехватке памяти ({constraint})")
+        # RU: 🔴 Никакого «предела службы» и никакого процента: жертва СВОЙ предел не
+        # RU: превышала, её выбрали за размер. Придуманный процент увёл бы разбор в
+        # RU: настройку невиновной службы.
+        # EN: 🔴 No "unit limit" and no percentage: the victim did NOT exceed its own
+        # EN: limit, it was chosen for its size. An invented percentage would send the
+        # EN: investigation into tuning an innocent unit.
+        lines.append(f"Предела нет — убито при общей нехватке памяти ({safe_text(constraint)})")
         mem = host_mem()
         if mem:
             lines.append(f"Память машины: {mem} (сейчас, не на момент убийства)")
         lines.append("Причина НЕ в этой службе: ищите, кто съел память машины")
-    elif unit:
+    elif unit and not user_unit(unit):
+        # RU: Групповое убийство узнанной службы: предел и насколько он выбран.
+        # RU: Процент не печатается, если предела нет или числа не разобрались.
+        # EN: A cgroup kill of an identified unit: the limit and how much of it was used.
+        # EN: No percentage is printed if there is no limit or the numbers did not parse.
         mm = prop(unit, "MemoryMax")
         pct = None
         if anon_kb and mm not in NO_LIMIT:
@@ -210,17 +461,30 @@ def build_alert(kind, unit, task, pid, anon_kb, ts_us, constraint):
                 pct = int(anon_kb) * 1024 / int(mm) * 100
             except Exception:
                 pct = None
-        lines.append(f"Предел службы: {fmt_memmax(mm)}"
+        lines.append(f"Предел службы: {safe_text(fmt_memmax(mm))}"
                      + (f" — выбран на {pct:.0f}%" if pct is not None else ""))
+    # RU: «Что дальше» — поднимется ли служба сама (по её Restart=).
+    # EN: "What next" — whether the unit comes back by itself (per its Restart=).
     if unit:
-        lines.append(f"Дальше: {fmt_restart(prop(unit, 'Restart'))}")
+        if user_unit(unit): lines.append("Дальше: перезапуск пользовательского юнита не проверен")
+        else: lines.append(f"Дальше: {safe_text(fmt_restart(prop(unit, 'Restart')))}")
     lines.append(f"Время: {fmt_time(ts_us)}")
     return "\n".join(lines) + "\n"
 
 
+# RU: ===== Основной проход (выполняется при каждом запуске таймером) =====
+# EN: ===== Main pass (runs on every timer start) =====
+if ALERT_CMD and not os.path.isabs(ALERT_CMD):
+    print("ОТКАЗ: OOM_WATCH_ALERT должен быть абсолютным путём, не именем из PATH", file=sys.stderr)
+    sys.exit(2)
 os.makedirs(STATE_DIR, exist_ok=True)
 
-# ПЕРВЫЙ запуск: зафиксировать позицию журнала и НЕ трубить о прошлом.
+# RU: ПЕРВЫЙ запуск: зафиксировать позицию журнала и НЕ трубить о прошлом.
+# RU: Позицию не добыть (нет прав, journalctl не запустился, нет метки) — current_cursor()
+# RU: сам говорит «СЛЕПОТА» и выходит кодом 2: молчаливого выхода больше нет.
+# EN: FIRST run: record the journal position and do NOT shout about the past.
+# EN: If the position cannot be obtained (no permission, journalctl failed, no cursor line),
+# EN: current_cursor() itself says "СЛЕПОТА" and exits 2: there is no silent exit any more.
 if not os.path.exists(CURSOR):
     c = current_cursor()
     if c:
@@ -229,90 +493,130 @@ if not os.path.exists(CURSOR):
         print("🔴 OOM-KILL: сторож поднят, слежу за ядерным логом с этой позиции", file=sys.stderr)
     sys.exit(0)
 
+# RU: Прочитать сохранённую позицию и всё ядерное, что было после неё, в JSON.
+# EN: Read the saved position and everything kernel-side after it, as JSON.
 with open(CURSOR) as f:
     cur = f.read().strip()
 
-out = subprocess.run(["journalctl", "-k", "--no-pager", "--output=json", "--after-cursor=" + cur],
-                     capture_output=True, text=True)
+try:
+    out = subprocess.run(["journalctl", "--no-pager", "--output=json", "--all", "--after-cursor=" + cur, "_TRANSPORT=kernel"],
+                         capture_output=True, text=True)
+except OSError as error:
+    notify(f"СЛЕПОТА: не добыт ядерный журнал: journalctl не запущен ({type(error).__name__}).\n")
+    sys.exit(2)
 if out.returncode != 0:
-    # 🔴 Курсор нечитаем (журнал вычищен, позиция устарела, битый файл состояния).
-    # Оставить его как есть — значит ослепнуть НАВСЕГДА: каждый запуск будет падать
-    # на том же месте, жаловаться только в журнал службы, которого никто не читает,
-    # и сам себя не починит. Поэтому: тревога НАРУЖУ один раз и сдвиг курсора на
-    # текущую позицию — сторож снова видит. Цена названа прямо: окно между старой
-    # позицией и текущей не проверено. Граница: сдвигаем ТОЛЬКО при ошибке чтения,
-    # пустой ответ журнала — это не ошибка и курсор не трогает.
+    # RU: 🔴 Курсор нечитаем (журнал вычищен, позиция устарела, битый файл состояния).
+    # RU: Оставить его как есть — значит ослепнуть НАВСЕГДА: каждый запуск будет падать
+    # RU: на том же месте, жаловаться только в журнал службы, которого никто не читает,
+    # RU: и сам себя не починит. Поэтому: тревога НАРУЖУ один раз и сдвиг курсора на
+    # RU: текущую позицию — сторож снова видит. Цена названа прямо: окно между старой
+    # RU: позицией и текущей не проверено. Граница: сдвигаем ТОЛЬКО при ошибке чтения,
+    # RU: пустой ответ журнала — это не ошибка и курсор не трогает.
+    # RU: Уточнение по пробе на systemd 255: код ≠ 0 даёт синтаксически битый или ПУСТОЙ
+    # RU: курсор («Failed to seek to cursor: Invalid argument»). Курсор правильного вида,
+    # RU: но с чужим/устаревшим журналом, journalctl принимает с кодом 0 и читает с
+    # RU: ближайшего места — эта ветка тогда не срабатывает.
+    # EN: 🔴 The cursor is unreadable (journal vacuumed, position stale, state file broken).
+    # EN: Leaving it as it is means going blind FOREVER: every run fails at the same place,
+    # EN: complains only into the service journal that nobody reads, and never heals.
+    # EN: Therefore: alert OUTWARD once and move the cursor to the current position — the
+    # EN: watchdog can see again. The price is stated plainly: the window between the old
+    # EN: and the current position is not checked. Boundary: the cursor is moved ONLY on a
+    # EN: read error; an empty answer from the journal is not an error and leaves it alone.
+    # EN: Refinement from a probe on systemd 255: a non-zero code comes from a syntactically
+    # EN: broken or EMPTY cursor ("Failed to seek to cursor: Invalid argument"). A well-formed
+    # EN: cursor from a foreign/stale journal is accepted by journalctl with code 0 and read
+    # EN: from the nearest place — this branch does not fire then.
     c = current_cursor()
     notify(f"🔴 OOM-KILL: не удалось прочитать ядерный лог (rc={out.returncode}).\n"
            f"Позиция сброшена на текущую — сторож снова видит, но окно до этого момента\n"
-           f"НЕ проверено: убийства в нём, если были, пропущены.\n"
-           + ("" if c else "Текущую позицию тоже получить не удалось — сторож слеп, разберитесь руками.\n"))
-    if c:
-        with open(CURSOR, "w") as f:
-            f.write(c)
-    sys.exit(0)
+           f"НЕ проверено: убийства в нём, если были, пропущены.\n")
+    # RU: Если текущую позицию не добыть, current_cursor() уже вышел кодом 2 со «СЛЕПОТОЙ».
+    # RU: Здесь курсор сдвинут, но проход всё равно завершается кодом 2: окно не проверено.
+    # EN: If the current position cannot be obtained, current_cursor() has already exited 2
+    # EN: with "СЛЕПОТА". Here the cursor is moved, but the pass still exits 2: the window was not checked.
+    with open(CURSOR, "w") as f:
+        f.write(c)
+    sys.exit(2)  # Cursor recovery does not make the failed inspection successful.
 
+# RU: JSON-объекты сохраняют курсор; нестроковый MESSAGE не попадает в regex.
+# RU: Не принятые записи дают именованную слепоту2 после обработки остальных.
+# EN: JSON objects retain cursors; nonstring MESSAGE never enters regex.
+# EN: Rejected records give named blindness2 after other records are processed.
 entries = []
+malformed = 0
 for line in out.stdout.splitlines():
     line = line.strip()
     if not line:
         continue
     try:
-        entries.append(json.loads(line))
+        entry = json.loads(line)
+        if not isinstance(entry, dict): malformed += 1; continue
+        if not isinstance(entry.get("MESSAGE"), str): malformed += 1
+        entries.append(entry)
     except Exception:
+        malformed += 1
         continue
 
-# Карта «номер процесса -> событие» из строк «oom-kill:constraint=…»: в них есть и
-# путь cgroup, и pid. Берём ВСЕ виды constraint, а не только MEMCG.
+# RU: Один проход по порядку журнала. Ключ _BOOT_ID+pid не путает загрузки.
+# RU: Последняя предшествующая constraint-строка с тем же ключом потребляется один раз.
+# RU: Нет пары или boot identity — юнит не угадывается; отсутствующий boot даёт слепоту2.
+# EN: One ordered pass. _BOOT_ID+pid separates boots; the preceding constraint is consumed once.
+# EN: No pair/boot identity means unknown unit; missing boot identity gives blindness2.
 kill_map = {}
-for e in entries:
-    msg = e.get("MESSAGE", "")
+missing_boot = set()
+for index, e in enumerate(entries):
+    msg = e.get("MESSAGE")
+    if not isinstance(msg, str): continue
+    boot = e.get("_BOOT_ID")
+    valid_boot = isinstance(boot, str) and bool(re.fullmatch(r"[0-9a-fA-F]{32}", boot))
     c = re.search(r"oom-kill:constraint=(\S+?),", msg)
-    if not c:
-        continue
-    p = re.search(r"\bpid=(\d+)", msg)
-    if not p:
-        continue
-    constraint = c.group(1)
-    memcg = constraint == "CONSTRAINT_MEMCG"
-    t = re.search(r"\btask=([^,]+)", msg)
-    kill_map[p.group(1)] = {
-        # У группового виноват тот, чей предел пробит (oom_memcg); у глобального
-        # такого поля нет вовсе (ядро печатает global_oom), и единственное, что
-        # известно про жертву, — её собственная cgroup (task_memcg).
-        "unit": unit_of(msg, "oom_memcg" if memcg else "task_memcg"),
-        "kind": "memcg" if memcg else "global",
-        "constraint": constraint,
-        "task": t.group(1) if t else None,
-        "ts": e.get("__REALTIME_TIMESTAMP"),
-    }
-
-# Строки «…: Killed process …» — в них числа. Связь ПО PID.
-# 🔴 Ловим по «: Killed process», а не по конкретному префиксу: ядро подставляет
-# туда три разных текста, и «Out of memory (oom_kill_allocating_task)» пропал бы.
-for e in entries:
-    msg = e.get("MESSAGE", "")
-    m = re.search(r"^(.*?): Killed process (\d+) \((\S+?)\)", msg)
-    if not m:
-        continue
+    if c:
+        p = re.search(r"\bpid=(\d+)", msg)
+        if p:
+            if not valid_boot: missing_boot.add(index)
+            else:
+                constraint = c.group(1)
+                memcg = constraint == "CONSTRAINT_MEMCG"
+                t = re.search(r"\btask=([^,]+)", msg)
+                kill_map[(boot, p.group(1))] = {
+                    "unit": unit_of(msg, "oom_memcg" if memcg else "task_memcg"),
+                    "kind": "memcg" if memcg else "global",
+                    "constraint": constraint, "task": t.group(1) if t else None,
+                    "ts": e.get("__REALTIME_TIMESTAMP"),
+                }
+    m = re.search(r"^(.*?): Killed process (\d+) \((.*)\)\s+total-vm:", msg)
+    if not m: continue
     prefix, pid, name = m.group(1), m.group(2), m.group(3)
     a = re.search(r"anon-rss:(\d+)kB", msg)
     anon_kb = a.group(1) if a else None
-    info = kill_map.get(pid) or {}
+    if not valid_boot: missing_boot.add(index)
+    info = kill_map.pop((boot,pid),{}) if valid_boot else {}
     unit = info.get("unit")
-    # Вид берём из строки constraint, а если её потеряли — из префикса.
     kind = info.get("kind") or ("memcg" if prefix.startswith("Memory cgroup") else "global")
-    # Фильтр по списку — только для УЗНАННОЙ службы и только для ГРУППОВОГО убийства.
-    # Неузнанная тревожит ВСЕГДА: иначе дефект разбора превращается в молчание.
-    # Глобальное тревожит ВСЕГДА: жертвой стало что попало, а список составлялся
-    # под «чьи пределы мы стережём» — к общей нехватке памяти он отношения не имеет.
-    if kind == "memcg" and unit and UNITS and unit not in UNITS:
-        continue
-    notify(build_alert(kind, unit, info.get("task") or name, pid, anon_kb,
-                       info.get("ts") or e.get("__REALTIME_TIMESTAMP"),
-                       info.get("constraint") or "constraint не определён"))
+    if kind == "memcg" and unit and UNITS and unit not in UNITS: continue
+    notify(build_alert(kind,unit,info.get("task") or name,pid,anon_kb,
+        info.get("ts") or e.get("__REALTIME_TIMESTAMP"),
+        info.get("constraint") or "constraint не определён"))
 
-c = current_cursor()
-if c:
+# RU: Курсор — на ПОСЛЕДНЮЮ ПРОЧИТАННУЮ запись (её __CURSOR), а не на конец журнала на этот
+# RU: момент (04.10.2026). Строки, пришедшие после чтения (в т.ч. пока ждали канал тревоги),
+# RU: прочитает следующий проход — окна потери больше нет. Ничего не прочитано — курсор не
+# RU: трогаем. Файл пишется открытием на запись, не атомарно.
+# EN: The cursor goes to the LAST READ entry (its __CURSOR), not to the end of the journal at
+# EN: this moment (2026-10-04). Lines that arrived after the read (incl. while waiting for the
+# EN: alert channel) are read by the next pass — no loss window any more. Nothing read —
+# EN: cursor untouched. The file is written by opening for writing, not atomically.
+c = entries[-1].get("__CURSOR", "") if entries else ""
+cursor_moved = False
+if isinstance(c, str) and c:
     with open(CURSOR, "w") as f:
         f.write(c)
+    cursor_moved = c != cur
+
+
+if malformed or missing_boot:
+    notify(f"СЛЕПОТА: MESSAGE не строка/запись не JSON-объект: {malformed}; "
+           f"OOM-записей без годного _BOOT_ID: {len(missing_boot)}; "
+           f"неподдержанные данные не приняты; курсор {'сдвинут' if cursor_moved else 'не сдвинут'}.\n")
+    sys.exit(2)

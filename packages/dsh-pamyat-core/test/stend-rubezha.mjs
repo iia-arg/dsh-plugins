@@ -1,23 +1,17 @@
-/**
- * Стенд РУБЕЖА ПРОИСХОЖДЕНИЯ (Э5.3) — по воротам приёмки В1–В8.
- *
- * Предмет решён служебным каналом 04–05.09.2026: умолчание НЕЙТРАЛЬНОЕ, ноль — только для записей
- * ПОСЛЕ рубежа, «до протокола» — отдельная строка в выдаче и нейтральная сортировка,
- * статус при обновлении не меняется, рубеж — данные в базе и снимается в той же транзакции,
- * что ALTER TABLE, ввоз с сохранением чужих id запрещён.
- *
- * 🔴 В1 И В5 РАЗВЕДЕНЫ ПО РАЗНЫМ БАЗАМ НАМЕРЕННО (поправка автора предмета к воротам).
- * Прогон В1 добавляет запись — и В5, считающий записи на той же базе, дал бы 42+1 и
- * покраснел бы на ИСПРАВНОМ поведении. Признак такой пары назван им же: два критерия
- * конфликтуют, если порча одного меняет число, которое проверяет другой.
- *
- * Первая проба — на заведомо исправном: соврала она, значит сломан стенд, а не предмет.
- */
+// RU: Проверяем рубеж происхождения: нейтральное умолчание для старых записей, ноль только после рубежа, отдельная строка «до протокола» и нейтральная сортировка. Обновление не меняет статус. Рубеж хранится в базе и снимается в транзакции ALTER TABLE; ввоз с чужими id запрещён. Атомарность и счёт проверяем на разных базах, чтобы вставки не меняли соседний критерий. Сначала исправный контроль.
+// EN: Test the provenance boundary: neutral default for old records, zero only after the boundary, a separate “before protocol” annotation, and neutral sorting. Updates do not change status. The database stores the boundary captured in the ALTER TABLE transaction; importing external ids is forbidden. Test atomicity and counting on separate databases so inserts cannot affect the other criterion. Begin with a healthy control.
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// RU: Каждый mkdtemp создаём через vremennyj(): уборка выполняется при обычном выходе, исключении, process.exit и SIGTERM/SIGINT, включая timeout 120. SIGKILL не перехватывается; временные файлы дочернего процесса убирает сам дочерний процесс.
+// EN: Create every mkdtemp through vremennyj(): cleanup runs on normal exit, exceptions, process.exit, and SIGTERM/SIGINT, including timeout 120. SIGKILL cannot be intercepted; a child process must clean up its own temporary files.
+import { mkdtempSync as mkdtempSync_, rmSync as rmSync_ } from 'node:fs'
+const VREMENNYE = []
+const vremennyj = (...a) => { const k = mkdtempSync_(...a); VREMENNYE.push(k); return k }
+process.on('exit', () => { for (const k of VREMENNYE) rmSync_(k, { recursive: true, force: true }) })
+process.on('SIGTERM', () => process.exit(143)); process.on('SIGINT', () => process.exit(130))
 
 let otkrytHranilishche;
 try {
@@ -36,12 +30,12 @@ const proba = (imya, f) => {
     if (vernulos && typeof vernulos.then === 'function') {
       throw new Error('тело пробы ОЖИДАЮЩЕЕ, а прогонщик синхронный: вынеси ожидание наружу');
     }
-    // 🔴 ВОЗВРАТ ТЕЛА УЧИТЫВАЕТСЯ (05.09.2026). Обёртка краснела только на ИСКЛЮЧЕНИИ,
-    // а возврат выбрасывала — проба вида «вернуть true либо строку с причиной» была
-    // зелёной при ЛЮБОМ содержимом. Замер фактом: вписала в каждый стенд ядра пробу,
-    // заведомо возвращающую строку, — ПЯТЬ стендов её не заметили.
-    if (typeof vernulos === 'string') throw new Error(vernulos);
-    if (vernulos === false) throw new Error('тело пробы вернуло false без причины');
+    // RU: Тело пробы должно бросить ошибку или вернуть undefined. Любое другое значение, включая строку, false, 0, null и объект, означает отказ: игнорирование возврата даёт ложный успех.
+    // EN: The probe body must throw an error or return undefined. Any other value, including a string, false, 0, null, or an object, means failure: ignoring returns produces false success.
+    if (vernulos !== undefined && vernulos !== true) {
+      throw new Error('тело пробы ВЕРНУЛО «' + String(vernulos).slice(0, 60) +
+                      '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы');
+    }
     proshlo++; console.log('  ✅ ' + imya);
   } catch (e) { console.log('  ❌ ' + imya + ' — ' + String(e.message).slice(0, 160)); }
 };
@@ -53,16 +47,18 @@ const dolzhnoUpast = (kod, f) => {
   throw new Error('не упало, а должно было (' + kod + ')');
 };
 
-const katalog = mkdtempSync(join(tmpdir(), 'pamyat-rubezh-'));
+const katalog = vremennyj(join(tmpdir(), 'pamyat-rubezh-'));
 const svezhaya = (imya) => join(katalog, imya + '.db');
 
-/** База «как до миграции»: записи есть, полей и рубежа нет. Иначе рубеж снимется на пустой. */
+// RU: База до миграции содержит записи, но не новые поля или рубеж; пустая база не проверила бы положение рубежа.
+// EN: The pre-migration database contains records but no new fields or boundary; an empty database would not test boundary placement.
 function bazaSoStarymiZapisyami(put, skolko) {
   const h = otkrytHranilishche(put);
   for (let i = 0; i < skolko; i++) {
     h.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'старая запись ' + i, istochnik: 'session#' + i });
   }
-  // Снимаем следы миграции, оставляя записи: так выглядит база, накопленная до Э5.3.
+  // RU: Удаляем следы миграции и сохраняем старые записи.
+  // EN: Remove migration traces while retaining old records.
   h.baza.exec('ALTER TABLE zapisi DROP COLUMN proishozhdenie');
   h.baza.exec('ALTER TABLE zapisi DROP COLUMN proverka');
   h.baza.exec("DELETE FROM nastrojki WHERE kluch = 'rubezh_proishozhdeniya'");
@@ -80,7 +76,8 @@ proba('стенд годен: на исправном предмете мигр�
   h.zakryt();
 });
 
-// ─── В5: ЧИСЛА ДО И ПОСЛЕ, СПОКОЙНАЯ БАЗА (без параллельных вставок) ───────────
+// RU: Сверяем числа до и после без параллельных вставок.
+// EN: Compare counts before and after without concurrent inserts.
 proba('В5 числа: 42 записи до миграции → 42 «до протокола», 0 уровня, 0 потерянных', () => {
   const put = svezhaya('v5');
   bazaSoStarymiZapisyami(put, 42);
@@ -101,13 +98,18 @@ proba('В5 числа: 42 записи до миграции → 42 «до пр�
   h.zakryt();
 });
 
-// ─── В1: АТОМАРНОСТЬ, ОТДЕЛЬНАЯ БАЗА ──────────────────────────────────────────
+// RU: Проверяем атомарность на отдельной базе.
+// EN: Test atomicity on a separate database.
 proba('В1 атомарность: пока миграция держит запись, вставка со стороны НЕ проходит', () => {
   const put = svezhaya('v1');
   bazaSoStarymiZapisyami(put, 5);
-  const a = otkrytHranilishche(put);          // миграция уже прошла при открытии
+  const a = otkrytHranilishche(put);          /* RU: Открытие уже выполнило миграцию.
+ * EN: Opening has already run migration.
+ */
   const b = otkrytHranilishche(put);
-  a.baza.exec('BEGIN IMMEDIATE');             // воспроизводим окно миграции
+  a.baza.exec('BEGIN IMMEDIATE');             /* RU: Воспроизводим окно миграции.
+ * EN: Reproduce the migration window.
+ */
   let upalo = false;
   try {
     b.baza.prepare('INSERT INTO zapisi (agent, klass, soderzhim, sozdano) VALUES (?, ?, ?, ?)')
@@ -128,7 +130,8 @@ proba('В1 следствие: запись, легшая ПОСЛЕ мигра�
   h.zakryt();
 });
 
-// ─── В2: РУБЕЖ — ДАННЫЕ, НЕ КОНСТАНТА ─────────────────────────────────────────
+// RU: Рубеж хранится как данные, а не константа.
+// EN: The boundary is stored as data rather than a constant.
 proba('В2 порча: подмена рубежа В БАЗЕ меняет выдачу — значит читается оттуда, а не из кода', () => {
   const put = svezhaya('v2');
   bazaSoStarymiZapisyami(put, 10);
@@ -147,7 +150,8 @@ proba('В2 порча: числа рубежа в исходнике нет — 
   if (podozritelnye.length) throw new Error('рубеж присвоен числом в коде: ' + podozritelnye.join(', '));
 });
 
-// ─── В3: ТРИ РАЗНЫЕ СТРОКИ И НЕЙТРАЛЬНАЯ СОРТИРОВКА ───────────────────────────
+// RU: Проверяем три строки состояния и нейтральную сортировку.
+// EN: Test three state annotations and neutral sorting.
 proba('В3 три состояния дают ТРИ РАЗНЫЕ строки, а не три числа', () => {
   const put = svezhaya('v3');
   bazaSoStarymiZapisyami(put, 4);
@@ -176,7 +180,8 @@ proba('В3 порча: введение поля НЕ переставило в�
   h2.zakryt();
 });
 
-// ─── В4: ИДЕМПОТЕНТНОСТЬ ──────────────────────────────────────────────────────
+// RU: Проверяем идемпотентность.
+// EN: Test idempotency.
 proba('В4 идемпотентность: повторная миграция НЕ пересчитывает рубеж', () => {
   const put = svezhaya('v4');
   bazaSoStarymiZapisyami(put, 42);
@@ -184,7 +189,9 @@ proba('В4 идемпотентность: повторная миграция �
   const pervyj = h1.rubezhProishozhdeniya();
   h1.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'после первой миграции' });
   h1.zakryt();
-  const h2 = otkrytHranilishche(put);        // второй прогон миграции
+  const h2 = otkrytHranilishche(put);        /* RU: Запускаем миграцию второй раз.
+ * EN: Run migration a second time.
+ */
   const vtoroj = h2.rubezhProishozhdeniya();
   if (pervyj !== 42) throw new Error('первый рубеж ' + pervyj + ' вместо 42');
   if (vtoroj !== pervyj) throw new Error('рубеж пересчитан: ' + pervyj + ' → ' + vtoroj + ' — вся память ушла бы в «после протокола»');
@@ -192,21 +199,20 @@ proba('В4 идемпотентность: повторная миграция �
 });
 
 proba('В4-бис: блок миграции вошёл из-за НЕДОСТАЮЩЕГО поля — рубеж всё равно не пересчитан', () => {
-  // 🔴 Заведена 05.09.2026 после того, как первая порча идемпотентности прошла НЕЗАМЕЧЕННОЙ.
-  // Проба В4 закрывает только случай «второе открытие ничего не мигрирует»: блок в него
-  // не входит вовсе, и порча ВНУТРИ блока ничего не ломает — она не исполняется.
-  // Ветка «блок вошёл, а рубеж уже есть» зовётся редко: при поэтапном заведении полей.
-  // Класс (формулировка из служебного канала): ветка, исполняемая только при находке, не проверяется,
-  // пока находок нет, — и ломается ровно тогда, когда нужна.
+  // RU: Проверяем вход в миграционный блок при уже существующем рубеже: обычное повторное открытие пропускает блок и не ловит порчу внутри него. Частичная миграция должна сохранить рубеж.
+  // EN: Test entry into the migration block when the boundary already exists: ordinary reopening skips the block and cannot detect mutations inside it. Partial migration must preserve the boundary.
   const put = svezhaya('v4bis');
   bazaSoStarymiZapisyami(put, 5);
   const h1 = otkrytHranilishche(put);
   const pervyj = h1.rubezhProishozhdeniya();
   h1.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'запись после первой миграции' });
-  // Возвращаем базу в состояние «поле proverka ещё не заводили, а рубеж уже стоит».
+  // RU: Создаём состояние с рубежом, но без поля proverka.
+  // EN: Create a state with a boundary but no proverka field.
   h1.baza.exec('ALTER TABLE zapisi DROP COLUMN proverka');
   h1.zakryt();
-  const h2 = otkrytHranilishche(put);   // блок миграции ВОЙДЁТ: не хватает столбца
+  const h2 = otkrytHranilishche(put);   /* RU: Отсутствующий столбец заставляет войти в миграционный блок.
+ * EN: The missing column forces entry into the migration block.
+ */
   const stolbcy = h2.baza.prepare('PRAGMA table_info(zapisi)').all().map((r) => r.name);
   if (!stolbcy.includes('proverka')) throw new Error('столбец proverka не добавлен — блок не входил, проба ничего не проверила');
   const vtoroj = h2.rubezhProishozhdeniya();
@@ -214,19 +220,17 @@ proba('В4-бис: блок миграции вошёл из-за НЕДОСТА
   h2.zakryt();
 });
 
-// ─── В6: ИМЯ ПОЛЯ ─────────────────────────────────────────────────────────────
+// RU: Проверяем имя поля.
+// EN: Test the field name.
 proba('В5-бис: база с ДЫРАМИ в номерах — рубеж по MAX(id), а не по числу записей', () => {
-  // 🔴 ЗАВЕДЕНА 05.09.2026 ПО ЗАМЕЧАНИЮ ПРИЁМКИ, и замечание подтверждено моей рукой:
-  // порча MAX(id) → COUNT(*) проходила стенд 15 из 15. Прежние пробы строили базу
-  // подряд идущими номерами, где обе величины СОВПАДАЮТ, — и потому не различали их.
-  // Цена дефекта настоящая: удалили записи — COUNT(*) стал меньше MAX(id), рубеж встал
-  // НИЖЕ последней записи, и часть старой памяти ушла бы в «после протокола», то есть
-  // получила ноль. Ровно тот вред, ради защиты от которого рубеж и заводился.
-  // 📌 Класс: величина, совпадающая с другой на всех проверенных данных, не проверена вовсе.
+  // RU: Различаем MAX(id) и COUNT(*) на базе с удалёнными записями. Непрерывные id делают величины равными и скрывают порчу; меньший COUNT(*) ошибочно поместит старые записи после рубежа и даст им ноль.
+  // EN: Distinguish MAX(id) from COUNT(*) using deleted records. Consecutive ids make them equal and hide mutations; a smaller COUNT(*) wrongly places old records after the boundary and gives them zero.
   const put = svezhaya('v5bis');
   bazaSoStarymiZapisyami(put, 10);
   const db = new DatabaseSync(put);
-  db.exec('DELETE FROM zapisi WHERE id <= 6');   // осталось 4 записи, номера 7..10
+  db.exec('DELETE FROM zapisi WHERE id <= 6');   /* RU: Остались четыре записи с id 7..10.
+ * EN: Four records remain with ids 7..10.
+ */
   const ostalos = db.prepare('SELECT COUNT(*) c FROM zapisi').get().c;
   const maks = db.prepare('SELECT MAX(id) m FROM zapisi').get().m;
   db.close();
@@ -247,14 +251,15 @@ proba('В6 порча: уровень, положенный в `vera`, лома�
   const stolbcy = h.baza.prepare('PRAGMA table_info(zapisi)').all().map((r) => r.name);
   if (!stolbcy.includes('proishozhdenie')) throw new Error('нет столбца proishozhdenie');
   const id = h.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'новая', vera: 0.9 });
-  // Порча: если бы уровень происхождения писали в `vera`, статус происхождения о нём
-  // не узнал бы вовсе — а читатель веры (restore) объявил бы запись измеренной.
+  // RU: Порча подменяет поле происхождения на vera: статус не увидит значение, а restore ошибочно объявит веру измеренной.
+  // EN: Mutation substitutes vera for the provenance field: status misses the value while restore incorrectly treats confidence as measured.
   const s = h.statusProishozhdeniya(h.poId(id));
   if (s.status !== 'ne-ustanovleno') throw new Error('вера подменила происхождение: статус ' + s.status);
   h.zakryt();
 });
 
-// ─── В7: СТАТУС НЕ МЕНЯЕТСЯ ПРИ ОБНОВЛЕНИИ ────────────────────────────────────
+// RU: Обновление не меняет статус происхождения.
+// EN: Updating does not change provenance status.
 proba('В7 отмывание: проставить уровень записи НИЖЕ рубежа → ОТКАЗ, а не тихий пропуск', () => {
   const put = svezhaya('v7');
   bazaSoStarymiZapisyami(put, 6);
@@ -278,7 +283,8 @@ proba('В7 граница: записи ВЫШЕ рубежа уровень п�
   h.zakryt();
 });
 
-// ─── В8: ОГРАНИЧЕНИЕ ВВОЗА НАЗВАНО В ФАЙЛЕ МИГРАЦИИ ───────────────────────────
+// RU: Файл миграции должен назвать ограничение ввоза.
+// EN: The migration file must state the import restriction.
 proba('В8 стенд-документ: ограничение ввоза записано в самом файле миграции', () => {
   const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'hranilishche.js'), 'utf8');
   for (const slovo of ['ВВОЗ С СОХРАНЕНИЕМ ЧУЖИХ id', 'отмывание', 'НАШИ id']) {
@@ -286,7 +292,8 @@ proba('В8 стенд-документ: ограничение ввоза зап
   }
 });
 
-// ─── ОТКАЗ ВМЕСТО ВЫДУМАННОГО НУЛЯ ────────────────────────────────────────────
+// RU: Ошибка даёт отказ вместо выдуманного нуля.
+// EN: An error must fail rather than invent a zero.
 proba('рубежа нет в базе → ОТКАЗ, а не «рубеж ноль» (ноль обвинил бы всю память)', () => {
   const put = svezhaya('bez-rubezha');
   bazaSoStarymiZapisyami(put, 2);
@@ -296,9 +303,8 @@ proba('рубежа нет в базе → ОТКАЗ, а не «рубеж но
   h.zakryt();
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// СВЕРКА С ОПОРОЙ (Э8.1): ПОЛЕ proverka — ТРИ СОСТОЯНИЯ, ОТСУТСТВИЕ ≠ УТРАЧЕНА
-// ═══════════════════════════════════════════════════════════════════════════════
+// RU: Поле proverka имеет три состояния; отсутствие не равно утрате опоры.
+// EN: proverka has three states; absence is not loss of the reference.
 
 proba('В6 сверка: отсутствие отметки = «не проверялось», а НЕ «утрачена»', () => {
   const put = svezhaya('sv1');
@@ -375,9 +381,8 @@ proba('сверка и происхождение — РАЗНЫЕ поля: о�
   if (pr.status === 'uroven') throw new Error('отметка сверки проставила происхождение — поля слиты');
 });
 
-// 🔴 УБОРКА — ПОСЛЕДНИМ ДЕЙСТВИЕМ, ПЕРЕД ИТОГОМ. 05.09.2026 она стояла в середине файла,
-// и семь проб, дописанных ниже, падали на «база не открылась»: каталог был уже удалён.
-// Проба, стоящая после уборки, отвечает не про предмет, а про порядок строк в стенде.
+// RU: Убираем временную базу последним действием перед итогом; более поздние пробы не должны читать уже удалённый каталог.
+// EN: Clean up the temporary database as the last action before the summary; later probes must not read a removed directory.
 rmSync(katalog, { recursive: true, force: true });
 
 console.log(`\nитог рубежа: ${proshlo}/${vsego}`);

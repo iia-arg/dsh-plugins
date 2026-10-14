@@ -1,0 +1,207 @@
+#!/usr/bin/python3 -B
+# -*- coding: utf-8 -*-
+"""dsh-limity-podpiski — управление подписками службы лимитов КОНФИГОМ, без перевыпуска софта (B-N-1776 r4; слово владельца
+07.10 22:12 МСК). Конфиг — /etc/dsh-limity/podpiski.json (поля — в lib/dsh_limity_konfig.py). От root.
+
+  dsh-limity-podpiski proverit            — проверить конфиг: ошибки списком, код 0 годен / 2 негоден
+  dsh-limity-podpiski spisok              — подписки из конфига: вкл/выкл, способ, учётка, есть ли вход замера
+  dsh-limity-podpiski vojti <kluch>       — вход владельца для замера подписки (Claude): учётка и каталог по конфигу (создаёт, если нет),
+                                            штатный `claude auth login` — ссылка на экран, код — в этот же терминал; затем сверка
+                                            организации: в конфиге пусто — покажет найденную и спросит «вписать? [y/N]» (нужна --prichina;
+                                            кто подтвердил — в коммит); не совпала — вход снимается (auth logout), конфиг не трогается, код 1.
+                                            Смена входа/токена — та же команда.
+  dsh-limity-podpiski klyuch <kluch>      — DeepSeek (r10): drop-in dsh-limity-deepseek.service.d/klyuch-<kluch>.conf с
+                                            LoadCredential=dsh-limity-<kluch>:<klyuch_fajl из конфига> + daemon-reload; права файла ключа не трогаются
+  dsh-limity-podpiski snyat <kluch> --prichina "<текст>" [--udalit-uchetku]
+                                          — снять вход (auth logout) и выключить подписку в конфиге (vkl=false); учётку и каталог —
+                                            только с флагом и после ввода ключа подписки.
+Добавить подписку: строка в конфиге (provajder, nomer, kluch [, podpis, email, token_shlyuza]) → `vojti <kluch>`.
+Удалить: `snyat <kluch>` (выкл) или убрать строку. Правка конфига — атомарно, прежний — копией рядом (.bak).
+r7 (Вениамин 19:13Z): каталог конфига — под git (как /etc/agent-registry; .bak вне учёта). Каждая правка командой — коммит: действие,
+ключ, причина (--prichina), кто подтвердил (SUDO_USER, иначе root) — он же автор. Нет репозитория или в учёте незафиксированная
+правка — ОТКАЗ до любых действий (чужую правку под своим именем не фиксируем). Ручная правка — фиксировать руками; proverit её покажет.
+Неизвестное действие или флаг — ОТКАЗ (в т.ч. --dry-run, -n: «прогона насухо» у команды нет).
+"""
+import json, os, pwd, grp, re, shutil, subprocess, sys
+from pathlib import Path
+for _l in (os.environ.get('DSH_LIMITY_LIB'), Path(__file__).resolve().parent.parent / 'lib', '/usr/local/lib/dsh-limity'):
+    if _l and (Path(_l) / 'dsh_limity_konfig.py').is_file(): sys.path.insert(0, str(_l)); break
+import dsh_limity_konfig as K
+
+PODPISKI = Path(os.environ.get('DSH_LIMITY_PODPISKI', '/etc/dsh-limity/podpiski.json'))
+CLI = os.environ.get('DSH_LIMITY_CLI', '/opt/subscription-gateway-guest/sdk-runtime/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude')
+KOREN = os.environ.get('DSH_LIMITY_ZAMER_KOREN', '/var/lib/dsh-limity-zamer/')        # соглашение: каталоги входа — только здесь
+PREFIKS = os.environ.get('DSH_LIMITY_ZAMER_PREFIKS', 'limity-zamer-')                 # и учётки — только с этим началом (удаление — только их)
+GRUPPA = os.environ.get('DSH_LIMITY_VHOD_GRUPPA', 'limity-vhod')   # r10: из окружения — стенд НЕ трогает живую группу (19:54Z мой стенд добавил туда nobody)
+SYSTEMD = Path(os.environ.get('DSH_LIMITY_SYSTEMD_DIR', '/etc/systemd/system'))   # r10: drop-in LoadCredential юнита DeepSeek
+PEREZAGRUZKA = os.environ.get('DSH_LIMITY_DAEMON_RELOAD', 'systemctl daemon-reload').split()
+
+def otkaz(tekst, kod=2): print('ОТКАЗ: ' + tekst); sys.exit(kod)
+def sprosit(vopros):
+    print(vopros, end=' ', flush=True)
+    try: return sys.stdin.readline().strip()
+    except (OSError, ValueError): return ''
+def zapis_po_klyuchu(kluch, dlya_vhoda=False):
+    konfig, oshibki = K.prochitat(PODPISKI)
+    if dlya_vhoda:   # r13: новая подписка — строка без organizaciya + vojti (одной командой); её единственная ошибка входу не мешает
+        oshibki = [o for o in oshibki if not (f'({kluch}):' in o and 'без organizaciya' in o)]
+    if oshibki: otkaz('конфиг негоден:\n  ' + '\n  '.join(oshibki))
+    z = next((p for p in konfig if p['kluch'] == kluch), None)
+    if z is None: otkaz(f'подписки с ключом {kluch!r} в конфиге нет (сначала строка в {PODPISKI})')
+    return z
+KTO = os.environ.get('SUDO_USER') or 'root'   # r7: кто подтвердил — человек за sudo, иначе root
+def git(*a): return subprocess.run(['git', '-C', str(PODPISKI.parent), *a], capture_output=True, text=True)
+def uchet():
+    """r7: None — учёт годен для правки; иначе причина отказа."""
+    r = git('rev-parse', '--show-toplevel')
+    if r.returncode != 0 or Path(r.stdout.strip()).resolve() != PODPISKI.parent.resolve():
+        return f'каталог {PODPISKI.parent} не под учётом git (заводит монтаж: git init, .gitignore с *.bak, первый коммит)'
+    gr = git('status', '--porcelain', '--', PODPISKI.name)
+    if gr.returncode != 0 or gr.stdout.strip(): return f'в учёте незафиксированная правка {PODPISKI.name} — зафиксируйте её сначала: {gr.stdout.strip()[:120]}'
+    return None
+def pravit_konfig(kluch, prichina, deystvie, istochnik=None, **polya):
+    syroe = json.loads(PODPISKI.read_text(encoding='utf-8'))
+    for z in syroe:
+        if z.get('kluch') == kluch: z.update(polya)
+    kopiya = K.zapisat(syroe, PODPISKI)
+    _, oshibki = K.prochitat(PODPISKI)
+    print(f'конфиг записан: {", ".join(f"{k}={v}" for k, v in polya.items())}; прежний — {kopiya}' + (f'; 🔴 стал негоден: {oshibki}' if oshibki else ''))
+    soobshchenie = (f'dsh-limity-podpiski {deystvie} {kluch}: {prichina} · {", ".join(f"{k}={v}" for k, v in polya.items())} · подтвердил {KTO}'
+                    + (f'\n\nорганизация подтверждена: {KTO}, источник: {istochnik}' if istochnik else ''))   # r14 (Вениамин 20:08Z в)
+    a = git('add', '--', PODPISKI.name)
+    c = git('-c', f'user.name={KTO}', '-c', f'user.email={KTO}@{os.uname().nodename}', 'commit', '-q', '-m', soobshchenie, '--', PODPISKI.name)
+    if a.returncode or c.returncode:
+        print(f'🔴 правка записана, но НЕ зафиксирована в git: {(a.stderr + c.stderr).strip()[:300]}'); sys.exit(1)
+    print(f'зафиксировано: {git("log", "-1", "--format=%h %an: %s").stdout.strip()}')
+def ot_uchetki(pw, komanda, **kw):
+    env = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': pw.pw_dir, 'CLAUDE_CONFIG_DIR': kw.pop('katalog'), 'TERM': os.environ.get('TERM', 'xterm'),
+           'ENABLE_CLAUDEAI_MCP_SERVERS': 'false', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1'}   # вход/выход — не usage: флаг здесь годен
+    env['HOME'] = env['CLAUDE_CONFIG_DIR']
+    return subprocess.run(['setpriv', f'--reuid={pw.pw_uid}', f'--regid={pw.pw_gid}', '--init-groups', '--no-new-privs'] + komanda, env=env, **kw)
+def vhod_v_kataloge(kat):
+    try: a = json.loads((Path(kat) / '.claude.json').read_text()).get('oauthAccount') or {}
+    except (OSError, ValueError): a = {}
+    try: exists = (Path(kat) / '.credentials.json').exists()
+    except OSError: return None, None, None, None
+    return exists, a.get('organizationUuid'), a.get('emailAddress'), a.get('organizationName')
+
+def proverit():
+    konfig, oshibki = K.prochitat(PODPISKI)
+    if oshibki: print(f'НЕГОДЕН {PODPISKI}:'); [print('  ' + o) for o in oshibki]
+    else: print(f'годен {PODPISKI}: подписок {len(konfig)}, включено {sum(p["vkl"] for p in konfig)}')
+    u = uchet(); print('учёт git: ' + ('чисто' if u is None else '🔴 ' + u))   # r7: ручная правка без коммита — видна здесь
+    for p in konfig if not oshibki else []:   # r10: у каждого включённого ключа DeepSeek этой машины — свой LoadCredential
+        if p['provajder'] == 'deepseek' and p['vkl'] and p.get('klyuch_fajl') and (not p.get('mashina') or p['mashina'] == os.uname().nodename):
+            f = dropin(p['kluch']); est = f.is_file() and f'LoadCredential={imya_klyucha(p["kluch"])}:{p["klyuch_fajl"]}' in f.read_text()
+            print(f'DeepSeek {p["kluch"]}: LoadCredential ' + ('есть' if est else f'🔴 НЕТ — dsh-limity-podpiski klyuch {p["kluch"]}'))
+    return 2 if oshibki else 0
+
+def spisok():
+    konfig, oshibki = K.prochitat(PODPISKI)
+    if oshibki: return proverit()
+    for p in sorted(konfig, key=lambda p: (p['poryadok'], p['kluch'])):
+        vhod = ''
+        if p['sposob'] == 'claude_usage':
+            est, org, _, _ = vhod_v_kataloge(p['zamer_katalog'])
+            if est is None:
+                vhod = f" · вход ? — не проверить без root ({p['zamer']})"
+            else:
+                vhod = f" · вход {'есть' if est else 'НЕТ'}{'' if not est or org == p.get('organizaciya') else ' — 🔴 НЕ ТА ОРГАНИЗАЦИЯ'} ({p['zamer']})"
+        print(f"{p['kluch']:12} {p['provajder']:6} №{p['nomer']:<2} {'вкл ' if p['vkl'] else 'ВЫКЛ'} {p['sposob']:17} «{p['podpis']}»{vhod}")
+    return 0
+
+def vojti(kluch, email, prichina):
+    z = zapis_po_klyuchu(kluch, dlya_vhoda=True)
+    if z['sposob'] != 'claude_usage': otkaz(f'{kluch}: способ {z["sposob"]} — вход владельца не нужен (Codex меряет codex-limit-watch)')
+    uch, kat = z['zamer'], z['zamer_katalog']
+    if not uch.startswith(PREFIKS) or not (kat.startswith(KOREN) and Path(kat).resolve().parent == Path(KOREN.rstrip('/'))):   # r9: как в snyat — после resolve
+        otkaz(f'учётка {uch} / каталог {kat} вне соглашения {PREFIKS}* / прямой подкаталог {KOREN}; ничего не создано')
+    if not z.get('organizaciya'):   # r7: вписывать будем — ДО входа: причина есть и учёт готов, иначе отказ, вход не начинается
+        if not prichina: otkaz(f'у {kluch} в конфиге нет organizaciya — вписать её можно только с --prichina "<текст>" (уйдёт в коммит); вход не начинался')
+        if uchet(): otkaz(uchet() + '; вход не начинался')
+        if not sys.stdin.isatty(): otkaz('вписать организацию можно только с явным «y» человека в терминале — stdin не терминал (Вениамин 20:09Z); вход не начинался')
+    try: pw = pwd.getpwnam(uch)
+    except KeyError:
+        print(f'учётки {uch} нет — создаю (системная, без оболочки, дом {kat})')
+        Path(KOREN).mkdir(mode=0o711, exist_ok=True)
+        subprocess.run(['useradd', '--system', '--home-dir', kat, '--no-create-home', '--shell', '/usr/sbin/nologin', '--user-group', uch], check=True)
+        pw = pwd.getpwnam(uch)
+    Path(kat).mkdir(mode=0o700, exist_ok=True); os.chown(kat, pw.pw_uid, pw.pw_gid); os.chmod(kat, 0o700)
+    try:
+        if uch not in grp.getgrnam(GRUPPA).gr_mem: subprocess.run(['usermod', '-aG', GRUPPA, uch], check=True)
+    except KeyError: print(f'⚠️ группы {GRUPPA} нет (ставит пакет, sysusers) — без неё замер не положит строки в приёмную')
+    pochta = email or z.get('email')
+    print(f'вход для {kluch} («{z["podpis"]}»): откройте ссылку ниже, войдите аккаунтом ЭТОЙ подписки, код вставьте сюда. Предел — 15 мин.')
+    r = ot_uchetki(pw, ['timeout', '--foreground', '900', CLI, 'auth', 'login', '--claudeai'] + (['--email', pochta] if pochta else []), katalog=kat)
+    est, org, mail, imya_org = vhod_v_kataloge(kat)
+    if r.returncode != 0 or not est or not org: otkaz(f'вход не состоялся (код {r.returncode}, вход {"есть" if est else "нет"}, организация {org})', 1)
+    maska = (mail or '')[:2] + '…@' + (mail or '@').split('@')[1]
+    if z.get('organizaciya') and org != z['organizaciya']:
+        ot_uchetki(pw, ['timeout', '60', CLI, 'auth', 'logout'], katalog=kat, capture_output=True)
+        otkaz(f'вход НЕ ТОЙ организации: {org} ({imya_org}, {maska}) ≠ {z["organizaciya"]} в конфиге — вход снят (auth logout), конфиг не тронут', 1)
+    if not z.get('organizaciya'):   # явное подтверждение человека; кто подтвердил — в коммит (Забава 19:40Z: «вписать? [y/N]» годно)
+        print(f'в конфиге у {kluch} организации нет; вход: email {mail}, организация «{imya_org}», orgId {org}')   # r11 (Вениамин п.2): владельцу — полностью
+        if sprosit(f'Вписать её в конфиг (подтверждает {KTO})? [y/N]').lower() != 'y':
+            ot_uchetki(pw, ['timeout', '60', CLI, 'auth', 'logout'], katalog=kat, capture_output=True)
+            otkaz('не подтверждено — вход снят (auth logout), конфиг не тронут', 1)
+        pravit_konfig(kluch, prichina, 'vojti', istochnik=f'вход {mail} в каталоге {kat}; показано {imya_org}/{org}', organizaciya=org)   # r15: «показано orgName/orgId»
+    print(f'ГОДНО: {kluch} — вход {maska}, организация {org} совпадает с конфигом.' + ('' if z['vkl'] else f' Подписка ВЫКЛЮЧЕНА в конфиге (vkl=false) — замеров не будет, пока не включите.'))
+    return 0
+
+def imya_klyucha(kluch): return 'dsh-limity-' + re.sub(r'[^A-Za-z0-9_-]', '_', kluch)   # то же имя читает dsh-limity-deepseek
+def dropin(kluch): return SYSTEMD / 'dsh-limity-deepseek.service.d' / f"klyuch-{re.sub(r'[^A-Za-z0-9_-]', '_', kluch)}.conf"
+def klyuch(kluch):
+    """r10 (Вениамин 19:56Z: LoadCredential): ключ DeepSeek — юниту через LoadCredential, строка на ключ; добавить ключ = строка конфига + эта команда."""
+    z = zapis_po_klyuchu(kluch)
+    if z['provajder'] != 'deepseek' or not z.get('klyuch_fajl'): otkaz(f'{kluch}: не DeepSeek с klyuch_fajl — LoadCredential не нужен')
+    if not Path(z['klyuch_fajl']).is_file(): otkaz(f'файла ключа {z["klyuch_fajl"]} нет — drop-in не пишу')
+    f = dropin(kluch); f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(f'# dsh-limity-podpiski klyuch {kluch} (B-N-1776 r10): ключ DeepSeek юниту — только через LoadCredential\n'
+                 f'[Service]\nLoadCredential={imya_klyucha(kluch)}:{z["klyuch_fajl"]}\n', encoding='utf-8'); f.chmod(0o644)
+    r = subprocess.run(PEREZAGRUZKA, capture_output=True, text=True)
+    print(f'drop-in {f}: LoadCredential={imya_klyucha(kluch)}:{z["klyuch_fajl"]}; {" ".join(PEREZAGRUZKA)} — код {r.returncode}')
+    return 0 if r.returncode == 0 else 1
+
+def snyat(kluch, udalit, prichina):
+    z = zapis_po_klyuchu(kluch)
+    if not prichina: otkaz('snyat правит конфиг (vkl=false) — нужна --prichina "<текст>" (уйдёт в коммит); ничего не тронуто')
+    if uchet(): otkaz(uchet() + '; ничего не тронуто')
+    if z['sposob'] == 'claude_usage':
+        try:
+            pw = pwd.getpwnam(z['zamer'])
+            r = ot_uchetki(pw, ['timeout', '60', CLI, 'auth', 'logout'], katalog=z['zamer_katalog'], capture_output=True, text=True)
+            print(f'auth logout: код {r.returncode}; вход {"ОСТАЛСЯ" if vhod_v_kataloge(z["zamer_katalog"])[0] else "снят"}')
+        except KeyError: print(f'учётки {z["zamer"]} нет — снимать вход нечего')
+    if z['vkl']: pravit_konfig(kluch, prichina, 'snyat', vkl=False)
+    if udalit:
+        uch, kat = z.get('zamer'), z.get('zamer_katalog')
+        if not (uch and uch.startswith(PREFIKS) and kat and kat.startswith(KOREN) and Path(kat).resolve().parent == Path(KOREN.rstrip('/'))):
+            otkaz(f'удалять учётку {uch} / каталог {kat} не стану: вне соглашения {PREFIKS}* / {KOREN}<имя>')
+        if sprosit(f'Удалить учётку {uch} и каталог {kat}? Наберите ключ подписки ({kluch}):') != kluch: otkaz('ключ не набран — учётка и каталог оставлены', 1)
+        subprocess.run(['userdel', uch], check=False); shutil.rmtree(kat, ignore_errors=True)
+        print(f'учётка {uch} и каталог {kat} удалены: учётки {"нет" if not pwd_est(uch) else "ОСТАЛАСЬ"}, каталога {"нет" if not Path(kat).exists() else "ОСТАЛСЯ"}')
+    return 0
+def pwd_est(u):
+    try: pwd.getpwnam(u); return True
+    except KeyError: return False
+
+def main(a):
+    if a in (['proverit'], ['spisok']): return {'proverit': proverit, 'spisok': spisok}[a[0]]()
+    if len(a) == 2 and a[0] == 'klyuch':
+        if os.geteuid() != 0: otkaz('нужен root (drop-in юнита, daemon-reload)')
+        return klyuch(a[1])
+    if len(a) >= 2 and a[0] in ('vojti', 'snyat'):
+        dop, f = a[2:], {}
+        while dop:   # r7: флаги в любом порядке; неизвестный, повтор или пустое значение — ОТКАЗ
+            if dop[0] in ('--email', '--prichina') and len(dop) >= 2 and dop[1].strip() and dop[0] not in f: f[dop[0]] = dop[1]; dop = dop[2:]
+            elif dop[0] == '--udalit-uchetku' and a[0] == 'snyat' and dop[0] not in f: f[dop[0]] = True; dop = dop[1:]
+            else: break
+        if not dop and not (a[0] == 'snyat' and '--email' in f) and ('--email' not in f or '@' in f['--email']):
+            if os.geteuid() != 0: otkaz('нужен root (учётки замера, setpriv, конфиг)')
+            if a[0] == 'vojti': return vojti(a[1], f.get('--email'), f.get('--prichina'))
+            return snyat(a[1], bool(f.get('--udalit-uchetku')), f.get('--prichina'))
+    otkaz('неизвестное действие или флаг ' + ' '.join(a)[:80] + ' — см. справку в начале файла (действия: proverit, spisok, klyuch <kluch>, vojti <kluch> [--email X] '
+          '[--prichina "…"], snyat <kluch> --prichina "…" [--udalit-uchetku])')
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,18 @@
+# RU: Настройки DKW_OSNOVA и DKW_APPS обязательны (без них — «НЕ НАСТРОЕНО», код 2, юнит failed) — через drop-in
+# RU: <юнит>.d/*.conf (Environment=).
+# EN: Settings DKW_OSNOVA and DKW_APPS are required (without them — "НЕ НАСТРОЕНО", exit 2, unit failed) — via a
+# EN: drop-in <unit>.d/*.conf (Environment=).
+[Unit]
+Description=Сторож «две копии пакетов платформы» — код в дереве плагинов против app агентов · Two-copies watchdog — plugin tree vs agent apps
+
+[Service]
+# RU: stdout службы — под своим тегом; итог через logger остаётся ОДНОЙ строкой под тегом скрипта.
+# EN: service stdout goes under its own tag; the logger summary stays ONE line under the script's tag.
+SyslogIdentifier=dve-kopii-watch-vyvod
+Type=oneshot
+ExecStart=/usr/local/sbin/dve-kopii-watch --avto-montazh
+# RU: 1 = разошёлся код: тревога уже ушла в agent-alert, юнит не валим. 2 = слепота → failed.
+# EN: 1 = code diverged: the alert already went to agent-alert, the unit is not failed. 2 = blindness → failed.
+SuccessExitStatus=1
+Nice=10
+IOSchedulingClass=idle

@@ -1,0 +1,13 @@
+[Unit]
+Description=Две команды владельца sadik: %i (B-N-1438)
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/libexec/sadik-switch-exec %i
+StateDirectory=sadik-switch
+StateDirectoryMode=0755
+UMask=0022
+# B-N-1472: ожидание600 + прежний исполнитель170 + запас30.
+TimeoutStartSec=800
+KillMode=control-group

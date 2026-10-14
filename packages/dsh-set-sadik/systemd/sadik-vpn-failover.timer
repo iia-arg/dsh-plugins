@@ -1,0 +1,9 @@
+[Unit]
+Description=sadik egress failover check
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=30
+
+[Install]
+WantedBy=timers.target

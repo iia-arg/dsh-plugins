@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+# mail-stop-hold — показать и СНЯТЬ HOLD подписанного стопа почтой (B-N-1536, условие М1 Вениамина; Заря, 05.10.2026).
+#
+# ЗАЧЕМ. В telegram-multiagent 2.5.72 строка mail_stop_controls в состоянии 'unknown' держит fence one_mail_stop_fence:
+#   nativeBlocked → новый ход сессии не начинается, письма владельца откладываются (deferOwner). Разрешающего перехода
+#   из 'unknown' в коде НЕТ (complete() его не берёт); рестарт службы во время стопа тоже даёт unknown (process_changed).
+#   Этот инструмент — ручная рука снятия, ВНЕ пакета (учёт координатора), без правки SQLite наугад.
+#
+# ВЫЗОВ:  mail-stop-hold pokazat <агент>                       только чтение (по умолчанию)
+#         mail-stop-hold snyat <агент> <control_id> --prichina 'почему' [--backlog vernut|derzhat]
+#                        [--sdk-sverka 'доказательство terminal SDK'] [--v-boj]
+#         mail-stop-hold snyat-pauzu <агент> <control_id> --prichina 'почему' [--v-boj]      (B-N-1596, с 05.10)
+#         mail-stop-hold zakryt-kvitanciyu <агент> <control_id> --prichina 'почему' [--v-boj] (B-N-1605, с 05.10)
+#   без --v-boj — ПРОГОН: все проверки, ничего не пишет. Неизвестный ключ (и --dry-run, -n) — отказ 2.
+# ЧТО ДЕЛАЕТ snyat --v-boj (одной транзакцией BEGIN IMMEDIATE, ОТ ИМЕНИ ВЛАДЕЛЬЦА БАЗЫ, не root):
+#   1. state 'unknown' → 'superseded' (схема его допускает, fence его не держит), reason='manual_release: <рука>: <почему>';
+#   2. --backlog vernut (умолчание): удаляет строки mail_stop_backlog этого control — удержанные письма снова идут обычным
+#      путём; derzhat — оставляет (тогда nativeBlocked держит, пока все ждущие письма — из удержанных: решать отдельно);
+#   3. audit: kind='mail_stop_manual_release', detail — JSON (рука, причина, прежнее состояние, доказательства, backlog);
+#   4. (B-N-1605) КВИТАНЦИЯ этого стопа (receipts.id = receipt_id control), если она открыта и blocked='mail_stop_intake':
+#      blocked=NULL, finished_at, outcome='mail_stop_manual_release', result_json только с machineReplyBody (копии владельцу и
+#      :result нет — как completeRow с machineOnly), audit 'turn_finished'. Иначе holdTick шлёт отправителю «УДЕРЖАНО …» и держит
+#      её в дневной сводке удержанных. Файл стопа приёмник затем сам отпускает из ящика (replay → finished → release).
+# zakryt-kvitanciyu — то же закрытие квитанции для стопа, снятого РАНЬШЕ (до B-N-1605): control в superseded|complete|
+#   blocked_prior_pause, квитанция открыта и blocked='mail_stop_intake', в сессии нет fence. Ход не проверяется: закрытие
+#   квитанции ход не начинает и не останавливает. Страховка базы, владелец базы, одна транзакция; чужие квитанции не трогает.
+#   Перед записью — страховка: копия базы (sqlite backup API) в /var/backups/montazh/mail-stop-hold/<агент>.<UTC>.do-snyatiya.sqlite
+#   (0600), проверена чтением строки control в копии; не прочиталась — отказ.
+# ПРЕДУСЛОВИЯ (не прошло — отказ 2, ничего не записано):
+#   строка есть и state='unknown' (активные admitted…resuming — не HOLD, а стоп в работе: ждать его deadline);
+#   ПЛАТФОРМА: hod-sluzhby <агент>.service = 0 (хода нет; 1 — идёт, 2/4 — слепота → отказ);
+#   SDK: процесс шлюза агента запущен ПОСЛЕ started_at строки (старый запрос умер вместе с ним) ИЛИ --sdk-sverka с
+#   доказательством руки (строка terminal этого запроса в журнале шлюза). Агент без шлюза (petrovich) — --sdk-sverka.
+# snyat-pauzu (B-N-1596: неудачный стоп на простаивающем оставил паузу, а у разговора a2a без слияния с чатом владельца входа
+#   «сообщение владельца» нет — агент глух к почте). Снимает ТОЛЬКО паузу conversation_pauses, поставленную этим стопом:
+#   строка control в superseded|complete (fence не держит), пауза state='paused' с command_id = receipt_id этого control и той же
+#   сессией; в сессии нет строк fence; hod-sluzhby = 0. Пауза 'resuming' (владелец уже пишет) — отказ. Запись — как у snyat:
+#   страховка базы, владелец базы, одна транзакция: DELETE строки паузы + audit 'mail_stop_manual_pause_release'. Живой процесс
+#   читает паузу из базы на каждом запуске хода — перезапуск не нужен; ход начнётся со следующим письмом (накопленные письма уйдут
+#   вместе с ним); опубликованный pauza.json догонит не позже 60 с (обновление видимости).
+# ЧЕГО НЕ ДЕЛАЕТ snyat: не снимает паузу разговора (conversation_pauses) — её снимает ОБЫЧНОЕ сообщение владельца (если чат
+#   владельца слит с этим разговором) или snyat-pauzu; не будит ход (ход сам не начнётся, пока не придёт письмо/сообщение); не отвечает отправителю
+#   статусом (ручное снятие — не исход стопа; отправитель видит unknown и сверяет руками); не трогает чужие строки.
+# ЧЕГО НЕ ЛОВИТ: ход, начатый между проверкой hod-sluzhby и транзакцией (секунды) — снятие при этом безопасно для fence,
+#   но рука обязана повторить pokazat после; запрос SDK, переживший смену процесса шлюза (не бывает при штатном restart).
+#   Стоп, который telegram 2.5.72–2.5.76 (mail-stop-receiver.js:136; с 2.5.77 исправлено — истёкший control отказывает до fence,
+#   отказ beginDispatch даёт строку unknown и подписанный статус, snyat берёт её штатно) бросил на beginDispatch→false: приёмник выходит с unknown
+#   БЕЗ подписанного статуса и НЕ переводит строку в unknown — строка остаётся 'admitted' (держит fence), пауза этого стопа стоит,
+#   отправитель не узнаёт ни исхода, ни паузы. pokazat покажет строку и паузу; snyat её не возьмёт («не HOLD, ждать deadline»),
+#   хотя deadline уже прошёл, — до смены процесса агента (тогда process_changed → unknown → snyat, затем snyat-pauzu). По коду
+#   ветка достижима, когда срок подписи истёк между перепроверкой и admit (резолвер с 2.5.73 ждёт agentFor); живьём не встречалась.
+# ПОДМЕНЫ ТОЛЬКО ДЛЯ СТЕНДА (печатаются строкой «ПОДМЕНА»): MSH_DB, MSH_HOD, MSH_SYSTEMCTL, MSH_BACKUP, MSH_NOW_MS.
+import json, os, sqlite3, subprocess, sys, time, pwd, datetime
+
+FENCE = ('admitted','dispatching','waiting','replacement_permitted','replacement_queued','resuming','unknown')
+GW = {'alfa':'coder-gateway@alfa','beta':'coder-gateway@beta','gamma':'coder-gateway@gamma','marc':'coder-gateway-marc','anna':'coder-gateway-anna','master':'coder-gateway-master',
+      'iskra':'claude-oauth-gateway@iskra','zarya':'claude-oauth-gateway@zarya','avrora':'claude-oauth-gateway@avrora',
+      'spartak':'claude-oauth-gateway@spartak','varvara':'claude-oauth-gateway@varvara'}
+
+def otkaz(t, k=2): print(f'🔴 ОТКАЗ: {t} — ничего не записано', file=sys.stderr); sys.exit(k)
+def vyzov(argv, **kw):
+    # Находка Авроры к №4 A-N-1948 (10.10): нет исполняемого (hod-sluzhby, systemctl, ps) — «ОТКАЗ … код 2» до записи, а не трассировка
+    # FileNotFoundError с кодом 1. Все вызовы ниже стоят ДО fork/записи, поэтому «ничего не записано» здесь верно.
+    try: return subprocess.run(argv, capture_output=True, text=True, **kw)
+    except OSError as e: otkaz(f'{argv[0]} не исполнился ({e.strerror}) — признак слеп')
+for v in ('MSH_DB','MSH_HOD','MSH_SYSTEMCTL','MSH_BACKUP','MSH_NOW_MS'):
+    if v in os.environ: print(f'⚠️ ПОДМЕНА: {v}={os.environ[v]}')
+SYSTEMCTL = os.environ.get('MSH_SYSTEMCTL', 'systemctl')
+HOD = os.environ.get('MSH_HOD', '/usr/local/libexec/agent-hod/hod-sluzhby')
+BACKUP = os.environ.get('MSH_BACKUP', '/var/backups/montazh/mail-stop-hold')
+now_ms = lambda: int(os.environ.get('MSH_NOW_MS') or time.time() * 1000)
+
+a = sys.argv[1:]
+rezhim = a.pop(0) if a and not a[0].startswith('-') else 'pokazat'
+if rezhim not in ('pokazat', 'snyat', 'snyat-pauzu', 'zakryt-kvitanciyu'): otkaz(f'режим «{rezhim}» не знаю (pokazat | snyat | snyat-pauzu | zakryt-kvitanciyu)')
+poz, opt, vboj = [], {}, False
+while a:
+    x = a.pop(0)
+    if x == '--v-boj': vboj = True
+    elif x in ('--prichina', '--backlog', '--sdk-sverka'):
+        if not a: otkaz(f'{x} без значения')
+        opt[x] = a.pop(0)
+    elif x.startswith('-'): otkaz(f'ключ «{x[:40]}» не знаю (прогон — по умолчанию, запись — --v-boj)')
+    else: poz.append(x)
+if rezhim == 'pokazat' and (len(poz) != 1 or opt or vboj): otkaz('pokazat <агент> — без ключей')
+if rezhim == 'snyat' and len(poz) != 2: otkaz('snyat <агент> <control_id> --prichina … [--backlog vernut|derzhat] [--sdk-sverka …] [--v-boj]')
+if rezhim == 'zakryt-kvitanciyu' and (len(poz) != 2 or set(opt) - {'--prichina'}): otkaz("zakryt-kvitanciyu <агент> <control_id> --prichina … [--v-boj] (без --backlog/--sdk-sverka)")
+if rezhim == 'snyat-pauzu' and (len(poz) != 2 or set(opt) - {'--prichina'}): otkaz("snyat-pauzu <агент> <control_id> --prichina … [--v-boj] (без --backlog/--sdk-sverka)")
+agent = poz[0]
+if not agent.isidentifier() or not agent.islower(): otkaz(f'агент «{agent}»')
+
+def show(unit, *props):
+    r = vyzov([SYSTEMCTL, 'show', unit, *[f'-p{p}' for p in props], '--value'])
+    if r.returncode: otkaz(f'systemctl show {unit} не ответил')
+    return r.stdout.rstrip('\n').split('\n')
+
+db = os.environ.get('MSH_DB')
+if not db:
+    wd = show(f'{agent}.service', 'WorkingDirectory')[0]
+    if not wd: otkaz(f'{agent}.service: WorkingDirectory пуст — базу не найти')
+    db = os.path.join(wd, '.message-receipts', 'receipts.sqlite')
+if not os.path.isfile(db): otkaz(f'базы нет: {db}')
+
+def ro():
+    c = sqlite3.connect(f'file:{db}?mode=ro', uri=True); c.row_factory = sqlite3.Row; c.execute('PRAGMA busy_timeout=5000'); return c
+c = ro()
+if not c.execute("SELECT 1 FROM sqlite_master WHERE name='mail_stop_controls'").fetchone():
+    print(f'{agent}: таблицы mail_stop_controls нет ({db}) — код стопа не монтирован или не стартовал; HOLD нет')
+    sys.exit(0 if rezhim == 'pokazat' else 2)
+rows = c.execute(f"SELECT * FROM mail_stop_controls WHERE state IN ({','.join('?'*len(FENCE))}) ORDER BY started_at", FENCE).fetchall()
+print(f'{agent}: база {db} · строк, держащих fence: {len(rows)}')
+for r in rows:
+    nb = c.execute('SELECT count(*) FROM mail_stop_backlog WHERE control_id=?', (r['control_id'],)).fetchone()[0]
+    p = c.execute('SELECT state,owner_id,command_id FROM conversation_pauses WHERE session_id=? AND session_created=?', (r['session_id'], r['session_created'])).fetchone()
+    print(f"  {r['control_id']} · {r['state']}{' ('+r['reason']+')' if r['reason'] else ''} · {r['mode']} · {r['principal']} · сессия {r['session_id']}/{r['session_created']}"
+          f" · начат {datetime.datetime.utcfromtimestamp(r['started_at']/1000):%H:%M:%SZ} · terminal SDK {r['sdk_terminal']} платформа {r['native_terminal']}"
+          f" · удержано писем {nb} · владелец ждёт: receipt {r['owner_receipt'] or '—'} message {r['owner_message'] or '—'} · пауза {dict(p) if p else 'нет'}")
+pz = c.execute("SELECT p.session_id,p.session_created,p.state,p.command_id,p.owner_id,m.control_id,m.state AS cstate FROM conversation_pauses p JOIN mail_stop_controls m ON m.receipt_id=p.command_id ORDER BY p.paused_at").fetchall() if c.execute("SELECT 1 FROM sqlite_master WHERE name='conversation_pauses'").fetchone() else []
+print(f'{agent}: пауз, поставленных стопом: {len(pz)}')
+for q in pz: print(f"  пауза {q['session_id']}/{q['session_created']} · {q['state']} · стоп {q['control_id']} ({q['cstate']}) · владелец {q['owner_id'] or '—'}")
+kv = c.execute("SELECT r.id,r.hold_notices,m.control_id,m.state FROM receipts r JOIN mail_stop_controls m ON m.receipt_id=r.id WHERE r.blocked='mail_stop_intake' AND r.finished_at IS NULL ORDER BY r.received_at").fetchall()
+print(f'{agent}: открытых квитанций стопа (blocked=mail_stop_intake): {len(kv)}')
+for q in kv: print(f"  квитанция {q['id']} · стоп {q['control_id']} ({q['state']}) · напоминаний «УДЕРЖАНО» {q['hold_notices']}" + (f" · ВИСИТ — mail-stop-hold zakryt-kvitanciyu {agent} {q['control_id']}" if q['state'] not in FENCE else ''))
+if rezhim == 'pokazat': sys.exit(0)
+
+def zakryt_kvitanciyu(w, rid, ruka, prichina):   # B-N-1605: как completeRow(machineOnly); 0 — квитанция не открыта или не стоп-удержание
+    body = f'[ответ по receipt {rid}; mail_stop_manual_release]\n\nСтоп снят вручную ({ruka}): {prichina}. Исхода стопа после снятия нет.'
+    n = w.execute("UPDATE receipts SET blocked=NULL,finished_at=?,outcome='mail_stop_manual_release',result_json=? WHERE id=? AND finished_at IS NULL AND blocked='mail_stop_intake'",
+                  (now_ms(), json.dumps({'kind': 'manual-release', 'ruka': ruka, 'machineReplyBody': body}, ensure_ascii=False), rid)).rowcount
+    if n: w.execute('INSERT INTO audit(receipt_id,at,kind,detail) VALUES(?,?,?,?)', (rid, now_ms(), 'turn_finished', 'mail_stop_manual_release'))
+    return n
+
+cid = poz[1]
+r = c.execute('SELECT * FROM mail_stop_controls WHERE control_id=?', (cid,)).fetchone()
+if not r: otkaz(f'строки {cid} нет')
+if rezhim == 'zakryt-kvitanciyu':
+    if r['state'] not in ('superseded', 'complete', 'blocked_prior_pause'): otkaz(f"{cid} в состоянии {r['state']} — стоп не закрыт: сначала snyat (он закроет и квитанцию)")
+    q = c.execute('SELECT * FROM receipts WHERE id=?', (r['receipt_id'],)).fetchone()
+    if not q: otkaz(f"квитанции {r['receipt_id']} нет")
+    if q['finished_at'] is not None or q['blocked'] != 'mail_stop_intake': otkaz(f"квитанция {q['id']} не висит (finished_at {q['finished_at']}, blocked {q['blocked']}) — закрывать нечего")
+    left = c.execute(f"SELECT count(*) FROM mail_stop_controls WHERE session_id=? AND session_created=? AND state IN ({','.join('?'*len(FENCE))})", (r['session_id'], r['session_created'], *FENCE)).fetchone()[0]
+    if left: otkaz(f'в сессии держат fence строк: {left} — сначала snyat')
+    prichina = opt.get('--prichina', '').strip()
+    if len(prichina) < 10: otkaz('--prichina обязательна (словами, ≥ 10 знаков)')
+    ruka = os.environ.get('SUDO_USER') or pwd.getpwuid(os.getuid()).pw_name
+    print(f"  план: квитанция {q['id']} (напоминаний {q['hold_notices']}) → finished, outcome mail_stop_manual_release, blocked снят · рука {ruka}")
+    if not vboj: print('⇒ ПРОГОН: ничего не записано (запись — --v-boj)'); sys.exit(0)
+    c.close(); st = os.stat(db); os.makedirs(BACKUP, mode=0o700, exist_ok=True)
+    kopiya = os.path.join(BACKUP, f'{agent}.{datetime.datetime.utcnow():%Y%m%dT%H%M%SZ}.do-zakrytiya-kvitancii.sqlite')
+    c = ro(); b = sqlite3.connect(kopiya); c.backup(b); b.close(); c.close(); os.chmod(kopiya, 0o600)
+    cs = sqlite3.connect(f'file:{kopiya}?mode=ro', uri=True)
+    if cs.execute('SELECT blocked FROM receipts WHERE id=?', (q['id'],)).fetchone() != ('mail_stop_intake',): otkaz(f'страховка {kopiya} не читается или не та')
+    cs.close(); print(f'  страховка базы: {kopiya}')
+    pid = os.fork()
+    if pid == 0:   # пишет ВЛАДЕЛЕЦ базы, как в snyat
+        try:
+            if os.getuid() == 0: os.setgid(st.st_gid); os.setuid(st.st_uid)
+            w = sqlite3.connect(db, isolation_level=None); w.execute('PRAGMA busy_timeout=5000'); w.execute('BEGIN IMMEDIATE')
+            if zakryt_kvitanciyu(w, q['id'], ruka, prichina) != 1: w.execute('ROLLBACK'); print('🔴 квитанция уже не та — НЕ закрыта', file=sys.stderr, flush=True); os._exit(1)
+            w.execute('INSERT INTO audit(receipt_id,at,kind,detail) VALUES(?,?,?,?)', (q['id'], now_ms(), 'mail_stop_manual_receipt_close', json.dumps({'ruka': ruka, 'prichina': prichina, 'control': cid}, ensure_ascii=False)))
+            w.execute('COMMIT'); print('  записано: квитанция закрыта 1', flush=True); os._exit(0)
+        except Exception as e: print(f'🔴 запись не удалась: {e}', file=sys.stderr, flush=True); os._exit(1)
+    _, k = os.waitpid(pid, 0)
+    if os.waitstatus_to_exitcode(k): sys.exit(1)
+    c = ro(); q2 = c.execute('SELECT blocked,finished_at,outcome FROM receipts WHERE id=?', (q['id'],)).fetchone()
+    print(f"  ПРОВЕРКА: blocked {q2['blocked']} · finished {'да' if q2['finished_at'] else 'НЕТ'} · outcome {q2['outcome']}")
+    if q2['blocked'] is not None or q2['finished_at'] is None: print('🔴 проверка НЕ сошлась', file=sys.stderr); sys.exit(1)
+    print('✅ квитанция закрыта: напоминаний «УДЕРЖАНО» больше не будет; файл стопа приёмник отпустит на следующем опросе.'); sys.exit(0)
+if rezhim == 'snyat-pauzu':
+    if r['state'] not in ('superseded', 'complete'): otkaz(f"{cid} в состоянии {r['state']} — паузу снимать рано: сначала снять fence (snyat) или дождаться исхода")
+    p = c.execute('SELECT * FROM conversation_pauses WHERE session_id=?', (r['session_id'],)).fetchone()
+    if not p: otkaz(f"паузы сессии {r['session_id']} нет — снимать нечего")
+    if p['command_id'] != r['receipt_id'] or p['session_created'] not in (None, r['session_created']): otkaz(f"пауза сессии поставлена не этим стопом (command {p['command_id']}) — не трогаю")
+    if p['state'] != 'paused': otkaz(f"пауза в состоянии {p['state']} — владелец уже снимает её своим вводом")
+    left = c.execute(f"SELECT count(*) FROM mail_stop_controls WHERE session_id=? AND session_created=? AND state IN ({','.join('?'*len(FENCE))})", (r['session_id'], r['session_created'], *FENCE)).fetchone()[0]
+    if left: otkaz(f'в сессии держат fence строк: {left} — сначала snyat')
+    prichina = opt.get('--prichina', '').strip()
+    if len(prichina) < 10: otkaz('--prichina обязательна (словами, ≥ 10 знаков)')
+    h = vyzov([HOD, f'{agent}.service'])
+    if h.returncode != 0: otkaz(f"платформа: hod-sluzhby {agent}.service код {h.returncode} ({h.stdout.strip()}) — ход идёт или признак слеп")
+    print(f'  ✅ платформа: хода нет ({h.stdout.strip()})')
+    ruka = os.environ.get('SUDO_USER') or pwd.getpwuid(os.getuid()).pw_name
+    detail = json.dumps({'ruka': ruka, 'prichina': prichina, 'control': cid, 'control_state': r['state'], 'pauza': dict(p), 'platforma': h.stdout.strip()}, ensure_ascii=False)
+    print(f"  план: удалить паузу {r['session_id']} (command {p['command_id']}) · audit mail_stop_manual_pause_release · рука {ruka}")
+    if not vboj: print('⇒ ПРОГОН: ничего не записано (запись — --v-boj)'); sys.exit(0)
+    c.close(); st = os.stat(db); os.makedirs(BACKUP, mode=0o700, exist_ok=True)
+    kopiya = os.path.join(BACKUP, f'{agent}.{datetime.datetime.utcnow():%Y%m%dT%H%M%SZ}.do-snyatiya-pauzy.sqlite')
+    c = ro(); b = sqlite3.connect(kopiya); c.backup(b); b.close(); c.close(); os.chmod(kopiya, 0o600)
+    cs = sqlite3.connect(f'file:{kopiya}?mode=ro', uri=True)
+    if cs.execute('SELECT command_id FROM conversation_pauses WHERE session_id=?', (r['session_id'],)).fetchone() != (r['receipt_id'],): otkaz(f'страховка {kopiya} не читается или не та')
+    cs.close(); print(f'  страховка базы до снятия паузы: {kopiya}')
+    pid = os.fork()
+    if pid == 0:   # пишет ВЛАДЕЛЕЦ базы, как в snyat
+        try:
+            if os.getuid() == 0: os.setgid(st.st_gid); os.setuid(st.st_uid)
+            w = sqlite3.connect(db, isolation_level=None); w.execute('PRAGMA busy_timeout=5000'); w.execute('BEGIN IMMEDIATE')
+            n = w.execute("DELETE FROM conversation_pauses WHERE session_id=? AND command_id=? AND state='paused'", (r['session_id'], r['receipt_id'])).rowcount
+            if n != 1: w.execute('ROLLBACK'); print('🔴 пауза уже не та — снятие НЕ сделано', file=sys.stderr, flush=True); os._exit(1)
+            w.execute('INSERT INTO audit(receipt_id,at,kind,detail) VALUES(?,?,?,?)', (r['receipt_id'], now_ms(), 'mail_stop_manual_pause_release', detail))
+            w.execute('COMMIT'); print('  записано: пауза удалена 1', flush=True); os._exit(0)
+        except Exception as e: print(f'🔴 запись не удалась: {e}', file=sys.stderr, flush=True); os._exit(1)
+    _, k = os.waitpid(pid, 0)
+    if os.waitstatus_to_exitcode(k): sys.exit(1)
+    c = ro(); p2 = c.execute('SELECT 1 FROM conversation_pauses WHERE session_id=?', (r['session_id'],)).fetchone()
+    au = c.execute("SELECT count(*) FROM audit WHERE receipt_id=? AND kind='mail_stop_manual_pause_release'", (r['receipt_id'],)).fetchone()[0]
+    print(f"  ПРОВЕРКА: пауза {'ЕСТЬ' if p2 else 'нет'} · audit снятия {au}")
+    if p2 or not au: print('🔴 проверка НЕ сошлась', file=sys.stderr); sys.exit(1)
+    print('✅ пауза снята. Ход начнётся со следующим письмом (накопленные уйдут с ним); pauza.json догонит ≤ 60 с; повторить pokazat.'); sys.exit(0)
+if r['state'] != 'unknown': otkaz(f"{cid} в состоянии {r['state']} — это не HOLD; активный стоп ждёт своего deadline ({r['deadline_at']})")
+prichina = opt.get('--prichina', '').strip()
+if len(prichina) < 10: otkaz('--prichina обязательна (словами, ≥ 10 знаков)')
+backlog = opt.get('--backlog', 'vernut')
+if backlog not in ('vernut', 'derzhat'): otkaz('--backlog vernut | derzhat')
+h = vyzov([HOD, f'{agent}.service'])
+if h.returncode != 0: otkaz(f"платформа: hod-sluzhby {agent}.service код {h.returncode} ({h.stdout.strip()}) — ход идёт или признак слеп")
+print(f'  ✅ платформа: хода нет ({h.stdout.strip()})')
+sdk = None
+gw = GW.get(agent)
+if gw:
+    pid = show(gw, 'MainPID')[0]
+    st = vyzov(['ps', '-o', 'lstart=', '-p', pid], env={'LC_ALL': 'C', 'TZ': 'UTC'}).stdout.strip() if pid not in ('', '0') else ''
+    start_ms = int(datetime.datetime.strptime(st, '%a %b %d %H:%M:%S %Y').replace(tzinfo=datetime.timezone.utc).timestamp() * 1000) if st else 0
+    if start_ms > r['started_at']: sdk = f'процесс шлюза {gw} pid {pid} запущен {st} UTC — ПОСЛЕ начала стопа'
+if not sdk and opt.get('--sdk-sverka'): sdk = 'рука: ' + opt['--sdk-sverka'].strip()
+if not sdk: otkaz(f"SDK: процесс шлюза {gw or '(нет шлюза)'} не сменился после начала стопа — нужно --sdk-sverka 'строка terminal этого запроса в журнале шлюза'")
+print(f'  ✅ SDK: {sdk}')
+ruka = os.environ.get('SUDO_USER') or pwd.getpwuid(os.getuid()).pw_name
+detail = json.dumps({'ruka': ruka, 'prichina': prichina, 'bylo': r['state'], 'reason_bylo': r['reason'], 'platforma': h.stdout.strip(), 'sdk': sdk, 'backlog': backlog}, ensure_ascii=False)
+print(f"  план: {cid} unknown → superseded · backlog {backlog} · audit mail_stop_manual_release · рука {ruka}")
+if not vboj: print('⇒ ПРОГОН: ничего не записано (запись — --v-boj)'); sys.exit(0)
+c.close()
+
+st = os.stat(db)
+os.makedirs(BACKUP, mode=0o700, exist_ok=True)
+kopiya = os.path.join(BACKUP, f'{agent}.{datetime.datetime.utcnow():%Y%m%dT%H%M%SZ}.do-snyatiya.sqlite')
+c = ro(); b = sqlite3.connect(kopiya); c.backup(b); b.close(); c.close(); os.chmod(kopiya, 0o600)
+cs = sqlite3.connect(f'file:{kopiya}?mode=ro', uri=True)
+if cs.execute('SELECT state FROM mail_stop_controls WHERE control_id=?', (cid,)).fetchone() != ('unknown',): otkaz(f'страховка {kopiya} не читается или не та')
+cs.close(); print(f'  страховка базы до снятия: {kopiya} (откат — по строке audit и этой копии, рукой)')
+pid = os.fork()
+if pid == 0:   # пишет ВЛАДЕЛЕЦ базы: root не оставит своих файлов журнала рядом с базой агента
+    try:
+        if os.getuid() == 0: os.setgid(st.st_gid); os.setuid(st.st_uid)
+        w = sqlite3.connect(db, isolation_level=None); w.execute('PRAGMA busy_timeout=5000')
+        w.execute('BEGIN IMMEDIATE')
+        n = w.execute("UPDATE mail_stop_controls SET state='superseded',reason=? WHERE control_id=? AND state='unknown'", (f'manual_release: {ruka}: {prichina}', cid)).rowcount
+        if n != 1: w.execute('ROLLBACK'); print(f'🔴 строка {cid} уже не unknown — снятие НЕ сделано', file=sys.stderr, flush=True); os._exit(1)
+        nb = w.execute('DELETE FROM mail_stop_backlog WHERE control_id=?', (cid,)).rowcount if backlog == 'vernut' else 0
+        w.execute('INSERT INTO audit(receipt_id,at,kind,detail) VALUES(?,?,?,?)', (r['receipt_id'], now_ms(), 'mail_stop_manual_release', detail))
+        kz = zakryt_kvitanciyu(w, r['receipt_id'], ruka, prichina)
+        w.execute('COMMIT'); print(f'  записано: superseded 1 · удержанных писем возвращено {nb} · квитанция стопа закрыта {kz}', flush=True); os._exit(0)
+    except Exception as e: print(f'🔴 запись не удалась: {e}', file=sys.stderr, flush=True); os._exit(1)
+_, k = os.waitpid(pid, 0)
+k = os.waitstatus_to_exitcode(k)
+if k: sys.exit(1)
+c = ro()
+left = c.execute(f"SELECT count(*) FROM mail_stop_controls WHERE session_id=? AND session_created=? AND state IN ({','.join('?'*len(FENCE))})", (r['session_id'], r['session_created'], *FENCE)).fetchone()[0]
+au = c.execute("SELECT count(*) FROM audit WHERE receipt_id=? AND kind='mail_stop_manual_release'", (r['receipt_id'],)).fetchone()[0]
+p = c.execute('SELECT state,command_id FROM conversation_pauses WHERE session_id=? AND session_created=?', (r['session_id'], r['session_created'])).fetchone()
+print(f'  ПРОВЕРКА: fence сессии {left} · audit снятия {au} · пауза {p[0] if p else "нет"}')
+# B-N-1596 r2: пауза, поставленная ЭТИМ стопом, называется вместе с командой её снятия.
+svoya = bool(p and p[1] == r['receipt_id'])
+if svoya: print(f"  ⚠️ ПАУЗА ЭТОГО СТОПА ОСТАЛАСЬ ({p[0]}): агент не начнёт ход, пока её не снимут — mail-stop-hold snyat-pauzu {agent} {cid} --prichina '…' (прогон, затем --v-boj) либо обычное сообщение владельца, если его чат слит с этим разговором")
+if left or not au: print('🔴 проверка НЕ сошлась', file=sys.stderr); sys.exit(1)
+if backlog == 'derzhat':
+    print(f"✅ fence снят, удержанные письма ОСТАЛИСЬ удержанными: сессию отопрёт следующее НОВОЕ письмо; удержанные к модели не пойдут НИКОГДА"
+          f"{' (и пауза осталась — см. строку выше)' if p else ''}; повторить pokazat.")
+else:
+    print(f"✅ HOLD снят. Дальше: {('пауза ЭТОГО стопа осталась — snyat-pauzu (строка выше)' if svoya else 'пауза осталась (чужая: другого стопа или человека) — её снимает её владелец') if p else 'паузы нет — ход начнётся со следующим письмом'}; повторить pokazat.")

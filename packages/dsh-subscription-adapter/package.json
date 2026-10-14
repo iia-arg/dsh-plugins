@@ -1,0 +1,50 @@
+{
+  "name": "dsh-subscription-adapter",
+  "version": "3.1.2",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.js",
+  "description": "Адаптер DSH к подписочному шлюзу · DSH adapter for a subscription gateway",
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": "^0.1.1-rc.2 || ^0.2.0-rc.2"
+  },
+  "scripts": {
+    "test": "node test/stend-predela.mjs"
+  },
+  "files": [
+    "src",
+    "test",
+    "README.md",
+    "CHANGELOG.md",
+    "docs/ARCHITECTURE.md",
+    "docs/SETTINGS.md",
+    "docs/GUARDS.md",
+    "docs/TROUBLESHOOTING.md",
+    "LIVE-INPUT.md",
+    "docs/SERVICES.md"
+  ],
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-llm": "0.1.1-rc.2"
+  },
+  "keywords": [
+    "адаптер · adapter",
+    "подписка · subscription",
+    "DSH · DSH",
+    "NDJSON · NDJSON"
+  ],
+  "author": "Aleksandr Argelander",
+  "dsh": {
+    "prezhnie_imena": [
+      "subscription-adapter"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/iia-arg/dsh-plugins.git",
+    "directory": "packages/dsh-subscription-adapter"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

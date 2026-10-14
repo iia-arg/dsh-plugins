@@ -1,0 +1,79 @@
+#!/usr/bin/python3 -B
+"""codex-compaction-vyborka — узкий канал событий сжатия Codex из журнала шлюза агента без датчика хода.
+
+B-N-1175 (29.09.2026, Аврора; решение Забавы — вариант (1) «узкий канал», условие Вениамина 13:23Z).
+ЗАЧЕМ. dsh-compact-outcomes работает под coders и журнал юнита шлюза чужой учётки (marc) не видит; дать
+службе группу systemd-journal = дать любому Codex-кодеру чтение всего журнала машины. Поэтому root выбирает
+из журнала ОДНОГО юнита ТОЛЬКО строки «[codex-compaction] {json}» и дописывает их разобранный json в
+/var/lib/codex-compaction-sobytiya/<имя>.jsonl (root:coders 0640). turn_watch читает файл, не журнал.
+
+ВЫЗОВ: codex-compaction-vyborka <имя> <юнит>   (зовёт ExecStartPre=-+ в drop-in dsh-compact-outcomes;
+       имя и юнит — в drop-in под root, НЕ в agents.json дома coders: какой журнал читает root, решает root).
+ПОРЯДОК: курсор журнала в <каталог>/.kursor-<имя> (root 0600). Первый прогон — только курсор конца и пустой
+       файл: история не выбирается. Затем: строки после курсора → в файл (append) → новый курсор. Сбой между
+       записью и курсором даст дубль строки один раз (тревогу turn_watch — тоже один раз).
+       Каждый удачный прогон трогает mtime файла: по нему turn_watch отличает «событий нет» от «выборка стоит».
+ИСХОД: 0 — выбрано (печать json: сколько строк журнала, сколько взято); 2 — отказ (журнал не прочитан, у юнита
+       ни одной записи, негодные аргументы) — файл НЕ тронут, turn_watch назовёт СЛЕПОТУ по давности файла.
+НЕ ЛОВИТ: сжатие, о котором шлюз не написал «[codex-compaction]» (иная версия шлюза); курсор, ушедший из
+       журнала при ротации (journalctl откажет каждый прогон — выборка встанет, turn_watch назовёт слепоту).
+"""
+import grp, json, os, re, subprocess, sys
+from pathlib import Path
+
+KATALOG = Path('/var/lib/codex-compaction-sobytiya')
+JOURNALCTL = '/usr/bin/journalctl'
+GRUPPA = 'coders'
+METKA = '[codex-compaction] '
+IMYA = re.compile(r'^[a-z]+$')
+YUNIT = re.compile(r'^coder-gateway(-[a-z]+|@[a-z]+)\.service$')
+
+
+def vyborka(imya, yunit, katalog=KATALOG, journalctl=JOURNALCTL, gruppa=GRUPPA):
+    if not IMYA.match(imya) or not YUNIT.match(yunit):
+        return 2, {'otkaz': 'негодные имя/юнит'}
+    gid = grp.getgrnam(gruppa).gr_gid if gruppa else None
+    katalog.mkdir(mode=0o750, exist_ok=True)
+    if gid is not None: os.chown(katalog, 0, gid)
+    os.chmod(katalog, 0o750)
+    fajl = katalog / f'{imya}.jsonl'; pk = katalog / f'.kursor-{imya}'
+    kursor = pk.read_text().strip() if pk.exists() else None
+    cmd = [journalctl, '-u', yunit, '-o', 'json', '--no-pager'] + (['--after-cursor', kursor] if kursor else ['-n', '1'])
+    try: r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as e: return 2, {'otkaz': f'journalctl не отработал ({type(e).__name__})'}
+    if r.returncode != 0: return 2, {'otkaz': f'journalctl код {r.returncode}: {r.stderr.strip()[:160]}'}
+    try:
+        zapisi = [json.loads(l) for l in r.stdout.splitlines() if l.strip()]
+        if any(not isinstance(z, dict) or not isinstance(z.get('__CURSOR'), str) or not z['__CURSOR'] for z in zapisi):
+            raise ValueError('неверная строка/курсор')
+    except ValueError:
+        return 2, {'otkaz': 'журнал содержит неверный JSON/курсор — файл не тронут'}
+    if kursor is None and not zapisi: return 2, {'otkaz': f'у {yunit} в журнале ни одной записи — юнит не тот или журнал не виден'}
+    vzyato = []
+    for z in zapisi:
+        if kursor is None: break  # первый прогон: только курсор, история не выбирается
+        m = z.get('MESSAGE')
+        if isinstance(m, list): m = bytes(m).decode('utf-8', 'replace')
+        if not isinstance(m, str) or METKA not in m: continue
+        try: d = json.loads(m.split(METKA, 1)[1])
+        except ValueError: continue
+        if isinstance(d, dict): vzyato.append(d)
+    novyj = zapisi[-1].get('__CURSOR') if zapisi else kursor
+    fd = os.open(fajl, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o640)
+    try:
+        if vzyato: os.write(fd, ''.join(json.dumps(d, ensure_ascii=False) + '\n' for d in vzyato).encode())
+        os.fsync(fd)
+    finally: os.close(fd)
+    if gid is not None: os.chown(fajl, 0, gid)
+    os.chmod(fajl, 0o640)
+    if novyj != kursor:
+        tmp = pk.with_name(pk.name + '.tmp'); tmp.write_text(novyj + '\n'); os.chmod(tmp, 0o600); os.replace(tmp, pk)
+    os.utime(fajl)
+    return 0, {'imya': imya, 'yunit': yunit, 'strok_zhurnala': len(zapisi), 'vzyato': len(vzyato), 'pervyj_progon': kursor is None}
+
+
+if __name__ == '__main__':
+    if len(sys.argv) != 3: print('вызов: codex-compaction-vyborka <имя> <юнит>', file=sys.stderr); sys.exit(2)
+    kod, itog = vyborka(sys.argv[1], sys.argv[2])
+    print('codex-compaction-vyborka ' + json.dumps(itog, ensure_ascii=False), file=sys.stderr if kod else sys.stdout)
+    sys.exit(kod)

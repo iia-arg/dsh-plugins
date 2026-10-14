@@ -1,0 +1,11 @@
+# /etc/systemd/system/golos-watch.timer — НОВЫЙ (B-N-760). Раз в сутки и через 10 мин после загрузки машины.
+# ⚠️ Подъём СЛУЖБЫ агента таймер не ловит — только загрузку машины и сутки. Проба дешёвая (~23 с на 9 агентов),
+#    звать её после подъёма агента можно рукой: systemctl start golos-watch.service.
+[Unit]
+Description=Сторож голоса — раз в сутки и после загрузки
+[Timer]
+OnBootSec=10min
+OnCalendar=*-*-* 05:20:00 UTC
+Persistent=true
+[Install]
+WantedBy=timers.target

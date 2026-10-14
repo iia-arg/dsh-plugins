@@ -1,7 +1,7 @@
 {
   "name": "dsh-pamyat-secretary",
-  "version": "0.1.0-alpha.23",
-  "description": "Секретарь компакции для DSH: снимает сводку затираемой истории и кладёт её в память с verbatim-ссылкой на затенённый диапазон.",
+  "version": "3.1.2",
+  "description": "Сводки сжатия, дистилляция знаний и ограниченное восстановление · Compaction summaries, knowledge distillation and bounded recovery",
   "type": "module",
   "main": "src/index.js",
   "files": [
@@ -9,7 +9,8 @@
     "test",
     "README.md",
     "README.en.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "docs"
   ],
   "scripts": {
     "test": "r=0; for f in test/stend-*.mjs; do node \"$f\"; c=$?; if [ $c -eq 1 ]; then r=1; elif [ $c -eq 2 ] && [ $r -ne 1 ]; then r=2; elif [ $c -ne 0 ] && [ $c -ne 2 ] && [ $r -ne 1 ]; then r=$c; fi; done; exit $r"
@@ -19,16 +20,15 @@
     "@deepseek-ai/schemastery": "^3.18.1"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.15.0"
   },
   "license": "MIT",
+  "author": "Aleksandr Argelander",
   "keywords": [
-    "dsh",
-    "deepseek-harness",
-    "agent",
-    "memory",
-    "compaction",
-    "plugin"
+    "память-агента · agent-memory",
+    "дистилляция-знаний · knowledge-distillation",
+    "сводки-сжатия · compaction-summaries",
+    "происхождение · provenance"
   ],
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",

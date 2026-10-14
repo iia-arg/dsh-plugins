@@ -1,0 +1,10 @@
+[Unit]
+Description=Сторож узла sadik (местный режим, переехал с aclaude 06.09.2026 по поручению Александра)
+
+[Service]
+Type=oneshot
+User=root
+Environment=SADIK_WATCH_MESTNO=1
+Environment=SADIK_ALERT_BIN=/usr/local/bin/dsh-alert
+Environment=SADIK_WATCH_SOST=/var/lib/sadik-watch
+ExecStart=/usr/local/sbin/sadik-watch

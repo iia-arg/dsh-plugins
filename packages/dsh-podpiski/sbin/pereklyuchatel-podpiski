@@ -1,0 +1,425 @@
+#!/usr/bin/env bash
+# pereklyuchatel-podpiski — /switch для sadik (B-N-1151, 28.09.2026, Искра; слово владельца 28.09 20:40+20:53).
+# Переключает подписку Claude (1/2/3) у ОБЩИХ по реестру Claude-шлюзов sadik и перезапускает их. Пара к aclaude-/switch.
+#
+# ЗОВ:  pereklyuchatel-podpiski <1|2|3> [force]   (без цели — по кругу 1→2→3→1)
+#   без цели — следующая по кругу от подписки первого ОБЩЕГО шлюза; смешанное среди общих — НЕ отказ: все общие сводятся
+#   на неё с перечнем «кто на какой» (слово владельца 05.10 23:45 МСК; прежний отказ усл.1 Вениамина снят им).
+#   1|2|3 — целевая подписка. force — снять заслон лимита (ручной режим владельца).
+#
+# ЧТО ПЕРЕКЛЮЧАЕТ: только claude-oauth-gateway@<agent> с podpiska = obshchaya-claude в реестре и НЕПУСТЫМ
+#   GATEWAY_TOKEN_FILE=token-podpiska-{1,2,3}
+#   в /proc/PID/environ (живой список, не по памяти). Codex (alfa/beta/gamma/marc, файл пуст) и Петрович-
+#   DeepSeek не затрагиваются по построению — у них нет такого шлюза с подписочным токеном.
+# 07.10.2026 (слово владельца 02:19 МСК: все Claude-агенты на подписке 2, КРОМЕ Варвары — она на 3; наряд Забавы, Аврора):
+#   ИЗ ЖИВОГО СПИСКА В ПЕРЕКЛЮЧЕНИЕ ИДЁТ ТОЛЬКО агент с namerenie.podpiska = obshchaya-claude в РЕЕСТРЕ (agent-registry pole
+#   <a> podpiska --json). podpiska-N — СВОЯ подписка: не трогается, печатается «<a>: своя подписка N по реестру — не трогаю»;
+#   смешанность и «первый шлюз» без цели — только среди общих. Реестр не ответил, поля нет, иное значение — ОТКАЗ до любого
+#   действия (неизвестное ведёт в отказ, а не в «переключить всех»).
+# ЕДИНИЦА: строка GATEWAY_TOKEN_FILE=/etc/claude-oauth/token-podpiska-<N> в /etc/claude-oauth/instance-<a>.env
+#   → дождаться конца хода → сменить N → снова проверить ход → restart → сверить живой токен.
+# B-N-1472: общий бюджет ожидания600с, опрос5с; неизвестный ход не разрешает restart.
+# Код7 — частично: занятые/неизмеренные не переключены; force снимает только лимит, не этот заслон.
+# ЗАСЛОН B-N-1390: локальные следы текущих процессов + таблица dsh-limity sadik (оба окна; B-N-1776 такт 4).
+# Явный лимит любого источника — ОТКАЗ. Нет лимита и хотя бы один источник подтверждает
+# доступность — проход. Оба неизвестны — ОТКАЗ с двумя причинами; null не равен нулю.
+# dsh-limity: /var/lib/dsh-limity/limity.db read-only; правило свежести — /etc/default/pereklyuchatel-podpiski-limity.
+# Предел чтения 12с в helper, внешний предел 15с + 1с на остановку; одна попытка.
+# Force и случай «все уже на цели» прежние. Это не резервирование квоты: после замера
+# другая машина может её потратить. Модельные premium-ограничения и баланс доплат не проверяются.
+# set -u: ВСЕ переменные инициализированы ДО заслонов (урок C-N-1150 «SEJ unbound»).
+# ДОСТУП (B-N-1621): шлюз читает ТОЛЬКО свою подписку (ACL, svesti-dostup-podpisok). После правки строки env и ДО restart —
+#   `svesti-dostup-podpisok --dobavit` (не выдал — откат настройки этого агента, стоп); в конце прогона, если хоть одна
+#   настройка менялась, — `--svesti` (подписка, с которой ушли, отзывается). Сбой --svesti прогон не роняет — говорится в итоге.
+#   Стенд (SWITCH_STEND=1) обязан подменить и помощника (SWITCH_SVESTI), иначе ОТКАЗ: боевые права из стенда не трогаются.
+set -euo pipefail
+
+# ── боевые значения; подмена — ТОЛЬКО стенду и ТОЛЬКО при явном ключе SWITCH_STEND=1 (B-N-1394,
+# рецепт Вениамина). Без ключа все SWITCH_* игнорируются: забытая переменная в root-оболочке не
+# подменит ни systemctl, ни reader. Ключ с иным значением — ОТКАЗ (неизвестный ввод не ведёт ни в бой,
+# ни в стенд). ГРАНИЦА: PATH (sudo, cp, sed, date, journalctl) ключом не закрыт и точкой подмены не числится.
+ENV_DIR=/etc/claude-oauth
+SYSTEMCTL=systemctl
+JOURNALCTL=journalctl
+LIMIT_DIR=/var/lib/sadik-watch
+ALERT=/usr/local/bin/dsh-alert
+ZHIVOJ_TOKEN=""                # живой токен-файл шлюза по агенту: печатает номер подписки или пусто
+OKNO_LIMITA=10800              # 3 ч, как OKNO_OTKAZA sadik-watch
+OTMETKA=/var/lib/pereklyuchatel-podpiski/last
+ITOG_FILE=/var/lib/pereklyuchatel-podpiski/last-itog.txt
+HOD_CMD=""
+START_CMD=""
+LIMITY_READER=/usr/local/libexec/pereklyuchatel-podpiski-limity.py
+CHASTOTA=30                    # не чаще раза в 30 с
+PAUZA=2                        # после restart, до проверки живого токена
+TURN_CMD=/usr/local/libexec/agent-hod/hod-sluzhby
+TURN_WAIT=600                  # общий бюджет ожидания на весь запуск, не на каждого агента
+TURN_POLL=5
+TURN_PROBE=10                  # один вызов прибора, затем 1с до KILL
+# B-N-1498 (03.10.2026, Михалыч; наряд Забавы): СТРАХОВКИ — не в /etc/claude-oauth, а в едином месте страховок sadik,
+# по каталогу на прогон: $BAK_DIR/<штамп>-switch<цель>/instance-<агент>.env (cp -p: владелец и 600 сохраняются).
+# Прежде instance-<a>.env.bak-* ложились рядом с боевыми: 10 файлов за две пробы владельца, сторож копии видел их
+# неучтёнными, и они копились бы на каждом переключении.
+# РОТАЦИЯ: после прогона держим последние BAK_HRANIT=10 каталогов-прогонов. ДОВОД: страховка нужна для отката
+# ВНУТРИ прогона (используется до его конца); после — только для «что стояло до переключения». 10 прогонов при
+# нынешнем темпе (переключение на исчерпании лимита — единицы в сутки; две пробы владельца = 2 прогона) покрывают
+# несколько суток; глубже — ночная копия sadik (её охват включает /var/backups/montazh, хранение 30). Объём
+# ≤ ~15 КБ на прогон. Удаляются ТОЛЬКО каталоги вида ЦЦЦЦЦЦЦЦTЦЦЦЦЦЦZ-switch[123] внутри $BAK_DIR, текущий — никогда.
+BAK_DIR=/var/backups/montazh/pereklyuchatel-podpiski
+BAK_HRANIT=10
+SVESTI=/usr/local/sbin/svesti-dostup-podpisok   # B-N-1621: права на токены — только через него
+REESTR=/usr/local/bin/agent-registry            # 07.10: кто общий, кто со своей подпиской — только из реестра
+# SWITCH_<имя>:переменная — точки подмены только при явном ключе стенда
+PODMENY="REGISTRY:REESTR ENV_DIR:ENV_DIR SYSTEMCTL:SYSTEMCTL LIMIT_DIR:LIMIT_DIR ALERT:ALERT LIVE_TOKEN_CMD:ZHIVOJ_TOKEN OKNO_LIMITA:OKNO_LIMITA OTMETKA:OTMETKA ITOG_FILE:ITOG_FILE HOD_CMD:HOD_CMD START_CMD:START_CMD LIMITY_READER:LIMITY_READER MIN_INTERVAL:CHASTOTA SLEEP:PAUZA TURN_CMD:TURN_CMD TURN_WAIT:TURN_WAIT TURN_POLL:TURN_POLL TURN_PROBE:TURN_PROBE JOURNALCTL:JOURNALCTL BAK_DIR:BAK_DIR BAK_HRANIT:BAK_HRANIT SVESTI:SVESTI"
+case "${SWITCH_STEND:-}" in
+  1) [ -n "${SWITCH_REGISTRY:-}" ] || { echo "ОТКАЗ: SWITCH_STEND=1 без SWITCH_REGISTRY — стенд судил бы своих агентов по БОЕВОМУ реестру; ничего не тронуто" >&2; exit 2; }
+     [ -n "${SWITCH_SVESTI:-}" ] || { echo "ОТКАЗ: SWITCH_STEND=1 без SWITCH_SVESTI — стенд тронул бы БОЕВЫЕ права токенов; ничего не тронуто" >&2; exit 2; }
+     podmeneno=""
+     for p in $PODMENY; do v="SWITCH_${p%%:*}"
+       if [ -n "${!v:-}" ]; then printf -v "${p#*:}" '%s' "${!v}"; podmeneno="$podmeneno ${p%%:*}"; fi
+     done
+     echo "ПОДМЕНЕНО:${podmeneno:- ничего}" ;;
+  "") zabyto=""
+      for p in $PODMENY; do v="SWITCH_${p%%:*}"; [ -z "${!v:-}" ] || zabyto="$zabyto $v"; done
+      [ -z "$zabyto" ] || echo "ИГНОРИРУЮ (нет SWITCH_STEND=1), беру боевые:$zabyto" >&2 ;;
+  *) echo "ОТКАЗ: SWITCH_STEND=«${SWITCH_STEND}» — допустимо только 1 (стенд) или пусто (бой); ничего не тронуто" >&2; exit 2 ;;
+esac
+
+# ── инициализация ВСЕХ переменных до первой проверки (set -u) ──────────────────
+CEL=""; FORCE=0; RC=0; smeshannoe=0; N_OK=0; N_SKIP=0
+TIHO=0                         # B-N-1806: «tiho» — без своей тревоги владельцу (итог — в ITOG_FILE; шлёт зовущий dsh-limity-avtoperekl)
+pereklyucheny=(); zanyatye=(); neproverennye=(); TURN_REASON=""; TURN_DEADLINE=0
+agenty=(); tek=(); menyat=(); itog_str=""; otkat_spisok=(); svoi=()
+now=$(date +%s)
+# ИД прогона — метка свежести для приёмника (усл.2 Вениамина v4): epoch старта + pid.
+RUN_ID="${now}.$$"
+itog_str=""
+# trap EXIT: итог пишется на ЛЮБОМ выходе (усл.1 v4). Без «|| true»: не записался → громко в журнал.
+zapisat_itog() {
+  local kod=$?
+  [ -n "$itog_str" ] || itog_str="прогон завершился кодом $kod без сообщения (см. journalctl)"
+  mkdir -p "$(dirname "$ITOG_FILE")" 2>/dev/null || true
+  if ! printf '%s\t%s\n' "$RUN_ID" "$itog_str" > "$ITOG_FILE" 2>/dev/null; then
+    echo "🔴 ИТОГ НЕ ЗАПИСАН в $ITOG_FILE (прогон $RUN_ID): $itog_str" >&2
+  fi
+}
+trap zapisat_itog EXIT
+# stop <текст> <код>: заполнить итог, сказать в stderr, выйти (итог уедет через trap)
+stop() { itog_str="$1"; echo "$1" >&2; exit "$2"; }
+
+# B-N-1472: код 2 (пустой журнал) и неисправный прибор НЕ разрешают restart.
+# Общий бюджет 600с, шаг 5с; неизвестность — немедленный пропуск, не бесконечное ожидание.
+# Это замер, не блокировка нового turn/start между последней проверкой и restart.
+for v in TURN_WAIT TURN_POLL TURN_PROBE; do
+  [[ "${!v}" =~ ^[0-9]+$ ]] || stop "ОТКАЗ: $v должен быть целым числом секунд" 2
+  printf -v "$v" '%d' "$((10#${!v}))"
+done
+[ "$TURN_POLL" -gt 0 ] && [ "$TURN_PROBE" -gt 0 ] || stop "ОТКАЗ: сроки опроса должны быть положительными" 2
+[[ "$BAK_HRANIT" =~ ^[1-9][0-9]*$ ]] || stop "ОТКАЗ: BAK_HRANIT должен быть целым ≥1 (сколько прогонов страховок держать)" 2
+
+dozhdatsya_hoda() {
+  local agent="$1" answer code po journal delay announced=0
+  while :; do
+    code=0
+    answer=$(timeout -k 1s "${TURN_PROBE}s" env -u HOD_SYSTEMCTL -u HOD_JOURNALCTL -u HOD_KAT_METOK -u HOD_DISTILL_MIN \
+      "$TURN_CMD" "${agent}.service") || code=$?
+    po="?"; journal="?"
+    if [[ "$answer" != *$'\n'* && "$answer" =~ ^pid=[0-9]+\ start=[0-9]+\ end=[0-9]+\ poslednee=([^[:space:]]*)\ zhurnal=(est|pust|net-processa)(\ distill=[^[:space:]]+)?$ ]]; then
+      po=${BASH_REMATCH[1]}; journal=${BASH_REMATCH[2]}
+    fi
+    if [ "$code" = 0 ] && { [ "$po" = turn/end ] || [ -z "$po" ]; } && { [ "$journal" = est ] || [ "$journal" = net-processa ]; }; then
+      TURN_REASON=""; return 0
+    fi
+    if [ "$code" != 1 ] || [ "$po" != turn/start ] || [ "$journal" != est ]; then
+      TURN_REASON="$agent: ход не установлен (hod-sluzhby код $code, признак $po/$journal) — не переключён"
+      return 2
+    fi
+    if [ "$SECONDS" -ge "$TURN_DEADLINE" ]; then
+      TURN_REASON="$agent занят — не переключён (предел ожидания ${TURN_WAIT}с на запуск)"
+      return 1
+    fi
+    if [ "$announced" = 0 ]; then echo "$agent занят — жду конца хода; общий предел ${TURN_WAIT}с"; announced=1; fi
+    delay=$((TURN_DEADLINE - SECONDS)); [ "$delay" -le "$TURN_POLL" ] || delay=$TURN_POLL
+    sleep "$delay"
+  done
+}
+propustit() {
+  echo "$TURN_REASON"
+  if [ "$1" = 1 ]; then zanyatye+=("$a"); else neproverennye+=("$a"); fi
+}
+otkat_restart() {
+  if dozhdatsya_hoda "$1"; then "$SYSTEMCTL" restart "claude-oauth-gateway@$1" || true
+  else echo "🔴 откат настройки $1 выполнен, restart отложен: $TURN_REASON" >&2; fi
+}
+
+usage() { echo "зов: pereklyuchatel-podpiski [1|2|3|1-force|2-force|3-force] [force] [tiho]" >&2; }
+zapisat_otmetku() {
+  mkdir -p "$(dirname "$OTMETKA")" 2>/dev/null || true
+  if ! echo "$now" > "$OTMETKA" 2>/dev/null; then
+    stop "🔴 ОТКАЗ: отметку частоты не записать ($OTMETKA) — запись, вероятно, закрыта песочницей; переключение ОСТАНОВЛЕНО." 6
+  fi
+}
+
+# ── разбор аргументов: фиксированный список, НИЧЕГО в оболочку (усл. Вениамина в приёмнике) ──
+for a in "$@"; do
+  case "$a" in
+    1|2|3) [ -z "$CEL" ] && CEL="$a" || stop "ОТКАЗ: цель задана дважды" 2 ;;
+    1-force|2-force|3-force) [ -z "$CEL" ] || stop "ОТКАЗ: цель задана дважды" 2; CEL="${a%%-*}"; FORCE=1 ;;
+    force) FORCE=1 ;;
+    tiho) TIHO=1 ;;
+    *) usage; stop "ОТКАЗ: неизвестный аргумент «$a» (только 1|2|3|1-force|2-force|3-force [force] [tiho])" 2 ;;
+  esac
+done
+
+# ── отметка частоты (защита от повторов) ──────────────────────────────────────
+if [ -f "$OTMETKA" ]; then
+  last=$(cat "$OTMETKA" 2>/dev/null || echo 0); last=${last//[!0-9]/}; last=${last:-0}
+  if [ $((now - last)) -lt "$CHASTOTA" ]; then
+    stop "ОТКАЗ: слишком часто — прошло $((now-last)) с, порог $CHASTOTA с" 3
+  fi
+fi
+
+# ── живой список Claude-шлюзов и их текущая подписка ──────────────────────────
+zhivoj_token() {  # $1=agent → "1"|"2"|"" (номер подписки живого токена)
+  local a="$1" tf=""
+  if [ -n "$ZHIVOJ_TOKEN" ]; then
+    tf=$("$ZHIVOJ_TOKEN" "$a" 2>/dev/null) || tf=UNKNOWN
+  else
+    local pid; pid=$("$SYSTEMCTL" show "claude-oauth-gateway@$a" -p MainPID --value 2>/dev/null || echo 0)
+    if [ "${pid:-0}" -gt 0 ]; then
+      tf=$(sudo cat "/proc/$pid/environ" 2>/dev/null | tr '\0' '\n' | sed -n 's#^GATEWAY_TOKEN_FILE=.*/token-podpiska-##p' | head -1) || tf=UNKNOWN
+    else
+      tf=UNKNOWN
+    fi
+  fi
+  # Пустое успешно прочитанное поле — неподписочный шлюз; ошибка чтения — неизвестность.
+  case "$tf" in ""|1|2|3) printf '%s' "$tf" ;; *) printf '%s' UNKNOWN ;; esac
+}
+# 07.10: подписка агента по реестру → PR="obshchaya" | "svoya:N"; иное — ОТКАЗ (код 4) до любого действия.
+# Зовётся НЕ в $(…): stop внутри подоболочки потерял бы итог (trap родителя записал бы «без сообщения»).
+PR=""
+podpiska_reestra() {  # $1=agent
+  local a="$1" out="" code=0
+  out=$("$REESTR" pole "$a" podpiska --json 2>&1) || code=$?
+  [ "$code" = 0 ] || stop "ОТКАЗ: реестр не дал подписку агента $a (agent-registry pole код $code: ${out:0:200}) — неизвестное ведёт в отказ, никто не переключён" 4
+  case "$out" in
+    '"obshchaya-claude"') PR=obshchaya ;;
+    '"podpiska-'[1-9]'"') out=${out#\"podpiska-}; PR="svoya:${out%\"}" ;;
+    *) stop "ОТКАЗ: у агента $a в реестре podpiska=${out:0:80} — ни obshchaya-claude, ни podpiska-N; неизвестное ведёт в отказ, никто не переключён" 4 ;;
+  esac
+}
+while IFS= read -r u; do
+  a="${u#claude-oauth-gateway@}"; a="${a%.service}"
+  [ -n "$a" ] || continue
+  podpiska_reestra "$a"
+  if [ "${PR%%:*}" = svoya ]; then
+    echo "$a: своя подписка ${PR#svoya:} по реестру — не трогаю"; svoi+=("$a=${PR#svoya:}"); continue
+  fi
+  n=$(zhivoj_token "$a")
+  if [ -z "$CEL" ] && [ "$n" = UNKNOWN ]; then
+    stop "ОТКАЗ: подписка живого Claude-шлюза $a НЕИЗВЕСТНА — инверсия запрещена" 4
+  fi
+  [ "$n" != UNKNOWN ] || continue  # явная цель: прежний пропуск непрочитанного шлюза
+  [ -n "$n" ] || continue    # пустой = Codex/не подписочный → пропуск по построению
+  agenty+=("$a"); tek+=("$n")
+done < <("$SYSTEMCTL" list-units --no-pager --plain --type=service 'claude-oauth-gateway@*' 2>/dev/null | awk '/claude-oauth-gateway@/{print $1}')
+
+if [ "${#agenty[@]}" -eq 0 ]; then stop "ОТКАЗ: живых Claude-шлюзов с общей подпиской не найдено${svoi[*]:+ (своя: ${svoi[*]})}" 4; fi
+
+# состояние: смешанное?
+first="${tek[0]}"; for n in "${tek[@]}"; do [ "$n" = "$first" ] || smeshannoe=1; done
+
+# ── усл.1: без цели при смешанном — отказ с перечнем ──────────────────────────
+# 05.10.2026 23:45 МСК, слово владельца: «переключатели должны без вопросов переключать по очереди
+# подписки 1 на 2, потом на 3, потом снова на 1». Без цели — СЛЕДУЮЩАЯ по кругу 1→2→3→1 от подписки
+# первого живого шлюза; смешанное состояние больше НЕ отказ: все сводятся на следующую (перечень печатается).
+if [ -z "$CEL" ]; then
+  if [ "$smeshannoe" = 1 ]; then
+    perechen=""; for i in "${!agenty[@]}"; do perechen="$perechen ${agenty[$i]}=${tek[$i]}"; done
+    echo "состояние СМЕШАННОЕ ($perechen) — свожу всех на следующую после подписки первого шлюза ($first)"
+  fi
+  CEL=$(( first % 3 + 1 ))
+fi
+
+# ── ДЕФЕКТ 1 (проба владельца 19:09Z): кого менять — ДО заслона. Все уже на цели → «менять нечего», код 0.
+for i in "${!agenty[@]}"; do [ "${tek[$i]}" != "$CEL" ] && menyat+=("${agenty[$i]}"); done
+if [ "${#menyat[@]}" -eq 0 ]; then
+  itog_str="все ${#agenty[@]} шлюзов уже на подписке $CEL — менять нечего"
+  echo "$itog_str"; exit 0   # итог уедет trap-ом; заслон не нужен — никого не трогаем
+fi
+
+# ── ЗАСЛОН = ПОВЕДЕНИЕ (усл.3 Вениамина 17:58Z + Забава): расход цели — с ЖИВЫХ шлюзов на ней.
+# (л) свежий otkaz-limita = была в лимите; (х) шлюз ходил к модели за окно = расход наблюдался.
+# Это локальная часть двухисточникового заслона. Явный локальный лимит запрещает переход;
+# при его отсутствии ниже читается таблица dsh-limity. Неизвестность не превращается в ноль.
+start_shlyuza() {  # $1=agent → unix старта ТЕКУЩЕГО процесса шлюза (0, если не узнать)
+  local a="$1" ts=""
+  if [ -n "$START_CMD" ]; then ts=$("$START_CMD" "$a" 2>/dev/null)
+  else
+    ts=$("$SYSTEMCTL" show "claude-oauth-gateway@$a" -p ExecMainStartTimestamp --value 2>/dev/null)
+    [ -n "$ts" ] && ts=$(date -d "$ts" +%s 2>/dev/null) || ts=""
+  fi
+  printf '%s' "${ts//[!0-9]/}"
+}
+hodil() {  # $1=agent, $2=старт → непусто, если ходил ПОСЛЕ старта текущего процесса
+  local a="$1" s="${2:-0}"
+  if [ -n "$HOD_CMD" ]; then "$HOD_CMD" "$a" 2>/dev/null; return; fi
+  [ "$s" -ge "$((now - OKNO_LIMITA))" ] || s=$((now - OKNO_LIMITA))
+  # бой: маска «мост подключ»/«подсказк» ПОСЛЕ старта (дефект 2: только текущий процесс). ГРАНИЦА: сменят
+  # формулировку — признак ослепнет, заслон уйдёт в «расход неизвестен» (безопасная сторона).
+  sudo journalctl -u "claude-oauth-gateway@$a" --since "@${s:-0}" --no-pager -o cat 2>/dev/null | grep -m1 -iE 'мост подключ|подсказк' || true
+}
+# B-N-1472: прямой отказ текущего процесса важнее следа «ходил» и не зависит от такта сторожа.
+limit_iz_zhurnala() {
+  local agent="$1" started="$2" pid since
+  pid=$("$SYSTEMCTL" show "claude-oauth-gateway@$agent" -p MainPID --value 2>/dev/null) || return 20
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 20
+  since=$((now - OKNO_LIMITA)); [ "$started" -le "$since" ] || since=$started
+  timeout -k 1s 5s "$JOURNALCTL" -u "claude-oauth-gateway@$agent" "_PID=$pid" -t node --since "@$since" --no-pager -o json 2>/dev/null |
+    python3 -c '
+import sys,json,re
+pid,since=sys.argv[1],int(sys.argv[2]); found=""; broken=False
+rx=re.compile(r"(?:\bHTTP\s*429\b|\b(?:error|status|code)\s*[:=]?\s*429\b|^429\b|hit your (?:(?:usage|session|weekly) )?limit|usage_limit_reached)",re.I)
+reset=re.compile(r"(?:resets?|try again at|сброс)\s*[:=]?\s*(\d{4}-\d{2}-\d{2}[T ][0-9:.]+(?:Z|[+-]\d{2}:\d{2})?|(?:[A-Za-z]{3,9} \d{1,2},? (?:at )?)?\d{1,2}(?::\d{2})?(?:am|pm)(?:\s*\([A-Za-z_+/-]+\))?)",re.I)
+for raw in sys.stdin:
+ try: row=json.loads(raw); stamp=int(row["__REALTIME_TIMESTAMP"])/1e6
+ except (ValueError,KeyError,TypeError): broken=True; continue
+ msg=row.get("MESSAGE")
+ if str(row.get("_PID"))!=pid or row.get("SYSLOG_IDENTIFIER")!="node" or stamp<since or not isinstance(msg,str): continue
+ m=re.match(r"^\[(?:dsh-)?subscription-gateway [^\]]+\] 🔴 сбой вызова: (.*)$",msg)
+ if not m or not rx.search(m[1]): continue
+ r=reset.search(m[1]);found="лимитный отказ журнала"+("; сброс (из отказа): "+r.group(1) if r else "")
+print(found,end="")
+sys.exit(10 if found else (20 if broken else 0))
+' "$pid" "$since"
+}
+
+if [ "$FORCE" = 0 ]; then
+  limit_hit=0; hodil_bez_limita=0; kto_limit=""; bez_starta=""; journal_unknown=""
+  for i in "${!agenty[@]}"; do
+    [ "${tek[$i]}" = "$CEL" ] || continue
+    st=$(start_shlyuza "${agenty[$i]}"); st=${st:-0}   # дефект 2: метку/хождение — только ПОСЛЕ старта процесса
+    # low Вениамина 20:29Z: старт не узнан → граница «после старта» пропала (журнал с @0 = весь). Такой шлюз
+    # не засчитывается ни «в лимите», ни «ходил» — остальные решают; нет других → «расход неизвестен».
+    [ "$st" -gt 0 ] || { bez_starta="$bez_starta ${agenty[$i]}"; continue; }
+    journal_rc=0; journal_limit=$(limit_iz_zhurnala "${agenty[$i]}" "$st") || journal_rc=$?
+    if [ "$journal_rc" = 10 ] && [ -n "$journal_limit" ]; then
+      limit_hit=1; kto_limit="$kto_limit ${agenty[$i]}: $journal_limit;"
+    elif [ "$journal_rc" != 0 ]; then journal_unknown="$journal_unknown ${agenty[$i]}(код$journal_rc)"; fi
+    yunit="claude-oauth-gateway-${agenty[$i]}-service"; lf="$LIMIT_DIR/otkaz-limita-$yunit.txt"; hit=0
+    if [ -f "$lf" ]; then
+      t=$(cat "$lf" 2>/dev/null); t=${t//[!0-9]/}; t=${t:-0}
+      [ "$t" -gt 0 ] && [ "$t" -ge "$st" ] && [ $((now - t)) -lt "$OKNO_LIMITA" ] && { hit=1; limit_hit=1; kto_limit="$kto_limit ${agenty[$i]} ($((now-t)) с назад);"; }
+    fi
+    [ "$hit" = 0 ] && [ "$journal_rc" = 0 ] && [ -n "$(hodil "${agenty[$i]}" "$st")" ] && hodil_bez_limita=1
+  done
+  local_reason="за ${OKNO_LIMITA}с нет локального подтверждения хождения на целевой подписке $CEL без лимита${bez_starta:+; старт процесса не узнан:$bez_starta}"
+  [ -z "$journal_unknown" ] || local_reason="$local_reason; журнал не проверен:$journal_unknown"
+  [ "$hodil_bez_limita" = 1 ] && local_reason="есть хождение текущего процесса на цели без локального лимита"
+  if [ "$limit_hit" = 1 ]; then
+    stop "ОТКАЗ: у подписки $CEL лимит выбран; sadik: $kto_limit; dsh-limity: не запрашивалась, локальный отказ не перекрывается. Ручное: sudo pereklyuchatel-podpiski $CEL force." 5
+  fi
+  remote_state=unknown; remote_reason="чтение недоступно"; remote_rc=0; remote_output=""
+  if [ ! -x "$LIMITY_READER" ]; then
+    remote_reason="нет исполняемого reader $LIMITY_READER"
+  else
+    remote_output=$(timeout -k 1s 15s "$LIMITY_READER" "$CEL" 2>/dev/null) || remote_rc=$?
+    IFS=$'\t' read -r remote_state remote_reason <<< "$remote_output" || true
+    case "$remote_rc:$remote_state" in
+      0:free|10:blocked|20:unknown) ;;
+      *) remote_state=unknown; remote_reason="reader не дал годный ответ (код $remote_rc)" ;;
+    esac
+  fi
+  if [ "$remote_state" = blocked ]; then
+    stop "ОТКАЗ: у подписки $CEL лимит выбран; dsh-limity: $remote_reason. Ручное: sudo pereklyuchatel-podpiski $CEL force." 5
+  fi
+  if [ "$hodil_bez_limita" = 0 ] && [ "$remote_state" != free ]; then
+    stop "ОТКАЗ (заслон): расход целевой подписки $CEL НЕИЗВЕСТЕН; sadik: $local_reason; dsh-limity: $remote_reason. Ручное: sudo pereklyuchatel-podpiski $CEL force." 5
+  fi
+  echo "ЗАСЛОН: sadik: $local_reason; dsh-limity: $remote_reason"
+
+fi
+
+zapisat_otmetku
+shtamp=$(date -u +%Y%m%dT%H%M%SZ)
+
+# ── переключение ПО ОДНОМУ, с проверкой после каждого (усл.2 Вениамина) ───────
+TURN_DEADLINE=$((SECONDS + TURN_WAIT))
+for a in "${menyat[@]}"; do
+  if dozhdatsya_hoda "$a"; then :; else turn_code=$?; propustit "$turn_code"; continue; fi
+  ef="$ENV_DIR/instance-$a.env"
+  if [ ! -f "$ef" ]; then echo "🔴 нет $ef — стоп" >&2; RC=1; break; fi
+  bak_kat="$BAK_DIR/$shtamp-switch$CEL"
+  sudo install -d -m 0700 "$bak_kat" || { echo "🔴 каталог страховок $bak_kat не заведён — стоп" >&2; RC=1; break; }
+  bak="$bak_kat/instance-$a.env"
+  sudo cp -p "$ef" "$bak" || { echo "🔴 страховка $a не снята — стоп" >&2; RC=1; break; }
+  # правка ТОЛЬКО строки GATEWAY_TOKEN_FILE, путь и число — фиксированные, не из ввода
+  sudo sed -i -E "s#^(GATEWAY_TOKEN_FILE=).*/token-podpiska-[123]\$#\1$ENV_DIR/token-podpiska-$CEL#" "$ef"
+  if ! grep -qE "^GATEWAY_TOKEN_FILE=.*/token-podpiska-$CEL\$" "$ef"; then
+    echo "🔴 $a: строка GATEWAY_TOKEN_FILE не встала на $CEL — откат, стоп" >&2
+    sudo cp -p "$bak" "$ef"; RC=1; break
+  fi
+  # B-N-1621: новый процесс шлюза обязан ЧИТАТЬ токен цели — выдать ДО restart, ничего не отзывая
+  if ! "$SVESTI" --dobavit; then
+    echo "🔴 $a: доступ к token-podpiska-$CEL не выдан (svesti-dostup-podpisok --dobavit) — откат настройки, стоп" >&2
+    sudo cp -p "$bak" "$ef"; RC=1; break
+  fi
+  # Повтор непосредственно перед restart: за время записи настройки мог начаться ход.
+  if dozhdatsya_hoda "$a"; then :; else
+    turn_code=$?; sudo cp -p "$bak" "$ef" || { echo "🔴 $a: настройка не восстановлена" >&2; RC=1; break; }
+    propustit "$turn_code"; continue
+  fi
+  "$SYSTEMCTL" restart "claude-oauth-gateway@$a" || { echo "🔴 $a: restart не удался — откат, стоп" >&2; sudo cp -p "$bak" "$ef"; otkat_restart "$a"; RC=1; break; }
+  sleep "$PAUZA"
+  # 05.10.2026: шлюз гостя (Варвара) поднимается дольше 2 с — «activating» ждём до 90 с, а не откатываем сразу.
+  # is-active при activating даёт код≠0: прежнее «|| echo нет» склеивало «activating\nнет».
+  for _w in $(seq 1 90); do
+    act=$("$SYSTEMCTL" is-active "claude-oauth-gateway@$a" 2>/dev/null) || true
+    [ "$act" = activating ] || break; sleep 1
+  done
+  act=${act:-нет}
+  live=$(zhivoj_token "$a")
+  if [ "$act" != "active" ] || [ "$live" != "$CEL" ]; then
+    echo "🔴 $a: после рестарта active=$act, живой токен=${live:-пусто}, цель=$CEL — откат ЭТОГО, остальных не трогаю (усл.2)" >&2
+    sudo cp -p "$bak" "$ef"; otkat_restart "$a"
+    RC=1; break
+  fi
+  N_OK=$((N_OK+1)); pereklyucheny+=("$a"); otkat_spisok+=("$bak")
+done
+
+# ── B-N-1498: ротация страховок — после прогона, текущий каталог не трогается (он последний по имени) ──
+if [ -n "${bak_kat:-}" ]; then
+  starye=$(sudo find "$BAK_DIR" -mindepth 1 -maxdepth 1 -type d -regextype posix-extended \
+             -regex '.*/[0-9]{8}T[0-9]{6}Z-switch[123]' -printf '%f\n' 2>/dev/null | sort | head -n "-$BAK_HRANIT") \
+    || { echo "⚠️ ротация страховок: перечень $BAK_DIR не снят — пропускаю (переключение уже сделано)" >&2; starye=""; }
+  # ↑ БЕЗ этого «||» сбой find/sort под set -euo pipefail ОБРЫВАЛ ПРОГОН после переключения: итог писал trap, а
+  #   тревога владельцу не уходила (порча «head -n 0» на стенде 03.10 — код 141). Ротация не вправе ронять прогон.
+  for d in $starye; do
+    [ "$BAK_DIR/$d" != "$bak_kat" ] || continue
+    sudo rm -rf -- "${BAK_DIR:?}/$d" && echo "ротация страховок: удалён $d (держу $BAK_HRANIT)" \
+      || echo "⚠️ ротация: $BAK_DIR/$d не удалён" >&2
+  done
+fi
+
+# ── B-N-1621: свести доступ по итогу — подписка, с которой ушли, отзывается (и выданное под откатанных) ──
+dostup_itog=""
+if [ -n "${bak_kat:-}" ]; then
+  if "$SVESTI" --svesti; then dostup_itog=" Доступ к токенам сведён: прежняя подписка шлюзам не читается."
+  else dostup_itog=" ⚠️ доступ НЕ сведён (svesti-dostup-podpisok --svesti код $?): прежняя подписка ещё читается — sudo svesti-dostup-podpisok --svesti."; fi
+fi
+
+# ── итог одной строкой с именами (усл.5) + владельцу ──────────────────────────
+imena="${pereklyucheny[*]:-никто}"
+[ "$RC" != 0 ] || { [ "${#zanyatye[@]}" -eq 0 ] && [ "${#neproverennye[@]}" -eq 0 ]; } || RC=7
+if [ "$RC" = 0 ]; then
+  itog_str="Claude: подписка $first → $CEL; переключено $N_OK шлюзов на подписку $CEL; переключены: $imena. Перед рестартом подтверждён конец хода."
+elif [ "$RC" = 7 ]; then
+  itog_str="ЧАСТИЧНО (код 7): Claude $first → $CEL; переключены: $imena; заняты и не переключены: ${zanyatye[*]:-нет}; ход не установлен, не переключены: ${neproverennye[*]:-нет}."
+else
+  itog_str="🔴 переключение оборвано на подписку $CEL: успело $N_OK (${imena# }), дальше СТОП и откат последнего; проверь вручную."
+fi
+[ "$RC" != 1 ] || itog_str="$itog_str Заняты и не переключены: ${zanyatye[*]:-нет}; ход не установлен: ${neproverennye[*]:-нет}."
+itog_str="$itog_str$dostup_itog${svoi[*]:+ Своя подписка по реестру — не тронута: ${svoi[*]}.}"
+echo "$itog_str"                       # итог в ITOG_FILE пишет trap zapisat_itog (усл.1 v4 — на любом выходе)
+[ "$TIHO" = 1 ] || { [ -x "$ALERT" ] && "$ALERT" "$itog_str" >/dev/null 2>&1; } || true
+exit "$RC"

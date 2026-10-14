@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# kto-pravil-fajl — кто ЧУЖОЙ рукой трогал мой файл, и правил ли он его на самом деле.
+#
+# ЗАЧЕМ. У квитанции подъёма в файле состояния агента стояла командная строка: журнал sudo,
+# отфильтрованный ОТРИЦАТЕЛЬНЫМ перечнем читающих команд (md5sum|cat|head|sed -n|grep).
+# Замер 07.09.2026: она отдавала 14 строк, и ТРИНАДЦАТЬ из них — чужие ПРОВЕРКИ ПРАВ и
+# чтения (test 6, sed -n 3, find 2, stat 1, sh 1). Настоящих правок было три, и они тонули.
+# 🔴 Отрицательный перечень плох вдвойне: он и шумит, и МОЛЧА ПРОПУСКАЕТ незнакомую правящую
+# форму — допиши кто-нибудь `tee`, `dd`, `python -c`, и она пройдёт как «не исключённая»...
+# нет, наоборот: пройдёт как правка, а вот `truncate` без исключения зашумит. Общее одно:
+# перечень по ИМЕНИ отвечает про имя. Мы ловим этот класс третьи сутки.
+#
+# ЧТО ЗДЕСЬ ВМЕСТО ЭТОГО: не исключение, а РАЗБОР НА ТРИ ИСХОДА. Читающие названы числом и
+# не показываются; правящие показываются поимённо; НЕИЗВЕСТНАЯ форма показывается ТОЖЕ —
+# именно она и есть дыра отрицательного перечня, и молчать о ней нельзя.
+#
+# ГДЕ НЕ ПРИМЕНЯЕТСЯ, названо честно:
+#   · журнал sudo видит ТОЛЬКО ЧУЖУЮ руку. Моя правка идёт без sudo и следа не оставляет.
+#     Инструмент отвечает на «трогал ли кто-то, КРОМЕ меня», а не на «трогала ли я»;
+#   · разбор идёт по ИМЕНИ ДВОИЧНОГО ФАЙЛА и флагам — тела `sh -c '…'` он не читает,
+#     поэтому оболочка и языки всегда попадают в «неизвестные», а не в «читающие»;
+#   · «правок нет» верно ДЛЯ ОКНА. Окно печатается в шапке, чтобы читающий сверил сам.
+#
+# КОДЫ: 0 чужих правок нет · 1 есть правящие либо неизвестные формы · 2 слепота
+# EN: kto-pravil-fajl — who touched my file with SOMEONE ELSE'S hand, and whether they actually edited it.
+#     WHY. The startup receipt in the agent's state file carried a command line: the sudo log filtered by a
+#     NEGATIVE list of reading commands (md5sum|cat|head|sed -n|grep). Measured 07.09.2026: it returned 14
+#     lines, and THIRTEEN of them were someone else's PERMISSION CHECKS and reads (test 6, sed -n 3, find 2,
+#     stat 1, sh 1). There were three real edits, and they drowned.
+#     🔴 A negative list is bad twice over: it is both noisy and SILENTLY MISSES an unfamiliar editing form — add
+#     `tee`, `dd`, `python -c`, and it passes as "not excluded"... no, the other way round: it passes as an
+#     edit, while `truncate` without an exclusion becomes noise. One thing is common: a list by NAME answers
+#     about the name. We have been catching this class for the third day.
+#     WHAT IS HERE INSTEAD: not exclusion but A SPLIT INTO THREE OUTCOMES. Reading ones are named as a number
+#     and not shown; editing ones are shown by name; an UNKNOWN form is shown TOO — it is exactly the hole of a
+#     negative list, and keeping silent about it is not allowed.
+#     WHERE IT DOES NOT APPLY, named honestly:
+#     · the sudo log sees ONLY SOMEONE ELSE'S hand. My edit goes without sudo and leaves no trace. The tool
+#     answers "did anyone OTHER than me touch it", not "did I touch it";
+#     · the split goes by the BINARY NAME and flags — it does not read the bodies of `sh -c '…'`, so shells and
+#     languages always land in "unknown", not in "reading";
+#     · "no edits" holds FOR THE WINDOW. The window is printed in the header so that the reader checks for
+#     themselves.
+#     CODES: 0 no foreign edits · 1 there are editing or unknown forms · 2 blindness
+set -uo pipefail
+# Файл настройки пакета dsh-pribory: строки «КЛЮЧ=значение», «#» — комментарий; берётся последнее вхождение.
+# Путь меняет DSH_PRIBORY_CONF. Порядок: переменная → файл → нейтральное умолчание; нет ничего — СЛЕПОТА, код 2.
+# EN: Settings file of the dsh-pribory package: "KEY=value" lines, a line starting with "#" is a comment; the
+#     last occurrence wins.
+#     DSH_PRIBORY_CONF changes the path. Order: variable → file → neutral default; nothing at all — BLINDNESS,
+#     code 2.
+DSH_PRIBORY_CONF="${DSH_PRIBORY_CONF:-/etc/dsh-pribory/dsh-pribory.conf}"
+# « #» в значении — громкий отказ (stderr, код 2), а не склеивание пояснения со значением; зовущий обязан выйти: X=$(konf …) || exit 2.
+# EN: " #" in a value is a loud refusal (stderr, code 2), not gluing the note into the value; the caller must exit: X=$(konf …) || exit 2.
+konf() { local v; v=$(sed -n "s/^[[:space:]]*$1[[:space:]]*=//p" "$DSH_PRIBORY_CONF" 2>/dev/null | tail -n 1) || true; case "$v" in *[[:space:]]#*) echo "ОТКАЗ: значение ключа $1 в $DSH_PRIBORY_CONF содержит « #» — комментарий допускается только с начала строки" >&2; return 2;; esac; v=$(printf '%s' "$v" | sed "s/^[[:space:]]*//;s/[[:space:]]*$//"); printf '%s' "${v:-$2}"; }
+
+FAJL=${1:-$(konf KTO_PRAVIL_FAJL "")} || exit 2
+[ -n "$FAJL" ] || { echo "kto-pravil-fajl <путь> [с-какой-даты] — путь: довод или ключ KTO_PRAVIL_FAJL в $DSH_PRIBORY_CONF" >&2; exit 2; }
+# 🔴 ОКНО ПО УМОЛЧАНИЮ — ДВОЕ СУТОК, И ЭТО ЗАМЕР, А НЕ ВКУС. Журнал этой машины пишет
+# сотни тысяч строк в сутки (один шлюз даёт ~972 тыс.). Запрос с 01.09 не уложился в две
+# минуты и был оборван; с датой «двое суток назад» отвечает за секунды. Окно печатается в
+# шапке, чтобы «правок нет» читалось вместе с тем, ЗА КАКОЙ СРОК их нет.
+# EN: 🔴 THE DEFAULT WINDOW IS TWO DAYS, AND THIS IS A MEASUREMENT, NOT TASTE. This machine's journal writes
+#     hundreds of thousands of lines a day (one gateway gives ~972 thousand). A query from 01.09 did not fit
+#     into two minutes and was cut off; with the date "two days ago" it answers in seconds. The window is
+#     printed in the header so that "no edits" is read together with FOR WHAT PERIOD there are none.
+OKNO=${2:-$(date -u -d '2 days ago' +%Y-%m-%d)}
+[ -n "$FAJL" ] || { echo "kto-pravil-fajl <путь> [с-какой-даты]" >&2; exit 2; }
+
+IMYA=$(basename "$FAJL")
+SVOYA=${SVOYA_UCHYOTKA:-$(id -un)}
+PROBA_ZHURNALA=$(sudo -n journalctl --since "$OKNO" -n 1 --no-pager -o json 2>/dev/null); kod=$?
+[ "$kod" -eq 0 ] && printf '%s' "$PROBA_ZHURNALA" | python3 -c 'import json,sys
+for line in sys.stdin:
+    try:
+        d=json.loads(line)
+        if isinstance(d,dict) and "__REALTIME_TIMESTAMP" in d: sys.exit(0)
+    except ValueError: pass
+sys.exit(1)' || { echo "СЛЕПОТА: журнал не покрывает окно с $OKNO" >&2; exit 2; }
+SYROE=$(sudo -n journalctl _COMM=sudo --since "$OKNO" --no-pager 2>&1) || {
+  echo "🔴 СЛЕПОТА: журнал sudo не прочитался — это про ДОСТУП, а не про отсутствие правок" >&2
+  printf '%s\n' "$SYROE" | head -2 >&2; exit 2; }
+
+# 🔴 ПЕРВЫМ ДЕЛОМ ОТСЕИВАЕМ СВОЮ РУКУ ПО УЧЁТНОЙ ЗАПИСИ, А НЕ ПО ИМЕНИ КОМАНДЫ.
+# Замер 07.09.2026 за сутки: строк журнала с этим именем 1284, из них 1273 — МОИ
+# (учётная запись агента), и 1260 из них — мой же md5sum из учёта доработок. Чужих 11.
+# Прежний признак фильтровал по ИМЕНИ команды и потому а) тонул в собственном шуме,
+# б) числил чужой рукой мои же пробы прав (`sudo -u claude test -w …`). Учётная запись
+# отвечает на вопрос «чья рука» прямо, а имя команды — только на «что делали».
+# EN: 🔴 FIRST WE FILTER OUT OUR OWN HAND BY ACCOUNT, NOT BY COMMAND NAME. Measured 07.09.2026 over a day:
+#     journal lines with this name 1284, of them 1273 are MINE (the agent account), and 1260 of those are my own
+#     md5sum from the enhancements ledger. Foreign ones: 11. The previous sign filtered by command NAME and
+#     therefore a) drowned in its own noise, b) counted my own permission probes (`sudo -u claude test -w …`) as
+#     a foreign hand. The account answers the question "whose hand" directly, while the command name only
+#     answers "what was done".
+PO_PUTI=$(printf '%s\n' "$SYROE" | python3 -c '
+import os,re,shlex,sys
+wanted=os.path.abspath(sys.argv[1])
+for line in sys.stdin:
+    if "COMMAND=" not in line: continue
+    try: argv=shlex.split(line.split("COMMAND=",1)[1])
+    except ValueError: continue
+    pwd=re.search(r"PWD=([^;]+)",line); cwd=pwd.group(1).strip() if pwd else "/"
+    for arg in argv[1:]:
+        values=[arg]
+        if "=" in arg and (arg.startswith("--") or (os.path.basename(argv[0])=="dd" and arg.split("=",1)[0] in ("if","of"))): values.append(arg.split("=",1)[1])
+        if any(not value.startswith("-") and os.path.normpath(value if os.path.isabs(value) else os.path.join(cwd,value))==wanted for value in values):
+            print(line,end=""); break
+' "$FAJL")
+STROKI=$(printf '%s\n' "$PO_PUTI" | grep -vE "sudo\[[0-9]+\]: *${SVOYA} *:" || true)
+VSEGO=$(printf '%s' "$STROKI" | grep -c . || true)
+
+echo "── кто трогал $FAJL"
+VSEGO_SO_SVOIMI=$(printf '%s\n' "$PO_PUTI" | grep -c . || true)
+echo "   окно: с $OKNO · строк с этим путём всего $VSEGO_SO_SVOIMI · из них ЧУЖОЙ рукой $VSEGO"
+echo "   (своя рука — учётная запись «$SVOYA» — отсеяна: она не подделывает мою же подпись)"
+[ "$VSEGO" -eq 0 ] && { echo "   чужой рукой не трогался. ⚠️ Это про ЧУЖУЮ руку: своя не оставляет следа вовсе."; exit 0; }
+
+CHIT=0; PRAV=(); NEIZV=()
+while IFS= read -r s; do
+  [ -n "$s" ] || continue
+  # 🔴 ЖАДНОСТЬ, воспроизведена 14.09.2026: `.*COMMAND=` доходит до ПОСЛЕДНЕГО вхождения.
+  # Строка sudo несёт ДВА `COMMAND=`, если сама команда содержит этот текст в аргументе
+  # (проба: `sudo /usr/bin/true 'proba-COMMAND=…'` → жадное вернуло ОБРЫВОК АРГУМЕНТА
+  # вместо команды). Берём ПЕРВОЕ вхождение: `\K` отбрасывает всё до него и не жадничает.
+  # EN: 🔴 GREEDINESS, reproduced 14.09.2026: `.*COMMAND=` reaches the LAST occurrence. A sudo line carries TWO
+  #     `COMMAND=` if the command itself contains this text in an argument (probe: `sudo /usr/bin/true
+  #     'proba-COMMAND=…'` → the greedy form returned A FRAGMENT OF THE ARGUMENT instead of the command). We
+  #     take the FIRST occurrence: `\K` discards everything before it and is not greedy.
+  kom=$(printf '%s' "$s" | grep -oP 'COMMAND=\K.*')
+  dvoich=$(basename "$(printf '%s' "$kom" | awk '{print $1}')")
+  case "$dvoich" in
+    cat|head|tail|less|more|md5sum|sha256sum|stat|ls|find|wc|diff|cmp|grep|egrep|test|file|readlink|realpath)
+      CHIT=$((CHIT+1)) ;;
+    sed) case "$kom" in *" -i"*) PRAV+=("$s");; *) CHIT=$((CHIT+1));; esac ;;
+    rm|mv|cp|tee|dd|truncate|install|chmod|chown|chgrp|ln|touch|patch)
+      PRAV+=("$s") ;;
+    *) NEIZV+=("$s") ;;
+  esac
+done <<< "$STROKI"
+
+echo "   читающих (не показываю): $CHIT · ПРАВЯЩИХ: ${#PRAV[@]} · неизвестных форм: ${#NEIZV[@]}"
+for s in ${PRAV+"${PRAV[@]}"};  do echo "  🔴 ПРАВИЛИ: $(printf '%s' "$s" | cut -c1-170)"; done
+for s in ${NEIZV+"${NEIZV[@]}"}; do echo "  ⚠️  ФОРМА НЕ РАЗОБРАНА (может и править, и читать): $(printf '%s' "$s" | cut -c1-170)"; done
+[ "${#PRAV[@]}" -gt 0 ] || [ "${#NEIZV[@]}" -gt 0 ] && exit 1
+echo "   ✅ чужой рукой ЧИТАЛИ, но не правили"
+exit 0

@@ -1,0 +1,578 @@
+#!/usr/bin/env python3
+"""omega-kopiya-watch — сторож копирования знаний pamyat.db → OMEGA (слово владельца 25.09.2026 18:44 голосом:
+«выжимки дистилляции ОБЯЗАТЕЛЬНО копировать в OMEGA, без срока давности; следить, чтобы модуль копирования отрабатывал»).
+
+ОТ ЧЕГО: знание (класс из перечня знаний ядра) легло в pamyat.db агента, а в OMEGA не доехало — молча. Писатель —
+dsh-pamyat-core src/index.js:747 → dsh-pamyat-omega src/index.js:190 (omega_store). Связь записей — ТОЛЬКО по тексту:
+id связи нет; маска секретов применяется ДО записи, поэтому текст в обеих базах один (core :520–545).
+ТРИ ПРИЗНАКА, у каждого своя тревога:
+  1) знание старше N мин без двойника в OMEGA — «без копии: агент, число, примеры id»;
+  2) «копирование встало»: за окно W в pamyat легли знания, а двойников у них в OMEGA — 0;
+  3) двойник в OMEGA со сроком жизни (ttl_seconds не NULL) — владелец велел «без срока давности»;
+  4) БЕСХОЗНАЯ запись OMEGA: active без entity_id вне рубежа. Рубеж — МНОЖЕСТВО node_id первого прогона (не число:
+     число не заметит «одну приписали, одна появилась»). Тревога — с node_id новых и подсказкой хозяина (project; для автозаписи
+     «Edit pattern…» — entity исходной по derived_from). Приписывать — руками, не автоматом (решение Главной 25.09).
+     Отметка «названо» — ТОЛЬКО после успеха канала: отказ канала — повтор в следующий такт.
+     Источники: прямой mcp omega_store без довода entity_id; автозапись сервера bridge.py:1790.
+  5) ДОВЕРИЕ — НОЧНОЙ СЧЁТ состояний доверия по каждой pamyat.db, раз в сутки (первый такт после 00:00 UTC).
+     Формула — ЯДРА (dsh-pamyat-core src/schet-doveriya.mjs, база только на чтение), здесь не повторяется: две реализации разошлись бы.
+     Пишет: строку «доверие <агент>: …» в журнал ЭТОЙ службы (journalctl -u omega-kopiya-watch). Тревога — о НОВЫХ отменённых записях
+     с id (рубеж — первый счёт); отметка — после успеха канала, повтор — каждый такт. Счётчика ядра нет (ядро < alpha.87) — строка
+     «не измерено» раз в сутки, без тревоги.
+     ЧИТАТЕЛЬ СТРОКИ (решение координатора 26.09): НЕДЕЛЬНАЯ СВОДКА в тот же канал — раз в 7 суток, одно письмо: по агентам со
+     знаниями > 0 счёт состояний и сдвиг от прошлой сводки. Только показ, ПОРОГА НЕТ (по двум счетам его не снять; ряд даст сама сводка).
+     Рубеж — первый счёт после монтажа (монтаж письма не даёт); счёта за день сводки нет — «НЕ ИЗМЕРЕНО» с датой последнего.
+     Замечание приёмки (LOW): «НЕ ИЗМЕРЕНО» день сводки НЕ ДВИГАЕТ — сводку даст первый удачный счёт следующих суток, письмо назовёт
+     «опоздала на N сут.», сдвиг — от прошлой сводки. Пока счёт не удаётся — «НЕ ИЗМЕРЕНО» не чаще раза в сутки (doverie_neizm_den);
+     останавливается первым удачным счётом.
+     Отметка «сводка отдана» — после успеха канала; отказ — повтор каждый такт. Ежедневный счёт по-прежнему только в журнале.
+  6) ЛОКАЛЬНАЯ ПРАВКА ПОСТАВКИ OMEGA (поиск видит кириллицу; omega/sqlite_store/_search.py, _query.py) — `pip install
+     omega-memory` сотрёт её МОЛЧА. Тревога называет ВСЕ причины сразу и различитель (метки, версия, старт службы, mtime файлов):
+     меток «ЛОКАЛЬНАЯ ПРАВКА ПОСТАВКИ <пункт>» меньше 1/2 — «стёрта»; версия omega-memory ≠ 1.5.13 — «сверить правку»; служба
+     omega-memory стартовала раньше mtime файлов — «на диске, не в памяти». Один раз на состояние (подпись причин), повтор — строкой
+     журнала; правка снова цела — отметки сняты, повтор той же беды скажется снова. Не читается (файл, dist-info, служба не active,
+     systemctl) — в слепоту (тревога раз в сутки). Монтировать ПОСЛЕ правки поиска: до неё признак честно скажет «стёрта».
+     Не ловит: правку, наложенную заново С ОШИБКОЙ (метка есть, код иной) — это сумма в учёте dorabotki; точность «старт раньше
+     файлов» — 1 с (равные секунды — «в памяти»).
+     🔴 Признак 6 живёт ровно столько, сколько правка поставки: убирают правку (вендор починил сам) — снимать признак В ТОМ ЖЕ
+     действии, иначе «стёрта» и код 1 НАВСЕГДА (условие приёмки).
+     С 26.09.2026 правки и метки — ДАННЫМИ, перечень OKW_PRAVKI
+     (путь — переменная или ключ OKW_PRAVKI): «<пункт> <файл> <строк с меткой> <версия> <pravka.diff>». Метка каждой правки
+     считается отдельно («ЛОКАЛЬНАЯ ПРАВКА ПОСТАВКИ <пункт>», номер не продолжается цифрой: «…-98» ≠ «…-982»). «СТЁРТА» называет
+     правку и порядок восстановления (patch -p1 -d site-packages < pravka.diff, стенд, перезапуск). Новая правка — строка перечня;
+     убранная — строки убрать в том же действии. Перечень не читается / пуст / строка негодна — слепота с номером строки.
+     Не ловит: правку, которой нет в перечне (её слёт — только строка E учёта dorabotki, nashi --check).
+  7) МОДЕЛЬ ЭМБЕДДИНГА СЛУЖБЫ OMEGA: model.onnx, model.onnx_data, tokenizer.json в каталоге модели (embedding.conf,
+     OMEGA_EMBEDDING_MODEL_DIR) — есть и непусты; и в журнале omega-memory с её старта нет «No embedding model loaded»/«hash-fallback».
+     Нет любого файла — служба при следующей загрузке молча переходит на хэш-вектор: поиск по смыслу выключен, агенты видят лишь
+     «Semantic search is degraded» в ответе. Тревога — как у признака 6: один раз на состояние, отметка после успеха канала, цела —
+     отметки сняты. Не читается (журнал, systemctl) — в слепоту. Реранкер НЕ мерится: в режиме http служба его не грузит
+     (mcp_server.py:1051–1052). Не ловит: подменённый файл модели того же размера (сумма не сверяется); строку журнала — только после
+     первого запроса с начала службы (модель грузится лениво); каталог, если embedding.conf укажет другой (сторож смотрит OKW_OMEGA_MODEL_DIR).
+ГДЕ НЕ ПРИМЕНЯЕТСЯ: сводки компакта (svodka-*) в OMEGA не идут по решению — не считаются; классы вне перечня — тоже.
+КОГДА ОСТАНАВЛИВАЕТСЯ: тревога шлётся ОДИН раз на новый id (память отданных — STATE); повтор уже названного — только
+строкой журнала. Слепота (база не читается) — тревога один раз в сутки, не каждые 10 мин.
+ОТМЕТКА «названо» (id, «встало», суточная слепота) — ТОЛЬКО после успеха канала: отказ канала — повтор в следующий такт.
+ЧЕГО НЕ ЛОВИТ: хранилище, слившее нашу запись с похожей (текст иной) — даст ЛОЖНОЕ «без копии», назовётся примером id;
+знание, не дошедшее до pamyat.db вовсе (это дело секретаря и ядра); чужие узлы (только своя машина).
+Двойник только со status=superseded считается копией; видимость поиском не проверяется.
+STATE пишется атомарно (временный файл рядом + os.replace). Битый STATE (чужая рука, диск) — не падение: сохраняется в сторону,
+уже названные тревоги повторятся ОДИН раз — это граница.
+N выбран по замеру 25.09 15:5xZ: задержка записи в OMEGA — медиана < 1 с, p99 1,2–3,4 с, максимум 67,9 с ⇒ 10 мин с запасом.
+"""
+# EN: omega-kopiya-watch — watcher of knowledge copying pamyat.db → OMEGA (the owner's spoken word of 25.09.2026
+#     18:44: "distillation extracts MUST be copied into OMEGA, with no expiry; watch that the copying module
+#     works").
+#     AGAINST WHAT: knowledge (a class from the core knowledge list) landed in the agent's pamyat.db but
+#     silently did not reach OMEGA. The writer is dsh-pamyat-core src/index.js:747 → dsh-pamyat-omega
+#     src/index.js:190 (omega_store). Records are linked ONLY by text: there is no link id; the secret mask is
+#     applied BEFORE writing, so the text is the same in both bases (core :520–545).
+#     THREE SIGNS, each with its own alarm:
+#     1) knowledge older than N min without a twin in OMEGA — "no copy: agent, count, example ids";
+#     2) "copying stalled": within window W knowledge landed in pamyat, but its twins in OMEGA are 0;
+#     3) a twin in OMEGA with a lifetime (ttl_seconds not NULL) — the owner ordered "no expiry";
+#     4) an OWNERLESS OMEGA record: active without entity_id outside the boundary. The boundary is the SET of
+#     node_id of the first run (not a number: a number would not notice "one assigned, one appeared"). The alarm
+#     carries the new node_id and an owner hint (project; for an auto-record "Edit pattern…" — the entity of the
+#     source via derived_from). Assignment is manual, not automatic (the lead's decision of 25.09). The "named"
+#     mark is set ONLY after the channel succeeds: a channel refusal is repeated on the next cycle. Sources: a
+#     direct mcp omega_store without the entity_id argument; the server auto-record bridge.py:1790.
+#     5) TRUST — a NIGHTLY COUNT of trust states for each pamyat.db, once a day (the first cycle after 00:00
+#     UTC). The formula is the CORE's (dsh-pamyat-core src/schet-doveriya.mjs, base read-only) and is not
+#     repeated here: two implementations would diverge. Writes the line "доверие <agent>: …" into THIS service's
+#     journal (journalctl -u omega-kopiya-watch). The alarm is about NEW superseded records with ids (the
+#     boundary is the first count); the mark after the channel succeeds, repeated every cycle. No core counter
+#     (core < alpha.87) — a "not measured" line once a day, no alarm. THE LINE'S READER (coordinator's decision
+#     of 26.09): a WEEKLY SUMMARY into the same channel — once in 7 days, one letter: for agents with knowledge
+#     > 0, the state count and the shift since the previous summary. Display only, NO THRESHOLD (two counts
+#     cannot establish one; the summary itself will build the series). The boundary is the first count after
+#     deployment (deployment sends no letter); no count on the summary day — "NOT MEASURED" with the date of the
+#     last one. Acceptance remark (LOW): "NOT MEASURED" does NOT move the summary day — the summary comes from
+#     the first successful count of the following days, the letter says "late by N days", the shift is from the
+#     previous summary. While counting fails — "NOT MEASURED" at most once a day (doverie_neizm_den); it stops
+#     at the first successful count. The "summary delivered" mark is set after the channel succeeds; a refusal
+#     is repeated every cycle. The daily count stays in the journal only.
+#     6) A LOCAL PATCH OF THE OMEGA DISTRIBUTION (search sees Cyrillic; omega/sqlite_store/_search.py,
+#     _query.py) — `pip install omega-memory` will wipe it SILENTLY. The alarm names ALL causes at once and the
+#     distinguisher (labels, version, service start, file mtime): fewer than 1/2 of the "ЛОКАЛЬНАЯ ПРАВКА
+#     ПОСТАВКИ <item>" labels — "wiped"; omega-memory version ≠ 1.5.13 — "check the patch"; the omega-memory
+#     service started before the files' mtime — "on disk, not in memory". Once per state (a signature of
+#     causes), repeats as a journal line; the patch intact again — marks removed, a repeat of the same trouble
+#     will be reported again. Unreadable (file, dist-info, service not active, systemctl) — goes to blindness
+#     (an alarm once a day). Deploy AFTER the search patch: before it, the sign will honestly say "wiped". Does
+#     not catch: a patch re-applied WITH AN ERROR (label present, code different) — that is the checksum in the
+#     dorabotki ledger; precision of "started before the files" is 1 s (equal seconds — "in memory"). 🔴 Sign 6
+#     lives exactly as long as the distribution patch: when the patch is removed (the vendor fixed it), remove
+#     the sign IN THE SAME action, otherwise "wiped" and code 1 FOREVER (acceptance condition). Since 26.09.2026
+#     patches and labels are DATA, the OKW_PRAVKI list (path — variable or the OKW_PRAVKI key): "<item> <file>
+#     <lines with label> <version> <pravka.diff>". Each patch's label is counted separately ("ЛОКАЛЬНАЯ ПРАВКА
+#     ПОСТАВКИ <item>", the number is not continued by a digit: "…-98" ≠ "…-982"). "WIPED" names the patch and
+#     the restore procedure (patch -p1 -d site-packages < pravka.diff, stand, restart). A new patch is a list
+#     line; a removed one — remove its lines in the same action. The list is unreadable / empty / a line is
+#     invalid — blindness with the line number. Does not catch: a patch that is not in the list (its loss shows
+#     only as line E of the dorabotki ledger, nashi --check).
+#     7) THE OMEGA SERVICE EMBEDDING MODEL: model.onnx, model.onnx_data, tokenizer.json in the model directory
+#     (embedding.conf, OMEGA_EMBEDDING_MODEL_DIR) — present and non-empty; and since its start the omega-memory
+#     journal has no "No embedding model loaded"/"hash-fallback". Any file missing — on the next load the
+#     service silently switches to a hash vector: semantic search is off, agents see only "Semantic search is
+#     degraded" in the answer. The alarm is as for sign 6: once per state, the mark after the channel succeeds,
+#     intact — marks removed. Unreadable (journal, systemctl) — goes to blindness. The reranker is NOT measured:
+#     in http mode the service does not load it (mcp_server.py:1051–1052). Does not catch: a substituted model
+#     file of the same size (the checksum is not compared); the journal line — only after the first request
+#     since the service start (the model loads lazily); the directory, if embedding.conf points elsewhere (the
+#     watcher looks at OKW_OMEGA_MODEL_DIR).
+#     WHERE IT DOES NOT APPLY: compaction summaries (svodka-*) do not go to OMEGA by decision — not counted;
+#     classes outside the list — likewise.
+#     WHEN IT STOPS: an alarm is sent ONCE per new id (memory of what was sent — STATE); a repeat of what was
+#     already named — only as a journal line. Blindness (the base is unreadable) — an alarm once a day, not
+#     every 10 min.
+#     The "named" MARK (id, "stalled", daily blindness) — ONLY after the channel succeeds: a channel refusal is
+#     repeated on the next cycle.
+#     DOES NOT CATCH: a store that merged our record with a similar one (different text) — gives a FALSE "no
+#     copy", named as an example id; knowledge that never reached pamyat.db (that is the secretary's and the
+#     core's business); other nodes (only its own machine).
+#     A twin with status=superseded only is counted as a copy; visibility to search is not checked.
+#     STATE is written atomically (a temporary file alongside + os.replace). A broken STATE (another hand, the
+#     disk) is not a failure: it is saved aside, already named alarms will repeat ONCE — this is the boundary.
+#     N is chosen from the measurement of 25.09 15:5xZ: OMEGA write delay — median < 1 s, p99 1.2–3.4 s, maximum
+#     67.9 s ⇒ 10 min with a margin.
+import glob, hashlib, json, os, re, sqlite3, subprocess, sys, time, unicodedata
+# Файл настройки пакета dsh-pamyat-storozha: строки «КЛЮЧ=значение», «#» — комментарий; берётся последнее вхождение.
+# Путь меняет DSH_PAMYAT_STOROZHA_CONF. Порядок: переменная → файл → нейтральное умолчание; нет ничего — СЛЕПОТА, код 2.
+# EN: Settings file of the dsh-pamyat-storozha package: "KEY=value" lines, a line starting with "#" is a
+#     comment; the last occurrence wins.
+#     DSH_PAMYAT_STOROZHA_CONF changes the path. Order: variable → file → neutral default; nothing at all —
+#     BLINDNESS, code 2.
+KONF=os.environ.get('DSH_PAMYAT_STOROZHA_CONF','/etc/dsh-pamyat-storozha/dsh-pamyat-storozha.conf')
+def _konf(key,default):
+    value=None
+    try:
+        with open(KONF,encoding='utf-8') as f:
+            for s in f:
+                s=s.strip()
+                if s and not s.startswith('#') and s.partition('=')[0].strip()==key:value=s.partition('=')[2]
+    except OSError:pass
+    # « #» в значении — громкий отказ, а не склеивание пояснения со значением: комментарий только с начала строки.
+    # Код 3 — провал для юнитов, считающих успехом 1 и 2 (omega) или 1 (writer).
+    # EN: " #" in a value is a loud refusal, not gluing the note into the value: a comment only from the line start.
+    #     Code 3 is a failure for units counting 1 and 2 (omega) or 1 (writer) as success.
+    if value is not None and (' #' in value or '\t#' in value):
+        print(f'ОТКАЗ: значение ключа {key} в {KONF} содержит « #» — комментарий допускается только с начала строки'); raise SystemExit(3)
+    value=value.strip() if value else value
+    return value or default
+
+N_MIN = int(os.environ.get('OKW_N_MIN', '10'))
+OKNO_MIN = int(os.environ.get('OKW_OKNO_MIN', '60'))
+# Двойник ищется по sha1 текста в NFC с ОБЕИХ сторон — OMEGA хранит NFC, модель изредка пишет NFD
+# (замер на записи с id 9: «й» = и + U+0306 ⇒ ложное «без копии»). Прочая разница текста (склейка) по-прежнему даёт «без копии».
+# omega_store (handlers.py) делает strip(), затем bridge.store — NFC.
+# Повторяем с обеих сторон; внутренние пробелы и переводы строк сохраняются.
+# EN: The twin is looked up by the sha1 of the NFC text on BOTH sides — OMEGA stores NFC, the model occasionally
+#     writes NFD (measured on the record with id 9: "й" = и + U+0306 ⇒ a false "no copy"). Any other text
+#     difference (merging) still gives "no copy".
+#     omega_store (handlers.py) does strip(), then bridge.store — NFC.
+#     We repeat this on both sides; inner spaces and line breaks are kept.
+def otpechatok(t):
+    return hashlib.sha1(unicodedata.normalize('NFC', t.strip()).encode()).hexdigest()
+
+OMEGA_DB = os.environ.get('OKW_OMEGA_DB', '/var/lib/omega/.omega/omega.db')
+PAMYAT = [s for s in (os.environ.get('OKW_PAMYAT') or _konf('OKW_PAMYAT', '')).split(':') if s]
+STATE = os.environ.get('OKW_STATE') or _konf('OKW_STATE', '')
+ALERT = os.environ.get('OKW_ALERT', '/usr/local/bin/agent-alert')
+CORE = os.environ.get('OKW_CORE') or _konf('PAMYAT_CORE', '')   # признак 5: счётчик доверия ядра · EN: sign 5: core trust counter
+NODE = os.environ.get('OKW_NODE', '/usr/local/bin/node')
+SVODKA_DNEJ = 7   # недельная сводка доверия · EN: weekly trust summary
+OMEGA_SP = os.environ.get('OKW_OMEGA_SP', '/opt/omega/venv/lib/python3.12/site-packages')   # признак 6: поставка OMEGA · EN: sign 6: OMEGA distribution
+OMEGA_UNIT = os.environ.get('OKW_OMEGA_UNIT', 'omega-memory')
+SYSTEMCTL = os.environ.get('OKW_SYSTEMCTL', 'systemctl')
+PRAVKA_METKA = 'ЛОКАЛЬНАЯ ПРАВКА ПОСТАВКИ'   # + « <пункт>» из перечня · EN: + " <item>" from the list
+PRAVKI = os.environ.get('OKW_PRAVKI') or _konf('OKW_PRAVKI', '')   # признак 6: перечень правок поставки · EN: sign 6: list of distribution patches
+
+def perechen_pravok():
+    """Перечень правок → [(пункт, файл, строк, версия, diff)]; негодное — исключение (уходит в слепоту признака 6)."""
+    # EN: Patch list → [(item, file, lines, version, diff)]; an invalid one — an exception (goes to sign 6
+    #     blindness).
+    if not PRAVKI: raise RuntimeError(f'перечень правок не задан — OKW_PRAVKI или ключ OKW_PRAVKI в {KONF}')
+    stroki = []
+    with open(PRAVKI, encoding='utf-8') as fh:
+        for n, l in enumerate(fh, 1):
+            l = l.strip()
+            if not l or l.startswith('#'): continue
+            c = l.split()
+            if len(c) != 5 or not re.fullmatch(r'[A-Z]-[A-Z]-\d+', c[0]) or not c[2].isdigit() or int(c[2]) < 1 \
+                    or c[1].startswith('/') or '..' in c[1].split('/') or not c[4].startswith('/'):
+                raise RuntimeError(f'перечень правок {PRAVKI}: строка {n} негодна: «{l[:120]}»')
+            stroki.append((c[0], c[1], int(c[2]), c[3], c[4]))
+    if not stroki: raise RuntimeError(f'перечень правок {PRAVKI}: строк правок 0 — мерить нечего (это не «цела»)')
+    return stroki
+OMEGA_MODEL_DIR = os.environ.get('OKW_OMEGA_MODEL_DIR', '/var/lib/omega/.cache/omega/models/bge-m3-onnx')   # признак 7 (embedding.conf) · EN: sign 7 (embedding.conf)
+MODEL_FAJLY = ('model.onnx', 'model.onnx_data', 'tokenizer.json')   # всё, что грузит embedding.py:301/319; нет любого — вектор = хэш · EN: everything embedding.py:301/319 loads; any one missing — the vector is a hash
+JOURNALCTL = os.environ.get('OKW_JOURNALCTL', 'journalctl')
+# Перечень знаний = умолчание ядра (dsh-pamyat-core KLASSY_ZNANIY_UMOLCHANIE); все профили машины называют его же.
+# EN: The knowledge list = the core default (dsh-pamyat-core KLASSY_ZNANIY_UMOLCHANIE); every profile on the
+#     machine names the same list.
+KLASSY = ('reshenie', 'urok', 'vyvod', 'ogranichenie', 'oshibka', 'poryadok', 'nablyudenie', 'fakt')
+# Исключения ПОИМЁННО — ключ OKW_ISKLYUCHENIYA «агент:id …», причина — комментарием в файле настройки. Не знание, а след — копировать в общую память нечего.
+# EN: Exceptions BY NAME — the OKW_ISKLYUCHENIYA key "agent:id …", the reason as a comment in the settings file.
+#     Not knowledge but a trace — nothing to copy into shared memory.
+ISKLYUCHENIYA = {
+    (a, int(i)): 'исключено настройкой OKW_ISKLYUCHENIYA' for a, _, i in (x.partition(':') for x in _konf('OKW_ISKLYUCHENIYA', '').split()) if i.isdigit()
+}
+
+def pechat(s): print(s, flush=True)
+
+SLEPOTA = '__slepota_den__'   # метка в списке ключей тревоги: успех канала отмечает суточную слепоту, а не id · EN: a label in the alarm key list: a channel success marks the daily blindness, not an id
+
+def trevoga(tekst):
+    """→ True, если канал принял (признаку 4 отметка ставится только тогда)."""
+    # EN: → True if the channel accepted (only then is the sign 4 mark set).
+    try:
+        r = subprocess.run([ALERT, tekst], capture_output=True, text=True, timeout=120)
+        pechat(f'  тревога {"отправлена" if r.returncode == 0 else "НЕ ДОШЛА, код " + str(r.returncode)}: {tekst[:160]}')
+        return r.returncode == 0
+    except Exception as e:
+        pechat(f'  тревога НЕ ДОШЛА ({e}): {tekst[:160]}')
+        return False
+
+def konf_prichina():
+    # Почему ключа нет: файла настройки нет / файл есть, но не читается / читается, а ключа в нём нет (или он пуст).
+    # _konf сам отказ чтения глотает — нечитаемый файл для него то же, что отсутствующий; различаем здесь.
+    # EN: Why the key is missing: no settings file / the file exists but is unreadable / it is readable but has no
+    #     such key (or it is empty). _konf itself swallows a read failure — an unreadable file is the same as a
+    #     missing one for it; we tell them apart here.
+    try:
+        with open(KONF, encoding='utf-8') as f: f.read(1)
+        return f'файл {KONF} читается, ключа в нём нет или он пуст'
+    except FileNotFoundError:
+        return f'файла {KONF} нет'
+    except OSError as e:
+        return f'файл {KONF} есть, но не читается: {e}'
+
+def pravka_postavki():
+    """Признак 6 → (строка-различитель, [причины]); нечитаемое — исключение (уходит в слепоту)."""
+    # EN: Sign 6 → (distinguishing line, [causes]); unreadable — an exception (goes to blindness).
+    prichiny, chasti, mtime = [], [], 0
+    pravki = perechen_pravok()
+    for punkt, f, nado, _v, diff in pravki:
+        p = os.path.join(OMEGA_SP, f)
+        metka = re.compile(re.escape(f'{PRAVKA_METKA} {punkt}') + r'(?!\d)')
+        with open(p, encoding='utf-8') as fh:
+            est = sum(bool(metka.search(l)) for l in fh)      # строки с меткой ЭТОЙ правки — как grep -c · EN: lines with THIS patch's label — like grep -c
+        mtime = max(mtime, os.stat(p).st_mtime)
+        chasti.append(f'{os.path.basename(f)} {punkt} меток {est}/{nado}')
+        if est < nado: prichiny.append(f'СТЁРТА: {os.path.basename(f)} меток {est} из {nado} (правка {punkt} — восстановить: '
+                                        f'patch -p1 -d {OMEGA_SP} < {diff}, стенд, перезапуск {OMEGA_UNIT})')
+    di = glob.glob(os.path.join(OMEGA_SP, 'omega_memory-*.dist-info'))
+    if len(di) != 1: raise RuntimeError(f'omega_memory-*.dist-info: {len(di)} шт. в {OMEGA_SP}')
+    ver = os.path.basename(di[0])[len('omega_memory-'):-len('.dist-info')]
+    chasti.append(f'версия {ver}')
+    for v in sorted({x[3] for x in pravki}):
+        if ver != v:
+            pp = ', '.join(sorted({x[0] for x in pravki if x[3] == v}))
+            prichiny.append(f'СВЕРИТЬ ПРАВКУ: omega-memory {ver} на диске, правка сделана для {v} ({pp})')
+    r = subprocess.run([SYSTEMCTL, 'show', OMEGA_UNIT, '-p', 'ActiveState', '-p', 'ExecMainStartTimestamp', '--timestamp=unix'],
+                       capture_output=True, text=True, timeout=30)
+    pole = dict(l.split('=', 1) for l in r.stdout.splitlines() if '=' in l)
+    if r.returncode != 0 or pole.get('ActiveState') != 'active' or not pole.get('ExecMainStartTimestamp', '').startswith('@'):
+        raise RuntimeError(f'{OMEGA_UNIT}: старт не измерить (код {r.returncode}, {pole or r.stderr.strip()[:80]})')
+    start = int(pole['ExecMainStartTimestamp'][1:])
+    ts = lambda t: time.strftime('%Y-%m-%d %H:%M:%SZ', time.gmtime(t))
+    chasti.append(f'служба с {ts(start)}, файлы {ts(mtime)}')
+    if start < int(mtime):
+        prichiny.append(f'НА ДИСКЕ, НЕ В ПАМЯТИ: {OMEGA_UNIT} стартовала {ts(start)}, файлы правки изменены {ts(mtime)} — нужен перезапуск')
+    return ' · '.join(chasti), prichiny
+
+def model_embeddinga():
+    """Признак 7 → (строка-различитель, [причины], [виды]); нечитаемое — исключение (уходит в слепоту).
+    Виды — ключ тревоги БЕЗ чисел: число строк журнала растёт с каждой попыткой загрузки, и ключ с числом давал бы
+    новую тревогу каждый такт (условие приёмки). Число — только в тексте причины."""
+    # EN: Sign 7 → (distinguishing line, [causes], [kinds]); unreadable — an exception (goes to blindness).
+    #     Kinds are the alarm key WITHOUT numbers: the number of journal lines grows with every load attempt,
+    #     and a key with a number would give a new alarm every cycle (acceptance condition). The number is only
+    #     in the cause text.
+    prichiny, chasti, vidy = [], [], []
+    for f in MODEL_FAJLY:
+        p = os.path.join(OMEGA_MODEL_DIR, f)
+        try: n = os.stat(p).st_size
+        except FileNotFoundError: n = None
+        chasti.append(f'{f} {"НЕТ" if n is None else n}')
+        if not n:
+            prichiny.append(f'МОДЕЛИ НЕТ: {p} ' + ('отсутствует' if n is None else 'пуст')); vidy.append(prichiny[-1])
+    r = subprocess.run([SYSTEMCTL, 'show', OMEGA_UNIT, '-p', 'ExecMainStartTimestamp', '--timestamp=unix'],
+                       capture_output=True, text=True, timeout=30)
+    pole = dict(l.split('=', 1) for l in r.stdout.splitlines() if '=' in l)
+    if r.returncode != 0 or not pole.get('ExecMainStartTimestamp', '').startswith('@'):
+        raise RuntimeError(f'{OMEGA_UNIT}: старт не измерить (код {r.returncode})')
+    start = pole['ExecMainStartTimestamp']
+    j = subprocess.run([JOURNALCTL, '-u', OMEGA_UNIT, '--since', start, '-o', 'cat', '--no-pager'], capture_output=True, text=True, timeout=120)
+    if j.returncode != 0: raise RuntimeError(f'журнал {OMEGA_UNIT} не прочитан (код {j.returncode}): {j.stderr.strip()[:80]}')
+    if not any('Startup RSS' in l for l in j.stdout.splitlines()):    # служба пишет её при КАЖДОМ старте (mcp_server.py:1031) · EN: the service writes it on EVERY start (mcp_server.py:1031)
+        raise RuntimeError(f'журнал {OMEGA_UNIT} с её старта без строки «Startup RSS» — журнал не виден (права? ротация?)')
+    hesh = sum('No embedding model loaded' in l or 'hash-fallback' in l for l in j.stdout.splitlines())
+    ts = time.strftime('%Y-%m-%d %H:%M:%SZ', time.gmtime(int(start[1:])))
+    chasti.append(f'журнал с {ts}: строк {len(j.stdout.splitlines())}, про хэш-вектор {hesh}')
+    if hesh:
+        prichiny.append(f'ВЕКТОР = ХЭШ: в журнале {OMEGA_UNIT} с {ts} строк «No embedding model loaded/hash-fallback» {hesh}')
+        vidy.append(f'ВЕКТОР = ХЭШ с {start}')     # новый старт службы при той же беде — новая тревога · EN: a new service start with the same trouble — a new alarm
+    return OMEGA_MODEL_DIR + ': ' + ' · '.join(chasti), prichiny, vidy
+
+def razobrat_schet(vyvod):
+    """Строки «доверие <агент>: знаний N · otmenena N · … · otmenena_id [..]» → {агент: {поле: число}}."""
+    # EN: Lines "доверие <agent>: знаний N · otmenena N · … · otmenena_id [..]" → {agent: {field: number}}.
+    schet = {}
+    for l in vyvod.splitlines():
+        m = re.match(r'доверие (\S+): (.*) · otmenena_id \[', l)
+        if m: schet[m.group(1)] = {k: int(v) for k, v in (c.rsplit(' ', 1) for c in m.group(2).split(' · ') if ' ' in c) if v.isdigit()}
+    return schet
+
+POLYA_SVODKI = (('знаний', 'знаний'), ('otmenena', 'отменена'), ('oprovergnuta', 'опровергнута'), ('otmetka-negodna', 'отметка негодна'),
+                ('utochnena', 'уточнена'), ('podtverzhdena', 'подтверждена'), ('bez-podtverzhdeniya', 'без подтверждения'))
+
+def dnej_mezhdu(a, b):
+    return round((time.mktime(time.strptime(b, '%Y-%m-%d')) - time.mktime(time.strptime(a, '%Y-%m-%d'))) / 86400)
+
+def tekst_svodki(svod, posl, den):
+    if not posl or posl.get('den') != den:
+        return (f'📊 доверие памяти — недельная сводка {den}: НЕ ИЗМЕРЕНО — счёта за {den} нет '
+                f'(последний — {posl["den"] if posl else "никогда"}); сводка ОТЛОЖЕНА до первого удачного счёта')
+    stroki = []
+    for a, s in sorted(posl['schet'].items()):
+        if not s.get('знаний'): continue
+        b = svod['schet'].get(a)
+        stroki.append(f'{a}: ' + ' · '.join(f'{imya} {s.get(k, 0)}' + (f' ({s.get(k, 0) - b.get(k, 0):+d})' if b is not None else '')
+                                           for k, imya in POLYA_SVODKI) + ('' if b is not None else ' (в прошлой сводке не было)'))
+    opozd = dnej_mezhdu(svod['den'], den) - SVODKA_DNEJ
+    return (f'📊 доверие памяти — недельная сводка {den}, сдвиг с {svod["schet_den"]}'
+            + (f', ОПОЗДАЛА на {opozd} сут. (счёт ядра не удавался)' if opozd > 0 else '') + ' (только показ, порога нет): '
+            + ('; '.join(stroki) if stroki else 'агентов со знаниями 0'))
+
+# Каталог агента бывает ≠ его корню в OMEGA: соответствие «каталог:корень» — ключ OKW_IMYA. В строке — оба, чтобы искали там, где лежит.
+# EN: An agent directory may differ from its root in OMEGA: the "directory:root" mapping is the OKW_IMYA key.
+#     The line carries both, so people search where it lies.
+IMYA = dict(x.split(':', 1) for x in _konf('OKW_IMYA', '').split() if ':' in x)
+
+def agent_iz_puti(p):
+    a = p.split('/')[-3]         # …/<агент>/pamyat/pamyat.db — при любом шаблоне OKW_PAMYAT · EN: …/<agent>/pamyat/pamyat.db — for any OKW_PAMYAT template
+    return IMYA.get(a, a)
+
+def main():
+    teper = time.time()
+    if not STATE:
+        # Без файла состояния сторож слеп ко всему — это говорится в канал, как прочие слепоты, и выход кодом 3:
+        # коды 1 и 2 юнит считает успехом (SuccessExitStatus=1 2), и слепота настройки иначе прошла бы молча.
+        # Памяти отданного нет (её и держит файл состояния), поэтому тревога повторяется каждый такт — до
+        # исправления настройки; остановка — заданный OKW_STATE.
+        # EN: Without the state file the watcher is blind to everything — this is said to the channel like other
+        #     blindnesses, with exit code 3: the unit counts codes 1 and 2 as success (SuccessExitStatus=1 2), and
+        #     settings blindness would otherwise pass silently. There is no memory of what was sent (the state
+        #     file holds it), so the alarm repeats every cycle until the settings are fixed; it stops once OKW_STATE
+        #     is set.
+        tekst = f'СЛЕПОТА: файл состояния не задан — OKW_STATE или ключ OKW_STATE в {KONF} ({konf_prichina()})'
+        pechat(tekst)
+        if not trevoga('⚠️ сторож копирования в OMEGA СЛЕП: ' + tekst):
+            pechat('  🔴 тревога о слепоте настройки НЕ ушла')
+        return 3
+    try:
+        st = json.load(open(STATE, encoding='utf-8'))
+    except FileNotFoundError:
+        st = {}
+    except (ValueError, OSError) as e:        # битый STATE: не падать молча (код 1 юнит считает успехом) — отложить и сказать · EN: broken STATE: do not fail silently (the unit counts code 1 as success) — set it aside and say so
+        vstoronu = STATE + '.bityj.' + time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
+        try: os.replace(STATE, vstoronu)
+        except OSError: vstoronu = 'не отложен'
+        pechat(f'⚠️ STATE битый ({e}) — отложен: {vstoronu}; уже названные тревоги повторятся один раз')
+        st = {}
+    otdano = set(st.get('ids', [])); slepota_den = st.get('slepota_den')
+    kod = 0; slepye = []
+    try:
+        om = sqlite3.connect(f'file:{OMEGA_DB}?mode=ro', uri=True)
+        dvojniki = {}
+        for c, ttl in om.execute('SELECT content, ttl_seconds FROM memories'):
+            dvojniki.setdefault(otpechatok(c), []).append(ttl)
+        bez_ent = {r[0]: r[1:] for r in om.execute(
+            "SELECT m.node_id, m.project, json_extract(m.metadata, '$.derived_from'), "
+            "(SELECT e.entity_id FROM memories e WHERE e.node_id = json_extract(m.metadata, '$.derived_from')) "
+            "FROM memories m WHERE (m.entity_id IS NULL OR m.entity_id = '') AND COALESCE(m.status, 'active') = 'active'")}
+    except Exception as e:
+        slepye.append(f'OMEGA {OMEGA_DB}: {e}'); dvojniki = None; bez_ent = None
+    bazy = sorted({p for sh in PAMYAT for p in glob.glob(sh)})
+    if not bazy: slepye.append(('ни одной pamyat.db по ' + ':'.join(PAMYAT) if PAMYAT else f'шаблоны баз памяти не заданы — OKW_PAMYAT или ключ OKW_PAMYAT в {KONF}'))
+    novye = []
+    for p in bazy if dvojniki is not None else []:
+        a = agent_iz_puti(p)
+        try:
+            db = sqlite3.connect(f'file:{p}?mode=ro', uri=True)
+            # Заглушка (текст стёрт ступенью чистки, запись уже в OMEGA) двойника по тексту не имеет — не «без копии».
+            # EN: A stub (text wiped by the cleanup stage, the record is already in OMEGA) has no twin by text —
+            #     it is not "no copy".
+            bez_zaglushek = ' AND vychishcheno IS NULL' if 'vychishcheno' in {r[1] for r in db.execute('PRAGMA table_info(zapisi)')} else ''
+            zap = db.execute(f'SELECT id, soderzhim, sozdano FROM zapisi WHERE klass IN ({",".join("?" * len(KLASSY))}){bez_zaglushek}', KLASSY).fetchall()
+        except Exception as e:
+            slepye.append(f'{a} {p}: {e}'); continue
+        bez, srok, v_okne, v_okne_s = [], [], 0, 0
+        for i, s, sozd in zap:
+            if (a.split(' ')[0], i) in ISKLYUCHENIYA: continue
+            vozr = teper - sozd / 1000
+            tw = dvojniki.get(otpechatok(s))
+            if N_MIN * 60 <= vozr <= (N_MIN + OKNO_MIN) * 60:
+                v_okne += 1; v_okne_s += bool(tw)
+            if tw is None:
+                if vozr >= N_MIN * 60: bez.append(i)
+            elif any(t is not None for t in tw):
+                srok.append(i)
+        pechat(f'{a}: знаний {len(zap)} · без копии старше {N_MIN} мин {len(bez)} · копия со сроком {len(srok)} · '
+               f'в окне {OKNO_MIN} мин {v_okne} (с копией {v_okne_s})')
+        if v_okne > 0 and v_okne_s == 0:
+            kod = 1; kl = f'{a}:vstalo:{int(teper // 3600)}'
+            if kl not in otdano:
+                novye.append((f'🔴 {a}: КОПИРОВАНИЕ В OMEGA ВСТАЛО — за {OKNO_MIN} мин в pamyat.db легло знаний {v_okne}, '
+                             f'двойников в OMEGA 0 (пример id {bez[-1] if bez else "?"})', [kl]))
+        for vid, spisok, slovo in (('bez', bez, 'БЕЗ КОПИИ в OMEGA'), ('srok', srok, 'копия в OMEGA СО СРОКОМ жизни')):
+            if not spisok: continue
+            kod = 1
+            svezhie = [i for i in spisok if f'{a}:{vid}:{i}' not in otdano]
+            if svezhie:
+                novye.append((f'🔴 {a}: знаний {slovo}: {len(spisok)} (новых {len(svezhie)}; пример id '
+                              + ', '.join(str(x) for x in svezhie[:2]) + f'; база {p})', [f'{a}:{vid}:{i}' for i in svezhie]))
+    rubezh = st.get('bez_entity_rubezh'); bez_novye = []
+    if bez_ent is not None:
+        if rubezh is None:
+            rubezh = sorted(bez_ent)
+            pechat(f'OMEGA: бесхозных (active без entity_id) {len(bez_ent)} — РУБЕЖ поставлен этим прогоном, тревоги на них нет')
+        else:
+            vne = [n for n in sorted(bez_ent) if n not in set(rubezh)]
+            bez_novye = [n for n in vne if f'bez_entity:{n}' not in otdano]
+            pechat(f'OMEGA: бесхозных {len(bez_ent)} · вне рубежа {len(vne)} · из них ещё не названо {len(bez_novye)}')
+            if vne: kod = max(kod, 1)
+    try:
+        pravka_str, pravka_prich = pravka_postavki()
+        pechat(f'правка поставки OMEGA (перечень {PRAVKI}): {pravka_str} — ' + ('ЦЕЛА' if not pravka_prich else '; '.join(pravka_prich)))
+    except Exception as e:
+        slepye.append(f'правка поставки OMEGA: {e}'); pravka_prich = None
+    pravka_klyuch = None
+    if pravka_prich:
+        kod = max(kod, 1)
+        pravka_klyuch = 'pravka:' + hashlib.sha1('|'.join(pravka_prich).encode()).hexdigest()[:12]
+    elif pravka_prich == []:
+        otdano = {k for k in otdano if not k.startswith('pravka:')}   # цела — отметки сняты: повтор той же беды снова скажется · EN: intact — marks removed: a repeat of the same trouble will be reported again
+    try:
+        model_str, model_prich, model_vidy = model_embeddinga()
+        pechat(f'модель эмбеддинга OMEGA (признак 7): {model_str} — ' + ('НА МЕСТЕ' if not model_prich else '; '.join(model_prich)))
+    except Exception as e:
+        slepye.append(f'модель эмбеддинга OMEGA: {e}'); model_prich = None
+    model_klyuch = None
+    if model_prich:
+        kod = max(kod, 1)
+        model_klyuch = 'model:' + hashlib.sha1('|'.join(model_vidy).encode()).hexdigest()[:12]   # по виду, не по числу · EN: by kind, not by number
+    elif model_prich == []:
+        otdano = {k for k in otdano if not k.startswith('model:')}    # на месте — отметки сняты · EN: in place — marks removed
+    den = time.strftime('%Y-%m-%d', time.gmtime(teper))
+    if slepye:
+        kod = 2
+        pechat('СЛЕПОТА: ' + ' · '.join(slepye))
+        if slepota_den != den:
+            novye.append(('⚠️ сторож копирования в OMEGA СЛЕП: ' + ' · '.join(slepye)[:600], [SLEPOTA]))
+    # Находка 25.09: признаки 1–3 и слепота ставили отметку ДО отправки, итог канала не читали — отказ канала
+    # гасил тревогу навсегда. Теперь как у признака 4: отметка — только после успеха канала.
+    # EN: Finding of 25.09: signs 1–3 and blindness set the mark BEFORE sending and did not read the channel
+    #     result — a channel refusal silenced the alarm forever. Now as with sign 4: the mark is set only after
+    #     the channel succeeds.
+    for t, klyuchi in novye:
+        if trevoga(t):
+            otdano.update(k for k in klyuchi if k != SLEPOTA)
+            if SLEPOTA in klyuchi: slepota_den = den
+        else:
+            pechat('  🔴 тревога НЕ ушла — отметку не ставлю, повторю в следующий такт')
+    if bez_novye:
+        podskazki = []
+        for n in bez_novye[:5]:
+            proj, der, der_ent = bez_ent[n]
+            podskazki.append(f'{n} (project {proj or "—"}' + (f'; автозапись от {der}, хозяин исходной {der_ent or "тоже пуст"}' if der else '') + ')')
+        if trevoga(f'🔴 OMEGA: новых БЕСХОЗНЫХ записей (active без entity_id) {len(bez_novye)}: ' + '; '.join(podskazki)
+                   + (f' и ещё {len(bez_novye) - 5}' if len(bez_novye) > 5 else '')
+                   + '. Приписать руками (UPDATE entity_id по node_id); прямой omega_store — всегда с entity_id'):
+            otdano.update(f'bez_entity:{n}' for n in bez_novye)
+        else:
+            pechat('  🔴 тревога о бесхозных НЕ ушла — отметку не ставлю, повторю в следующий такт')
+    # 5) ДОВЕРИЕ: счёт раз в сутки; тревога о новых отменённых — каждый такт до успеха канала.
+    # EN: 5) TRUST: a count once a day; the alarm about new superseded records — every cycle until the channel
+    #     succeeds.
+    dov_den = st.get('doverie_den'); dov_otm = st.get('doverie_otmenena')      # последний счёт: ['агент:id', …] либо None · EN: last count: ['agent:id', …] or None
+    dov_posl = st.get('doverie_poslednij')        # последний удавшийся счёт: {'den', 'schet': {агент: {поле: число}}} · EN: last successful count: {'den', 'schet': {agent: {field: number}}}
+    if dov_den != den:
+        skript = os.path.join(CORE, 'src', 'schet-doveriya.mjs') if CORE else ''
+        if not os.path.exists(skript):
+            pechat(f'доверие: счётчик ядра не найден ({skript}) — НЕ ИЗМЕРЕНО (ядро старше alpha.87)')
+        else:
+            try:
+                r = subprocess.run([NODE, '--no-warnings', skript] + [agent_iz_puti(p).split(' ')[0] + '=' + p for p in bazy],
+                                   capture_output=True, text=True, timeout=300)
+                for l in r.stdout.splitlines(): pechat(l)
+                if r.returncode in (0, 2):
+                    tek = sorted(f'{m.group(1)}:{i}' for l in r.stdout.splitlines()
+                                 for m in [re.match(r'доверие (\S+): .* otmenena_id \[([\d,]*)\]$', l)] if m for i in m.group(2).split(',') if i)
+                    if dov_otm is None:
+                        otdano.update('dov:' + k for k in tek)
+                        pechat(f'доверие: РУБЕЖ отменённых поставлен первым счётом ({len(tek)}: {", ".join(tek) or "—"}), тревоги на них нет')
+                    dov_otm = tek
+                    dov_posl = {'den': den, 'schet': razobrat_schet(r.stdout)}
+                else:
+                    pechat(f'доверие: счётчик ядра отказал (код {r.returncode}): {r.stderr.strip()[-200:]} — НЕ ИЗМЕРЕНО')
+            except Exception as e:
+                pechat(f'доверие: счётчик ядра не выполнен ({e}) — НЕ ИЗМЕРЕНО')
+        dov_den = den
+    dov_novye = [k for k in (dov_otm or []) if 'dov:' + k not in otdano]
+    if dov_novye:
+        if trevoga('🔴 доверие: НОВЫЕ ОТМЕНЁННЫЕ записи памяти (в брифинге restore — строкой «⛔», содержимое не подаётся): '
+                   + ', '.join(dov_novye[:10]) + (f' и ещё {len(dov_novye) - 10}' if len(dov_novye) > 10 else '')):
+            otdano.update('dov:' + k for k in dov_novye)
+        else:
+            pechat('  🔴 тревога об отменённых НЕ ушла — отметку не ставлю, повторю в следующий такт')
+    # 5б) НЕДЕЛЬНАЯ СВОДКА ДОВЕРИЯ — читатель ночной строки; отметка — после успеха канала.
+    # EN: 5b) WEEKLY TRUST SUMMARY — the reader of the nightly line; the mark is set after the channel succeeds.
+    svod = st.get('doverie_svodka'); svod_nov = False; neizm_den = st.get('doverie_neizm_den')
+    if svod is None:
+        if dov_posl:
+            svod = {'den': dov_posl['den'], 'schet': dov_posl['schet'], 'schet_den': dov_posl['den']}
+            pechat(f'доверие: РУБЕЖ недельной сводки — счёт {dov_posl["den"]}; первая сводка через {SVODKA_DNEJ} сут., письма сейчас нет')
+        else:
+            pechat('доверие: рубеж недельной сводки ждёт первого счёта')
+    elif dnej_mezhdu(svod['den'], den) >= SVODKA_DNEJ:
+        izmereno = bool(dov_posl) and dov_posl.get('den') == den
+        if izmereno or neizm_den != den:          # «НЕ ИЗМЕРЕНО» — не чаще раза в сутки; день сводки при нём не двигается · EN: "NOT MEASURED" — at most once a day; the summary day does not move with it
+            svod_nov = True
+            if trevoga(tekst_svodki(svod, dov_posl, den)):
+                if izmereno: svod = {'den': den, 'schet': dov_posl['schet'], 'schet_den': den}
+                else: neizm_den = den
+            else:
+                pechat('  🔴 недельная сводка доверия НЕ ушла — отметку не ставлю, повторю в следующий такт')
+        else:
+            pechat(f'доверие: недельная сводка ОТЛОЖЕНА — счёта за {den} нет, «НЕ ИЗМЕРЕНО» сегодня уже сказано')
+    pravka_nov = pravka_klyuch is not None and pravka_klyuch not in otdano
+    if pravka_nov:
+        if trevoga('🔴 OMEGA: ЛОКАЛЬНАЯ ПРАВКА ПОСТАВКИ (перечень ' + PRAVKI + ') — ' + '; '.join(pravka_prich)
+                   + f'. Различитель: {pravka_str}. Патчи — pravka.diff в учёте dorabotki (omega-b-n-*); порядок — в каждой причине'):
+            otdano.add(pravka_klyuch)
+        else:
+            pechat('  🔴 тревога о правке поставки НЕ ушла — отметку не ставлю, повторю в следующий такт')
+    model_nov = model_klyuch is not None and model_klyuch not in otdano
+    if model_nov:
+        if trevoga('🔴 OMEGA: МОДЕЛЬ ЭМБЕДДИНГА — ' + '; '.join(model_prich) + f'. Различитель: {model_str}. '
+                   + 'Поиск по смыслу выключен (вектор = хэш), агенты видят лишь «Semantic search is degraded». Вернуть файлы модели, перезапустить omega-memory'):
+            otdano.add(model_klyuch)
+        else:
+            pechat('  🔴 тревога о модели эмбеддинга НЕ ушла — отметку не ставлю, повторю в следующий такт')
+    if not novye and not bez_novye and not dov_novye and not pravka_nov and not svod_nov and not model_nov: pechat('новых тревог нет' + (' (уже названное — выше)' if kod == 1 else ''))
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    vrem = f'{STATE}.{os.getpid()}.tmp'       # атомарно: оборванная запись не оставит битый STATE (замечание приёмки) · EN: atomically: an interrupted write will not leave a broken STATE (acceptance remark)
+    with open(vrem, 'w', encoding='utf-8') as f:
+        json.dump({'ids': sorted(otdano), 'slepota_den': slepota_den, 'bez_entity_rubezh': rubezh,
+                   'doverie_den': dov_den, 'doverie_otmenena': dov_otm,
+                   'doverie_poslednij': dov_posl, 'doverie_svodka': svod,
+                   'doverie_neizm_den': neizm_den}, f); f.flush(); os.fsync(f.fileno())
+    os.replace(vrem, STATE)
+    pechat(f'ИТОГ: баз {len(bazy)} · код {kod} (0 — все знания в OMEGA без срока · 1 — есть без копии/со сроком/встало/бесхозные вне рубежа/правка поставки/модель эмбеддинга · 2 — слепота)')
+    return kod
+
+if __name__ == '__main__':
+    sys.exit(main())

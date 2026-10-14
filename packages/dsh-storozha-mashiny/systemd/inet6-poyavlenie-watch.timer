@@ -1,0 +1,10 @@
+# RU: Каждые 30 минут, первый прогон через 10 минут после загрузки.
+# EN: Every 30 minutes, the first run 10 minutes after boot.
+[Unit]
+Description=Запуск сторожа появления IPv6 каждые 30 минут · IPv6 appearance watchdog every 30 minutes
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+Persistent=true
+[Install]
+WantedBy=timers.target

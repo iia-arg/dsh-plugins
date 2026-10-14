@@ -1,0 +1,21 @@
+# B-N-1640: читатель списка сотрудников сайта → белый список маски ПДн Варвары + адресаты тревог (Заря, B-N-1639).
+# От root: пишет /etc/varvara (root:varvara 0750) и читает ключ. Ключ — учётные данные systemd: исходник root 0600,
+# процесс видит его только в $CREDENTIALS_DIRECTORY; в argv и журнал не попадает.
+[Unit]
+Description=Список сотрудников сайта «Острова» → белый список Варвары (B-N-1640)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/spisok-sotrudnikov
+LoadCredential=ostrov-staff:/etc/spisok-sotrudnikov/directory-readonly.key
+# 1 — отказ чтения (файлы не тронуты, тревога ушла по правилу остывания): юнит failed — видно в systemctl --failed.
+TimeoutStartSec=90
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/etc/varvara -/var/log/agent-alert/poslednie.log
+StateDirectory=spisok-sotrudnikov
+StateDirectoryMode=0700

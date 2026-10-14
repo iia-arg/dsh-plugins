@@ -1,0 +1,202 @@
+{
+  "type": "object",
+  "title": "Ostrov model tool arguments (not transport envelope)",
+  "description": "Остров CRM: карточки, расчёты, сотрудники и связи по правам текущего доверенного входа. Context/requestKey назначает код; Site и гостевой Telegram не повышаются в staff.",
+  "properties": {
+    "operation": {
+      "type": "string",
+      "enum": [
+        "identity",
+        "catalog",
+        "objects",
+        "quote",
+        "plan.create",
+        "plan.read",
+        "plan.edit",
+        "plan.list",
+        "client.read",
+        "client.save",
+        "staff.list",
+        "staff.read",
+        "client.list",
+        "client.create",
+        "plan.connections",
+        "plan.link",
+        "client.assign"
+      ]
+    },
+    "params": {
+      "type": "object",
+      "description": "plan.create: kind/plan/catalogVersion и при необходимости один из clientId/clientProfile; plan.link: версии расчёта и клиента; client.assign: версия клиента и staffId. id/clientId чужого гостя доступны только подтверждённому сотруднику. После изменения связи — независимое перечитывание.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "group",
+            "biggroup",
+            "resident"
+          ],
+          "type": "string"
+        },
+        "plan": {
+          "description": "Поля плана: group — policyVersion:3, week (суббота YYYY-MM-DD из catalog), adults/teens (участники без команды), extraTeam, group=adults+teens, foodDays:7, organizer/title, housing:[{resource,occupancy,quantity}], activities:[{resource,day:0..7,slot,options:[]}]; основные мастера добавляются сервером по catalog. biggroup — policyVersion:3, week, adults, teens, extraTeam, organizer, title. resident — name, arrival/departure (YYYY-MM-DD), adults, children:[возраста из правил catalog, не количество], housing:[{resource,occupancy}] по строке на комнату, bathVisits. Жильё покрывает всех людей/команду. resource/slot/options только из свежего catalog; не добавлять все залы/баню автоматически. При неполном расселении уточнить жильё, не уменьшать людей ради прохода. Возрастные/тарифные/семантические ограничения проверяет API.",
+          "type": "object"
+        },
+        "catalogVersion": {
+          "type": "integer"
+        },
+        "documentVersion": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "version": {
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "profile": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "phone": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "messengers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "telegram",
+                      "whatsapp",
+                      "max"
+                    ]
+                  },
+                  "username": {
+                    "type": "string"
+                  },
+                  "userId": {
+                    "type": "string",
+                    "description": "Telegram ID — подтверждённая привязка. В своей Telegram-карточке назначает/сохраняет код; чужую карточку редактирует только подтверждённый сотрудник. При plan.create с clientProfile userId пустой."
+                  }
+                },
+                "required": [
+                  "type",
+                  "username"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "name",
+            "phone",
+            "email",
+            "notes",
+            "messengers"
+          ],
+          "additionalProperties": false
+        },
+        "clientId": {
+          "type": "string"
+        },
+        "staffId": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "calculations",
+            "applications",
+            "bookings",
+            "guests",
+            "finance"
+          ]
+        },
+        "clientVersion": {
+          "type": "integer"
+        },
+        "clientProfile": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "phone": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "messengers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "telegram",
+                      "whatsapp",
+                      "max"
+                    ]
+                  },
+                  "username": {
+                    "type": "string"
+                  },
+                  "userId": {
+                    "type": "string",
+                    "description": "Telegram ID — подтверждённая привязка. В своей Telegram-карточке назначает/сохраняет код; чужую карточку редактирует только подтверждённый сотрудник. При plan.create с clientProfile userId пустой."
+                  }
+                },
+                "required": [
+                  "type",
+                  "username"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "name",
+            "phone",
+            "email",
+            "notes",
+            "messengers"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "operation"
+  ],
+  "additionalProperties": false
+}

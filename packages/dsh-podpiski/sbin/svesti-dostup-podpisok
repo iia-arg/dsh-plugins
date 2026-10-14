@@ -1,0 +1,461 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""svesti-dostup-podpisok — свести доступ шлюзов sadik к токенам подписок: учётка шлюза читает ТОЛЬКО свою (B-N-1621, Искра).
+
+ЗАЧЕМ (слово владельца 05.10 09:13 МСК; замысел kandidaty/B-N-1621/ZAMYSEL-B-N-1621.md 2b1c54b7): группа claudeoauth (986)
+  давала 8 шлюзам чтение ВСЕХ токенов (проба setpriv с группами шлюза Спартака: 5 из 5). Теперь доступ — ACL
+  u:<учётка>:r на ОДИН файл, назначенный шлюзу его настройками.
+ЗОВ (root):
+  svesti-dostup-podpisok --dobavit [--codex N]  выдать нужное, НИЧЕГО не отзывать; --codex N — сверх того подписку Codex N
+                                                всем Codex-шлюзам (переключатель Codex зовёт ДО перевески ссылок)
+  svesti-dostup-podpisok --svesti               выдать нужное и отозвать лишнее (после переключения, при переходе)
+  svesti-dostup-podpisok --proverit             только чтение: расхождения с нужным и с правами «после перехода»,
+                                                плюс ЯДРО: каждый шлюз (живые группы) читает своё 1/1 и чужие 0/N
+  svesti-dostup-podpisok --chtenie [--bez-gruppy G]  только чтение ЯДРОМ: каждый шлюз читает СВОЁ с живыми группами
+                                                (минус G — такт 1 перехода: ACL работает без 986); чужие — для сведения
+  любой иной ввод (пусто, --dry-run, -n, …) — ОТКАЗ, код 2, ничего не тронуто.
+🔴 ПРАВИЛО (ворота Вениамина 06:31Z, условие 1в): ЛЮБОЙ chmod файла токена ⇒ следом `svesti-dostup-podpisok --svesti`.
+  chmod меняет МАСКУ ACL: «user:spartak:r--  #effective:---» — запись есть, чтения нет; шлюз молча теряет токен.
+  Поэтому здесь судит ДЕЙСТВУЮЩЕЕ право (getfacl #effective и ядро), а не строка ACL.
+КТО НУЖЕН: шлюз = юнит claude-oauth-gateway@<a> | coder-gateway@<a> | coder-gateway-<a> с UnitFileState=enabled или
+  ActiveState=active, в EnvironmentFiles которого есть instance-<a>.env. Шаблон даёт «двойника» на любое имя
+  (claude-oauth-gateway@alfa: loaded, но disabled/inactive) — такие не считаются. Учётка — User= юнита.
+  Настройки — из $ENV_DIR/instance-<a>.env:
+    GATEWAY_POSTAVSHIK=anthropic → GATEWAY_TOKEN_FILE, ровно <KATALOG_TOKENOV>/token-podpiska-<N>;
+    GATEWAY_POSTAVSHIK=openai    → <CODEX_HOME>/auth.json — ссылка ровно на <KATALOG_CODEX N>/auth.json; ещё --x на этот каталог.
+  Гость (ExecStart через guest-launch.sh; токен ему отдаёт systemd по LoadCredential=) — ACL не нужен, пропуск с именем.
+ЧЕМ ВЛАДЕЕТ: файлы token и token-podpiska-<N> в KATALOG_TOKENOV; каталоги codex-podpiska-<N> и их auth.json. Больше ничего.
+  --svesti отзывает именованные u:<кто-угодно> сверх нужного и снимает ACL ПО УМОЛЧАНИЮ с каталогов codex-podpiska-<N>
+  (из-за него новый файл обновителя наследовал чтение u:coders на ОБЕ подписки).
+ОТКАЗ ДО ЗАПИСЕЙ (код 2): неизвестный поставщик; путь токена вне KATALOG_TOKENOV; ссылка не на зарегистрированную подписку;
+  два живых юнита на одно имя; юнит без User=; ноль шлюзов или ноль файлов-токенов (СЛЕПОТА). Неизвестное НЕ превращается
+  в «отозвать всё»: план строится целиком до первой записи.
+ПОСЛЕ ЗАПИСИ — сверка другим срезом (под root): каждая нужная пара проверяется ЯДРОМ (`setpriv` с ЖИВЫМИ uid/gid/
+  группами процесса шлюза из /proc/<MainPID>/status; процесса нет — `runuser` с группами юнита, это названо). Не читается — код 1.
+--proverit (сторож «как после перехода»; ДО перехода красный — и это правда): нужное выдано, лишнего нет, ACL по умолчанию
+  нет; у токенов владелец root:root, group::--- и other::---; каталог KATALOG_TOKENOV без r/w для группы и прочих;
+  instance-*.env — root:root 0600 без именованных ACL (§5 замысла: иначе агент переписывает свой шлюз).
+КОДЫ: 0 сошлось/сделано · 1 расхождение (--proverit) или нужное не читается после записи · 2 отказ/слепота · 3 setfacl упал.
+ЧЕГО НЕ ЛОВИТ: доступ через sudo у агентов с sudo; копии токенов вне этих путей; /run/credentials гостя; чтение, уже
+  совершённое процессом до отзыва (Codex держит вход в памяти хода — замер Зари 30.09, pereklyuchatel-codex:10–11).
+ЗНАЧЕНИЯ ТОКЕНОВ НЕ ЧИТАЮТСЯ И НЕ ПЕЧАТАЮТСЯ: работа только с правами. instance-*.env читается ради трёх путевых строк.
+"""
+import fcntl, grp, os, pwd, re, subprocess, sys
+
+# Боевые значения; подмена — ТОЛЬКО стенду и ТОЛЬКО при явном ключе SDP_STEND=1 (как PK_STEND/SWITCH_STEND, B-N-1394).
+# Без ключа SDP_* игнорируются (строка в stderr); ключ иной — ОТКАЗ, код 2. ГРАНИЦА: PATH (getfacl, setfacl, runuser) не закрыт.
+ENV_DIR = '/etc/claude-oauth'
+KATALOG_TOKENOV = '/etc/claude-oauth'
+KATALOG_CODEX = '/etc/claude-oauth/codex-podpiska-{n}'
+SYSTEMCTL = 'systemctl'
+ZAMOK = '/run/svesti-dostup-podpisok.lock'
+PODMENY = ('ENV_DIR', 'KATALOG_TOKENOV', 'KATALOG_CODEX', 'SYSTEMCTL', 'ZAMOK')
+_klyuch = os.environ.get('SDP_STEND', '')
+_zadany = [v for v in PODMENY if os.environ.get('SDP_' + v)]
+if _klyuch == '1':
+    for _v in _zadany:
+        globals()[_v] = os.environ['SDP_' + _v]
+    print('ПОДМЕНЕНО: ' + (' '.join(_zadany) or 'ничего'), flush=True)
+elif _klyuch == '':
+    if _zadany:
+        print('ИГНОРИРУЮ (нет SDP_STEND=1), беру боевые: ' + ' '.join('SDP_' + v for v in _zadany), file=sys.stderr)
+else:
+    print(f'ОТКАЗ: SDP_STEND=«{_klyuch}» — допустимо только 1 (стенд) или пусто (бой); ничего не тронуто', file=sys.stderr)
+    sys.exit(2)
+
+SHABLONY = ('claude-oauth-gateway@{a}.service', 'coder-gateway@{a}.service', 'coder-gateway-{a}.service')
+ZOV = 'зов: svesti-dostup-podpisok --dobavit [--codex N] | --svesti | --proverit | --chtenie [--bez-gruppy G]'
+
+
+def otkaz(tekst, kod=2):
+    print(f'ОТКАЗ: {tekst}', file=sys.stderr)
+    sys.exit(kod)
+
+
+def razbor(argv):
+    if argv == ['--dobavit']:
+        return 'dobavit', None
+    if len(argv) == 3 and argv[:2] == ['--dobavit', '--codex'] and re.fullmatch(r'[0-9]+', argv[2]):
+        return 'dobavit', argv[2]
+    if argv == ['--svesti']:
+        return 'svesti', None
+    if argv == ['--proverit']:
+        return 'proverit', None
+    if argv == ['--chtenie']:
+        return 'chtenie', None
+    if len(argv) == 3 and argv[:2] == ['--chtenie', '--bez-gruppy'] and re.fullmatch(r'[a-z_][a-z0-9_-]*', argv[2]):
+        return 'chtenie', argv[2]
+    otkaz(f'{ZOV} (получено: {" ".join(argv) or "ничего"}); ничего не тронуто')
+
+
+def chitat_env(put):
+    """Простые строки KEY=VALUE, как их понимает EnvironmentFile=; значения наружу не идут."""
+    d = {}
+    with open(put, encoding='utf-8') as f:
+        for s in f:
+            s = s.strip()
+            if not s or s.startswith('#') or '=' not in s:
+                continue
+            k, v = s.split('=', 1)
+            v = v.strip()
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in '"\'':
+                v = v[1:-1]
+            d[k.strip()] = v
+    return d
+
+
+def pokaz(yunit):
+    r = subprocess.run([SYSTEMCTL, 'show', yunit, '-p', 'LoadState', '-p', 'UnitFileState', '-p', 'ActiveState',
+                        '-p', 'User', '-p', 'Group', '-p', 'SupplementaryGroups', '-p', 'EnvironmentFiles', '-p', 'ExecStart',
+                        '-p', 'MainPID'],
+                       capture_output=True, text=True, timeout=15)
+    if r.returncode != 0:
+        otkaz(f'systemctl show {yunit}: код {r.returncode} — состав шлюзов неизвестен')
+    v = {'EnvironmentFiles': []}
+    for s in r.stdout.splitlines():
+        if '=' not in s:
+            continue
+        k, x = s.split('=', 1)
+        if k == 'EnvironmentFiles':
+            v[k].append(os.path.basename(x.split(' (', 1)[0]))
+        else:
+            v[k] = x
+    return v
+
+
+def shlyuzy():
+    try:
+        envs = sorted(f for f in os.listdir(ENV_DIR) if re.fullmatch(r'instance-[a-z0-9_-]+\.env', f))
+    except OSError as e:
+        otkaz(f'СЛЕПОТА: {ENV_DIR} не читается ({e.strerror})')
+    if not envs:
+        otkaz(f'СЛЕПОТА: ни одного instance-*.env в {ENV_DIR}')
+    est, gosti, bez = [], [], []
+    for f in envs:
+        a = f[len('instance-'):-len('.env')]
+        zhivye = []
+        for sh in SHABLONY:
+            y = sh.format(a=a)
+            v = pokaz(y)
+            if v.get('LoadState') != 'loaded':
+                continue
+            if v.get('UnitFileState') != 'enabled' and v.get('ActiveState') != 'active':
+                continue
+            if f not in v['EnvironmentFiles']:
+                continue
+            zhivye.append((y, v))
+        if not zhivye:
+            bez.append(a)
+            continue
+        if len(zhivye) > 1:
+            otkaz(f'{f}: живых юнитов два и больше ({", ".join(y for y, _ in zhivye)}) — чей файл, неизвестно')
+        y, v = zhivye[0]
+        if 'guest-launch' in v.get('ExecStart', ''):
+            gosti.append(y)
+            continue
+        kto = v.get('User', '')
+        if not kto:
+            otkaz(f'{y}: нет User= — учётка шлюза неизвестна')
+        try:
+            pw = pwd.getpwnam(kto)
+        except KeyError:
+            otkaz(f'{y}: учётки «{kto}» нет в системе')
+        # группы — как их выставит systemd: Group= (или основная) + NSS + SupplementaryGroups= (как kak_v_yunite у
+        # pereklyuchatel-codex). Иначе сверка ДО перехода ложно краснеет: шлюз читает через 986 из юнита, а не из /etc/group.
+        osn = v.get('Group') or grp.getgrgid(pw.pw_gid).gr_name
+        gr = [grp.getgrgid(g).gr_name for g in os.getgrouplist(kto, pw.pw_gid)] + v.get('SupplementaryGroups', '').split()
+        est.append((a, y, kto, os.path.join(ENV_DIR, f), osn, list(dict.fromkeys(gr)), v.get('MainPID', '0')))
+    if not est:
+        otkaz('СЛЕПОТА: ни одного шлюза с учёткой (гости и юниты без жизни не в счёт)')
+    return est, gosti, bez
+
+
+def podpiski_codex():
+    """Зарегистрированные подписки Codex: каталоги по шаблону KATALOG_CODEX, в которых есть auth.json."""
+    roditel = os.path.dirname(KATALOG_CODEX)
+    obr = re.compile(re.escape(os.path.basename(KATALOG_CODEX)).replace(re.escape('{n}'), '([0-9]+)'))
+    res = {}
+    try:
+        imena = os.listdir(roditel)
+    except OSError:
+        return res
+    for imya in imena:
+        m = obr.fullmatch(imya)
+        if m and os.path.isfile(os.path.join(roditel, imya, 'auth.json')):
+            res[m[1]] = os.path.join(roditel, imya, 'auth.json')
+    return res
+
+
+def plan(est, codex_dop):
+    """(файл → {учётки}, каталог Codex → {учётки}) — что ДОЛЖНО быть. Строится целиком до записей."""
+    obr = re.compile(re.escape(KATALOG_TOKENOV.rstrip('/')) + r'/token-podpiska-[0-9]+')
+    codex = podpiski_codex()
+    po_realnomu = {os.path.realpath(p): n for n, p in codex.items()}
+    if codex_dop is not None and codex_dop not in codex:
+        otkaz(f'--codex {codex_dop}: подписки нет ({KATALOG_CODEX.format(n=codex_dop)}/auth.json); есть: {", ".join(sorted(codex)) or "ничего"}')
+    fajly, katalogi = {}, {}
+    for a, y, kto, ef, *_ in est:
+        try:
+            e = chitat_env(ef)
+        except (OSError, UnicodeError) as x:
+            otkaz(f'{ef} не читается ({type(x).__name__})')
+        post = e.get('GATEWAY_POSTAVSHIK', '')
+        if post == 'anthropic':
+            t = e.get('GATEWAY_TOKEN_FILE', '')
+            if not obr.fullmatch(t):
+                otkaz(f'{y}: GATEWAY_TOKEN_FILE «{t}» — не {KATALOG_TOKENOV}/token-podpiska-<N>')
+            if not os.path.isfile(t):
+                otkaz(f'{y}: файла {t} нет')
+            fajly.setdefault(t, set()).add(kto)
+        elif post == 'openai':
+            dom = e.get('CODEX_HOME', '')
+            ssylka = os.path.join(dom, 'auth.json')
+            if not dom or not os.path.islink(ssylka):
+                otkaz(f'{y}: {ssylka or "CODEX_HOME"} — не ссылка')
+            n = po_realnomu.get(os.path.realpath(ssylka))
+            if n is None:
+                otkaz(f'{y}: {ssylka} ведёт не на зарегистрированную подписку Codex')
+            for m in {n, codex_dop} - {None}:
+                fajly.setdefault(codex[m], set()).add(kto)
+                katalogi.setdefault(os.path.dirname(codex[m]), set()).add(kto)
+        else:
+            otkaz(f'{y}: GATEWAY_POSTAVSHIK «{post}» — неизвестен (жду anthropic | openai)')
+    vladenie = []
+    try:
+        vladenie = [os.path.join(KATALOG_TOKENOV, f) for f in sorted(os.listdir(KATALOG_TOKENOV))
+                    if re.fullmatch(r'token(-podpiska-[0-9]+)?', f) and os.path.isfile(os.path.join(KATALOG_TOKENOV, f))]
+    except OSError as x:
+        otkaz(f'СЛЕПОТА: {KATALOG_TOKENOV} не читается ({x.strerror})')
+    vladenie += [codex[n] for n in sorted(codex)]
+    if not vladenie:
+        otkaz('СЛЕПОТА: ни одного файла-токена — нечего сводить')
+    for f in vladenie:
+        fajly.setdefault(f, set())
+    for n in codex:
+        katalogi.setdefault(os.path.dirname(codex[n]), set())
+    # проход по каталогу токенов — каждому шлюзу (такт 1: без 986 каталог 750 root:claudeoauth НЕ проходится, и ACL на
+    # токен до шлюза не доходит; найдено стендом r2 05.10). Прочим после перехода — o::--x (711), это допустимо.
+    katalogi.setdefault(KATALOG_TOKENOV.rstrip('/') or '/', set()).update(kto for _, _, kto, *_ in est)
+    return fajly, katalogi
+
+
+def acl(put):
+    """getfacl → (именованные u:имя→ДЕЙСТВУЮЩИЕ права, есть ли ACL по умолчанию, группа:: ЗАПИСАННАЯ, прочие::)."""
+    r = subprocess.run(['getfacl', '--omit-header', '--absolute-names', '--', put], capture_output=True, text=True)
+    if r.returncode != 0:
+        otkaz(f'getfacl {put}: код {r.returncode}', 3)
+    imen, po_umolch, gr, pr = {}, False, '', ''
+    for s in r.stdout.splitlines():
+        # «user:spartak:r--	#effective:---» — маска обнулила запись (chmod 600 ПОСЛЕ setfacl): решает действующее право
+        s, _, hvost = s.partition('#')
+        s = s.strip()
+        if not s:
+            continue
+        if s.startswith('default:'):
+            po_umolch = True
+            continue
+        chast = s.split(':')
+        if len(chast) != 3:
+            continue
+        if chast[0] == 'user' and chast[1] and hvost.strip().startswith('effective:'):
+            chast[2] = hvost.strip().split(':', 1)[1].strip()
+        # group:: берётся ЗАПИСАННЫМ, не действующим: маску пересчитает следующий же setfacl -m, и «group::r--»
+        # под нулевой маской снова станет чтением
+        if chast[0] == 'user' and chast[1]:
+            imen[chast[1]] = chast[2]
+        elif chast[0] == 'group' and not chast[1]:
+            gr = chast[2]
+        elif chast[0] == 'other':
+            pr = chast[2]
+    return imen, po_umolch, gr, pr
+
+
+def setfacl(*argv):
+    r = subprocess.run(['setfacl', *argv], capture_output=True, text=True)
+    if r.returncode != 0:
+        otkaz(f'setfacl {" ".join(argv)}: {r.stderr.strip() or "код " + str(r.returncode)}', 3)
+
+
+def svesti(fajly, katalogi, otzyvat):
+    vydano = otozvano = umolch = 0
+    for put, nuzh, prava in ([(p, u, 'r--') for p, u in sorted(fajly.items())] +
+                             [(p, u, '--x') for p, u in sorted(katalogi.items())]):
+        imen, po_umolch, _, _ = acl(put)
+        for kto in sorted(nuzh):
+            if imen.get(kto) != prava:
+                setfacl('-m', f'u:{kto}:{prava}', '--', put)
+                print(f'выдано    u:{kto}:{prava}  {put}')
+                vydano += 1
+        if otzyvat:
+            for kto in sorted(set(imen) - nuzh):
+                setfacl('-x', f'u:{kto}', '--', put)
+                print(f'отозвано  u:{kto}  {put}')
+                otozvano += 1
+            if po_umolch and put in katalogi:
+                setfacl('-k', '--', put)
+                print(f'снят ACL по умолчанию  {put}')
+                umolch += 1
+    return vydano, otozvano, umolch
+
+
+def zhivye_gruppy(pid):
+    """(uid, gid, [gid…]) живого процесса шлюза из /proc/<pid>/status; None — процесса нет/не читается."""
+    if not str(pid).isdigit() or int(pid) <= 0:
+        return None
+    try:
+        pole = dict(s.split(':', 1) for s in open(f'/proc/{pid}/status') if ':' in s)
+        return int(pole['Uid'].split()[0]), int(pole['Gid'].split()[0]), [int(g) for g in pole['Groups'].split()]
+    except (OSError, KeyError, ValueError):
+        return None
+
+
+def chitaet(sh, put, bez=None):
+    """Ядро решает, читает ли шлюз sh файл put. Живые группы процесса (условие 1б Вениамина), иначе — группы юнита.
+    bez — имя группы, которую вычесть (такт 1: «ACL работает без 986»). → (да/нет, чем мерили)."""
+    a, y, kto, ef, osn, gr, pid = sh
+    bez_gid = None
+    if bez:
+        try:
+            bez_gid = grp.getgrnam(bez).gr_gid
+        except KeyError:
+            otkaz(f'--bez-gruppy {bez}: такой группы нет')
+    zh = zhivye_gruppy(pid)
+    if zh:
+        uid, gid, gg = zh
+        gg = [g for g in gg if g != bez_gid]
+        kom = ['setpriv', f'--reuid={uid}', f'--regid={gid}'] + ([f'--groups={",".join(map(str, gg))}'] if gg else ['--clear-groups'])
+        chem = f'живой pid {pid}'
+    else:
+        gr = [g for g in gr if g != bez]
+        kom = ['runuser', '-u', kto, '-g', osn] + [k for g in gr for k in ('-G', g)] + ['--']
+        chem = 'группы юнита (процесса нет)'
+    return subprocess.run(kom + ['test', '-r', put], capture_output=True).returncode == 0, chem
+
+
+def chtenie(est, fajly, bez=None):
+    """Ядром по каждому шлюзу: своё (обязано читаться) и чужие (сколько читается). → [(шлюз, своих_ок, своих, чужих_чит, чужих, чем)]."""
+    rez = []
+    for sh in est:
+        kto = sh[2]
+        svoi = [p for p, u in fajly.items() if kto in u]
+        chuzhie = [p for p, u in fajly.items() if kto not in u]
+        ok, chem = 0, ''
+        for p in svoi:
+            da, chem = chitaet(sh, p, bez)
+            ok += da
+        chit_chuzh = []
+        for p in chuzhie:
+            da, chem = chitaet(sh, p, bez)
+            if da:
+                chit_chuzh.append(p)
+        rez.append((sh, ok, len(svoi), chit_chuzh, len(chuzhie), chem))
+    return rez
+
+
+def proverit(fajly, katalogi, est=None):
+    bedy = []
+    if est is not None and os.geteuid() == 0:
+        for sh, ok, n, chuzh, nch, chem in chtenie(est, fajly):
+            imya = sh[1].replace('.service', '')
+            if ok != n:
+                bedy.append(f'ЯДРО: {imya}({sh[2]}) своё читает {ok} из {n} ({chem})')
+            for p in chuzh:
+                bedy.append(f'ЯДРО: {imya}({sh[2]}) читает ЧУЖОЕ {p} ({chem})')
+    elif est is not None:
+        bedy.append('ЯДРО: не root — чтение ядром не проверено (сторож обязан идти от root)')
+    for put, nuzh in sorted(fajly.items()):
+        imen, po_umolch, gr, pr = acl(put)
+        for kto in sorted(nuzh):
+            if imen.get(kto) != 'r--':
+                bedy.append(f'нет доступа  u:{kto}:r--  {put} (сейчас {imen.get(kto, "нет записи")})')
+        for kto in sorted(set(imen) - nuzh):
+            bedy.append(f'лишний доступ  u:{kto}:{imen[kto]}  {put}')
+        st = os.stat(put)
+        if st.st_uid != 0 or st.st_gid != 0:
+            bedy.append(f'владелец {st.st_uid}:{st.st_gid}, нужен root:root  {put}')
+        if gr != '---' or pr != '---':
+            bedy.append(f'группа::{gr} прочие::{pr}, нужно --- и ---  {put}')
+    for put, nuzh in sorted(katalogi.items()):
+        imen, po_umolch, gr, pr = acl(put)
+        for kto in sorted(nuzh):
+            if imen.get(kto) != '--x':
+                bedy.append(f'нет прохода  u:{kto}:--x  {put}')
+        for kto in sorted(set(imen) - nuzh):
+            bedy.append(f'лишний проход  u:{kto}:{imen[kto]}  {put}')
+        if po_umolch:
+            bedy.append(f'ACL по умолчанию на каталоге  {put}')
+        if put == KATALOG_TOKENOV.rstrip('/') and gr == '---' and pr in ('---', '--x'):
+            continue   # каталог токенов: прочим — только проход (711), это и есть цель перехода
+        if gr != '---' or pr != '---':
+            bedy.append(f'группа::{gr} прочие::{pr}, нужно --- и ---  {put}')
+    st = os.stat(KATALOG_TOKENOV)
+    if st.st_mode & 0o066:
+        bedy.append(f'каталог {KATALOG_TOKENOV} {oct(st.st_mode & 0o777)}: группе/прочим открыт просмотр или запись (нужно 711)')
+    for f in sorted(os.listdir(ENV_DIR)):
+        if not re.fullmatch(r'instance-[a-z0-9_-]+\.env', f):
+            continue
+        p = os.path.join(ENV_DIR, f)
+        st = os.stat(p)
+        imen = acl(p)[0]
+        if st.st_uid != 0 or st.st_gid != 0 or (st.st_mode & 0o777) != 0o600 or imen:
+            bedy.append(f'{p}: {st.st_uid}:{st.st_gid} {oct(st.st_mode & 0o777)}'
+                        + (f' ACL {",".join(imen)}' if imen else '') + ' — нужно root:root 0600 без ACL (агент переписывает свой шлюз)')
+    return bedy
+
+
+def glavnaya():
+    rezhim, dovod = razbor(sys.argv[1:])
+    codex_dop = dovod if rezhim == 'dobavit' else None    # --codex N
+    bez_gruppy = dovod if rezhim == 'chtenie' else None   # --bez-gruppy G (такт 1)
+    est, gosti, bez = shlyuzy()
+    fajly, katalogi = plan(est, codex_dop)
+    sostav = (f'шлюзов {len(est)}: ' + ', '.join(f'{y.replace(".service", "")}({kto})' for _, y, kto, *_ in est)
+              + (f'; гости по LoadCredential: {", ".join(gosti)}' if gosti else '')
+              + (f'; instance-*.env без живого юнита: {", ".join(bez)}' if bez else ''))
+    if rezhim == 'chtenie':
+        if os.geteuid() != 0:
+            otkaz('--chtenie — только от root (setpriv/runuser)')
+        rez = chtenie(est, fajly, bez_gruppy)
+        hudo = 0
+        for sh, ok, n, chuzh, nch, chem in rez:
+            znak = '✅' if ok == n and n else '🔴'
+            hudo += znak == '🔴'
+            print(f'{znak} {sh[1].replace(".service", "")}({sh[2]}): своё {ok} из {n}, чужие читаются {len(chuzh)} из {nch}'
+                  f'{" (без " + bez_gruppy + ")" if bez_gruppy else ""} — {chem}')
+        print(f'{"СВОЁ ЧИТАЮТ ВСЕ" if not hudo else "НЕ ЧИТАЮТ СВОЁ: " + str(hudo)} · {len(rez) - hudo} из {len(rez)} шлюзов · {sostav}')
+        sys.exit(1 if hudo else 0)
+    if rezhim == 'proverit':
+        bedy = proverit(fajly, katalogi, est)
+        for b in bedy:
+            print(f'🔴 {b}')
+        print(f'{"РАСХОЖДЕНИЙ " + str(len(bedy)) if bedy else "СОШЛОСЬ"} · {sostav}')
+        sys.exit(1 if bedy else 0)
+    try:
+        zf = open(ZAMOK, 'w')
+        fcntl.flock(zf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        otkaz('идёт другой прогон помощника')
+    except OSError as e:
+        otkaz(f'замок {ZAMOK}: {e.strerror}')
+    vyd, otz, umo = svesti(fajly, katalogi, rezhim == 'svesti')
+    ne_chitayut = []
+    if os.geteuid() == 0:
+        # сверка другим срезом — ПО ШЛЮЗАМ: каждый читает свой файл с группами своего юнита (ядро решает, не getfacl)
+        for sh in est:
+            for put, nuzh in sorted(fajly.items()):
+                if sh[2] in nuzh:
+                    da, chem = chitaet(sh, put)
+                    if not da:
+                        ne_chitayut.append(f'{sh[1].replace(".service", "")}({sh[2]}) {put} [{chem}]')
+    else:
+        print('⚠️ не root: сверка чтением (runuser) не делалась — только getfacl')
+    print(f'итог ({rezhim}{" --codex " + codex_dop if codex_dop else ""}): выдано {vyd}, отозвано {otz}, '
+          f'снято по умолчанию {umo} · {sostav}')
+    if ne_chitayut:
+        print('🔴 ВЫДАНО, НО НЕ ЧИТАЕТСЯ: ' + '; '.join(ne_chitayut))
+        sys.exit(1)
+    sys.exit(0)
+
+
+if __name__ == '__main__':
+    glavnaya()

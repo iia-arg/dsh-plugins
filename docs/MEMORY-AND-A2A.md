@@ -1,5 +1,7 @@
 # Documentation: the `dsh-pamyat` memory pipeline and agent-to-agent mail (A2A)
 
+> 🗄 **Historical edition.** This document was written against the old version numbering — the `dsh-pamyat-core` core at 0.1.0-alpha.23 (September 2026, §1.3) — and has not been re-checked against the code since: numbers, keys and behaviour may have changed. The current description of each package is in its README. Rewriting this document is a separate task.
+
 > **The original is Russian** — [`MEMORY-AND-A2A.ru.md`](MEMORY-AND-A2A.ru.md); this file is a
 > translation from Russian. Edits are made **in pairs**: change one file, change the other in the
 > same commit.
@@ -32,7 +34,7 @@ thing and **say out loud what they cannot do**.
 
 **Agent-to-agent mail (A2A)** — a way for agents on one machine, living under different system
 users, to write to each other without breaking isolation. Two parts: `a2a-bus` (a spool directory,
-a postman running as `root`, a timer) and the reading side inside `telegram-multiagent` (polling
+a postman running as `root`, a timer) and the reading side inside `dsh-telegram-multiagent` (polling
 the mailbox, feeding the letter into the agent's turn, replying to the owner's chat).
 
 The parts are independent: memory works without mail, mail without memory. Together they give
@@ -62,7 +64,7 @@ the same as the `latest` tag in the registry — see §7.
 | `dsh-pamyat-omega` | 0.1.0-alpha.9 | optional long-term layer over external storage via MCP |
 | `dsh-pamyat` | 0.1.0-alpha.27 | the name for the set: which six, in exactly which versions, were checked together |
 | `a2a-bus` | no version (not an npm package) | mailboxes, postman, timer |
-| `telegram-multiagent` (`dsh-telegram-multiagent`) | 1.4.3 (acceptance 2026-09-04: 1.5.1 → 1.5.3 → 1.5.4 → **1.5.5 accepted 21:13** (sum `a0df8c9d3bdb0c5f`, version line at startup); 1.5.2 rejected; `latest` per acceptance — 1.5.5; live at Iskra 1.5.4; §6.3 describes 1.5.x) | Telegram channel; in this document — only its A2A part and the context commands |
+| `dsh-telegram-multiagent` | 1.4.3 (acceptance 2026-09-04: 1.5.1 → 1.5.3 → 1.5.4 → **1.5.5 accepted 21:13** (sum `a0df8c9d3bdb0c5f`, version line at startup); 1.5.2 rejected; `latest` per acceptance — 1.5.5; live at Iskra 1.5.4; §6.3 describes 1.5.x) | Telegram channel; in this document — only its A2A part and the context commands |
 
 ---
 
@@ -83,7 +85,7 @@ the same as the `latest` tag in the registry — see §7.
    │     assistant/message ──► nudzh: account usage, recompute window occupancy
    │     agent/pre-step   ──► nudzh: if occupancy ≥ predel×dolyaTrevogi — ONE insert
    │                          "time to compact" (source.kind = plugin)
-   │     /compact-status  ──► telegram-multiagent: how many tokens and how far to the threshold
+   │     /compact-status  ──► dsh-telegram-multiagent: how many tokens and how far to the threshold
    │
    ├─ platform compaction (by its threshold or by /compact):
    │     compaction/summary ──► secretary: summary + verbatim reference to the shadowed range
@@ -118,7 +120,7 @@ Three things that are not visible on the map but matter more than the map itself
 | marks "when the briefing was given" | JSON `{ [sid]: timestamp }`, path `welcomeOtmetki` (`restore` setting), default `~/.dsh-pamyat-welcome-otmetki.json` | `restore` | `restore` |
 | platform session journal | path `putZhurnala` (`secretary` setting) | platform | `secretary` (only for distillation) |
 | external knowledge store | address `adres` (`omega` setting), MCP over HTTP | `omega` | `omega` (re-reading to confirm) |
-| A2A letters | `/var/spool/a2a/<user>` (default `A2A_KOREN`), or `<a2aDir>/in`, `<a2aDir>/out` | sender, postman | `telegram-multiagent` |
+| A2A letters | `/var/spool/a2a/<user>` (default `A2A_KOREN`), or `<a2aDir>/in`, `<a2aDir>/out` | sender, postman | `dsh-telegram-multiagent` |
 
 ---
 
@@ -135,13 +137,13 @@ Exact names are from the code; "waterfall" means the hook first calls `next()` a
 | `agent/pre-step` (waterfall, `prepend: true`) | `restore` | layer B: first step after `compaction/end` — insert the summary; layer C: first step after process start — briefing under budget | `restore/src/index.js` |
 | `agent/pre-step` (waterfall) | `nudzh` | on threshold crossing — one reminder insert; on `decision.kind === 'reject'` or an aborted signal — nothing | `nudzh/src/index.js` |
 | `dispose` | `core` | close the database | `core/src/index.js` |
-| `session/event` types `goal/change`, `turn/start`, `turn/end`, `assistant/message` | `telegram-multiagent` | deliver answers to chat/channel, drop the question from the queue, reason for a turn error | `telegram-multiagent/src/index.js` |
-| `command/run` (via the `commands` registry) | `telegram-multiagent` | `/compact` → the platform's own compaction; `/compact-status` → occupancy summary | same file |
+| `session/event` types `goal/change`, `turn/start`, `turn/end`, `assistant/message` | `dsh-telegram-multiagent` | deliver answers to chat/channel, drop the question from the queue, reason for a turn error | `dsh-telegram-multiagent/src/index.js` |
+| `command/run` (via the `commands` registry) | `dsh-telegram-multiagent` | `/compact` → the platform's own compaction; `/compact-status` → occupancy summary | same file |
 
 **What is not in this table — and it is not an omission.** `core`, `byudzhet` and `omega` listen
 to no event: they work on call. The platform has no separate `PreCompact`/`PostCompact` events —
 compaction is visible only through `compaction/summary` and `compaction/end` inside
-`session/event`. `telegram-multiagent` does **not** listen to compaction events at all: it merely
+`session/event`. `dsh-telegram-multiagent` does **not** listen to compaction events at all: it merely
 expands the `/compact` command into the name of the platform's own command, and executing it is
 the platform's business.
 
@@ -177,7 +179,7 @@ choice is deliberate:
   the core is missing, the layer comes up and **shouts** on every step where it should have
   inserted — more visible than a plugin absent from the list.
 - `core` takes `ctx.get('pamyatDolgovremennaya')`: the long-term layer is optional by design.
-- `telegram-multiagent` **deliberately does not declare** `compaction` or `tokenMeter` in
+- `dsh-telegram-multiagent` **deliberately does not declare** `compaction` or `tokenMeter` in
   `inject`: declaring them drove a copy of the platform into `pending: waiting for service:
   compaction`, and the link to the owner never came up at all. The services are taken with
   `ctx.get(...)`.
@@ -354,7 +356,7 @@ so that a reader understands how the versions differ and does not install by tag
 | alpha.24 | boundary without `_` | no `preshared` in the list (`PresharedKey=` → mark/miss); words glued to a prefix (`cftoken=`, `authtoken=`, `dbpassword=`) → miss |
 | alpha.25 | `preshared[-_ ]?key` in the list; the boundary **selectively** (only before `key`/`api-key`/`apikey`/`privkey`/`private-key`/`preshared-key` and the four Russian words; no boundary before `token`/`secret`/`password`/…); quote after the word (JSON); a table of three boundary editions with numbers — in the code comment. **Accepted for the `latest` tag** | the variable name (`BITRIX24_CLIENT_SECRET=`) itself becomes an entropy candidate before the declaration rule → mark instead of lock; hex still locks |
 | alpha.26 | `pin` and `psk` got the boundary (in alpha.25 they had none: `spin=`, `dropin=`, `sitepin=`, `whitelistpsk=` — 4 false refusals out of 4); the reasoning for the asymmetric list — in the code | **accepted** 2026-09-04 20:1x (subject sum `6c8cf7370443b31c`); published under the `neprinyato` tag — the first release where `latest` did not move |
-| alpha.27 | `hex-bez-obyavleniya` **marks instead of locking** (only `obyavlennyj`/`uuid-obyavlennyj`/`strukturnyj:*` lock; the reasoning sits in the code next to `strogo`); the storage refusal reason is non-empty even with an empty `message` (debt 100); the filter file is byte-identical to alpha.26 | **accepted for deployment** 2026-09-04 21:0x as a frozen copy from the sadik disk, subject sum `70c8fb7ee297a7f0` (not in the registry at that moment; the release must produce the same sum); sighted 3/3 (corruption "hex back into the lock set" → the stand turns red), controls 6/6. **Live at Iskra 18:25:06–19:08:16Z, then replaced by alpha.28.** alpha.27 exists neither in the registry nor in git (the number was bumped on disk without a release or a commit); the only artifact is the acceptor's frozen copy with the sum above. Debts for alpha.28: a declared secret whose value contains `-`, `.` or symbols passes silently (`api_key=sk-…`, `password = Xk9#…` → `null`, while `password=Qwerty123` is locked) — first; three stands crash at the recipient without the platform instead of declaring blindness; the three marking-mode rules |
+| alpha.27 | `hex-bez-obyavleniya` **marks instead of locking** (only `obyavlennyj`/`uuid-obyavlennyj`/`strukturnyj:*` lock; the reasoning sits in the code next to `strogo`); the storage refusal reason is non-empty even with an empty `message` (debt 100); the filter file is byte-identical to alpha.26 | **accepted for deployment** 2026-09-04 21:0x as a frozen copy from the node disk, subject sum `70c8fb7ee297a7f0` (not in the registry at that moment; the release must produce the same sum); sighted 3/3 (corruption "hex back into the lock set" → the stand turns red), controls 6/6. **Live at Iskra 18:25:06–19:08:16Z, then replaced by alpha.28.** alpha.27 exists neither in the registry nor in git (the number was bumped on disk without a release or a commit); the only artifact is the acceptor's frozen copy with the sum above. Debts for alpha.28: a declared secret whose value contains `-`, `.` or symbols passes silently (`api_key=sk-…`, `password = Xk9#…` → `null`, while `password=Qwerty123` is locked) — first; three stands crash at the recipient without the platform instead of declaring blindness; the three marking-mode rules |
 | alpha.28 | two rules in **marking** mode: inflected Russian forms (`ключа:`/`паролем:`/`токена=` → `slabyj:sklonenie`) and the authorization header (`Authorization: Bearer`, `authorization=` → `slabyj:zagolovok`); the dash rule **dropped by measurement** (it marked prose like «ключ - это идентификатор»); `strogo` unchanged | **accepted for `latest`** 2026-09-04 21:5x (subject sum `b7da7abe3741ccfc`); the `latest` tag was moved by Iskra at 19:00Z per the verdict; registry = repository (e8fad2d) = Iskra's disk = **live since 19:08:16Z** (Mikhalych's lift, sums verified before restart, seven of seven) — the four points agree; sighted 2/2 (each rule removed by corruption → its form falls back to `null`), controls 5/5; on the 3599 corpus — +11 marks, no new locks. **The symbol-value hole did not make it in** (fourth edition in a row: `api_key=sk-…` → `null`) — first in alpha.29; three stands still crash at the recipient without the platform instead of declaring blindness. Consumers of `najti_sekret` (export Э8.5, gatekeeper Т2): `slabyj:*` classes are marks, not skips |
 
 On the document date (rev. 3, 21:3x MSK) the core's `latest` tag points at alpha.25; alpha.26 sits under `neprinyato`, alpha.27 is accepted for
@@ -364,7 +366,7 @@ Observed on the same date: the `latest` tag moves **by itself** on publish — t
 by acceptance" works only after the publish wrapper is changed (publish under a separate tag).
 **A tag is not fitness** — see §7.
 
-**Acceptor's addendum (2026-09-05, 00:05–01:00 MSK; written 10:1x MSK — until then the verdicts went out only as letters and the sums file, the repository was not fed).** All verdicts from REGISTRY tarballs, `summa-predmeta` canon, full stand run with declared dependencies; canon of the accepted — `shared/a2a-inbox/prinyatye-summy-sadik-iskra.txt` (copy on sadik: `/home/claude/ot-veniamina/`).
+**Acceptor's addendum (2026-09-05, 00:05–01:00 MSK; written 10:1x MSK — until then the verdicts went out only as letters and the sums file, the repository was not fed).** All verdicts from REGISTRY tarballs, `summa-predmeta` canon, full stand run with declared dependencies; canon of the accepted — the acceptor's accepted-sums file (kept in the acceptor's home directory, with a copy on the node).
 
 | subject | sum | verdict |
 |---|---|---|
@@ -402,6 +404,11 @@ by acceptance" works only after the publish wrapper is changed (publish under a 
 | core alpha.50 | `463c95251875e569` (25 files) | **accepted for deployment** (2026-09-06 09:1x MSK, tag 94d7ea5 = disk; alphabet classes are counted by letter properties (\p{Ll}, \p{Lu}\p{Lt}, \p{Lo}\p{Lm}, \p{N}, other) instead of a range list — declared secrets in Armenian/Greek/Georgian/Hebrew/Arabic/CJK are now blocked (passed silently on a49); Latin/Cyrillic/field references unchanged; stands in the production layout 12 green / 1 blindness; corpus of 138 records: 1 hit (id 56) — same as a49. OPEN: P26-bis (candidate by [A-Za-z0-9_]) and declared values shorter than 8 chars; R6 — «Unrecognized key: lastTouchedAt» is blocked falsely on a49 and a50 (not a regression)) |
 | core alpha.51 | `3a4c3e69b1f5304a` (25 files) | **accepted for deployment** (2026-09-06 10:4x MSK, tag e8cde28 on origin = disk; text only: machine-private paths in stand comments korpus-progon.mjs anonymised — caught by the new milestone gate in the release wrapper; 0 non-comment changes; 0 private paths left in the package; stands 12 green / 1 blindness; «version bump before edit» order observed — first instance) |
 | core alpha.53 | `5d98993266729d9e` (25 files) | **accepted for deployment** (2026-09-06 11:2x MSK, tag 81fc9eb on origin = disk; Z1: the gatekeeper summary is printed on the first request and every tenth (constant ITOG_KAZHDYE) — otherwise on SIGKILL/OOM the gatekeeper's participation is unprovable; Z3: README section «gatekeeper = no human nearby»; a52 in passing — the stand no longer blames the package for a foreign platform-dictionary break; stands 12 green / 1 blindness, gatekeeper stand 16/16; mutations «print disabled» → 2 red, «print always» → exactly Z1-bis; «version bump before edit» order NOT observed — second instance) |
+| byudzhet alpha.14 | `fdc18fb1216e5f37` (12 files) | **accepted for deployment** (2026-09-09 09:3x MSK, tree = production; code growth 0 — src untouched, only CHANGELOG/package.json and one stand changed; the edit removed DEAD code in the probe wrapper: sud() throws on any return except undefined/true, so the three checks below it were unreachable yet read as active; canon taken with the summa-predmeta tool, not an ad-hoc one) |
+| storozha alpha.14 | `700ff8bb17ac4a4a` (8 files) | **accepted for deployment** (2026-09-09 09:3x MSK, tree = production; new bucket «started and NOT finished» — the count ran on /end, an aborted compaction fell into neither «compactions N» nor «failures»; the stand covers both sides: one and zero without crying wolf. 🔴 OPEN: the bucket keeps state in a Map inside apply() with no persistence — it will never catch an abort by RESTART, i.e. exactly the case it was created for; confirmed by the 07.09 event: last failure 14:00, service stopped 14:00:40) |
+| omega alpha.13 | `147ffdea709ea8be` (12 files) | **accepted for deployment** (2026-09-09 09:3x MSK, tree = production; code growth 0 — src untouched; same stand-wrapper fix; canon taken with summa-predmeta) |
+| nudzh alpha.17 | `c24f2d6003f5183c` (11 files) | **accepted for deployment** (2026-09-09 09:3x MSK, tree = production; code growth 0 — src untouched; six deaf stand wrappers fixed, the walker finally sees them; canon taken with summa-predmeta) |
+| core alpha.66 | `cb9ae2bb6007d3ae` (27 files) | **accepted for deployment** (2026-09-09 10:4x MSK, tree = production; review a53→a66: code +660, stands +772; belief as a protocol — 18 probes, «empty» told apart from «zero», migration idempotent; blizost and statusPodtverzhdeniya covered, consumers exist; the list of what the filter does NOT catch is declared and measured (a63). 🔴 OPEN: src/podtverdit-znanie.mjs — 121 lines, 0 probes, "bin": null; never called in production, does not affect fitness, but the only path of confirmation is unverified) |
 | subscription-gateway 0.1.5 | `cc6a30332de8db35` (10 files) | **accepted for latest** (00:45 MSK): caret ranges → exact 0.3.258/4.4.3, stand 10/10 |
 | core alpha.31 | `4c20c5de4b971283` (20 files) | **accepted for latest** (2026-09-05 02:54 MSK, acceptance on the registry tarball 26 s after the 23:53:55Z release): group B — declared values with special characters (`password = Xk9#mQ2$vL8p` etc.) → obyavlennyj, 4/4; exported `rezhim(klass)` → zapiraet/pomechaet/neizvesten (table checked over 12 classes) with `zapiraet` as a wrapper; probe P23 (the table knows its own classes) and the single-source-of-truth stand; stands 10/10 with secretary a15 beside; corpus 3599 — 201 = 201 (0 new false positives); sighted controls 6/6; private names 0. Still open: the pre-existing false positive on `key: lastTouchedAt` (not this change) |
 | core alpha.32 | `4d6ea232c93c452f` (21 files) | **accepted for latest** (2026-09-05 10:5x MSK, acceptance on the registry tarball: canon sum on disk = tarball, diff 0, stend-rubezha 15/15 from the tarball, commit 0c02450 in origin): E5.3 origin milestone — `nastrojki` table, one `BEGIN IMMEDIATE` migration for `proishozhdenie` + `proverka`, milestone = `MAX(id)` set only if absent, laundering below the milestone refused (`PAMYAT_ZAPIS_DO_PROTOKOLA`); verified on a read-only snapshot of the live base (55 records → milestone 55/55, all 55 «pre-protocol», second pass unchanged). Non-blocking LOW: the stand is blind to id gaps (`MAX(id)`→`COUNT(*)` corruption passes 15/15) — probe V5-bis due in the next core release. |
@@ -740,7 +747,7 @@ in three layouts: the workshop (repository), a flat delivery box, and installed 
 ## 6. Agent-to-agent mail (A2A)
 
 Two parts with different responsibilities: `a2a-bus` moves a letter between the mailboxes of
-system users and **does not read** it; `telegram-multiagent` takes the letter out of the mailbox
+system users and **does not read** it; `dsh-telegram-multiagent` takes the letter out of the mailbox
 and feeds it into the agent's turn. Neither delivers a letter "to the model" on its own — only
 the pair does.
 
@@ -833,7 +840,7 @@ guesses nothing (a missing field is a loud refusal, not a default); sub-commands
 `sluzhby`, `pole`, `mashina` (paths only, never secret values), `obshchee`, `pokrytie`, `fakt`,
 `verify` (mismatch → `1`, blindness → `2`).
 
-### 6.2. The reading side in `telegram-multiagent`
+### 6.2. The reading side in `dsh-telegram-multiagent`
 
 Two independent sources of incoming mail with different rules:
 
@@ -982,7 +989,7 @@ Rules that cost a day of work, and are therefore written here and not only in co
 | `dsh-pamyat-omega` | `npm test` | 5 (40 probes) | cordis, schemastery; no network needed |
 | `dsh-pamyat` | `npm test` → `node test/stend-sostava.mjs` | 1 | `npm`, `tar`, `sha256sum`, **network to the registry**; the family tree or a delivery box |
 | `a2a-bus` | `sbin/a2a-proba-novichka <nickname>` | 10 + canary | root; a neighbour for the "someone else's — refused" probes |
-| `telegram-multiagent` | `node test/stend-komand-konteksta.mjs`, `node test/stend-yashchika-shiny.mjs`, … | 6 | — |
+| `dsh-telegram-multiagent` | `node test/stend-komand-konteksta.mjs`, `node test/stend-yashchika-shiny.mjs`, … | 6 | — |
 
 Exit codes everywhere: `0` matches · `1` mismatch · `2` blindness ("nothing to check with"). Code
 `2` does not mean "all good".

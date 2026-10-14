@@ -1,0 +1,15 @@
+[Unit]
+Description=Watch socseti Telegram status (B-N-1496)
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/socseti-watch
+StateDirectory=socseti-watch
+StateDirectoryMode=0700
+UMask=0077
+TimeoutStartSec=30
+SuccessExitStatus=10
+PrivateTmp=yes
+NoNewPrivileges=yes

@@ -1,0 +1,57 @@
+{
+  "name": "dsh-schedule-guard",
+  "version": "3.1.3",
+  "description": "Behavioral guard for DeepSeek Harness self-wakeups: caps autonomous schedule reminders (consecutive, per-day, minimum repeat interval), deletes runaway repeats, and tells the owner why.",
+  "type": "module",
+  "main": "src/index.js",
+  "files": [
+    "src/index.js",
+    "cordis.patch.yml",
+    "README.md",
+    "test-preemptive-refusal.mjs",
+    "CHANGELOG.md",
+    "test",
+    "README.en.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "schedule",
+    "reminder",
+    "self-wakeup",
+    "guard",
+    "runaway-loop"
+  ],
+  "license": "MIT",
+  "author": "Aleksandr Argelander",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iia-arg/dsh-plugins.git",
+    "directory": "packages/dsh-schedule-guard"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "prezhnie_imena": [
+      "schedule-guard"
+    ]
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-schedule": "^0.2.0-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/dsh-tools": "^0.2.0-rc.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2"
+  },
+  "scripts": {
+    "test": "node test-preemptive-refusal.mjs"
+  }
+}

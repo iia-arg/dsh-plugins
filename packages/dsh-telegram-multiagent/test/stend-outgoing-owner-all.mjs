@@ -1,0 +1,34 @@
+import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import vm from 'node:vm';import crypto from 'node:crypto';
+import {MessageReceipts} from '../src/message-receipts.js';
+import {TelegramClient} from '../src/client.js';import {extractFunction} from './extract.mjs';
+const source=fs.readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
+assert(source.includes('function prepareOutgoingCopies('),'Missing owner-all copy for all outbound outbox paths, not just completed replies');
+const root=fs.mkdtempSync(path.join(os.tmpdir(),'owner-all-outgoing-'));const l=new MessageReceipts(root);const frames=[],logs=[];let mode='owner-all';
+const tg=new TelegramClient('synthetic');tg.call=async(method,args)=>{frames.push({method,...args});return{message_id:frames.length}};
+const c={Buffer,fs,path,crypto,process,who:'fixture',stripGoalMarker:x=>x,stripFileAck:x=>x,receipts:l,deliveryMode:()=>mode,ownerChatId:()=>123,log:m=>logs.push(m),tg,config:{},deployment:{},RETRY_SECONDS:[],A2A_OUT:root,prepareReceiptCopies(){},prepareSentCopies(){},startOwnerCopies(){},reportReceiptExhaustion(){},copyTo:()=>mode==='owner-all'?'tg':null};vm.createContext(c);
+for(const name of ['prepareOutgoingCopies','deliverReceiptOutbox','receiptTick'])vm.runInContext(extractFunction(source,name),c);
+try{
+ const receipt=l.receive('incoming',Buffer.from('test coordinator input'),{route:'a2a',sender:'zabava',expectsReply:false});l.completeLocal(receipt.id,'fixture','fixture complete');
+ l.notice(receipt.id,'held-test','УДЕРЖАНО synthetic; need operator');
+ l.addOutbox('explicit-agent-status',receipt.id,'a2a','synthetic service status');
+ l.addOutbox('new-return-fixture',receipt.id,'new-return',JSON.stringify({destination:{kind:'remote',recipient:'veniamina'},text:'Отменено /new, не исполнялось',command:receipt.id}));
+ l.addOutbox('stop-status-fixture',receipt.id,'mail-stop-status',Buffer.from('[task-stop-status version=1]\n'+JSON.stringify({state:'denied',reason:'expired',receiver:'alfa',recipient:'zabava'})).toString('base64'));
+ l.addOutbox('interrupted-sender',receipt.id,'a2a','Ход прерван, at-most-once; частичный ответ PARTIAL_END');
+ const long='🙂'.repeat(8500)+'LONG_END';l.addOutbox('multipart-response',receipt.id,'a2a',long);
+ l.addOutbox('bad-return',receipt.id,'new-return','RAW_INVALID_RETURN');
+ l.addOutbox('bad-stop',receipt.id,'mail-stop-status',Buffer.from('RAW_INVALID_STOP').toString('base64'));
+ await c.receiptTick();const copied=l.db.prepare("SELECT * FROM outbox WHERE id LIKE 'outgoing-copy:%'").all();assert.equal(copied.length,8,'each outbound producer gets a copy; malformed copy projection must not stop primary delivery');
+ assert(l.db.prepare('SELECT sent_at FROM outbox WHERE id=?').get('explicit-agent-status').sent_at!==null,'healthy primary delivered despite malformed copy sources');
+ const primary=path.join(root,'receipt-'+crypto.createHash('sha256').update('explicit-agent-status').digest('hex')+'.txt');
+ assert(fs.readFileSync(primary,'utf8').includes('synthetic service status'),'independent receiving-side file contains healthy primary');
+ assert(copied.some(r=>r.body.includes('УДЕРЖАНО synthetic')));assert(copied.some(r=>r.body.includes('expired')));assert(copied.some(r=>r.body.includes('Отменено /new')));
+ c.prepareOutgoingCopies();assert.equal(l.db.prepare("SELECT count(*) AS n FROM outbox WHERE id LIKE 'outgoing-copy:%'").get().n,8);
+ await l.deliverResults(c.deliverReceiptOutbox,{copyOnly:true});assert.equal(copied.length,l.db.prepare("SELECT count(*) AS n FROM outbox WHERE id LIKE 'outgoing-copy:%' AND sent_at IS NOT NULL").get().n);
+ assert(frames.some(x=>x.text.includes('PARTIAL_END')),'interrupted outgoing retains partial content');
+ assert(frames.map(x=>x.text).join('').includes('LONG_END'),'full long outgoing copy reaches final chunk');
+ assert(!frames.some(x=>/[\uD800-\uDBFF]$/.test(x.text)),'chunks never end inside surrogate pair');
+ mode='personal';l.addOutbox('personal-outgoing',receipt.id,'a2a','PERSONAL_NOT_RETROACTIVE');await c.receiptTick();assert(l.db.prepare('SELECT sent_at FROM outbox WHERE id=?').get('personal-outgoing').sent_at!==null);assert.equal(l.db.prepare("SELECT count(*) n FROM meta WHERE key LIKE 'outgoing-copy-disabled:%'").get().n,0,'personal must not create per-outgoing disable markers');mode='owner-all';c.prepareOutgoingCopies();assert(!l.db.prepare('SELECT 1 FROM outbox WHERE id=?').get('outgoing-copy:personal-outgoing'));
+ l.addOutbox('copy-source',receipt.id,'copy-tg','already a copy');c.prepareOutgoingCopies();assert(!l.db.prepare('SELECT 1 FROM outbox WHERE id=?').get('outgoing-copy:copy-source'),'copies never copy themselves');
+ l.addOutbox(receipt.id+':copy:answer',receipt.id,'copy-tg','existing answer');l.addOutbox(receipt.id+':result',receipt.id,'a2a','answer text');c.prepareOutgoingCopies();assert(!l.db.prepare('SELECT 1 FROM outbox WHERE id=?').get('outgoing-copy:'+receipt.id+':result'),'normal result uses established answer copy only');
+ console.log('PASS outgoing-owner-all: HOLD, status, new-return, signed stop status, full multipart, dedup, personal transition and no recursive/result doubles');
+}finally{l.close();fs.rmSync(root,{recursive:true,force:true})}

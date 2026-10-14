@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# obeimi-rukami — прогнать ЧИТАЮЩУЮ команду своей и чужой рукой и сравнить ответы.
+#
+# 🔴 ЗАЧЕМ. 05.09.2026 соседний агент поймал у меня признак, который РАБОТАЕТ У АВТОРА и ВРЁТ
+# ТОМУ, КОМУ ПРЕДНАЗНАЧЕН. Строка `sudo tr … < /proc/PID/environ | grep -c` даёт 1 моей
+# рукой (служба под моим пользователем, файл открывает МОЯ оболочка до sudo) и 0 чужой
+# (прав нет, оболочка падает, grep считает строки пустого ввода).
+# Врёт в опасную сторону: 0 читается как «правка НЕ применилась», и следующий пойдёт
+# чинить применённое либо отменит его как неработающее.
+#
+# 🔴 И ГЛАВНОЕ В КЛАССЕ: признак, вписанный для ДРУГОГО, проверяется автором — то есть
+# рукой, которая им пользоваться не будет. Подъём моей службы делает чужая рука по
+# построению; значит и признак применения снимает тот, у кого он молчит.
+# ПРАВИЛО: признак проверять ТОЙ рукой, которая будет им пользоваться.
+#
+# ЧТО ДЕЛАЕТ: выполняет команду дважды — своей рукой и через sudo -u <кто> — и печатает
+# оба ответа и вердикт «совпало / РАЗОШЛОСЬ».
+#
+# 🔴 ГДЕ НЕ ПРИМЕНЯЕТСЯ, И ЭТО НЕ ФОРМАЛЬНОСТЬ: только для ЧИТАЮЩИХ команд. Изменяющая
+# выполнится ДВАЖДЫ — два выпуска, два письма, два перезапуска. Проверить это за вас
+# инструмент не может: «читает ли команда» не выводится из её текста. Предупреждение
+# печатается ВСЕГДА, до запуска.
+# ЧТО ЗНАЧИТ «совпало»: ответы одинаковы ЗДЕСЬ И СЕЙЧАС. Права, PATH и рабочий каталог
+# могут разойтись позже — совпадение не обещает совпадения завтра.
+# EN: obeimi-rukami — run a READING command with your own hand and someone else's, and compare the answers.
+#     🔴 WHY. On 05.09.2026 a neighbouring agent caught a sign of mine that WORKS FOR THE AUTHOR and LIES TO WHOM
+#     IT IS MEANT FOR. The line `sudo tr … < /proc/PID/environ | grep -c` gives 1 with my hand (the service runs
+#     as my user, MY shell opens the file before sudo) and 0 with someone else's (no rights, the shell fails,
+#     grep counts the lines of empty input).
+#     It lies in the dangerous direction: 0 reads as "the edit was NOT applied", and the next person will go to
+#     fix what is applied or revert it as non-working.
+#     🔴 AND THE MAIN THING IN THE CLASS: a sign written for SOMEONE ELSE is checked by the author — i.e. by a
+#     hand that will not use it. Restarting my service is done by another hand by construction; so the
+#     application sign is taken by the one for whom it is silent.
+#     RULE: check a sign with THE hand that will use it.
+#     WHAT IT DOES: runs the command twice — with your own hand and via sudo -u <who> — and prints both answers
+#     and the verdict "matched / DIFFERS".
+#     🔴 WHERE IT DOES NOT APPLY, AND THIS IS NOT A FORMALITY: only for READING commands. A changing one will run
+#     TWICE — two releases, two letters, two restarts. The tool cannot check this for you: "does the command
+#     read" cannot be derived from its text. The warning is printed ALWAYS, before the run.
+#     WHAT "matched" MEANS: the answers are the same HERE AND NOW. Rights, PATH and the working directory may
+#     diverge later — a match does not promise a match tomorrow.
+set -uo pipefail
+# Файл настройки пакета dsh-pribory: строки «КЛЮЧ=значение», «#» — комментарий; берётся последнее вхождение.
+# Путь меняет DSH_PRIBORY_CONF. Порядок: переменная → файл → нейтральное умолчание; нет ничего — СЛЕПОТА, код 2.
+# EN: Settings file of the dsh-pribory package: "KEY=value" lines, a line starting with "#" is a comment; the
+#     last occurrence wins.
+#     DSH_PRIBORY_CONF changes the path. Order: variable → file → neutral default; nothing at all — BLINDNESS,
+#     code 2.
+DSH_PRIBORY_CONF="${DSH_PRIBORY_CONF:-/etc/dsh-pribory/dsh-pribory.conf}"
+# « #» в значении — громкий отказ (stderr, код 2), а не склеивание пояснения со значением; зовущий обязан выйти: X=$(konf …) || exit 2.
+# EN: " #" in a value is a loud refusal (stderr, code 2), not gluing the note into the value; the caller must exit: X=$(konf …) || exit 2.
+konf() { local v; v=$(sed -n "s/^[[:space:]]*$1[[:space:]]*=//p" "$DSH_PRIBORY_CONF" 2>/dev/null | tail -n 1) || true; case "$v" in *[[:space:]]#*) echo "ОТКАЗ: значение ключа $1 в $DSH_PRIBORY_CONF содержит « #» — комментарий допускается только с начала строки" >&2; return 2;; esac; v=$(printf '%s' "$v" | sed "s/^[[:space:]]*//;s/[[:space:]]*$//"); printf '%s' "${v:-$2}"; }
+
+# 🔴 УМОЛЧАНИЯ ВТОРОЙ РУКИ НЕТ НАМЕРЕННО (06.09.2026, довод соседнего агента, проверен фактом).
+# Прежде умолчанием стояла рука `claude` — а у неё группы adm и sudo, то есть БОЛЬШЕ прав,
+# чем у моей (systemd-journal без adm) и чем у dsh (журнал не читает вовсе, проверено пробой).
+# 🔴 УМОЛЧАНИЕ, ДАЮЩЕЕ БОЛЬШЕ ПРАВ, ОШИБАЕТСЯ СИСТЕМАТИЧЕСКИ В СТОРОНУ ЛОЖНО-ЗЕЛЁНОГО:
+# команда, которая работает у меня, у более правой руки сработает тем более — «сходится»
+# напечатается и успокоит. А спрашивают обычно обратное: увидит ли ТА ЖЕ команда столько же
+# у руки, которой признак предназначен. Проверено на этом инструменте: `find <дом агента>`
+# рукой первой учётки 96991 файл, рукой агента 104238 — коды одинаковы, ответы разные.
+# ⚠️ Тот же довод, что у прибора перед подъёмом: подставить молча значит уверенно ответить
+# про предмет, которого не спрашивали. Здесь — про руку, которой признак не предназначен.
+# ГДЕ НЕ ПРИМЕНЯЕТСЯ: инструменту всё равно, чей признак; выбрать руку он не может и не
+# должен — отсюда отказ, а не догадка.
+# EN: 🔴 THERE IS NO DEFAULT SECOND HAND ON PURPOSE (06.09.2026, a neighbouring agent's argument, checked by
+#     fact). Previously the default was the `claude` hand — and it has the adm and sudo groups, i.e. MORE rights
+#     than mine (systemd-journal without adm) and than dsh's (it does not read the journal at all, checked by a
+#     probe).
+#     🔴 A DEFAULT WITH MORE RIGHTS ERRS SYSTEMATICALLY TOWARDS A FALSE GREEN: a command that works for me works
+#     all the more for a more privileged hand — "matches" gets printed and reassures. Yet the usual question is
+#     the reverse: will THE SAME command see as much for the hand the sign is meant for. Checked on this tool:
+#     `find <agent home>` with the first account's hand 96991 files, with the agent's hand 104238 — the codes
+#     are equal, the answers differ.
+#     ⚠️ The same argument as for the tool before startup: filling in silently means answering confidently about
+#     a subject nobody asked about. Here — about a hand the sign is not meant for.
+#     WHERE IT DOES NOT APPLY: the tool does not care whose sign it is; it cannot and should not choose the hand
+#     — hence a refusal, not a guess.
+KTO="${OBEIMI_KTO:-}"
+if [ -z "$KTO" ]; then
+  echo "🔴 ОТКАЗ: вторая рука не названа. Умолчания нет намеренно — оно ошибалось бы в сторону" >&2
+  echo "   ложно-зелёного: рука с большими правами видит не меньше вашей, и «сходится»" >&2
+  echo "   напечаталось бы там, где признак у нужной руки как раз и не работает." >&2
+  echo "   Назовите: OBEIMI_KTO=<кто> obeimi-rukami <команда…>" >&2
+  echo "   Известные руки этой машины и их группы:" >&2
+  ruki=$(konf OBEIMI_RUKI "") || exit 2; [ -n "$ruki" ] || echo "     (перечень не задан — ключ OBEIMI_RUKI в $DSH_PRIBORY_CONF)" >&2
+  for u in $ruki; do
+    g=$(id -nG "$u" 2>/dev/null) && echo "     $u: $g" >&2
+  done
+  echo "   Берите ТУ, которой предназначен проверяемый признак, а не самую правую." >&2
+  exit 2
+fi
+[ $# -ge 1 ] || { echo "obeimi-rukami <команда…>   (вторая рука: OBEIMI_KTO=$KTO)" >&2; exit 2; }
+
+echo "⚠️  команда будет выполнена ДВАЖДЫ. Только для ЧИТАЮЩИХ команд." >&2
+echo "   вторая рука: $KTO" >&2
+echo >&2
+
+if ! PROBA_RUKI=$(sudo -n -u "$KTO" true 2>&1); then
+  echo "СЛЕПОТА: sudo не допускает вторую руку $KTO: $PROBA_RUKI" >&2; exit 2
+fi
+SVOJ=$("$@" 2>&1); K1=$?
+CHUZH=$(sudo -n -u "$KTO" bash -lc "$(printf '%q ' "$@")" 2>&1); K2=$?
+
+echo "── своей рукой ($(id -un)), код $K1 ──"
+printf '%s\n' "$SVOJ"
+echo "── рукой $KTO, код $K2 ──"
+printf '%s\n' "$CHUZH"
+echo "──────────────────────────────"
+# 🔴 СВЕРКА ДОКАЗЫВАЕТ ТОЛЬКО ПРО НАЗВАННУЮ РУКУ (05.09.2026, поймано на себе).
+# Умолчание второй руки — claude, а у неё групп БОЛЬШЕ, чем у меня. Признак чтения
+# журнала прошёл бы сверку зелёным и всё равно врал бы соседу: у него нет ни adm,
+# ни systemd-journal. То есть инструмент против «работает у автора, врёт адресату»
+# сам молчал бы, если адресат — не та рука, которую подставили умолчанием.
+# Лечение не в коде выбора, а в гласности: печатаем группы ОБЕИХ рук, чтобы разница
+# в правах была видна, и говорим, что сверка про эту пару, а не про всех.
+# EN: 🔴 THE COMPARISON PROVES SOMETHING ONLY ABOUT THE NAMED HAND (05.09.2026, caught on myself). The default
+#     second hand is claude, and it has MORE groups than me. A journal-reading sign would pass the comparison
+#     green and still lie to the neighbour: they have neither adm nor systemd-journal. So the tool against
+#     "works for the author, lies to the addressee" would itself stay silent if the addressee is not the hand
+#     substituted by default.
+#     The cure is not in the choosing code but in openness: we print the groups of BOTH hands so the difference
+#     in rights is visible, and we say the comparison is about this pair, not about everyone.
+echo "   права: $(id -un) → $(id -nG)"
+echo "          $KTO → $(sudo -n -u "$KTO" id -nG 2>/dev/null || echo '(не снять)')"
+echo "   ⚠️ сверка доказывает только про ЭТУ пару рук. Признак предназначен третьему —"
+echo "      гоняйте с его именем: OBEIMI_KTO=<кто> obeimi-rukami …"
+
+# 🔴 ВЕРДИКТ ПО КОДУ ВОЗВРАТА, А РАЗЛИЧИЕ ТЕКСТА — ПОКАЗЫВАЕМ, НЕ СУДИМ (05.09.2026).
+# Первая редакция сравнивала вывод ДОСЛОВНО и объявляла «РАЗОШЛОСЬ» — на моих же
+# приборах, которые первой строкой печатают время съёма. Два запуска в разные секунды
+# давали разный текст, и инструмент, заведённый ловить ложные признаки, сам стал
+# ложным признаком: сказал «разошлось» там, где различий по существу нет.
+# Код возврата от времени не зависит — он и есть вердикт. Текст показывается построчно,
+# чтобы читающий сам увидел, различие это по существу или по метке времени.
+# EN: 🔴 THE VERDICT IS BY EXIT CODE, AND TEXT DIFFERENCES ARE SHOWN, NOT JUDGED (05.09.2026). The first edition
+#     compared the output VERBATIM and declared "DIFFERS" — on my own tools, which print the time of taking on
+#     the first line. Two runs in different seconds gave different text, and a tool set up to catch false signs
+#     itself became a false sign: it said "differs" where there were no differences in substance.
+#     The exit code does not depend on time — it is the verdict. The text is shown line by line so the reader
+#     sees whether the difference is in substance or in a timestamp.
+if [ "$K1" != "$K2" ]; then
+  echo "🔴 РАЗОШЛИСЬ КОДЫ ВОЗВРАТА ($K1 против $K2) — признак НЕ годен тому, кому предназначен."
+  echo "   Частая причина: перенаправление или маска исполняются ВЫЗЫВАЮЩЕЙ оболочкой"
+  echo "   до sudo. Лечение: весь конвейер внутрь — sudo sh -c \"…\"."
+  exit 1
+fi
+
+if [ "$SVOJ" = "$CHUZH" ]; then
+  echo "✅ совпало целиком: коды $K1, текст дословно одинаков"
+  exit 0
+fi
+
+echo "⚠️  коды совпали ($K1), а ТЕКСТ различается. Смотрите строки ниже:"
+diff <(printf '%s\n' "$SVOJ") <(printf '%s\n' "$CHUZH") | head -12
+echo
+echo "   Различие по МЕТКЕ ВРЕМЕНИ — не беда: приборы печатают момент съёма."
+echo "   Различие по СУЩЕСТВУ (числа, имена, «не найдено») — беда: признак врёт"
+echo "   тому, кому предназначен. Судить вам: инструмент не отличает одно от другого."
+exit 0

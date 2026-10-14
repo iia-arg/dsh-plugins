@@ -1,0 +1,20 @@
+[Unit]
+Description=Недельный прогон долгих стендов (vzaimnogo, storozha-reestrov): неожиданное → тревога, зелёное → строка (B-N-1074)
+Documentation=file:///opt/iskra/workspace/dorabotki/vse-stendy-nedelnye.sh
+After=multi-user.target
+
+[Service]
+Type=oneshot
+User=iskra
+Group=iskra
+Environment=DSH_TEST_APP=/opt/iskra/app
+Environment=STEND_APP=/opt/iskra/app
+Environment=DSH_PERSIST=/opt/iskra/app/node_modules/@deepseek-ai/dsh-session-persistence/lib/index.js
+Environment=DSH_SESSION=/opt/iskra/app/node_modules/@deepseek-ai/dsh-session/lib/index.js
+PrivateTmp=true
+ExecStart=/opt/iskra/workspace/dorabotki/vse-stendy-nedelnye.sh
+# 1 — тревога ушла, 2 — слепота обхода (строка): прогон состоялся; 3 — поломка сторожа → failed (читатель: sadik-watch)
+SuccessExitStatus=1 2
+TimeoutStartSec=95min
+StandardOutput=journal
+StandardError=journal

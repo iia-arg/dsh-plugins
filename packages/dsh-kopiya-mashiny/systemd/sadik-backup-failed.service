@@ -1,0 +1,11 @@
+[Unit]
+# Тревога: копия sadik упала. Зовёт OnFailure= у sadik-backup.service (B-N-741, 24.09.2026).
+# Устройство — по образцу omega-db-backup-failed.service; команда вынесена в скрипт (почему — в нём).
+Description=Тревога: копия sadik не сделана
+
+[Service]
+Type=oneshot
+# B-H-561: общий скрипт трёх тревог копий вместо отдельного sadik-backup-failed.sh.
+ExecStart=/usr/local/sbin/kopiya-upala sadik-backup.service "Копия sadik не сделана"
+# agent-alert сам ограничен: 3 попытки по 20 с и паузы 5+15 с — 80 с. 120 с — граница сверху.
+TimeoutStartSec=120

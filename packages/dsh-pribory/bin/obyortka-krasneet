@@ -1,0 +1,479 @@
+#!/usr/bin/env bash
+# obyortka-krasneet — УМЕЕТ ЛИ ОБЁРТКА СТЕНДА ПОКРАСНЕТЬ ОТ ВОЗВРАТА ТЕЛА ПРОБЫ.
+#
+# 🔴 ЗАЧЕМ. 06.09.2026 у пакета вывоза семь проб из девяти зеленели ПРИ ЛЮБОМ содержимом:
+# обёртка выбрасывала возврат тела. Тот же дефект нашёлся ещё в двух пакетах. Причина не в
+# небрежности, а в устройстве: идиома перенесена из соседнего пакета, где обёртка её понимает.
+# Обёртка, глухая к возврату, делает ВСЕ свои пробы украшением, и снаружи это неотличимо от
+# исправного стенда: зелёный итог, растущее число проб, ноль расхождений.
+#
+# 🔴 ПЕРВАЯ РЕДАКЦИЯ ЭТОГО ПРИБОРА БЫЛА СЛЕПА, И ЭТО НАЙДЕНО КОНТРОЛЕМ ЗРЯЧЕСТИ, НЕ ЧТЕНИЕМ.
+# Она клала копию стенда в СВОЙ временный каталог и запускала оттуда. Относительные импорты
+# («../src/index.js») ломались, стенд падал с ERR_MODULE_NOT_FOUND — и любой ненулевой код
+# читался как «обёртка покраснела». То есть прибор мерил ПАДЕНИЕ, а не находку, и на подставной
+# ГЛУХОЙ обёртке отвечал «краснеет». Доложи я его числа — вышло бы ложное успокоение по всем
+# стендам разом.
+# ✅ Лечение двойное: копия кладётся РЯДОМ с оригиналом (импорты те же), и вердикт выносится
+# по РАЗНИЦЕ кодов «без порчи» и «с порчей», а не по одному коду.
+#
+# ЧТО ДЕЛАЕТ: рядом со стендом кладёт его копию с ОДНОЙ добавленной пробой, тело которой
+# возвращает заведомо ложный ответ, и сравнивает исходы. Боевой файл не изменяется.
+# ⚠️ ЧЕГО НЕ ЛОВИТ: обёртки, принимающие УСЛОВИЕ, а не тело — у них возврат не при чём, класс
+# не применим; они называются отдельным разрядом, а не засчитываются исправными.
+# ⚠️ И не судит стенд, который сам по себе не зелёный (красный или слепой ДО порчи): на нём
+# разница кодов ничего не значит. Это отдельный разряд «не на чем мерить».
+# ЧТО ЗНАЧИТ МОЛЧАНИЕ: «все применимые обёртки краснеют», а НЕ «стенды верны».
+# EN: obyortka-krasneet — CAN A STAND'S WRAPPER GO RED FROM A PROBE BODY'S RETURN VALUE.
+#     🔴 WHY. On 06.09.2026 in the export package seven probes of nine were green WITH ANY content: the wrapper
+#     threw away the body's return value. The same defect was found in two more packages. The cause is not
+#     carelessness but design: the idiom was carried over from a neighbouring package whose wrapper understands
+#     it. A wrapper deaf to the return value turns ALL its probes into decoration, and from outside this is
+#     indistinguishable from a healthy stand: a green result, a growing number of probes, zero divergences.
+#     🔴 THE FIRST EDITION OF THIS TOOL WAS BLIND, AND THIS WAS FOUND BY A BLINDNESS CONTROL, NOT BY READING. It
+#     put a copy of the stand into ITS OWN temporary directory and ran it from there. Relative imports
+#     ("../src/index.js") broke, the stand failed with ERR_MODULE_NOT_FOUND — and any non-zero code read as "the
+#     wrapper went red". So the tool measured a CRASH, not a finding, and on a stand-in DEAF wrapper answered
+#     "goes red". Had I reported its numbers, a false reassurance across all stands at once would have followed.
+#     ✅ The cure is twofold: the copy is put NEXT TO the original (the same imports), and the verdict is based
+#     on the DIFFERENCE of the codes "without corruption" and "with corruption", not on one code.
+#     WHAT IT DOES: next to the stand it puts a copy with ONE added probe whose body returns a deliberately
+#     false answer, and compares the outcomes. The production file is not changed.
+#     ⚠️ WHAT IT DOES NOT CATCH: wrappers that take a CONDITION, not a body — for them the return value is
+#     irrelevant, the class does not apply; they are named as a separate class rather than counted as healthy.
+#     ⚠️ Nor does it judge a stand that is not green by itself (red or blind BEFORE corruption): on it the
+#     difference of codes means nothing. That is a separate class "nothing to measure on".
+#     WHAT SILENCE MEANS: "all applicable wrappers go red", NOT "the stands are right".
+set -u
+# Файл настройки пакета dsh-pribory: строки «КЛЮЧ=значение», «#» — комментарий; берётся последнее вхождение.
+# Путь меняет DSH_PRIBORY_CONF. Порядок: переменная → файл → нейтральное умолчание; нет ничего — СЛЕПОТА, код 2.
+# EN: Settings file of the dsh-pribory package: "KEY=value" lines, a line starting with "#" is a comment; the
+#     last occurrence wins.
+#     DSH_PRIBORY_CONF changes the path. Order: variable → file → neutral default; nothing at all — BLINDNESS,
+#     code 2.
+DSH_PRIBORY_CONF="${DSH_PRIBORY_CONF:-/etc/dsh-pribory/dsh-pribory.conf}"
+# « #» в значении — громкий отказ (stderr, код 2), а не склеивание пояснения со значением; зовущий обязан выйти: X=$(konf …) || exit 2.
+# EN: " #" in a value is a loud refusal (stderr, code 2), not gluing the note into the value; the caller must exit: X=$(konf …) || exit 2.
+konf() { local v; v=$(sed -n "s/^[[:space:]]*$1[[:space:]]*=//p" "$DSH_PRIBORY_CONF" 2>/dev/null | tail -n 1) || true; case "$v" in *[[:space:]]#*) echo "ОТКАЗ: значение ключа $1 в $DSH_PRIBORY_CONF содержит « #» — комментарий допускается только с начала строки" >&2; return 2;; esac; v=$(printf '%s' "$v" | sed "s/^[[:space:]]*//;s/[[:space:]]*$//"); printf '%s' "${v:-$2}"; }
+KAT="${1:-$(konf OBYORTKA_KATALOG "")}" || exit 2
+[ -n "$KAT" ] || { echo "СЛЕПОТА: каталог обхода не задан — довод или ключ OBYORTKA_KATALOG в $DSH_PRIBORY_CONF"; exit 2; }
+KOPII=""
+uberi() { for k in $KOPII; do rm -f "$k"; done; }
+# 🔴 УБОРКА И НА ОБРЫВ, А НЕ ТОЛЬКО НА ВЫХОД (правка 06.09.2026, куплена делом).
+# Прогон по флоту идёт минутами; будучи оборван по таймауту, прибор оставлял в ЧУЖОМ
+# каталоге test две свои копии. Стенд соседнего пакета СЧИТАЕТ пробы по файлам рядом —
+# и насчитал на 13 больше, а я подогнала под это число README. То есть измерение
+# возмутило измеряемое, и возмущение закрепилось в описании предмета.
+# EXIT ловит обычный выход; INT и TERM — обрыв. От SIGKILL не спасает ничто, и это
+# named ниже: остатки называются по маске .obyortka-*, их видно и можно убрать руками.
+# EN: 🔴 CLEANUP ON INTERRUPTION TOO, NOT ONLY ON EXIT (edit of 06.09.2026, paid for by practice). A fleet run
+#     takes minutes; interrupted by a timeout, the tool left two of its copies in SOMEONE ELSE'S test directory.
+#     A neighbouring package's stand COUNTS probes by the files alongside — and counted 13 more, and I adjusted
+#     the README to that number. So the measurement disturbed the measured, and the disturbance got fixed into
+#     the subject's description.
+#     EXIT catches a normal exit; INT and TERM an interruption. Nothing saves from SIGKILL, and this is named
+#     below: leftovers are named by the .obyortka-* mask, they are visible and can be removed by hand.
+trap uberi EXIT INT TERM
+# 🔴 СТОРОЖ ГРУППЫ ПРОЦЕССОВ НА КАЖДОМ ПРОГОНЕ СТЕНДА (25.09.2026).
+# ЗАЧЕМ: 25.09 17:44Z прибор на restore a35 положил копию stend-readme в test/, stend-readme паковал пакет
+# ВМЕСТЕ с копией и гонял «все .mjs, кроме себя» — копия звала его снова: ~1000 процессов за 13 минут,
+# прибор не кончался. Причина была в стенде, но предела не было у ПРИБОРА — поэтому любая будущая
+# рекурсия стенда повторила бы это. Теперь каждый прогон — в своей группе процессов (setsid); ≥PREDEL_PROC
+# процессов группы или ≥PREDEL_SEK секунд ⇒ группа гасится целиком (SIGSTOP, затем SIGKILL — по группе,
+# не по маске), стенд попадает в разряд «СОРВАНО СТОРОЖЕМ» с причиной, итог — код 1 (vypusk-tegom: отказ).
+# Пределы: норма — до 9 процессов и десятков секунд (замер 25.09: restore 6 стендов ≤9 процессов, 25 с);
+# 120 с — как timeout обходчика на стенд.
+# ⚠️ ЧЕГО НЕ ЛОВИТ: потомков, ушедших в СВОЮ сессию или группу (setsid/detached) — node/execFileSync так не
+# делают; процессы, оставшиеся в группе после выхода самого стенда, — сторож смотрит, пока жив стенд.
+# EN: 🔴 A PROCESS-GROUP WATCHER ON EVERY STAND RUN (25.09.2026).
+#     WHY: on 25.09 17:44Z the tool on restore a35 put a copy of stend-readme into test/, stend-readme packed
+#     the package TOGETHER with the copy and ran "all .mjs except itself" — the copy called it again: ~1000
+#     processes in 13 minutes, the tool never finished. The cause was in the stand, but the TOOL had no limit —
+#     so any future stand recursion would repeat this. Now every run is in its own process group (setsid);
+#     ≥PREDEL_PROC processes in the group or ≥PREDEL_SEK seconds ⇒ the whole group is stopped (SIGSTOP, then
+#     SIGKILL — by group, not by pattern), the stand goes into the class "BROKEN OFF BY THE WATCHER" with the
+#     reason, the result is code 1 (vypusk-tegom: refusal).
+#     Limits: normal is up to 9 processes and tens of seconds (measured 25.09: restore 6 stands ≤9 processes, 25
+#     s); 120 s — like the walker's per-stand timeout.
+#     ⚠️ WHAT IT DOES NOT CATCH: descendants that went into THEIR OWN session or group (setsid/detached) —
+#     node/execFileSync do not do that; processes left in the group after the stand itself exits — the watcher
+#     looks while the stand is alive.
+PREDEL_PROC=40; PREDEL_SEK=120
+STOROZH=""   # непусто — последний прогон сорван, здесь причина · EN: non-empty — the last run was broken off, the reason is here
+zhiv() { local s; s=$(ps -o stat= -p "$1" 2>/dev/null) || return 1; case "$s" in Z*|"") return 1;; esac; }
+pod_storozhem() {   # <каталог> <стенд> — код стенда либо 124, если сорван (причина в STOROZH) · EN: <directory> <stand> — the stand's code, or 124 if broken off (reason in STOROZH)
+  STOROZH=""
+  setsid sh -c 'cd "$1" && exec node "$2" >/dev/null 2>&1' storozh "$1" "$2" &
+  local pg=$! t0=$SECONDS n=0
+  while zhiv "$pg"; do
+    n=$(pgrep -g "$pg" | wc -l)
+    if [ "$n" -ge "$PREDEL_PROC" ] || [ $((SECONDS - t0)) -ge "$PREDEL_SEK" ]; then
+      kill -STOP -- "-$pg" 2>/dev/null; kill -KILL -- "-$pg" 2>/dev/null; wait "$pg" 2>/dev/null
+      STOROZH="процессов группы $n (предел $PREDEL_PROC), $((SECONDS - t0)) с (предел $PREDEL_SEK) — группа погашена"
+      return 124
+    fi
+    sleep 0.2
+  done
+  wait "$pg"
+}
+
+vsego=0; krasneet=0; gluhih=0; neprimenimo=0; ne_na_chem=0; slepota=0; vozmushchaem=0; net_prav=0; lovushki=0; sorvano=0
+SORVANO=""
+GLUHIE=""; GLUHIE_PUTI=""; SLEPYE=""; NE_NA_CHEM=""; VOZMUSHCHAEM=""; NET_PRAV=""; LOVUSHKI=""; LOVUSHKI_PUTI=""
+
+# 🔴 ДВА РЕЖИМА, И ОБЛАСТЬ ПЕЧАТАЕТСЯ. Дали каталог ПАКЕТА (есть test/ внутри) — меряем его
+# один; дали каталог ПАКЕТОВ — обходим все. Без этого ворота выпуска, зовущие прибор по одному
+# пакету, получили бы пустой обход и зелёный итог: «ноль глухих» про ноль осмотренных.
+# 🔴 25.09.2026: (1) пакет узнаётся и по package.json — у dsh-pamyat-kompakt(-dsh) нет test/, стенды в КОРНЕ, и прибор
+# принимал пакет за «каталог пакетов» и не видел ничего; (2) стенды в корне пакета — в области (там 17 .mjs, прогонщик их гоняет);
+# (3) .sh-стенды — ВНЕ области поимённо: метод вставляет JS-пробу, к bash/python он неприменим; это называется, а не «ни одного стенда».
+# EN: 🔴 TWO MODES, AND THE SCOPE IS PRINTED. Given a PACKAGE directory (there is test/ inside) — we measure it
+#     alone; given a directory OF PACKAGES — we walk all of them. Without this, release gates calling the tool
+#     per package would get an empty walk and a green result: "zero deaf" about zero examined.
+#     🔴 25.09.2026: (1) a package is also recognised by package.json — dsh-pamyat-kompakt(-dsh) has no test/,
+#     the stands are in the ROOT, and the tool took the package for a "directory of packages" and saw nothing;
+#     (2) stands in the package root are in scope (17 .mjs there, the runner runs them); (3) .sh stands are OUT
+#     of scope by name: the method inserts a JS probe, it does not apply to bash/python; this is named, rather
+#     than "not a single stand".
+if [ -d "$KAT/test" ] || [ -f "$KAT/package.json" ]; then
+  OBLAST="$KAT/test/stend-*.mjs + $KAT/stend-*.mjs (один пакет)"
+  set -- "$KAT"/test/stend-*.mjs "$KAT"/stend-*.mjs
+  VNE=("$KAT"/test/stend-*.sh "$KAT"/stend-*.sh)
+else
+  OBLAST="$KAT/*/test/stend-*.mjs + $KAT/*/stend-*.mjs (все пакеты каталога)"
+  set -- "$KAT"/*/test/stend-*.mjs "$KAT"/*/stend-*.mjs
+  VNE=("$KAT"/*/test/stend-*.sh "$KAT"/*/stend-*.sh)
+fi
+VNE_PUTI=""; vne=0
+for f in "${VNE[@]}"; do [ -f "$f" ] && { vne=$((vne+1)); VNE_PUTI="$VNE_PUTI$f
+"; }; done
+
+for f in "$@"; do
+  [ -f "$f" ] || continue
+  vsego=$((vsego+1))
+  # 🔴 ФОРМА ОБЪЯВЛЕНИЯ БЫВАЕТ ДВУХ ВИДОВ, И ПРИЗНАК ОБЯЗАН ЗНАТЬ ОБА (06.09.2026).
+  # Первая редакция знала только `const proba = (imya, telo)` и не видела
+  # `function proba(imya, telo)`. Стенд маски образцов из-за этого попал в разряд
+  # «обёртка берёт условие», а его стрелки-тела были засчитаны ЛОВУШКОЙ — прибор дал
+  # ложное красное на исправном предмете. Признак по НАПИСАНИЮ вместо УСТРОЙСТВА,
+  # ровно та поправка, которую соседний агент в тот же час сделал себе сам.
+  # 🔴 ПРИЗНАК ПО УСТРОЙСТВУ, А НЕ ПО ПЕРЕЧНЮ ИМЁН (06.09.2026, третий промах одного класса).
+  # Прежде тело-обёртка узнавалась по ИМЕНИ второго параметра из списка (f|telo|body).
+  # Список неполон по построению: у соседнего пакета обёртка объявлена `const t = (imya, delo)`,
+  # имя `delo` в перечень не входило — стенд попал в разряд «обёртка берёт условие», а его
+  # стрелки-тела зачлись ЛОВУШКАМИ. Прибор дал ЛОЖНОЕ КРАСНОЕ на двух исправных стендах.
+  # Устройство тело-обёртки не в имени, а в том, что второй параметр ВЫЗЫВАЕТСЯ внутри неё.
+  # Поэтому: берём имя второго параметра из объявления КАКИМ БЫ ОНО НИ БЫЛО и смотрим,
+  # есть ли его вызов в следующих строках.
+  # EN: 🔴 THE DECLARATION FORM COMES IN TWO KINDS, AND THE SIGN MUST KNOW BOTH (06.09.2026). The first edition
+  #     knew only `const proba = (imya, telo)` and did not see `function proba(imya, telo)`. Because of this the
+  #     pattern-mask stand fell into the class "the wrapper takes a condition", and its arrow bodies were
+  #     counted as a TRAP — the tool gave a false red on a healthy subject. A sign by SPELLING instead of
+  #     DESIGN, exactly the correction a neighbouring agent made to themselves in the same hour.
+  #     🔴 A SIGN BY DESIGN, NOT BY A LIST OF NAMES (06.09.2026, the third miss of one class). Previously the
+  #     body wrapper was recognised by the NAME of the second parameter from a list (f|telo|body). The list is
+  #     incomplete by construction: a neighbouring package declares its wrapper `const t = (imya, delo)`, the
+  #     name `delo` was not on the list — the stand fell into the class "the wrapper takes a condition", and its
+  #     arrow bodies counted as TRAPS. The tool gave a FALSE RED on two healthy stands.
+  #     The design of a body wrapper is not in the name but in the second parameter being CALLED inside it. So:
+  #     we take the name of the second parameter from the declaration WHATEVER IT IS and look for its call in
+  #     the following lines.
+  vtoroj=$(grep -oE "(const (proba|t) = (async )?\(|function (proba|t) ?\()[^,)]+, *[a-zA-Z_][a-zA-Z0-9_]*" "$f" 2>/dev/null \
+           | head -1 | sed -E "s/.*, *//")
+  telo_obyortka=0
+  if [ -n "$vtoroj" ]; then
+    # вызов вида `delo()` либо `await delo()` в пределах файла — значит второй довод ИСПОЛНЯЕТСЯ
+    # Тело исполняется и так — Promise.resolve().then(f) (dsh-pamyat-kompakt/stend-metki-rezhima.mjs): без этого признака
+    # тело-обёртка уходила в «условие» и её стрелки-тела давали ЛОЖНУЮ ловушку (по дереву меняет классификацию ровно этого файла).
+    # EN: a call like `delo()` or `await delo()` within the file — so the second argument IS EXECUTED.
+    #     The body is also executed this way — Promise.resolve().then(f)
+    #     (dsh-pamyat-kompakt/stend-metki-rezhima.mjs): without this sign the body wrapper went into "condition"
+    #     and its arrow bodies gave a FALSE trap (across the tree it changes the classification of exactly this
+    #     file).
+    grep -qE "(^|[^a-zA-Z0-9_])${vtoroj}\(\)|\.then\( *${vtoroj} *[,)]" "$f" 2>/dev/null && telo_obyortka=1
+  fi
+  if [ "$telo_obyortka" -eq 0 ]; then
+    # ═══ ЗЕРКАЛЬНАЯ ЛОВУШКА У ОБЁРТОК-УСЛОВИЙ (замер соседнего агента 06.09.2026) ════════════
+    # 🔴 «Класс не применим» — НЕ «проверено». У обёртки вида t(имя, УСЛОВИЕ, текст) своя
+    # беда: если условием передать ФУНКЦИЮ, она истинна всегда (функция — truthy), и проба
+    # зеленеет при любых данных. Это зеркало глухой обёртки, и раньше эти файлы падали у
+    # меня в мешок «не применим» — то есть их не мерил никто.
+    # ДВА ПРИЗНАКА, А НЕ ОДИН (его же поправка): функция передаётся и явной стрелкой, и ПО
+    # ИМЕНИ. Признак по написанию видит первое и слеп ко второму.
+    # ⚠️ ТРЕТИЙ ВИД НЕ ИЗМЕРЯЕТСЯ: условие как результат вызова, возвращающего функцию —
+    # грепом не берётся, нужен разбор. Считать «маловероятно» замером нельзя, поэтому в
+    # выводе стоит «двух видов из трёх».
+    # EN: ═══ THE MIRROR TRAP OF CONDITION WRAPPERS (a neighbouring agent's measurement of 06.09.2026) ═══
+    #     🔴 "The class does not apply" is NOT "checked". A wrapper of the form t(name, CONDITION, text) has its
+    #     own trouble: if a FUNCTION is passed as the condition, it is always true (a function is truthy), and
+    #     the probe goes green with any data. This is the mirror of a deaf wrapper, and previously these files
+    #     fell into my "does not apply" bag — i.e. nobody measured them.
+    #     TWO SIGNS, NOT ONE (their correction too): a function is passed both as an explicit arrow and BY NAME.
+    #     A sign by spelling sees the first and is blind to the second.
+    #     ⚠️ A THIRD KIND IS NOT MEASURED: a condition as the result of a call returning a function — grep
+    #     cannot take it, a parse is needed. Counting "unlikely" as a measurement is not allowed, so the output
+    #     says "two kinds of three".
+    lovushek=0
+    # (1) явная функция вторым доводом
+    # EN: (1) an explicit function as the second argument
+    n1=$(grep -cE "^\s*(await )?(proba|t)\([^,]+, *(\(\)|async|function)" "$f" 2>/dev/null)
+    # (2) ИМЯ функции/стрелки, объявленной в этом же файле, вторым доводом без скобок вызова
+    # EN: (2) the NAME of a function/arrow declared in the same file, as the second argument without call
+    #     parentheses
+    n2=0
+    for imya_f in $(grep -oE "(function [a-zA-Z_][a-zA-Z0-9_]*|const [a-zA-Z_][a-zA-Z0-9_]* = (\(|async))" "$f" 2>/dev/null \
+                    | awk '{print $2}' | sort -u); do
+      k=$(grep -cE "^\s*(await )?(proba|t)\([^,]+, *${imya_f} *," "$f" 2>/dev/null)
+      n2=$((n2+k))
+    done
+    lovushek=$((n1+n2))
+    if [ "$lovushek" -gt 0 ]; then
+      lovushki=$((lovushki+1)); LOVUSHKI_PUTI="$LOVUSHKI_PUTI$f
+"; LOVUSHKI="$LOVUSHKI
+    🔴 $f — условием передана ФУНКЦИЯ ($lovushek): она истинна всегда, проба зелена при любых данных"
+    else
+      neprimenimo=$((neprimenimo+1))
+    fi
+    continue
+  fi
+  stroka=$(grep -nE "^\s*(await )?(proba|t)\(" "$f" | head -1 | cut -d: -f1)
+  if [ -z "$stroka" ]; then
+    slepota=$((slepota+1)); SLEPYE="$SLEPYE
+    $f — вызовов пробы в начале строки нет, вставить порчу некуда"
+    continue
+  fi
+  kat=$(dirname "$f")
+  # 🔴 ОРИГИНАЛ ПРОГОНЯЕТСЯ ДО СОЗДАНИЯ КОПИЙ. Порядок здесь — часть предмета: стенды описания
+  # считают файлы рядом, и оригинал, прогнанный ПОСЛЕ появления копии, видит её и краснеет.
+  # Первая правка этого разряда поставила прогон после cp — и разряд «неизмеримо» назначался
+  # тем же возмущением, от которого заводился.
+  # EN: 🔴 THE ORIGINAL IS RUN BEFORE THE COPIES ARE CREATED. The order here is part of the subject: description
+  #     stands count the files alongside, and an original run AFTER a copy appeared sees it and goes red. The
+  #     first edit of this class put the run after cp — and the class "unmeasurable" was assigned by the very
+  #     disturbance it was set up against.
+  pod_storozhem "$kat" "$f"; kod_original=$?
+  if [ -n "$STOROZH" ]; then sorvano=$((sorvano+1)); SORVANO="$SORVANO
+    $f — оригинал: $STOROZH"; continue; fi
+  # Имя с точки: под маску stend-* не попадает, значит прогонщик пакета его не подхватит.
+  # EN: A name starting with a dot: it does not match the stend-* mask, so the package runner will not pick it
+  #     up.
+  chistaya="$kat/.obyortka-chistaya-$$.mjs"
+  porchenaya="$kat/.obyortka-porcha-$$.mjs"
+  KOPII="$KOPII $chistaya $porchenaya"
+  if ! cp "$f" "$chistaya" 2>/dev/null; then
+    # ⚠️ Каталог не наш на запись (у restore он принадлежит root). Это НЕ «стенд плох» и не
+    # «обёртка глуха» — это отказ ПРИБОРУ, и он обязан называться отдельно, иначе чужие права
+    # молча уменьшат область и «глухих 0» будет верно про то, что удалось потрогать.
+    # EN: ⚠️ The directory is not writable for us (for restore it belongs to root). This is NOT "the stand is
+    #     bad" and NOT "the wrapper is deaf" — it is a refusal to the TOOL, and it must be named separately,
+    #     otherwise someone else's rights silently shrink the scope and "0 deaf" is true only about what could
+    #     be touched.
+    net_prav=$((net_prav+1)); NET_PRAV="$NET_PRAV
+    $f — каталог не открыт прибору на запись ($(stat -c '%U' "$kat")): копию положить нечем"
+    continue
+  fi
+  # 🔴 ИМЯ ОБЁРТКИ БЕРЁТСЯ ИЗ ОБЕИХ ФОРМ ОБЪЯВЛЕНИЯ (правка 06.09.2026, четвёртый промах
+  # одного класса в этом же приборе). Выемка знала только `const proba = ` и молчала на
+  # `function proba(...)`. Имя выходило ПУСТЫМ, и вписанная строка получалась не вызовом,
+  # а выражением `("текст", () => "…")` — проба не исполнялась вовсе, стенд оставался
+  # зелёным, и прибор объявлял его ГЛУХИМ. Ложное красное на исправном стенде.
+  # 📌 Лечение было применено НАПОЛОВИНУ: строкой выше выемка второго параметра обе формы
+  # уже знала — правку внесли в одно место из двух, и вторая молчала.
+  # EN: 🔴 THE WRAPPER NAME IS TAKEN FROM BOTH DECLARATION FORMS (edit of 06.09.2026, the fourth miss of one
+  #     class in this same tool). The extraction knew only `const proba = ` and was silent on `function
+  #     proba(...)`. The name came out EMPTY, and the inserted line was not a call but the expression `("text",
+  #     () => "…")` — the probe did not execute at all, the stand stayed green, and the tool declared it DEAF. A
+  #     false red on a healthy stand.
+  #     📌 The cure had been applied HALFWAY: a line above, the second-parameter extraction already knew both
+  #     forms — the edit was made in one place of two, and the second stayed silent.
+  imya_obyortki=$(grep -oE "(const (proba|t) = (async )?|function (proba|t) ?\()" "$f" | head -1 \
+                  | sed -E 's/^const ([a-z]+) = (async )?$/\1/; s/^function ([a-z]+) ?\($/\1/')
+  # 🔴 ОБЁРТКА БЫВАЕТ АСИНХРОННОЙ, И ТОГДА ВСТАВЛЯТЬ ЕЁ БЕЗ `await` НЕЛЬЗЯ (07.09.2026).
+  # Без await тело исполняется в микрозадаче, а итог печатается раньше — счётчик расходится
+  # не от возврата, а от порядка, и «краснеет» означало бы не то, что мерим.
+  # EN: 🔴 A WRAPPER CAN BE ASYNCHRONOUS, AND THEN IT MUST NOT BE INSERTED WITHOUT `await` (07.09.2026). Without
+  #     await the body runs in a microtask, and the result is printed earlier — the counter diverges not because
+  #     of the return value but because of the order, and "goes red" would mean something other than what we
+  #     measure.
+  zhdat=""
+  grep -qE "const (proba|t) = async |^\s*await (proba|t)\(" "$f" 2>/dev/null && zhdat="await " 
+  if [ -z "$imya_obyortki" ]; then
+    # Имя не выяснено — порчу вписать НЕЧЕМ. Это слепота прибора, а не глухота стенда:
+    # молчаливое «глухих +1» здесь было бы обвинением исправного предмета.
+    # EN: The name was not found out — there is NOTHING to write the corruption with. This is the tool's
+    #     blindness, not the stand's deafness: a silent "deaf +1" here would accuse a healthy subject.
+    slepota=$((slepota+1)); SLEPYE="$SLEPYE
+    $f — имя обёртки не выяснено ни одной из известных форм: порчу вписать нечем"
+    continue
+  fi
+  # 🔴 ТРИ ПРОГОНА, А НЕ ДВА: ОРИГИНАЛ БЕЗ КОПИЙ РЯДОМ — ПЕРВЫМ.
+  # Найдено 06.09.2026: стенды описания СЧИТАЮТ ФАЙЛЫ РЯДОМ («число проб в README считается
+  # по стендам», «число стендов сверено с диском»). Копия прибора — лишний файл, счёт растёт,
+  # и стенд честно краснеет. Прибор объявлял их «не на чем мерить», хотя сами по себе они
+  # ЗЕЛЁНЫЕ: измерение возмущало измеряемое, а разряд назывался как свойство предмета.
+  # Различает только прогон оригинала ДО появления копий.
+  # EN: 🔴 THREE RUNS, NOT TWO: THE ORIGINAL WITHOUT COPIES ALONGSIDE — FIRST. Found 06.09.2026: description
+  #     stands COUNT THE FILES ALONGSIDE ("the number of probes in the README is counted by the stands", "the
+  #     number of stands checked against the disk"). The tool's copy is an extra file, the count grows, and the
+  #     stand honestly goes red. The tool declared them "nothing to measure on", although by themselves they are
+  #     GREEN: the measurement disturbed the measured, while the class was named as a property of the subject.
+  #     Only a run of the original BEFORE the copies appear tells them apart.
+  pod_storozhem "$kat" "$chistaya"; kod_chisto=$?
+  if [ -n "$STOROZH" ]; then rm -f "$chistaya" "$porchenaya"; sorvano=$((sorvano+1)); SORVANO="$SORVANO
+    $f — копия рядом: $STOROZH"; continue; fi
+  # 🔴 ПОРЧА ГОНЯЕТСЯ НЕСКОЛЬКИМИ ФОРМАМИ ВОЗВРАТА, А НЕ ОДНОЙ (правка 06.09.2026).
+  # Прежде вписывалась ровно одна форма — возврат СТРОКИ. Обёртка, ловящая именно строку
+  # (`if (typeof vernulos === "string") throw`), краснела, и прибор объявлял её здоровой —
+  # при том что `0`, `null`, объект и число проходили сквозь неё ЗЕЛЁНЫМИ. Замер на
+  # stend-krik-zvuchit ядра: из шести форм ловились две, четыре пропускались.
+  # 📌 Отсюда объяснение расхождения замеров, которое искала приёмка: не «чужой способ
+  # строже», а ПОРЧА ОДНОЙ ФОРМЫ ОТВЕЧАЕТ ПРО ОДНУ ФОРМУ. Число глухих было занижено
+  # ровно на те обёртки, что знают перечень значений вместо устройства.
+  # Глухой считается обёртка, сквозь которую прошла ХОТЬ ОДНА форма: проба, написанная в
+  # чужой идиоме, вернёт что придётся, и «ловим строку» её не удержит.
+  # ⚠️ ГРАНИЦА: формы перечислены руками, и перечень тоже неполон по построению
+  # (не мерятся, например, пустая строка и NaN). Это перечень, а не устройство, — и он
+  # назван в выводе, чтобы «глухих N» читалось вместе с тем, чем именно мерили.
+  # EN: 🔴 THE CORRUPTION IS RUN WITH SEVERAL RETURN FORMS, NOT ONE (edit of 06.09.2026). Previously exactly one
+  #     form was inserted — returning a STRING. A wrapper that catches exactly a string (`if (typeof vernulos
+  #     === "string") throw`) went red, and the tool declared it healthy — while `0`, `null`, an object and a
+  #     number passed through it GREEN. Measured on the core's stend-krik-zvuchit: of six forms two were caught,
+  #     four passed.
+  #     📌 Hence the explanation of the measurement divergence that acceptance was looking for: not "someone
+  #     else's method is stricter", but A ONE-FORM CORRUPTION ANSWERS ABOUT ONE FORM. The number of deaf ones
+  #     was understated by exactly the wrappers that know a list of values instead of a design.
+  #     A wrapper counts as deaf if AT LEAST ONE form passed through it: a probe written in someone else's idiom
+  #     will return whatever comes, and "we catch a string" will not hold it.
+  #     ⚠️ LIMIT: the forms are listed by hand, and the list is also incomplete by construction (for example,
+  #     the empty string and NaN are not measured). This is a list, not a design — and it is named in the output
+  #     so that "N deaf" is read together with what exactly was measured.
+  FORMY='"заведомо ложный возврат"|false|0|null|({ ok: false })'
+  kod_porcha=0; proshli=""; vneslos=0
+  staryj_IFS="$IFS"; IFS='|'
+  for forma in $FORMY; do
+    IFS="$staryj_IFS"
+    awk -v n="$stroka" -v o="$imya_obyortki" -v v="$forma" \
+      -v w="$zhdat" 'NR==n{print w o "(\"ПОРЧА ОБЁРТКИ: тело вернуло значение\", () => (" v "));"} {print}' \
+      "$f" > "$porchenaya"
+    # 🔴 ФАКТ ВНЕСЕНИЯ ПРОВЕРЯЕТСЯ, А НЕ ПОДРАЗУМЕВАЕТСЯ (07.09.2026, урок соседнего агента).
+    # Если подстановка не сработала (имя обёртки выяснено неверно, номер строки не тот),
+    # копия остаётся РАВНОЙ оригиналу, коды совпадают — и файл объявляется ГЛУХИМ.
+    # То есть невнесённая порча даёт ЛОЖНОЕ ОБВИНЕНИЕ исправного стенда, и различить нечем.
+    # Сегодня прибор уже дважды обвинил исправные стенды, и оба раза причину искала рука.
+    # Направление промаха у нас с соседним агентом противоположное (у него ложное оправдание,
+    # у меня ложное обвинение), но оба тихие: вывод выглядит осмысленным.
+    # EN: 🔴 THE FACT OF INSERTION IS CHECKED, NOT ASSUMED (07.09.2026, a neighbouring agent's lesson). If the
+    #     substitution did not work (the wrapper name was found wrongly, the line number is off), the copy stays
+    #     EQUAL to the original, the codes match — and the file is declared DEAF. So an uninserted corruption
+    #     gives a FALSE ACCUSATION of a healthy stand, with nothing to tell them apart. Today the tool already
+    #     accused healthy stands twice, and both times a hand looked for the cause. The neighbouring agent's
+    #     direction of miss is opposite to mine (theirs is a false acquittal, mine a false accusation), but both
+    #     are quiet: the output looks meaningful.
+    if cmp -s "$chistaya" "$porchenaya"; then
+      continue
+    fi
+    vneslos=$((vneslos+1))
+    pod_storozhem "$kat" "$porchenaya"; k=$?
+    [ -n "$STOROZH" ] && break
+    if [ "$k" = 0 ]; then kod_porcha=0; proshli="$proshli $forma"; else kod_porcha=$k; fi
+    IFS='|'
+  done
+  IFS="$staryj_IFS"
+  if [ -n "$STOROZH" ]; then rm -f "$chistaya" "$porchenaya"; sorvano=$((sorvano+1)); SORVANO="$SORVANO
+    $f — порча: $STOROZH"; continue; fi
+  # Если прошла хоть одна форма — обёртка глуха, и НАЗЫВАЕМ какие именно прошли.
+  # EN: If at least one form passed — the wrapper is deaf, and we NAME exactly which ones passed.
+  if [ -n "$proshli" ]; then kod_porcha=0; fi
+  rm -f "$chistaya" "$porchenaya"
+  # 🔴 НИ ОДНА ФОРМА НЕ ВНЕСЛАСЬ — ЭТО СЛЕПОТА, А НЕ «ГЛУХАЯ ОБЁРТКА» (07.09.2026).
+  # Без этой ветки невнесённая подстановка давала ЛОЖНОЕ ОБВИНЕНИЕ: коды совпали, значит
+  # «стенд остался зелёным на возврате». Проверено порчей самого прибора (подстановка не
+  # попадает ни в одну строку): было «глухих 3», стало «слепота 4» — обвинение снято.
+  # EN: 🔴 NOT ONE FORM WAS INSERTED — THIS IS BLINDNESS, NOT "A DEAF WRAPPER" (07.09.2026). Without this branch
+  #     an uninserted substitution gave a FALSE ACCUSATION: the codes matched, so "the stand stayed green on the
+  #     return value". Checked by corrupting the tool itself (the substitution hits no line): it was "3 deaf",
+  #     it became "blindness 4" — the accusation is withdrawn.
+  if [ "$vneslos" = 0 ]; then
+    slepota=$((slepota+1)); SLEPYE="$SLEPYE
+    $f — ПОРЧА НЕ ВНЕСЛАСЬ ни одной формой (копия равна оригиналу): имя обёртки или номер
+      строки выяснены неверно. Это про прибор, а не про стенд — глухота НЕ установлена"
+  elif [ "$kod_original" = 0 ] && [ "$kod_chisto" != 0 ]; then
+    vozmushchaem=$((vozmushchaem+1)); VOZMUSHCHAEM="$VOZMUSHCHAEM
+    $f — оригинал зелёный ($kod_original), но копия рядом делает его красным ($kod_chisto):
+      предмет считает соседние файлы, и ЭТИМ способом он неизмерим. Не «глухая», не «краснеет»"
+  elif [ "$kod_chisto" != 0 ]; then
+    ne_na_chem=$((ne_na_chem+1)); NE_NA_CHEM="$NE_NA_CHEM
+    $f — до порчи код $kod_chisto (красный либо слепой), разница ничего не скажет"
+  elif [ "$kod_porcha" = 0 ]; then
+    gluhih=$((gluhih+1)); GLUHIE="$GLUHIE
+    🔴 $f — стенд остался ЗЕЛЁНЫМ на возврате:$proshli (было $kod_chisto)"
+    GLUHIE_PUTI="$GLUHIE_PUTI$f
+"
+  else
+    krasneet=$((krasneet+1))
+  fi
+done
+
+if [ "$vsego" = 0 ]; then
+  if [ "$vne" -gt 0 ]; then
+    echo "СЛЕПОТА: .mjs-стендов нет; вне области $vne (.sh — метод вставляет JS-пробу, к bash/python неприменим): $(printf '%s' "$VNE_PUTI" | xargs -d '\n' -r -n1 basename | tr '\n' ' ')"
+    printf '%s' "$VNE_PUTI" | sed 's/^/ВНЕ ОБЛАСТИ: /'
+  else
+    echo "СЛЕПОТА: в области $OBLAST не нашлось ни одного стенда — мерить нечего."
+  fi
+  echo "  Это НЕ «глухих ноль»: ноль осмотренных и ноль дефектов — разные ответы."
+  exit 2
+fi
+# 🔴 «ГЛУХИХ 0» ПРИ НУЛЕ ИЗМЕРИМЫХ — ЛОЖНЫЙ ЯРЛЫК (07.09.2026, найдено в ВОРОТАХ ВЫПУСКА).
+# Там прибор гонит стенды в чистом месте, где соседей нет: до порчи код ненулевой, и ВСЕ
+# файлы падают в «не на чем мерить». Итог печатался как «краснеют 0 · ГЛУХИХ 0 · не на чем
+# мерить 16» — и читался по первому числу, то есть как «проверено, чисто». Оговорка внизу
+# не отменяет ярлыка вверху: измеримых было НОЛЬ, и сказать надо это, а не «глухих ноль».
+# EN: 🔴 "0 DEAF" WITH ZERO MEASURABLE IS A FALSE LABEL (07.09.2026, found in the RELEASE GATES). There the tool
+#     runs stands in a clean place without neighbours: before corruption the code is non-zero, and ALL files
+#     fall into "nothing to measure on". The result was printed as "go red 0 · DEAF 0 · nothing to measure on
+#     16" — and read by the first number, i.e. as "checked, clean". A caveat at the bottom does not cancel the
+#     label at the top: there were ZERO measurable ones, and that is what must be said, not "zero deaf".
+izmerimyh=$((krasneet+gluhih))
+if [ "$izmerimyh" = 0 ] && [ "$neprimenimo" = "$vsego" ]; then
+  # Все стенды — обёртки-условия (или без обёртки, OK()/FAIL()/assert): возврата тела нет, класс НЕПРИМЕНИМ, ловушки проверены.
+  # EN: All stands are condition wrappers (or without a wrapper, OK()/FAIL()/assert): there is no body return
+  #     value, the class DOES NOT APPLY, traps were checked.
+  gluhih_slovo="НЕ ПРИМЕНИМО (все $vsego — обёртки-условия либо без обёртки: возврата тела нет; ловушки проверены)"
+elif [ "$izmerimyh" = 0 ]; then
+  gluhih_slovo="НЕ ИЗМЕРЕНО (измеримых 0 из $vsego — глухота этим прогоном НЕ проверялась)"
+else
+  gluhih_slovo="$gluhih"
+fi
+echo "ОБЁРТКИ СТЕНДОВ: краснеют $krasneet · ГЛУХИХ $gluhih_slovo · условие-обёрток без ловушки $neprimenimo (двух видов из трёх) · ЛОВУШЕК $lovushki · не на чем мерить $ne_na_chem · неизмеримо этим способом $vozmushchaem · нет прав на каталог $net_prav · слепота $slepota · сорвано сторожем $sorvano · всего файлов $vsego"
+echo "  область: $OBLAST — обход каталога, перечня рукой нет"
+[ "$vne" -gt 0 ] && { echo "  вне области (.sh — метод только для JS): $vne"; printf '%s' "$VNE_PUTI" | sed 's/^/ВНЕ ОБЛАСТИ: /'; }
+echo "  вердикт по РАЗНИЦЕ кодов «чисто -> с порчей», а не по одному коду"
+[ -n "$GLUHIE" ] && echo "ГЛУХИЕ К ВОЗВРАТУ ТЕЛА:$GLUHIE"
+# 🔴 МАШИННАЯ СТРОКА ДЛЯ ЧИТАТЕЛЕЙ (25.09.2026). Вывод выше — для человека, и его текст
+# менялся. vypusk-tegom искал глухих по фразе, которой этот прибор НЕ печатал ни в одной редакции
+# с 20.09, — отказ «глухая тронутая» не наступал никогда. Договор: одна строка на глухой стенд,
+# с начала строки, «ГЛУХОЙ: <путь>». Меняешь форму — меняй и читателя (vypusk-tegom); разрыв ловит
+# сквозная проба П27 stendy/stend-vorot-vypuska.sh (через ЭТОТ прибор, не подставной вывод).
+# EN: 🔴 A MACHINE LINE FOR READERS (25.09.2026). The output above is for a human, and its text changed.
+#     vypusk-tegom looked for deaf ones by a phrase this tool did NOT print in any edition since 20.09 — the
+#     refusal "deaf one touched" never happened. The contract: one line per deaf stand, at the start of a line,
+#     "ГЛУХОЙ: <path>". Change the form — change the reader too (vypusk-tegom); a break is caught by the
+#     end-to-end probe P27 stendy/stend-vorot-vypuska.sh (through THIS tool, not a stand-in output).
+[ -n "$GLUHIE_PUTI" ] && printf '%s' "$GLUHIE_PUTI" | sed 's/^/ГЛУХОЙ: /'
+[ -n "$LOVUSHKI" ] && echo "УСЛОВИЕ-ФУНКЦИЯ (зеркальная ловушка):$LOVUSHKI"
+# Машинная строка ловушки — тот же договор, что «ГЛУХОЙ:»: одна строка на стенд, с начала строки, «ЛОВУШКА: <путь>».
+# Ловушка — та же глухота зеркально (условие-функция истинно всегда, проба зелена при любых данных); читатель — vypusk-tegom.
+# EN: The machine line for a trap is the same contract as "ГЛУХОЙ:": one line per stand, at the start of a line,
+#     "ЛОВУШКА: <path>".
+#     A trap is the same deafness mirrored (a condition-function is always true, the probe is green with any
+#     data); the reader is vypusk-tegom.
+[ -n "$LOVUSHKI_PUTI" ] && printf '%s' "$LOVUSHKI_PUTI" | sed 's/^/ЛОВУШКА: /'
+[ -n "$VOZMUSHCHAEM" ] && echo "НЕИЗМЕРИМО ЭТИМ СПОСОБОМ (предмет считает соседей):$VOZMUSHCHAEM"
+[ -n "$NE_NA_CHEM" ] && echo "НЕ НА ЧЕМ МЕРИТЬ:$NE_NA_CHEM"
+[ -n "$NET_PRAV" ] && echo "НЕТ ПРАВ НА КАТАЛОГ (область урезана чужими правами):$NET_PRAV"
+[ -n "$SLEPYE" ] && echo "СЛЕПОТА:$SLEPYE"
+[ -n "$SORVANO" ] && echo "🔴 СТОРОЖ ПРИБОРА — СОРВАНО $sorvano (прогон стенда не кончился в пределах; стенд рекурсивен или завис):$SORVANO"
+if [ "$sorvano" -gt 0 ]; then exit 1; fi
+if [ "$gluhih" -gt 0 ] || [ "$lovushki" -gt 0 ]; then exit 1; fi
+if [ "$slepota" -gt 0 ] || [ "$ne_na_chem" -gt 0 ] || [ "$net_prav" -gt 0 ]; then exit 2; fi
+exit 0

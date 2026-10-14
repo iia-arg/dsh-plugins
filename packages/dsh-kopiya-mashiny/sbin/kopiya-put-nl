@@ -1,0 +1,29 @@
+#!/bin/bash
+# kopiya-put-nl — УЗКИЙ ПУТЬ выгрузки копии sadik через awg0 (NL). B-N-762, Михалыч, 24.09.2026.
+# От чего: выход через awg3 (US) в сторону vps-us деградировал (отдача 0,3 МБ/с, 24.09).
+# Где действует: ТОЛЬКО пакеты с меткой 0x740 — её ставит сам sadik-backup.py на свои сокеты при
+#   BACKUP_SO_MARK=0x740 (drop-in 30-put-nl.conf). Маршруты фермы, killswitch и vps-us не трогаются.
+# Когда останавливается: поднимается ExecStartPre прогона, снимается ExecStopPost того же прогона.
+# Чего НЕ ловит/не делает: деградацию самого NL; при отсутствии awg0 правило не ставится, и меченые
+#   пакеты проходят дальше по правилам — в таблицу 51820 (US), т.е. прежний путь (откат сам собой).
+set -u
+MARK=0x740; TAB=740; PREF=39; DEV=awg0
+case "${1:-}" in
+  up)
+    ip link show "$DEV" >/dev/null 2>&1 || { echo "kopiya-put-nl: $DEV нет — узкий путь НЕ поднят, выгрузка пойдёт прежним путём (US)"; exit 1; }
+    ip route replace default dev "$DEV" table "$TAB" || { echo "kopiya-put-nl: маршрут в таблицу $TAB не встал — путь НЕ поднят"; exit 1; }
+    # Проверяется СВОЁ правило, а не «что-то на pref» (low Вениамина 17:08): чужое на pref — отказ, а не «поднят».
+    SVOE="fwmark $MARK lookup $TAB"
+    if ip rule show pref "$PREF" | grep -q .; then
+      ip rule show pref "$PREF" | grep -qF "$SVOE" || { echo "kopiya-put-nl: на pref $PREF ЧУЖОЕ правило ($(ip rule show pref $PREF | head -1)) — ОТКАЗ, путь НЕ поднят"; ip route flush table "$TAB"; exit 1; }
+    else
+      ip rule add pref "$PREF" fwmark "$MARK" lookup "$TAB" || { echo "kopiya-put-nl: правило не встало"; exit 1; }
+    fi
+    echo "kopiya-put-nl: поднят — fwmark $MARK → таблица $TAB → $DEV (правило pref $PREF)";;
+  down)
+    # Снимается ТОЛЬКО своё — по всем селекторам (условие Вениамина 17:10): del по одному pref снял бы
+    # первое правило с этим приоритетом, в т.ч. чужое, а down — ExecStopPost и идёт ВСЕГДА, даже после отказа up.
+    ip rule del pref "$PREF" fwmark "$MARK" lookup "$TAB" 2>/dev/null; ip route flush table "$TAB" 2>/dev/null
+    echo "kopiya-put-nl: снят — правил pref $PREF: $(ip rule show pref $PREF | wc -l), маршрутов в $TAB: $(ip route show table $TAB 2>/dev/null | wc -l)";;
+  *) echo "kopiya-put-nl: неизвестный ввод «${1:-}» — ОТКАЗ (только up|down)"; exit 2;;
+esac

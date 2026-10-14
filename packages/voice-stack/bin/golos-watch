@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# RU: Сторож локального голоса для всех DSH-агентов из реестра. Перед обходом проверяет общий движок на синтетической речи; отказ общей пробы означает слепоту, а не неисправность каждого агента.
+# EN: Watch local speech recognition for every DSH agent in the registry. Test the shared engine with synthetic speech before scanning; a failed shared test means blindness rather than failure of every agent.
+# RU: Читает transcribeCommand из профиля, проверяет исполнение от учётки агента и узнаваемую фразу. Каждая проба ограничена GOLOS_PREDEL_PROBY; каждый агент должен попасть в исправные либо в ошибки. stdin команд закрыт, чтобы не потерять остаток реестра.
+# EN: Read transcribeCommand from each profile, test execution as that account and require a recognizable phrase. GOLOS_PREDEL_PROBY bounds each trial; every agent must appear in the healthy or failed set. Close command stdin so it cannot consume the remaining registry rows.
+# RU: Читает новые тревоги корректора из journalctl, сохраняет курсор GOLOS_KURSOR. Нет доступа к журналу — явно объявленная слепота; нет новых строк — отсутствие тревог в измеренном окне.
+# EN: Read new corrector alerts from journalctl and retain GOLOS_KURSOR. An unreadable journal is explicit blindness; no new lines means no alerts in the measured window.
+# RU: Коды: 0 все исправны; 1 ошибки, включая слепоту читателя журнала; 2 общая слепота; 3 тревога не отправлена. GOLOS_ALERT принимает сообщение, GOLOS_REESTR задаёт YAML agenty/namerenie. Обход вызывается администратором или таймером пакета golos-watch.timer.
+# EN: Exit 0 means healthy, 1 detected failures including journal-reader blindness, 2 shared-probe blindness, 3 undelivered alert. GOLOS_ALERT accepts a message and GOLOS_REESTR selects the agenty/namerenie YAML. An administrator or the packaged golos-watch.timer runs the scan.
+# RU: Не проверяет модуль канала, реальные сообщения посетителей, сбой между прогонами, строки журнала, уже удалённые ротацией, и необъявленные ошибки при отсутствии корректора. Требуются bash, Python/PyYAML, espeak-ng, ffmpeg, runuser, timeout, journalctl и права чтения профилей/смены учётки.
+# EN: Does not check the channel module, real visitor messages, failures between scans, rotated-away journal entries, or silent failures without a corrector. Requires bash, Python/PyYAML, espeak-ng, ffmpeg, runuser, timeout, journalctl and permission to read profiles/switch accounts.
+set -uo pipefail
+
+REESTR="${GOLOS_REESTR:-/etc/voice-stack/agents.yaml}"
+ALERT="${GOLOS_ALERT:-/usr/local/bin/agent-alert}"
+DVIZHOK="${GOLOS_DVIZHOK:-/usr/local/bin/transcribe-whispercpp-core}"
+PREDEL_PROBY="${GOLOS_PREDEL_PROBY:-150}"
+# RU: Unicode-сравнение не зависит от LC_ALL вызывающего.
+# EN: Unicode comparison does not depend on the caller's LC_ALL.
+uznal() { python3 -c 'import sys; sys.exit(0 if "провер" in sys.stdin.read().lower() else 1)'; }
+[ $# -eq 0 ] || { echo "ОТКАЗ: доводов нет и не бывает (получено: $*) — сторож только проверяет" >&2; exit 2; }
+
+trevoga() {  # trevoga <код> <текст>
+  echo "$2"
+  if [ -x "$ALERT" ] && "$ALERT" "голос на $(hostname -s): $2" >/dev/null 2>&1; then exit "$1"; fi
+  echo "🔴 ТРЕВОГА НЕ ДОСТАВЛЕНА (канал: $ALERT)"; exit 3
+}
+
+[ "$(id -u)" -eq 0 ] || { echo "СЛЕПОТА: golos-watch требует root для runuser и полного журнала" >&2; exit 2; }
+T=$(mktemp -d /tmp/golos-watch-XXXXXX) || { echo "СЛЕПОТА: временный каталог не создан"; exit 2; }
+trap 'rm -rf "$T"' EXIT
+chmod 755 "$T"
+if ! espeak-ng -v ru -s 140 -w "$T/raw.wav" "проверка голоса, раз, два, три" 2>"$T/err" \
+   || ! ffmpeg -loglevel error -y -i "$T/raw.wav" -ar 16000 -ac 1 "$T/fraza.wav" 2>>"$T/err"; then
+  trevoga 2 "СЛЕПОТА: пробная фраза не синтезирована ($(head -c 160 "$T/err")) — проверить агентов нечем"
+fi
+chmod 644 "$T/fraza.wav"
+
+kontrol=$(timeout "$PREDEL_PROBY" env -u DENOISE "$DVIZHOK" "$T/fraza.wav" auto 2>/dev/null); k=$?
+if [ "$k" -ne 0 ] || ! printf '%s' "$kontrol" | uznal; then
+  trevoga 2 "СЛЕПОТА: распознаватель машины ($DVIZHOK) не узнал пробную фразу (код $k, вывод «${kontrol:0:60}») — агентов не сужу: сломан общий движок, а не их настройка"
+fi
+
+spisok=$(python3 - "$REESTR" <<'PY'
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1], encoding='utf-8'))
+for e in d['agenty']:
+    n = e.get('namerenie') or {}
+    if n.get('platforma') == 'dsh':
+        fields = (e.get('imya'), n.get('dom'), n.get('polzovatel'))
+        missing = [key for key, value in zip(('imya', 'dom', 'polzovatel'), fields) if not isinstance(value, str) or not value.strip()]
+        values = [str(value).replace('\t', ' ').replace('\n', ' ') if value else '-' for value in fields]
+        print('\t'.join(values + ['нет поля ' + ', '.join(missing) if missing else '']))
+PY
+); k=$?
+[ "$k" -eq 0 ] || trevoga 2 "СЛЕПОТА: реестр $REESTR не разобран (код $k) — список агентов взять неоткуда"
+vsego=$(printf '%s\n' "$spisok" | grep -c .)
+[ "$vsego" -gt 0 ] || trevoga 2 "СЛЕПОТА: в реестре $REESTR нет ни одного DSH-агента — это не «все исправны»"
+
+chisto=(); bedy=(); nomer=0
+while IFS=$'\t' read -r imya dom kto otkaz; do
+  nomer=$((nomer + 1))
+  [ -z "$otkaz" ] || { bedy+=("$imya: $otkaz"); continue; }
+  profil="$dom/.dsh/profiles/web/cordis.patch.yml"
+  if [ ! -r "$profil" ]; then bedy+=("$imya: профиль $profil не читается"); continue; fi
+  komandy=$(sed -nE 's/^[[:space:]]*transcribeCommand:[[:space:]]*["'\'']?([^"'\''[:space:]#]+).*/\1/p' "$profil")
+  n_kom=$(printf '%s' "$komandy" | grep -c .)
+  if [ "$n_kom" -eq 0 ]; then bedy+=("$imya: в профиле НЕТ transcribeCommand — голосовые не расшифровываются"); continue; fi
+  if [ "$n_kom" -gt 1 ]; then bedy+=("$imya: transcribeCommand задан $n_kom раз — какая действует, неизвестно"); continue; fi
+  komanda=$komandy
+  if ! id -u "$kto" >/dev/null 2>&1; then bedy+=("$imya: учётки $kto нет"); continue; fi
+  if ! runuser -u "$kto" -- test -x "$komanda" </dev/null; then bedy+=("$imya: команда $komanda не исполнима от $kto"); continue; fi
+  vyvod=$(cd / && timeout "$PREDEL_PROBY" runuser -u "$kto" -- env -u DENOISE HOME="$dom" "$komanda" "$T/fraza.wav" auto 2>"$T/e-$nomer" </dev/null); k=$?
+  if [ "$k" -ne 0 ]; then bedy+=("$imya: проба от $kto — код $k ($(tr '\n' ' ' <"$T/e-$nomer" | head -c 120))"); continue; fi
+  if ! printf '%s' "$vyvod" | uznal; then bedy+=("$imya: проба от $kto — код 0, но фраза не узнана («${vyvod:0:60}»)"); continue; fi
+  chisto+=("$imya")
+done <<< "$spisok"
+
+if [ $(( ${#chisto[@]} + ${#bedy[@]} )) -ne "$vsego" ]; then
+  trevoga 2 "СЛЕПОТА: проверено $(( ${#chisto[@]} + ${#bedy[@]} )) из $vsego агентов реестра — часть потеряна обходом; исправны: ${chisto[*]:-никто}; беды: $(printf '%s; ' "${bedy[@]}")"
+fi
+KURSOR="${GOLOS_KURSOR:-/var/lib/golos-watch/korrektor.cursor}"
+mkdir -p "$(dirname "$KURSOR")" 2>/dev/null
+if [ -s "$KURSOR" ]; then okno=(--cursor-file="$KURSOR"); else okno=(--since=-25h --cursor-file="$KURSOR"); fi
+korr=$(journalctl -t transcribe-correct-wrap "${okno[@]}" --no-pager -o cat 2>"$T/jerr"); k=$?
+if [ "$k" -ne 0 ]; then
+  korr_itog="СЛЕПОТА читателя корректора: journalctl код $k ($(head -c 100 "$T/jerr"))"
+else
+  n_korr=$(printf '%s\n' "$korr" | grep -c '🔴')
+  korr_itog=""; [ "$n_korr" -gt 0 ] && korr_itog="корректор: 🔴 строк $n_korr с прошлого прогона, последняя: $(printf '%s\n' "$korr" | grep '🔴' | tail -n 1 | head -c 200)"
+fi
+if [ "${#bedy[@]}" -eq 0 ] && [ -z "$korr_itog" ]; then
+  echo "чисто: голос расшифровывается у ${#chisto[@]} из $vsego DSH-агентов реестра: ${chisto[*]}; корректор — без 🔴 с прошлого прогона"
+  exit 0
+fi
+if [ "${#bedy[@]}" -eq 0 ]; then
+  trevoga 1 "🔴 голос расшифровывается у ${#chisto[@]} из $vsego, но $korr_itog"
+fi
+trevoga 1 "🔴 голосовые НЕ расшифруются у ${#bedy[@]} из $vsego: $(printf '%s; ' "${bedy[@]}")исправны: ${chisto[*]:-никто}${korr_itog:+; $korr_itog}"

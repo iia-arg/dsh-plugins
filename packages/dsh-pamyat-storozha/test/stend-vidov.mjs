@@ -1,4 +1,9 @@
-/** Стенд опознания видов сжатия. Первая проба — на заведомо исправном. */
+/**
+ * RU: Стенд опознания видов сжатия и арифметики расхода (src/vidy-szhatiya.js). Первая проба — на заведомо
+ *     исправном. Запуск: node test/stend-vidov.mjs; код 0 — всё зелёное, 1 — красные.
+ * EN: Stand for compaction kind detection and spend arithmetic (src/vidy-szhatiya.js). The first probe is on a
+ *     known-good case. Run: node test/stend-vidov.mjs; exit 0 — all green, 1 — red.
+ */
 import { vidKonca, rashod, davlenie, neznakomyePolya, dlitelnost } from '../src/vidy-szhatiya.js'
 
 let vsego = 0, bed = 0
@@ -34,12 +39,18 @@ proba('расход: пустой объект → тоже «не сообщё�
   return (r.est === false && r.vsego === null) || `пустой usage прочтён как ноль: ${JSON.stringify(r)}`
 })
 
-// ═══ АРИФМЕТИКА ПЛАТФОРМЫ, А НЕ ЗДРАВЫЙ СМЫСЛ ═══════════════════════════════════
-// 🔴 ПРЕЖНЯЯ ПРОБА ЗДЕСЬ ГОНЯЛА `{ input: 10, output: 5 }` — ФОРМУ, КОТОРОЙ У ПЛАТФОРМЫ
-// НЕТ. Объявленные имена — inputTokens/outputTokens/cacheReadTokens/cacheWriteTokens/
-// reasoningTokens. Проба зеленела потому, что старая функция складывала ЛЮБОЕ число, а
-// не потому, что считала верно: она отвечала на свой вопрос, а читалась как ответ на наш.
-// Форму подставных данных надо брать у объявления, иначе стенд стережёт выдумку.
+// RU: ═══ АРИФМЕТИКА ПЛАТФОРМЫ, А НЕ ЗДРАВЫЙ СМЫСЛ ═══
+//     Прежняя проба здесь гоняла `{ input: 10, output: 5 }` — ФОРМУ, КОТОРОЙ У ПЛАТФОРМЫ НЕТ. Объявленные имена
+//     — inputTokens / outputTokens / cacheReadTokens / cacheWriteTokens / reasoningTokens. Проба зеленела
+//     потому, что старая функция складывала ЛЮБОЕ число, а не потому, что считала верно: она отвечала на свой
+//     вопрос, а читалась как ответ на наш. Форму подставных данных надо брать у объявления, иначе стенд
+//     стережёт выдумку.
+// EN: ═══ PLATFORM ARITHMETIC, NOT COMMON SENSE ═══
+//     The earlier probe here used `{ input: 10, output: 5 }` — A SHAPE THE PLATFORM DOES NOT HAVE. The declared
+//     names are inputTokens / outputTokens / cacheReadTokens / cacheWriteTokens / reasoningTokens. The probe
+//     was green because the old function added up ANY number, not because it counted correctly: it answered its
+//     own question while being read as an answer to ours. The shape of fake data must come from the
+//     declaration, otherwise the stand guards a fiction.
 
 proba('расход: непересекающиеся вёдра складываются', () =>
   rashod({ inputTokens: 10, outputTokens: 5, cacheReadTokens: 3, cacheWriteTokens: 2 }).vsego === 20
@@ -68,6 +79,14 @@ proba('🔴 чужая форма usage → «не сообщён», а поля
   const ch = neznakomyePolya({ input: 10, output: 5 })
   return (ch.includes('input') && ch.includes('output'))
     || `незнакомые поля не названы: ${JSON.stringify(ch)}`
+})
+
+proba('totalTokens (объявлен в DSH 0.2) — не «незнакомое поле» и не слагаемое давления/расхода', () => {
+  const u = { inputTokens: 11615, outputTokens: 21, cacheReadTokens: 9472, totalTokens: 21108 }   // RU: замер одного хода с моделью deepseek-v4-pro · EN: a measured single turn with the deepseek-v4-pro model
+  const ch = neznakomyePolya(u)
+  if (ch.length) return `объявленное поле названо незнакомым: ${JSON.stringify(ch)}`
+  if (davlenie(u).vsego !== 21087) return `давление ${davlenie(u).vsego}, ожидалось 21087 (вход+кэш, итог не слагаемое)`
+  return rashod(u).vsego === 21108 || `расход ${rashod(u).vsego}, ожидалось 21108 (вёдра; итог вызова не прибавлен второй раз)`
 })
 
 proba('длительность: без метки начала → null, а не ноль', () =>

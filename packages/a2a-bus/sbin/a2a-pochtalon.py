@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+#
+# 🔴 ГРАНИЦА СЛОВА «ДОСТАВЛЕНО» (вписано 06.09.2026 узлом машины с санкции координатора).
+# Отправителю «доставлено: <путь>» означает «ПОЛОЖЕНО В ОЧЕРЕДЬ», а НЕ «принято читателем».
+# Разрыв до 5 секунд штатный (такт почтальона); при сбое смены владельца — больше.
+# Замер аудитора 04.09: положено 08:54:44Z -> читатель EACCES 08:54:48 -> перенос 08:54:49
+# -> принято 08:55:19. Задержка 35 секунд, потери не было, а отправителю всё это время
+# печаталось «доставлено».
+# ⚠️ Поэтому: увидев «доставлено» и молчание получателя, НЕ ищите дефект в получателе.
+# Сначала посмотрите, дошло ли письмо до его ящика и сменился ли владелец.
 """
 ПОЧТАЛЬОН ШИНЫ A2A — переносит письма в собственность получателя.
 
@@ -49,9 +58,11 @@
 """
 
 import grp
+import hashlib
 import os
 import subprocess
 import pwd
+import re
 import stat
 import sys
 import time
@@ -62,8 +73,13 @@ KOREN = os.environ.get("A2A_KOREN", "/var/spool/a2a")
 TELL = os.environ.get("A2A_TELL_BIN", "/usr/local/bin/tell-owner")
 REESTR = os.environ.get("A2A_REESTR_BIN", "/usr/local/bin/agent-registry")
 # В чат идёт видимость переписки, а не её хранилище: письмо целиком уже у
-# получателя. Счёт и обрезка — по ЗНАКАМ (python), не по байтам.
+# получателя. 🔴 B-N-1665 (05.10.2026): счёт и обрезка — в ЕДИНИЦАХ UTF-16, не в знаках python:
+# Telegram меряет текст в UTF-16, знак вне BMP (эмодзи) — две единицы. Прежде 3800 знаков с
+# эмодзи давали >4096 единиц (замер B-N-1663: 3904 знака = 4127), и сообщение отвергалось целиком.
+# Число в «показано N из M знаков» — по-прежнему знаки: его читает человек.
 PREDEL_V_CHAT = int(os.environ.get("A2A_PREDEL_V_CHAT", "900"))
+# Предел одного sendMessage у Telegram (tell-owner шлёт ОДНО сообщение): шапка + тело + хвост не больше него.
+PREDEL_TELEGRAM = 4096
 # Уведомление не должно затягивать разноску: телеграм может молчать, а почта
 # ждёт. 15 с — меньше, чем предел curl внутри tell-owner (25 с).
 PREDEL_UVEDOMLENIYA_S = int(os.environ.get("A2A_PREDEL_UVEDOMLENIYA_S", "15"))
@@ -73,6 +89,24 @@ PREDEL_BAJT = int(os.environ.get("A2A_PREDEL_BAJT", str(1024 * 1024)))
 # Предел писем за один прогон: прогон раз в 5 с, длинная очередь разберётся за
 # несколько заходов. Граница нужна, чтобы один заваленный ящик не занимал прогон целиком.
 PREDEL_PISEM = int(os.environ.get("A2A_PREDEL_PISEM", "100"))
+# B-N-915 (26.09.2026): конверт учёта первой строкой — его ставит a2a-send (с 19.09). Он СЛУЖЕБНЫЙ: в видимый
+# предел и в «показано N из M» не входит, в чат не идёт (как и у отправителя в «→ кому»). Файл письма не трогаем —
+# id остаётся в ящике для квитанций. Первая строка иного вида — тело, показывается как есть (не знаю ≠ убрать).
+KONVERT = re.compile(r"\[delivery-v1 id=[0-9a-f]{64} reply=[a-z]+\]\n")
+# 🔴 B-N-1502 (03.10.2026, Аврора; находка Искры 18:58Z): владельцу показываем ТОЛЬКО письма курьеров. Прежде в чат
+# уходил ЛЮБОЙ файл ящика: 18:16:27Z файл учётных данных (iskra/marc-chatwoot-bot-…credentials.json) показан владельцу
+# целиком. Признак письма — по коду ТРЁХ курьеров (все пишут временным «.имя» и переименовывают):
+#   a2a-send v1 (/usr/local/bin/a2a-send :349–357) и письмо-продолжение шлюза (gateway.mjs, тот же формат):
+#     имя <ГГГГММДДTччммссZ>-<учётка>-[ownerall-]<8 hex | pid>.txt, первая строка [delivery-v1 id=<64 hex> reply=…];
+#   a2a-send --v2 (/usr/local/libexec/a2a-v2.py put): имя <метка>-<учётка>-v2-<64 hex>.txt, первая строка [a2a-envelope version=2];
+#   и УЧЁТКА В ИМЕНИ = владелец файла (его ставит ядро; курьер пишет своё id -un) — подписью служит это совпадение.
+# Не письмо — содержимое НЕ читается в чат и НЕ переносится получателю: файл переименовывается в «.ne-pismo-…»
+# (скрытое почтальон и читатели ящика не берут), владельцу — одна строка без содержимого, плюс тревога машины.
+# ЧЕГО НЕ ЛОВИТ: секрет ВНУТРИ настоящего письма курьера (это переписка — её показ и есть замысел).
+PISMO_HVOST = r"(?:(?:ownerall-)?(?:[0-9a-f]{8}|[0-9]+)|v2-[0-9a-f]{64})\.txt"
+PISMO_IMYA = re.compile(r"(?P<metka>\d{8}T\d{6}Z)-(?P<kto>[a-z_][a-z0-9_-]*)-" + PISMO_HVOST)
+KONVERT_V2 = "[a2a-envelope version=2]\n"
+TREVOGA = os.environ.get("A2A_ALERT_BIN", "/usr/local/bin/agent-alert")
 
 
 def skazat(*chasti):
@@ -85,7 +119,7 @@ def imya_agenta(polzovatel):
     Своего перечня «пользователь → имя» здесь нет намеренно: он разошёлся бы
     с реестром молча в тот день, когда заведут одиннадцатого агента.
     Не нашли — возвращаем самого пользователя: «от <пользователь>» хуже, чем «от
-    Петровича», но честнее выдуманного имени и заметно глазом.
+    <роль>», но честнее выдуманного имени и заметно глазом.
     """
     try:
         got = subprocess.run(
@@ -97,6 +131,22 @@ def imya_agenta(polzovatel):
     if got.returncode == 0 and got.stdout.strip():
         return got.stdout.strip()
     return polzovatel
+
+
+def dlina16(s):
+    """Длина в единицах UTF-16 — так меряет Telegram."""
+    return len(s.encode("utf-16-le")) // 2
+
+
+def nachalo16(s, predel):
+    """Самое длинное начало s не длиннее predel единиц UTF-16. Режем по знакам python
+    (кодовым точкам): знак вне BMP входит целиком или не входит — суррогатная пара не рвётся."""
+    n = 0
+    for i, ch in enumerate(s):
+        n += 2 if ord(ch) > 0xFFFF else 1
+        if n > predel:
+            return s[:i]
+    return s
 
 
 def uvedomit(polzovatel_poluchatelya, polzovatel_otpravitelya, tekst, imya_pisma):
@@ -116,23 +166,25 @@ def uvedomit(polzovatel_poluchatelya, polzovatel_otpravitelya, tekst, imya_pisma
     пользователем, значит строка попадёт в его личный чат с владельцем, а не
     в чужой. Почтальон своего бота не имеет и иметь не должен.
 
-    Возвращает (ushlo: bool, prichina: str). Отказ НЕ отменяет доставку письма:
-    письмо к этому мигу уже у получателя.
+    Возвращает (ushlo: bool, prichina: str, obrezka: str — пусто, если показано целиком).
+    Отказ НЕ отменяет доставку письма: письмо к этому мигу уже у получателя.
     """
     ot = imya_agenta(polzovatel_otpravitelya)
+    konvert = KONVERT.match(tekst)
+    if konvert:
+        tekst = tekst[konvert.end():]
     znakov = len(tekst)
-    if znakov > PREDEL_V_CHAT:
-        # Обрезка называется вслух: молча обрезанное владелец прочтёт как
-        # письмо целиком и решит, что видел всё.
-        vidno = tekst[:PREDEL_V_CHAT]
-        hvost = (
-            f"\n\n… показано {PREDEL_V_CHAT} из {znakov} знаков, "
-            f"письмо целиком в ящике: {imya_pisma}"
-        )
+    shapka = f"← от {ot}: "
+    hvost_po = lambda n: f"\n\n… показано {n} из {znakov} знаков, письмо целиком в ящике: {imya_pisma}"
+    if dlina16(tekst) <= min(PREDEL_V_CHAT, PREDEL_TELEGRAM - dlina16(shapka)):
+        vidno, hvost, obrezka = tekst, "", ""
     else:
-        vidno = tekst
-        hvost = ""
-    soobshchenie = f"← от {ot}: {vidno}{hvost}"
+        # Обрезка называется вслух: молча обрезанное владелец прочтёт как
+        # письмо целиком и решит, что видел всё. Запас на хвост — с N=znakov: цифр не меньше настоящих.
+        vidno = nachalo16(tekst, min(PREDEL_V_CHAT, PREDEL_TELEGRAM - dlina16(shapka) - dlina16(hvost_po(znakov))))
+        hvost = hvost_po(len(vidno))
+        obrezka = f"показано {len(vidno)} из {znakov} знаков, UTF-16 {dlina16(shapka + vidno + hvost)}"
+    soobshchenie = f"{shapka}{vidno}{hvost}"
     try:
         # 🔴 ТЕКСТ ПИСЬМА ПОДАЁТСЯ ЧЕРЕЗ СТАНДАРТНЫЙ ВВОД, А НЕ АРГУМЕНТОМ.
         # Аргумент видно дважды: в /proc/<pid>/cmdline его читает ЛЮБОЙ
@@ -145,13 +197,60 @@ def uvedomit(polzovatel_poluchatelya, polzovatel_otpravitelya, tekst, imya_pisma
             capture_output=True, text=True, timeout=PREDEL_UVEDOMLENIYA_S,
         )
     except subprocess.TimeoutExpired:
-        return False, f"молчит дольше {PREDEL_UVEDOMLENIYA_S} с"
+        return False, f"молчит дольше {PREDEL_UVEDOMLENIYA_S} с", obrezka
     except (OSError, subprocess.SubprocessError) as oshibka:
-        return False, f"позвать не удалось: {oshibka}"
+        return False, f"позвать не удалось: {oshibka}", obrezka
     if got.returncode == 0:
-        return True, ""
+        return True, "", obrezka
     prichina = (got.stdout + got.stderr).strip().replace("\n", " ")
-    return False, prichina or f"код {got.returncode}, причина не названа"
+    return False, prichina or f"код {got.returncode}, причина не названа", obrezka
+
+
+def eto_pismo(imya, otpravitel, soderzhimoe):
+    """Письмо ли это курьера: (да/нет, почему нет). Содержимое не печатается нигде."""
+    m = PISMO_IMYA.fullmatch(imya)
+    if not m:
+        return False, "имя не по образцу курьера"
+    # Hyphens and reserved suffixes are ambiguous; the kernel owner fixes the split.
+    nachalo = m.group("metka") + "-" + otpravitel + "-"
+    if not imya.startswith(nachalo) or not re.fullmatch(PISMO_HVOST, imya[len(nachalo):]):
+        return False, f"учётка в имени «{m.group('kto')}» ≠ владелец файла «{otpravitel}»"
+    try:
+        tekst = soderzhimoe.decode("utf-8")
+    except UnicodeDecodeError:
+        return False, "не текст UTF-8"
+    if not (KONVERT.match(tekst) or tekst.startswith(KONVERT_V2)):
+        return False, "первая строка — не конверт курьера"
+    return True, ""
+
+
+def otlozhit_ne_pismo(kat_fd, imya, st, uid_hozyaina, put_dlya_zhurnala, pochemu):
+    """Не письмо: убрать с дороги (скрытым именем, владелец прежний), сказать владельцу строку БЕЗ содержимого, тревога."""
+    vidimoe = re.sub(r"[^\w.\-]", "?", imya)[:80]
+    otpechatok_imeni = hashlib.sha256(os.fsencode(imya)).hexdigest()
+    novoe = f".ne-pismo-{int(time.time())}-{os.getpid()}-{otpechatok_imeni}"
+    try:
+        os.rename(imya, novoe, src_dir_fd=kat_fd, dst_dir_fd=kat_fd)
+        kuda = f"отложено как {novoe[:120]}"
+    except OSError as oshibka:
+        kuda = f"переименовать не удалось ({oshibka}) — лежит как есть"
+    stroka = (f"в ящике {put_dlya_zhurnala.split('/')[0]} лёг не-письмо {vidimoe}, {st.st_size} Б — "
+              f"не показано и не передано ({pochemu}); {kuda}")
+    skazat(f"[почтальон] 🔴 {put_dlya_zhurnala}: НЕ ПИСЬМО — {pochemu}; содержимое не показано; {kuda}")
+    try:
+        poluchatel = pwd.getpwuid(uid_hozyaina).pw_name
+        got = subprocess.run(["sudo", "-n", "-u", poluchatel, TELL], input=f"⚠️ {stroka}",
+                             capture_output=True, text=True, timeout=PREDEL_UVEDOMLENIYA_S)
+        if got.returncode != 0:
+            skazat(f"[почтальон] ⚠️ {put_dlya_zhurnala}: строка владельцу НЕ ушла: код {got.returncode}")
+    except (KeyError, OSError, subprocess.SubprocessError) as oshibka:
+        skazat(f"[почтальон] ⚠️ {put_dlya_zhurnala}: строка владельцу НЕ ушла: {oshibka}")
+    try:
+        subprocess.run([TREVOGA, "--plain"], input=f"a2a-pochtalon: {stroka}",
+                       capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as oshibka:
+        skazat(f"[почтальон] ⚠️ {put_dlya_zhurnala}: тревога НЕ ушла: {oshibka}")
+    return False, f"не письмо ({pochemu}) — не перенесено, содержимое не показано"
 
 
 def perenesti(kat_fd, imya, uid_hozyaina, gid_hozyaina, put_dlya_zhurnala):
@@ -184,6 +283,15 @@ def perenesti(kat_fd, imya, uid_hozyaina, gid_hozyaina, put_dlya_zhurnala):
         return False, f"прочитать не удалось: {oshibka}"
     finally:
         os.close(fd_ishod)
+
+    # B-N-1502: до переноса и до показа — письмо ли это курьера.
+    try:
+        otpr_ = pwd.getpwuid(st.st_uid).pw_name
+    except KeyError:
+        otpr_ = str(st.st_uid)
+    da_, pochemu_ = eto_pismo(imya, otpr_, soderzhimoe)
+    if not da_:
+        return otlozhit_ne_pismo(kat_fd, imya, st, uid_hozyaina, put_dlya_zhurnala, pochemu_)
 
     vremennoe = f".{imya}.perenos-{os.getpid()}"
     try:
@@ -263,7 +371,11 @@ def perenesti(kat_fd, imya, uid_hozyaina, gid_hozyaina, put_dlya_zhurnala):
     except UnicodeDecodeError:
         # Не текст — в чат такое не показываем, но о самом письме говорим.
         tekst = f"(двоичное вложение, {len(soderzhimoe)} Б)"
-    ushlo, prichina = uvedomit(poluchatel, otpravitel, tekst, imya)
+    ushlo, prichina, obrezka = uvedomit(poluchatel, otpravitel, tekst, imya)
+    if obrezka:
+        # B-N-1665: длина обрезанного — ОТДЕЛЬНОЙ строкой. Строку «владельцу показано (чат X)» не трогать:
+        # её якорным выражением читает a2a-owner-copy-watch (POKAZANO, …\)$) — дописка в неё ослепила бы сторожа.
+        skazat(f"[почтальон] {put_dlya_zhurnala}: в чат обрезано — {obrezka}")
     if ushlo:
         skazat(f"[почтальон] {put_dlya_zhurnala}: владельцу показано (чат {poluchatel})")
     else:
@@ -326,6 +438,16 @@ def razobrat_yashchik(imya_yashchika):
             )
             if ok:
                 perenes += 1
+                # 🔴 СЛЕД У УСПЕХА, А НЕ ТОЛЬКО У БЕДЫ (05.09.2026). Прежде почтальон
+                # кричал лишь при отказе, а успешный перенос не оставлял ничего — и
+                # вместе с письмом исчезало ЕГО ИМЯ. А в имени стоит метка укладки в
+                # наносекундах (курьер отправителя присваивает её в момент cp на этой машине).
+                # Без этой строки нельзя разделить две задержки: «от написания до
+                # укладки» (чужая сторона) и «от укладки до прочтения» (моя очередь) —
+                # мы вчетвером сутки спорили о них, не имея числа ни для одной.
+                # ЦЕНА: одна строка на письмо, порядка тридцати в час. Пустые проходы
+                # (а их 3697 за шесть часов) по-прежнему молчат.
+                skazat(f"[почтальон] перенесено {imya_yashchika}/{imya}")
             else:
                 otkazov += 1
                 skazat(

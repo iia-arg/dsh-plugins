@@ -1,19 +1,5 @@
-/**
- * Стенд ДОГОВОРА фильтра: что ядро обещает наружу и в какой форме.
- *
- * 🔴 ЗАЧЕМ. Вывоз памяти (Э8.5) — отдельный пакет, и он обязан пропускать записи через
- * ТОТ ЖЕ код, что и вход, а не через свою копию правил: две копии правил расходятся, и
- * расхождение видно только при сверке самих файлов. Значит `najti_sekret` перестаёт быть
- * внутренним делом ядра и становится ДОГОВОРОМ.
- *
- * 🔴 ЧТО ИМЕННО СТЕРЕЖЁТ ЭТОТ СТЕНД. Не работу фильтра — её проверяет соседний стенд на
- * 50+ пробах. Здесь: остались ли на месте ИМЯ, ЧИСЛО АРГУМЕНТОВ и ФОРМА ОТВЕТА. Сегодня
- * они держатся на том, что я так написала, а не на объявлении — то есть следующая правка
- * ядра сломала бы чужой пакет молча, и узнали бы мы об этом от получателя.
- *
- * ⚠️ ЧЕГО СТЕНД НЕ ДОКАЗЫВАЕТ: что фильтр СУДИТ верно. Договор — про форму, а не про
- * годность. Зелёный договор при негодном правиле возможен и это не противоречие.
- */
+// RU: Проверяем публичный договор фильтра: имена экспортов, число аргументов и форму ответа. Пакет вывоза должен вызывать тот же najti_sekret, что вход, чтобы правила не расходились. Эти пробы проверяют совместимость интерфейса; правильность решения фильтра проверяется отдельно.
+// EN: Test the filter’s public contract: export names, argument counts, and response shape. The export package must call the same najti_sekret as ingress so their rules cannot diverge. These probes check interface compatibility; filter decisions are tested separately.
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -32,26 +18,23 @@ const proba = (imya, f) => {
   vsego++
   try {
     const vernulos = f();
-    // 🔴 ПРИРОДА ТЕЛА ПРОВЕРЯЕТСЯ, А НЕ ПОДРАЗУМЕВАЕТСЯ (05.09.2026). Прогонщик синхронный —
-    // ждать не умеет. Ожидающее тело вернёт промис, try его НЕ поймает, проба зачтётся
-    // мгновенно, а брошенное внутри уйдёт в никуда. Такая проба не краснеет НИКОГДА, ни на
-    // каких данных: это не ложно-зелёное, а отсутствие проверки под видом проверки.
-    // Замер 05.09: семь стендов ядра из десяти зеленели на подложенном падении в ожидающем
-    // теле. Действующих async-тел не было ни одного — беда была впереди, и закрыта устройством.
+    // RU: Прогонщик синхронный и не ждёт промис: async-тело могло бы зачесть успех до исключения внутри. Возвращённый промис означает отказ пробы.
+    // EN: The runner is synchronous and does not await promises: an async body could record success before an inner exception. A returned promise fails the probe.
     if (vernulos && typeof vernulos.then === 'function') {
       throw new Error('тело пробы ОЖИДАЮЩЕЕ, а прогонщик синхронный: вынеси ожидание наружу');
     }
-    // 🔴 ВОЗВРАТ ТЕЛА УЧИТЫВАЕТСЯ (05.09.2026). Обёртка краснела только на ИСКЛЮЧЕНИИ,
-    // а возврат выбрасывала — проба вида «вернуть true либо строку с причиной» была
-    // зелёной при ЛЮБОМ содержимом. Замер фактом: вписала в каждый стенд ядра пробу,
-    // заведомо возвращающую строку, — ПЯТЬ стендов её не заметили.
-    if (typeof vernulos === 'string') throw new Error(vernulos);
-    if (vernulos === false) throw new Error('тело пробы вернуло false без причины');
+    // RU: Тело пробы должно бросить ошибку или вернуть undefined. Любое другое значение, включая строку, false, 0, null и объект, означает отказ: игнорирование возврата даёт ложный успех.
+    // EN: The probe body must throw an error or return undefined. Any other value, including a string, false, 0, null, or an object, means failure: ignoring returns produces false success.
+    if (vernulos !== undefined && vernulos !== true) {
+      throw new Error('тело пробы ВЕРНУЛО «' + String(vernulos).slice(0, 60) +
+                      '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы');
+    }
     proshlo++; console.log('  ✅ ' + imya) }
   catch (e) { console.log('  ❌ ' + imya + ' — ' + String(e?.message ?? e).slice(0, 200)) }
 }
 
-// Договор: имя -> сколько аргументов принимает. Меняешь — меняешь чужие пакеты.
+// RU: Договор сопоставляет имя числу аргументов; его изменение затрагивает потребителей.
+// EN: The contract maps each name to its argument count; changes affect consumers.
 const DOGOVOR = { najti_sekret: 1, ochistit: 1, proverit_sluzhebnoe: 2, normalizovat: 1, trevozhno: 1, filtr_ispraven: 0 }
 
 proba('все объявленные имена на месте и это функции', () => {
@@ -66,8 +49,8 @@ proba('число аргументов не изменилось', () => {
   if (inache.length) throw new Error(inache.join('; '))
 })
 
-// 🔴 ФОРМА ОТВЕТА — САМОЕ ХРУПКОЕ. Потребитель читает `klass` и `pozicia`; переименуй их —
-// и чужой пакет получит undefined вместо класса, то есть примет секрет за чистый текст.
+// RU: Потребитель читает klass и pozicia. Переименование даст undefined и может превратить секрет в якобы чистый текст.
+// EN: Consumers read klass and pozicia. Renaming either produces undefined and may make a secret appear clean.
 proba('najti_sekret: находка даёт { klass, pozicia }, klass — строка, pozicia — число', () => {
   const r = M.najti_sekret('пароль: Hunter22xy')
   if (!r) throw new Error('на заведомом секрете вернул пусто')
@@ -80,8 +63,8 @@ proba('najti_sekret: чистый текст даёт ПУСТО (null/undefined
   if (r) throw new Error('на чистом тексте вернул ' + JSON.stringify(r))
 })
 
-// 🔴 КОНТРОЛЬ ЗРЯЧЕСТИ САМОГО ДОГОВОРА. Без него стенд зеленел бы и на пустом модуле:
-// «все имена на месте» верно для пустого списка, «форма ответа» — для функции-заглушки.
+// RU: Контроль зрячести отвергает пустой список экспортов и функцию-заглушку: иначе проверки формы могли бы пройти без предмета.
+// EN: The visibility control rejects an empty export list and a stub function; otherwise shape checks could pass without a subject.
 proba('контроль зрячести: подставной модуль без имени роняет проверку', () => {
   const podstavnoj = { ochistit: () => {} }
   const net = Object.keys(DOGOVOR).filter((i) => typeof podstavnoj[i] !== 'function')
@@ -89,7 +72,9 @@ proba('контроль зрячести: подставной модуль бе
 })
 
 proba('контроль зрячести: заглушка с другой формой ответа роняет проверку', () => {
-  const zaglushka = () => ({ tip: 'secret' })   // поле названо иначе
+  const zaglushka = () => ({ tip: 'secret' })   /* RU: Порча: поле переименовано.
+ * EN: Mutation: rename the field.
+ */
   const r = zaglushka('пароль: Hunter22xy')
   if (typeof r.klass === 'string') throw new Error('проверка формы слепа: приняла чужое поле')
 })

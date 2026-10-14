@@ -1,0 +1,23 @@
+[Unit]
+# RU: Сторож отказа по длине промпта — ЭКЗЕМПЛЯР НА АГЕНТА (%i = имя агента = KOMU).
+# RU: 🔴 ЗАЧЕМ ШАБЛОН, А НЕ ОДИН ЮНИТ: прежний смотрел ТОЛЬКО за одним агентом (UNIT жёстко), и остальные агенты были
+# RU:    вне наблюдения ВОВСЕ. Нашли при обходе сторожей после заведения нового агента.
+# RU: ⚠️ ГРАНИЦА: экземпляр знает ОДИН юнит. Новый агент — это новый экземпляр:
+# RU:    systemctl enable --now predel-dliny-watch@<имя>.timer
+# RU:    Это НЕ «из реестра», покрытие новых — руками. Осознанно: скрипт однопредметный.
+# RU: UNIT (юнит шлюза агента) задаётся drop-in'ом: общим для шаблона (например UNIT=<gateway>@%i.service) и/или
+# RU:    экземплярным, если у агента шлюз другого вида. Таблица ящиков PREDEL_YASHCHIKI — через EnvironmentFile.
+# EN: Prompt-length refusal watcher — ONE INSTANCE PER AGENT (%i = agent name = KOMU).
+# EN: 🔴 WHY A TEMPLATE, NOT ONE UNIT: the old one watched ONLY one agent (hard-coded UNIT), and the other agents were
+# EN:    not watched AT ALL. Found while reviewing watchers after a new agent was added.
+# EN: ⚠️ BOUNDARY: an instance knows ONE unit. A new agent means a new instance:
+# EN:    systemctl enable --now predel-dliny-watch@<name>.timer
+# EN:    This is NOT "from the registry", new agents are covered by hand. Deliberate: the script watches one subject.
+# EN: UNIT (the agent's gateway unit) comes from a drop-in: common for the template (e.g. UNIT=<gateway>@%i.service) and/or
+# EN:    per instance if the agent's gateway is of another kind. The inbox table PREDEL_YASHCHIKI — via EnvironmentFile.
+Description=Сторож предела длины промпта: агент %i
+[Service]
+Type=oneshot
+Environment=LC_ALL=C.UTF-8
+Environment=KOMU=%i
+ExecStart=/usr/local/bin/predel-dliny-watch

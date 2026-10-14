@@ -1,16 +1,5 @@
-/**
- * Стенд привратника (Т2). Доказывает три вещи, каждую отдельной парой проб:
- *   1) выключено по умолчанию и в цепочку не встаём;
- *   2) включённый отвечает РОВНО тем словом, которое платформа считает
- *      разрешением, — и слово сверяется со словарём платформы, не с нашим
- *      представлением о нём;
- *   3) сорванная регистрация ГРОМКАЯ, а не молчаливая.
- *
- * 🔴 ЗАЧЕМ ПРОБА НА СЛОВАРЬ. Служба подтверждения нормализует любой возврат
- * вне словаря в 'unavailable' МОЛЧА. Значит опечатка в одной строке
- * превращает привратника, у которого нет права отказывать, в отказывающий
- * всем, и выглядит это как «отвечающего нет». Сверять надо с предметом.
- */
+// RU: Парно проверяем привратника: выключен по умолчанию; включённый отвечает точным разрешающим словом из словаря платформы; отказ регистрации слышен. Любое слово вне словаря молча становится unavailable и превращает разрешающий механизм в отказ всем.
+// EN: Test the gatekeeper in pairs: disabled by default; when enabled, it returns the exact permitting word from the platform dictionary; registration failure is audible. Any word outside the dictionary silently becomes unavailable and turns the permitting mechanism into rejection for everyone.
 let postavitPrivratnika, itogPrivratnika, RAZRESHENO, PRICHINY_PUSTOGO_SCHYOTCHIKA
 try {
   ;({ postavitPrivratnika, itogPrivratnika, RAZRESHENO, PRICHINY_PUSTOGO_SCHYOTCHIKA } = await import('../src/privratnik.js'))
@@ -21,7 +10,8 @@ try {
   process.exit(2)
 }
 
-// Ожидание вынесено НАРУЖУ тела проб: прогонщик синхронный (см. проверку природы ниже).
+// RU: Ожидаем вне тела пробы: прогонщик синхронный.
+// EN: Await outside the probe body: the runner is synchronous.
 const { createRequire } = await import('node:module');
 
 let vsego = 0, proshlo = 0, slepot = 0;
@@ -32,21 +22,18 @@ const proba = (imya, f) => {
     if (vernulos && typeof vernulos.then === 'function') {
       throw new Error('тело пробы ОЖИДАЮЩЕЕ, а прогонщик синхронный: вынеси ожидание наружу');
     }
-    // 🔴 ВОЗВРАТ ТЕЛА УЧИТЫВАЕТСЯ (05.09.2026, второй пакет с этой бедой за день).
-    // Обёртка краснела только на ИСКЛЮЧЕНИИ, а возврат выбрасывала — и всякая проба вида
-    // «вернуть true либо строку с причиной» была зелёной при любом содержимом. Поймано
-    // порчей: подложила в обработчик `return 'deny'` — проба-сторож промолчала, хотя её
-    // признак чужой возврат ВИДЕЛ (проверено тем же кодом отдельным файлом).
-    if (typeof vernulos === 'string') throw new Error(vernulos);
-    if (vernulos === false) throw new Error('тело пробы вернуло false без причины');
+    // RU: Тело пробы должно бросить ошибку или вернуть undefined. Любое другое значение, включая строку, false, 0, null и объект, означает отказ: игнорирование возврата даёт ложный успех.
+    // EN: The probe body must throw an error or return undefined. Any other value, including a string, false, 0, null, or an object, means failure: ignoring returns produces false success.
+    if (vernulos !== undefined && vernulos !== true) {
+      throw new Error('тело пробы ВЕРНУЛО «' + String(vernulos).slice(0, 60) +
+                      '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы');
+    }
     proshlo++; console.log('  ✅ ' + imya);
   } catch (e) { console.log('  ❌ ' + imya + ' — ' + (e?.message ?? e)); }
 };
 
-/** Подставная платформа: запоминает, ЧТО и С КАКИМИ настройками зарегистрировали. */
-// 🔴 УМОЛЧАНИЕ ЗДЕСЬ — СНИМАЛКА, а не пустота. Первая редакция подставной
-// возвращала undefined, и три пробы покраснели на ИСПРАВНОМ предмете: платформа
-// в жизни отдаёт функцию-снималку. Чинить надо было пробу, а не предмет.
+// RU: Подставная платформа сохраняет регистрацию и настройки, затем возвращает функцию снятия, как настоящая. undefined вместо этой функции ломает исправные пробы.
+// EN: The fake platform records registration and settings, then returns a removal function like the real platform. Returning undefined instead breaks healthy probes.
 const podstavnoj = (vozvrat = () => () => {}) => {
   const zapisi = [];
   const kriki = [];
@@ -54,7 +41,8 @@ const podstavnoj = (vozvrat = () => () => {}) => {
   return { ctx, zapisi, kriki, gromko: (s) => kriki.push(String(s)) };
 };
 
-// ─── 1. Умолчание ────────────────────────────────────────────────────────────
+// RU: Проверяем умолчание.
+// EN: Test the default.
 proba('выключено: в цепочку НЕ встаём', () => {
   const p = podstavnoj();
   const u = postavitPrivratnika(p.ctx, false, p.gromko);
@@ -70,7 +58,8 @@ proba('выключено: ключ ПРОЧИТАН вслух (иначе «н
   }
 });
 
-// ─── 2. Включённый ───────────────────────────────────────────────────────────
+// RU: Проверяем включённый режим.
+// EN: Test enabled mode.
 proba('включено: регистрация на approval/request', () => {
   const p = podstavnoj();
   postavitPrivratnika(p.ctx, true, p.gromko);
@@ -94,7 +83,8 @@ proba('включено: регистрация проверена ВОЗВРА�
   if (!p.kriki.some((s) => s.includes('регистрация УДАЛАСЬ'))) throw new Error('нет строки об удавшейся регистрации');
 });
 
-// ─── 3. Ответ ────────────────────────────────────────────────────────────────
+// RU: Проверяем ответ.
+// EN: Test the response.
 proba('спрос → отвечаем разрешением и считаем его', () => {
   const p = podstavnoj();
   const u = postavitPrivratnika(p.ctx, true, p.gromko);
@@ -104,25 +94,21 @@ proba('спрос → отвечаем разрешением и считаем 
   if (u.spisok[0]?.imya !== 'Bash') throw new Error('имя инструмента не записано: ' + JSON.stringify(u.spisok));
 });
 
-// 🔴 СЛУЖБЫ ПОДТВЕРЖДЕНИЯ МОЖЕТ НЕ БЫТЬ РЯДОМ — ЭТО СЛЕПОТА, А НЕ РАСХОЖДЕНИЕ.
-// Она живёт в дереве платформы, а не в зависимостях пакета: у получателя без платформы
-// разрешение её не найдёт. Молча зачесть сверку, которой не было, нельзя; но и краснеть
-// на исправном предмете проба не должна — «проверить нечем» и «не сошлось» разные вещи.
-// Ищем ДВУМЯ способами, оба без зашитых путей: обычным разрешением (так её найдёт
-// получатель, у которого служба в зависимостях) и обходом вверх по дереву (так она
-// находится у нас — служба живёт в дереве платформы, а не рядом с пакетом).
+// RU: Словарь службы подтверждения ищем обычным разрешением и обходом вверх без зашитых путей. Если платформы нет, сверка слепа: нельзя ни зачесть её, ни обвинить пакет в расхождении.
+// EN: Find the confirmation-service dictionary through normal resolution and upward traversal without hardcoded paths. Without the platform, the comparison is unobservable: neither count it as passed nor report a package mismatch.
 let putSluzhby = null;
 try { putSluzhby = createRequire(import.meta.url).resolve('@deepseek-ai/dsh-user-approval'); }
 catch { putSluzhby = null; }
 if (!putSluzhby) {
-  // Служба — часть ПЛАТФОРМЫ, а не зависимость плагина: рядом с пакетом её нет и не
-  // должно быть. Корень платформы задаётся снаружи, умолчания НЕТ намеренно —
-  // подставить чужой корень значит уверенно ответить про не тот узел.
+  // RU: Корень платформы задаётся снаружи без умолчания: служба не является зависимостью плагина, а чужой корень даст ответ про другой узел.
+  // EN: Supply the platform root externally with no default: the service is not a plugin dependency, and another root answers for a different node.
   const koren = globalThis.process?.env?.DSH_KOREN_PLATFORMY ?? null;
   if (koren) {
     const fs0 = globalThis.process?.getBuiltinModule?.('node:fs') ?? null;
     const k = koren.replace(/\/+$/, '') + '/node_modules/@deepseek-ai/dsh-user-approval/lib/index.js';
-    try { if (fs0?.existsSync(k)) putSluzhby = k; } catch { /* оставим слепоту */ }
+    try { if (fs0?.existsSync(k)) putSluzhby = k; } catch { /* RU: Сохраняем исход слепоты.
+ * EN: Retain the unobservable outcome.
+ */ }
   }
 }
 if (!putSluzhby) {
@@ -131,16 +117,8 @@ if (!putSluzhby) {
   console.log('    Это НЕ «сошлось»: сверка не состоялась. Служба — часть платформы, а не');
   console.log('    зависимость пакета. Чтобы сверить: DSH_KOREN_PLATFORMY=<корень платформы>');
 } else {
-  // 🔴 «НЕ СМОГЛА ПРОЧИТАТЬ» И «НАШЕГО СЛОВА НЕТ» РАЗВЕДЕНЫ (правка 06.09.2026 по замечанию
-  // координатора о четвёртой порче). Прежде обе беды бросались из тела пробы и давали
-  // КРАСНОЕ — то есть чужой формат обвинял НАШ предмет, и приёмка пошла бы чинить не то.
-  // Замер порчами: файл с переименованным OUTCOMES → красное «форма изменилась, сверка
-  // слепа»; пустой словарь → красное «проба слепа». Текст сам говорил «слепа», а исход
-  // печатался как расхождение. Наше правило прямое: расхождение про ПРЕДМЕТ, слепота про
-  // ИНСТРУМЕНТ, и слепота ведёт себя как «нельзя», а не как «плохо».
-  // ⚠️ Словарь живёт в ЧУЖОМ пакете, который обновляется без нас: переезд или переименование
-  // здесь обычное дело, а не редкость. Значит эта ветка исполнится, и не однажды.
-  // ПУТЬ ПЕЧАТАЕТСЯ ВСЕГДА — иначе следующий будет гадать, что именно читали.
+  // RU: Разводим непрочитанный или изменившийся словарь и отсутствие нашего слова: первое — слепота прибора, второе — расхождение предмета. Всегда печатаем прочитанный путь; чужой пакет может менять формат независимо.
+  // EN: Distinguish an unreadable or changed dictionary from a missing expected word: the former is an unobservable detector, the latter a subject mismatch. Always print the inspected path; the external package may change its format independently.
   const fs = globalThis.process?.getBuiltinModule?.('node:fs') ?? null;
   let slovar = null, prichinaSlepoty = null;
   if (!fs) prichinaSlepoty = 'нет доступа к node:fs — читать нечем';
@@ -175,12 +153,8 @@ if (!putSluzhby) {
   }
 }
 
-// ── З1 приёмки: ИТОГ ВИДЕН ИЗ ЖУРНАЛА, А НЕ ТОЛЬКО ИЗ ВЫГРУЗКИ ──────────────
-// 🔴 Прежде итог звался ровно один раз — на dispose. При SIGKILL, OOM или падении он не
-// печатался НИКОГДА, и «привратник работал» нельзя было увидеть из журнала: счётчик жил
-// в памяти и умирал вместе с ней. А падение — как раз тот случай, когда разбираются по
-// журналу. ПАРА, а не одна проба: печатать итог НА КАЖДОМ спросе было бы не лечением,
-// а заплывшим журналом, и вторая половина стережёт именно это.
+// RU: Итог должен появляться в журнале до dispose, иначе SIGKILL, OOM или падение уничтожат счётчик без следа. Парная проба ограничивает частоту, чтобы итог не печатался при каждом запросе.
+// EN: The summary must reach the journal before dispose, or SIGKILL, OOM, or a crash destroys the counter without a trace. A paired probe limits frequency so the summary is not printed on every query.
 proba('З1: итог печатается на ПЕРВОМ спросе — участие видно сразу', () => {
   const p = podstavnoj();
   postavitPrivratnika(p.ctx, true, p.gromko);
@@ -195,7 +169,9 @@ proba('З1-бис: со второго по девятый итог НЕ печ�
   const p = podstavnoj();
   postavitPrivratnika(p.ctx, true, p.gromko);
   const obr = p.zapisi[0].cb;
-  obr({ toolName: 'proba-1' }, () => {});   // первый — итог законен
+  obr({ toolName: 'proba-1' }, () => {});   /* RU: Первый итог разрешён.
+ * EN: The first summary is allowed.
+ */
   p.kriki.length = 0;
   for (let i = 2; i <= 9; i++) obr({ toolName: 'proba-' + i }, () => {});
   const itogi = p.kriki.filter((s) => /привратник: спросов /.test(s));
@@ -223,7 +199,8 @@ proba('ПРАВА ОТКАЗЫВАТЬ НЕТ: ветки rejected/cancelled в 
   if (kod.length < 20) throw new Error('исходник разобран пустым — проба слепа');
 });
 
-// ─── 4. Сорванная регистрация ────────────────────────────────────────────────
+// RU: Проверяем сорванную регистрацию.
+// EN: Test failed registration.
 proba('ПОРЧА: платформа не вернула снималку → ГРОМКИЙ отказ, не тишина', () => {
   const p = podstavnoj(() => undefined);
   const u = postavitPrivratnika(p.ctx, true, p.gromko);
@@ -240,7 +217,8 @@ proba('ПОРЧА: ctx.on бросил → отказ громкий, причи
   if (!p.kriki.some((s) => s.includes('цепочка занята'))) throw new Error('причина не названа: ' + JSON.stringify(p.kriki));
 });
 
-// ─── 5. Итог ─────────────────────────────────────────────────────────────────
+// RU: Проверяем итог.
+// EN: Test the summary.
 proba('итог при НУЛЕ спросов называет ВСЕ четыре причины пустоты', () => {
   const p = podstavnoj();
   const u = postavitPrivratnika(p.ctx, true, p.gromko);
@@ -258,7 +236,9 @@ proba('итог: «отказано > 0» — невозможное состо�
   const p = podstavnoj();
   const u = postavitPrivratnika(p.ctx, true, p.gromko);
   p.zapisi[0].cb({ toolName: 'Read' }, () => {});
-  u.otkazano = 1;                       // состояние, которого код породить не может
+  u.otkazano = 1;                       /* RU: Подставляем состояние, недостижимое штатным кодом.
+ * EN: Supply a state unreachable through normal code.
+ */
   const s = itogPrivratnika(u);
   if (!s.includes('🔴') || !s.includes('считаем не то')) throw new Error('прошло тихо: ' + s);
 });
@@ -270,23 +250,19 @@ proba('итог при выключенном ключе не выдаёт се�
   if (!s.includes('выключен')) throw new Error('строка не называет состояние: ' + s);
 });
 
-// ─── просьба автора замысла 05.09.2026: правило про next накрыть ПРОБОЙ ────────────
+// RU: Проверяем правило передачи цепочки через next.
+// EN: Test chain forwarding through next.
 proba('🔴 ветка, не отвечающая, ОБЯЗАНА звать next — стережём по исходнику', () => {
-  // Правило: у нас нет права отказывать, значит нет права и молча заканчивать цепочку.
-  // Сегодня оно соблюдается тем, что ветка одна — мы отвечаем всегда, next недостижим.
-  // Но правило, живущее в комментарии, уйдёт с ближайшей правкой: появится ветка
-  // «не отвечаем» — и если она вернёт своё вместо next(), мы сами станем тем, кого
-  // поймали в замере водопада (первый ответивший выключает остальных).
-  // Проверяем ИСХОДНИКОМ, потому что недостижимую ветку прогоном не проверить.
+  // RU: Не отвечающий привратник обязан вызвать next(), а не завершить цепочку своим возвратом. Сейчас ветка недостижима, поэтому проверяем исходник, чтобы будущая ветка не выключила остальных отвечающих.
+  // EN: A gatekeeper that does not answer must call next() rather than end the chain with its own return. The branch is currently unreachable, so inspect source to prevent a future branch from disabling other responders.
   const { readFileSync } = createRequire(import.meta.url)('node:fs');
   const src = readFileSync(new URL('../src/privratnik.js', import.meta.url), 'utf8');
   const telo = src.slice(src.indexOf('const obrabotchik'), src.indexOf('// 🔴 prepend'));
-  // ⚠️ ИЩЕМ return В ЛЮБОМ МЕСТЕ СТРОКИ, а не только в её начале. Первая редакция брала
-  // /^\s*return\s+/ и пропускала однострочное `if (…) return 'deny';` — порча легла в
-  // тело, а проба осталась зелёной. Признак не знал второй законной формы; поймано порчей,
-  // не чтением.
-  const vozvratov = [...telo.matchAll(/\breturn\s+([^;]+);/g)].map((m) => m[1].trim());
-  const chuzhie = vozvratov.filter((v) => v !== 'RAZRESHENO' && !/^next\b/.test(v));
+  // RU: Ищем return в любом месте строки, включая if (…) return и голый return;. Значение необязательно и не переходит на новую строку: иначе комментарий может склеиться со следующей точкой с запятой и дать ложный отказ.
+  // EN: Find return anywhere on a line, including if (…) return and bare return;. Its value is optional and must not cross a newline; otherwise a comment can join the next semicolon and cause a false rejection.
+  const vozvratov = [...telo.matchAll(/\breturn\b[ \t]*([^;\n]*);/g)].map((m) => m[1].trim());
+  const chuzhie = vozvratov.filter((v) => v !== 'RAZRESHENO' && !/^next\b/.test(v))
+    .map((v) => v === '' ? 'ГОЛЫЙ return; (цепочка обрывается молча)' : v);
   if (chuzhie.length) {
     return `в обработчике появился возврат помимо RAZRESHENO и next(): ${chuzhie.join(' | ')}. `
       + 'Ветка, которая не отвечает, обязана звать next(), иначе мы обрываем цепочку молча';
@@ -295,5 +271,6 @@ proba('🔴 ветка, не отвечающая, ОБЯЗАНА звать nex
 });
 
 console.log('  итог: ' + proshlo + ' из ' + vsego + (slepot ? ' · слепота ' + slepot : ''));
-// Расхождение проверяется ПЕРВЫМ: оно про предмет, слепота — про инструмент.
+// RU: Расхождение предмета имеет приоритет над слепотой инструмента.
+// EN: Subject mismatch takes precedence over an unobservable detector.
 process.exit(proshlo !== vsego ? 1 : (slepot ? 2 : 0));

@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import {generateKeyPairSync,randomUUID} from 'node:crypto';
+import * as signature from '../src/coordinator-signature.js';
+assert.equal(typeof signature.verifyControlSignature,'function','missing pure crypto verification for signed controls');
+const {publicKey,privateKey}=generateKeyPairSync('ed25519');
+const trust={version:1,status:'approved',maxLifetimeMs:900000,clockSkewMs:30000,keys:{fixture:publicKey.export({type:'spki',format:'pem'})}};
+const meta={action:'stop',delivery_id:randomUUID(),key_id:'fixture',recipient:'fixture-agent',ledger_uuid:'fixture-ledger',issued_at:1000000,expires_at:1120000};
+const raw=signature.signCoordinator(Buffer.from('fixture-control'),meta,privateKey);
+const crypto=signature.verifyControlSignature(raw,{trust});
+assert.equal(crypto.verified,true);assert.equal(crypto.meta.expires_at,1120000);
+// Expiry and ACL are later authorization checks; the trusted signer remains known after TTL.
+const expired=signature.verifyControlSignature(raw,{trust,now:1150000});
+assert.equal(expired.verified,true);assert.equal(expired.meta.key_id,'fixture');
+const corrupt=Buffer.from(raw);corrupt[corrupt.indexOf(Buffer.from('fixture-agent'))]='X'.charCodeAt(0);
+assert.equal(signature.verifyControlSignature(corrupt,{trust}).verified,false);
+assert.equal(signature.verifyControlSignature(raw,{trust:{...trust,keys:{}}}).reason,'key_unknown');
+assert.equal(signature.verifyControlSignature(Buffer.from('unsigned fixture'),{trust}).verified,false);
+assert.equal(signature.verifyControlSignature(raw,{trust:{...trust,status:'unapproved'}}).verified,false);
+assert.equal(signature.verifyControlSignature(raw,{trust}).verified,true);
+console.log('PASS control crypto: verified, expired signer retained, corruption rejected, restored');

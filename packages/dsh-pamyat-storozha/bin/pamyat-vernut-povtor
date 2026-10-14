@@ -1,0 +1,57 @@
+#!/usr/bin/env node
+// pamyat-vernut-povtor <файл пропущенного повтора> <база pamyat.db> — ВОЗВРАТ статьи, которую суд секретаря счёл ПОВТОРОМ.
+// Зачем: условие приёмки — у файла пропущенных есть возврат, названный и опробованный. Пишет текст записью ядра (hranilishche.zapisat —
+// тот же код, что у ядра) со связью «уточняет k», файл помечает «vozvrashcheno-<id>» (второй возврат того же файла — отказ).
+// Где живёт: скрипт машины, а не пакет секретаря — импорт ядра из пакета секретаря запрещён (решение 06.09, stend-maski-obrazcov).
+// Запуск — от учётки агента (база и каталог — 0600/0700 агента): sudo -u <агент> pamyat-vernut-povtor <файл> <база>.
+// ⚠️ НЕ ДЕЛАЕТ: доставку в OMEGA (двойник k там уже есть — это его повтор); не проверяет, жива ли k (возврат — решение руки).
+// Коды: 0 — возвращено; 2 — отказ до записи (с причиной).
+// EN: pamyat-vernut-povtor <skipped-repeat file> <pamyat.db base> — RETURN of an article that the secretary's
+//     judgement deemed a REPEAT.
+//     Why: the acceptance condition is that the skipped-files store has a return, named and tried. It writes
+//     the text as a core record (hranilishche.zapisat — the same code as the core) with the link "refines k",
+//     and marks the file "vozvrashcheno-<id>" (a second return of the same file is refused).
+//     Where it lives: a machine script, not the secretary package — importing the core from the secretary
+//     package is forbidden (decision of 06.09, stend-maski-obrazcov).
+//     Run as the agent's account (the base and directory are the agent's 0600/0700): sudo -u <agent>
+//     pamyat-vernut-povtor <file> <base>.
+//     ⚠️ DOES NOT: deliver to OMEGA (k's twin is already there — this is its repeat); check whether k is alive
+//     (the return is the hand's decision).
+//     Codes: 0 — returned; 2 — refusal before writing (with the reason).
+import { readFileSync, renameSync, existsSync } from 'node:fs';
+// Файл настройки пакета dsh-pamyat-storozha: строки «КЛЮЧ=значение», «#» — комментарий; берётся последнее вхождение ключа.
+// Путь меняет переменная DSH_PAMYAT_STOROZHA_CONF. Порядок: довод/переменная → файл → нейтральное умолчание; нет ничего — СЛЕПОТА, код 2.
+// EN: Settings file of the dsh-pamyat-storozha package: "KEY=value" lines, a line starting with "#" is a
+//     comment; the last occurrence of a key wins.
+//     The DSH_PAMYAT_STOROZHA_CONF variable changes the path. Order: argument/variable → file → neutral
+//     default; nothing at all — BLINDNESS, code 2.
+const KONF = process.env.DSH_PAMYAT_STOROZHA_CONF || '/etc/dsh-pamyat-storozha/dsh-pamyat-storozha.conf';
+// « #» в значении — громкий отказ (код 2), а не склеивание пояснения со значением: комментарий только с начала строки.
+// EN: " #" in a value is a loud refusal (code 2), not gluing the note into the value: a comment only from the line start.
+const konf = (k) => { let z = ''; try { for (const s of readFileSync(KONF, 'utf8').split('\n')) { const t = s.trim(), i = t.indexOf('='); if (t && !t.startsWith('#') && i > 0 && t.slice(0, i).trim() === k) z = t.slice(i + 1); } } catch {} if (/\s#/.test(z)) { console.log('ОТКАЗ: значение ключа ' + k + ' в ' + KONF + ' содержит « #» — комментарий допускается только с начала строки'); process.exit(2); } return z.trim(); };
+const CORE = process.env.PAMYAT_VERNUT_CORE || (konf('PAMYAT_CORE') ? konf('PAMYAT_CORE').replace(/\/$/, '') + '/src/' : '');   // переменная — только для стенда; иначе ключ PAMYAT_CORE · EN: the variable is for the stand only; otherwise the PAMYAT_CORE key
+const otkaz = (s) => { console.error('pamyat-vernut-povtor: ОТКАЗ — ' + s); process.exit(2); };
+const args = process.argv.slice(2);
+if (args.length !== 2 || args.some(a => a.startsWith('-'))) otkaz('нужны ровно файл и база; неизвестные ключи отвергаются');
+const [fajl, baza] = args;
+if (!fajl || !baza) otkaz('вызов: pamyat-vernut-povtor <файл> <база pamyat.db>');
+if (fajl.split('/').pop().includes('.vozvrashcheno-')) otkaz('файл уже возвращён: ' + fajl);
+if (!/(^|\/)povtoryaet-[^/]*\.txt$/.test(fajl)) otkaz('это не файл пропущенного повтора (povtoryaet-*.txt): ' + fajl);
+if (!existsSync(fajl)) otkaz('файла нет: ' + fajl + ' (уже возвращён? возвращённый помечается .vozvrashcheno-<id>)');
+if (!existsSync(baza)) otkaz('базы нет: ' + baza);
+const t = readFileSync(fajl, 'utf8'); const raz = t.indexOf('\n\n');
+if (raz < 0) otkaz('в файле нет шапки, отделённой пустой строкой');
+const shapka = t.slice(0, raz), tekst = t.slice(raz + 2);
+const pole = (imya) => (shapka.match(new RegExp('^# ' + imya + ': (.*)$', 'm')) ?? [])[1]?.trim();
+const k = Number(pole('повторяет действующую запись')), klass = pole('класс'), istochnik = pole('источник') || null;
+if (!Number.isInteger(k) || k <= 0 || !klass || !tekst.trim()) otkaz('шапка не разобрана (k=' + k + ', класс=' + klass + ') или текст пуст');
+if (!CORE) otkaz('СЛЕПОТА: не задан путь ядра памяти — ключ PAMYAT_CORE в ' + KONF);
+const { otkrytHranilishche } = await import(CORE + 'hranilishche.js');
+const { KLASSY_ZNANIY_UMOLCHANIE } = await import(CORE + 'index.js');
+const h = otkrytHranilishche(baza);
+const zk = h.poId(k); if (!zk) otkaz('записи ' + k + ' в базе нет — связь «уточняет» ставить не к чему');
+const r = h.zapisat({ agent: zk.agent, klass, soderzhim: tekst, istochnik });
+const id = Number(typeof r === 'object' ? r.id : r);
+const o = h.ustanovitOtnoshenie({ agent: zk.agent, id, vid: 'utochnyaet', k, klassyZnaniy: [...KLASSY_ZNANIY_UMOLCHANIE] });
+const novoe = fajl.replace(/\.txt$/, '.vozvrashcheno-' + id + '.txt'); renameSync(fajl, novoe);
+console.log('возвращено: запись ' + id + ' (' + klass + ', агент ' + zk.agent + ') уточняет ' + k + ' — ' + (o?.ishod ?? '?') + '; файл → ' + novoe);

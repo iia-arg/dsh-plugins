@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""model-podmena-watch — сторож подмены модели агента (B-N-1260, Заря, 30.09.2026; слово владельца 30.09 20:59/22:08 МСК:
+«нельзя свитчить модели … ответ только от модели из настроек»; сводки сжатия kompakt — НЕ предмет).
+
+ЧТО ЧИТАЕТ (такт — таймер, 5 мин):
+  1) журналы шлюзов агентов — список из РЕЕСТРА (namerenie.zavisit_ot в agents.yaml, как dsh-compact-watch B-N-1226),
+     рубеж — курсор journald; двигается ТОЛЬКО при доставленной тревоге (канал отказал — такт повторит):
+     • Claude-шлюз, строка хода «модель X · effort: … · модель запрошена Y» (gateway.mjs — выпуск B-N-1260, следующий после 0.4.19) — X ≠ Y ⇒ тревога
+       (X «?» и «<synthetic>» — не ответ модели, не судятся);
+     • Codex-шлюз, строка «🔴 МОДЕЛЬ ПОДМЕНЕНА СЕРВЕРОМ: model/rerouted A → B (причина)» (codex-app-server.mjs) ⇒ тревога;
+  2) ~/.claude/remote-settings.json учётки каждого Claude-шлюза (User юнита) — сервер-управляемые настройки: непустой
+     объект ⇒ тревога (через них можно включить fallbackModel/env СНАРУЖИ); одна тревога на каждое новое содержимое,
+     вернулось к {} — отметка снимается.
+СЛЕПОТА (не «всё чисто»): реестр не прочитан / шлюзов 0 / journalctl отказал / файл настроек нечитаем или не JSON /
+  строки хода без «модель запрошена» (шлюз не обновлён — сравнить не с чем). Тревога слепоты — не чаще раза в час на
+  одинаковый набор причин; не дошла — отметка откатывается.
+ЧЕГО НЕ ЛОВИТ: подмену, которую шлюз не видит (Codex без уведомления model/rerouted; модель ответа Codex журнал нити не
+  хранит); ответ, отданный ДО уведомления; шлюз, не записанный агенту в zavisit_ot; псевдоним вместо полного имени в
+  запросе (X ≠ Y при той же модели — ложная тревога); DeepSeek-путь (Петрович) — не читается.
+ОСТАНОВКА: сторож ничего не чинит и не перезапускает; только читает и шлёт. Код выхода 0 — такт прошёл (тревоги — в канале),
+  иное — сам такт упал (видно как failed юнита).
+"""
+import hashlib
+import json
+import os
+import pwd
+import re
+import subprocess
+import sys
+import time
+
+REESTR = os.environ.get("MPW_REESTR", "/etc/agent-registry/agents.yaml")
+KATALOG = os.environ.get("MPW_KATALOG", "/var/lib/model-podmena-watch")
+SOST = os.path.join(KATALOG, "sostoyanie.json")
+KANAL = os.environ.get("MPW_KANAL", "/usr/local/bin/agent-alert")
+JOURNALCTL = os.environ.get("MPW_JOURNALCTL", "journalctl")
+SYSTEMCTL = os.environ.get("MPW_SYSTEMCTL", "systemctl")
+DOMA = json.loads(os.environ.get("MPW_DOMA", "{}"))   # только стенд: {учётка: дом}
+OSTYVANIE_S = 3600
+
+RE_CLAUDE = re.compile(r"модель (\S+) · effort: .* · модель запрошена (\S+)\s*$")
+RE_CLAUDE_STARYJ = re.compile(r"модель (\S+) · effort: ")
+RE_CODEX = re.compile(r"🔴 МОДЕЛЬ ПОДМЕНЕНА СЕРВЕРОМ: model/rerouted (\S+) → (\S+) \((.*)\)")
+NE_OTVET = {"?", "<synthetic>"}
+
+
+def shlyuzy_iz_reestra():
+    import yaml
+    with open(REESTR, encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    out = []
+    for e in (data or {}).get("agenty") or []:
+        for u in ((e or {}).get("namerenie") or {}).get("zavisit_ot") or []:
+            if isinstance(u, str) and re.fullmatch(r"(claude-oauth-gateway@[\w-]+|coder-gateway(@[\w-]+|-[\w-]+))\.service", u) and u not in out:
+                out.append(u)
+    return out
+
+
+def zhurnal(shl, kursor):
+    cmd = [JOURNALCTL, "--no-pager", "-q", "-o", "json"] + sum((["-u", u] for u in shl), [])
+    cmd += ["--after-cursor", kursor] if kursor else ["--since", "-10min"]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if r.returncode != 0:
+        raise RuntimeError(f"journalctl код {r.returncode}: {r.stderr.strip()[:160]}")
+    zap, novyj = [], kursor
+    for ln in r.stdout.splitlines():
+        try:
+            d = json.loads(ln)
+        except Exception:
+            continue
+        novyj = d.get("__CURSOR", novyj)
+        msg = d.get("MESSAGE", "")
+        if not isinstance(msg, str):   # не-UTF-8 journald отдаёт списком байт (урок B-N-1060)
+            try:
+                msg = bytes(msg).decode("utf-8", "replace")
+            except (TypeError, ValueError):
+                msg = str(msg)
+        ts = d.get("__REALTIME_TIMESTAMP")
+        kogda = time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime(int(ts) / 1e6)) if ts else "?"
+        zap.append((d.get("_SYSTEMD_UNIT", "?"), kogda, msg))
+    return zap, novyj
+
+
+def dom_shlyuza(u):
+    r = subprocess.run([SYSTEMCTL, "show", u, "-p", "User", "--value"], capture_output=True, text=True, timeout=30)
+    user = r.stdout.strip()
+    if r.returncode != 0 or not user:
+        raise RuntimeError(f"{u}: учётка не прочитана (код {r.returncode})")
+    return user, DOMA.get(user) or pwd.getpwnam(user).pw_dir
+
+
+def poslat(text):
+    try:
+        return subprocess.run([KANAL, "--plain", "--", text], capture_output=True, text=True, timeout=60).returncode == 0
+    except Exception as e:
+        print(f"[model-podmena-watch] канал не отработал: {e}", file=sys.stderr)
+        return False
+
+
+def main():
+    os.makedirs(KATALOG, mode=0o750, exist_ok=True)
+    try:
+        s = json.load(open(SOST, encoding="utf-8"))
+    except FileNotFoundError:
+        s = {}
+    s.setdefault("kursor", None); s.setdefault("remote", {}); s.setdefault("slepota", {})
+    slepo, sobytiya, novyj_kursor = [], [], s["kursor"]
+    try:
+        shl = shlyuzy_iz_reestra()
+        if not shl:
+            raise RuntimeError("шлюзов в реестре 0")
+    except Exception as e:
+        shl = []
+        slepo.append(f"реестр {REESTR}: {e}")
+    if shl:
+        try:
+            zap, novyj_kursor = zhurnal(shl, s["kursor"])
+            s_zapr, bez_zapr = {}, {}   # по юниту (условие Вениамина): один необновлённый шлюз не тонет в остальных
+            for u, kogda, msg in zap:
+                m = RE_CLAUDE.search(msg)
+                if m:
+                    s_zapr[u] = s_zapr.get(u, 0) + 1
+                    x, y = m.group(1), m.group(2)
+                    if x not in NE_OTVET and x != y:
+                        sobytiya.append(f"{u} {kogda}: ответила {x}, запрошена {y}")
+                elif RE_CLAUDE_STARYJ.search(msg):
+                    bez_zapr[u] = bez_zapr.get(u, 0) + 1
+                m = RE_CODEX.search(msg)
+                if m:
+                    sobytiya.append(f"{u} {kogda}: сервер подменил {m.group(1)} → {m.group(2)} ({m.group(3)}), ход оборван")
+            for u in sorted(u for u in bez_zapr if not s_zapr.get(u)):
+                slepo.append(f"{u}: строк хода без «модель запрошена» {bez_zapr[u]}, с ней 0 — шлюз не обновлён, сравнить не с чем")
+        except Exception as e:
+            slepo.append(f"журнал шлюзов: {e}")
+    remote_novye = dict(s["remote"])
+    for u in [x for x in shl if x.startswith("claude-oauth-gateway@")]:
+        try:
+            user, dom = dom_shlyuza(u)
+            put = os.path.join(dom, ".claude", "remote-settings.json")
+            if not os.path.exists(put):
+                remote_novye.pop(put, None)
+                continue
+            raw = open(put, "rb").read()
+            obj = json.loads(raw.decode("utf-8"))
+            if not isinstance(obj, dict):
+                raise ValueError("не объект")
+            if not obj:
+                remote_novye.pop(put, None)
+                continue
+            podp = hashlib.sha256(raw).hexdigest()[:16]
+            if s["remote"].get(put) != podp:
+                sobytiya.append(f"{put} ({user}): сервер-управляемые настройки НЕ пусты — ключи {sorted(obj)[:12]} (сумма {podp})")
+            remote_novye[put] = podp
+        except Exception as e:
+            slepo.append(f"remote-settings {u}: {e}")
+    otpravleno = True
+    if sobytiya:
+        otpravleno = poslat("🔴 ПОДМЕНА МОДЕЛИ / ВНЕШНИЕ НАСТРОЙКИ (B-N-1260, запрет владельца):\n" + "\n".join("• " + x for x in sobytiya))
+        print(("тревога доставлена" if otpravleno else "🔴 тревога НЕ ДОШЛА") + f": событий {len(sobytiya)}")
+    if otpravleno:
+        s["kursor"], s["remote"] = novyj_kursor, remote_novye
+    if slepo:
+        kl = hashlib.sha256("\n".join(sorted(slepo)).encode()).hexdigest()[:16]
+        if time.time() - s["slepota"].get(kl, 0) >= OSTYVANIE_S:
+            prezhn = s["slepota"].get(kl)
+            s["slepota"][kl] = time.time()
+            if not poslat("🔴 СЛЕПОТА model-podmena-watch — это НЕ «подмен нет»:\n" + "\n".join("• " + x for x in slepo)):
+                if prezhn is None:
+                    s["slepota"].pop(kl)
+                else:
+                    s["slepota"][kl] = prezhn
+        print("СЛЕПОТА: " + " | ".join(slepo))
+    tmp = SOST + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(s, f, ensure_ascii=False)
+    os.replace(tmp, SOST)
+    print(f"такт: шлюзов {len(shl)}, событий {len(sobytiya)}, слепота {len(slepo)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

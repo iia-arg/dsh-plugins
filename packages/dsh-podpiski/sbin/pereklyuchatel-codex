@@ -1,0 +1,371 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""pereklyuchatel-codex — переключить подписку Codex 3↔4 у ВСЕХ Codex-шлюзов sadik (codex-podpiska-4, 30.09.2026, кандидат Зари).
+Пара к pereklyuchatel-podpiski (Claude 1↔2): так же — все шлюзы разом, без довода — ОТКАЗ с перечнем «кто на какой».
+
+ЗОВ:  pereklyuchatel-codex <3|4|toggle|toggle-force>   любой другой ввод (пусто, --dry-run, …) — ОТКАЗ, код 2, ничего не тронуто.
+      pereklyuchatel-codex <3|4> <агент> [агент …]   ДЕЛЁЖ (слово владельца 07.10.2026 12:01 МСК: Марк — 3, Альфа/Бета/Гамма — 4):
+        перевешиваются ТОЛЬКО названные; имя — из юнита DOMA (alfa, beta, gamma, marc, anna, master). Неизвестное имя, повтор, имена при
+        toggle — ОТКАЗ, код 2. Проверки годности цели и «все дома — ссылки на зарегистрированные» — как прежде, по ВСЕМ домам.
+        Без имён — как прежде, ВСЕ разом (это и есть «свести делёж», рука человека). Авто заслона зовёт без имён и только при
+        единой подписке — при делёже он не переключает (codex-limit-watch, ветка «делёж»).
+ЕДИНИЦА: ссылка <CODEX_HOME шлюза>/auth.json → /etc/claude-oauth/codex-podpiska-<N>/auth.json (производный, refresh пуст).
+  Смена — новая ссылка рядом + rename (атомарно: шлюз не увидит «нет файла»). ПЕРЕЗАПУСКА НЕТ И НЕ НУЖНО:
+  шлюз запускает Codex заново на каждом ходе (gateway.mjs: exec и app-server), auth.json читается при старте процесса.
+ЗАМЕРЫ 30.09 (kandidaty/codex-podpiska-4/proba-niti): нить, начатая на 3, продолжается на 4 и обратно — exec и app-server,
+  тариф по ходам pro → prolite → pro; зашифрованные рассуждения прежнего аккаунта сервер принимает. Смена ПОСРЕДИ хода
+  идущий ход не задевает: второй запрос того же хода после смены ушёл на прежней подписке; новая — со следующего хода.
+ДО СМЕНЫ (отказ, код 2, ничего не тронуто): производный цели не читается / refresh в нём непуст / access < 1 ч /
+  аккаунт производного ≠ аккаунт полного; дом шлюза — не ссылка или ссылка не на зарегистрированную подписку.
+ПОСЛЕ СМЕНЫ — сверка ДРУГИМ срезом: ссылка ведёт на цель И файл читается учёткой юнита с её группами (как видит systemd).
+  Не сошлось хоть у одного — ВСЕ сменённые возвращаются на прежние, тревога agent-alert, код 1.
+КОДЫ: 0 переключено / уже на цели · 1 сверка не сошлась, откат · 2 отказ до смены · 3 откат тоже не удался (тревога).
+ДОСТУП (B-N-1621): учётки шлюзов читают ТОЛЬКО свою подписку (ACL, svesti-dostup-podpisok). Перед перевеской —
+  `svesti-dostup-podpisok --dobavit --codex <цель>` (не выдал — ОТКАЗ код 2, ничего не перевешено); после — `--svesti`
+  (прежняя подписка отозвана; идущий ход её уже прочёл и доживает). Сбой --svesti переключение не отменяет — говорится в итоге.
+  Стенд (PK_STEND=1) обязан подменить и помощника (PK_SVESTI), иначе ОТКАЗ: боевые права из стенда не трогаются.
+РЕЖИМ toggle (B-N-1438): внутри замка читает живые /proc→CODEX_HOME→auth.json, требует единое 3/4;
+  лимиты — RATE_LIMITS сторожа, возраст ≤900с, оба объявленных окна свободны. Неизвестность/исчерпание — отказ.
+  Прямые 3/4 сохраняют прежнюю семантику без этого заслона (автомат судит сам). /switch-b вызывает только toggle;
+  переключает только шлюзы из DOMA; ход, упавший на 401 посреди смены, не отслеживается (Codex, вероятно, перечтёт файл).
+РЕЖИМ toggle-force (слово владельца 03.10 20:55 МСК, /switch-2): как toggle, но БЕЗ заслона лимита (живость цели не
+  проверяется). Остаются: единое 3/4 у живых шлюзов (смешанное — отказ), проверки годности производного цели (читается,
+  refresh пуст, access ≥ 1 ч, аккаунт = полному) и сверка после смены с откатом — они не про живость, а про то, чтобы
+  не подставить шлюзам негодный файл.
+ЗНАЧЕНИЯ ТОКЕНОВ НЕ ПЕЧАТАЮТСЯ.
+"""
+import base64, fcntl, grp, json, math, os, pwd, re, subprocess, sys, time
+from datetime import datetime, timezone
+
+# Боевые значения; подмена — ТОЛЬКО стенду и ТОЛЬКО при явном ключе PK_STEND=1 (B-N-1395, рецепт Вениамина B-N-1394).
+# Без ключа все PK_* игнорируются (одна строка в stderr): забытая переменная в root-оболочке не уведёт смену в чужие
+# каталоги. Ключ с иным значением — ОТКАЗ, код 2, до любых записей. ГРАНИЦА: PATH (systemctl, runuser) ключом не закрыт.
+PODPISKI = '3 4'
+KATALOG = '/etc/claude-oauth/codex-podpiska-{n}'
+DOMA = ('/var/lib/coder-gateway-alfa/codex-home:coder-gateway@alfa.service '
+        '/var/lib/coder-gateway-beta/codex-home:coder-gateway@beta.service '
+        '/var/lib/coder-gateway-gamma/codex-home:coder-gateway@gamma.service '
+        '/var/lib/coder-gateway-marc/codex-home:coder-gateway-marc.service '
+        '/var/lib/coder-gateway-anna/codex-home:coder-gateway-anna.service '   # B-N-1837: Анна (Codex-агент по образцу Марка)
+        '/var/lib/coder-gateway-master/codex-home:coder-gateway-master.service')   # 13.10.2026: Мастер (Codex-агент по образцу Марка)
+ALERT = '/usr/local/bin/agent-alert'
+ZAMOK = '/run/pereklyuchatel-codex.lock'
+PROC_ROOT = '/proc'
+SVESTI = '/usr/local/sbin/svesti-dostup-podpisok'   # B-N-1621: права на токены — только через него
+PODMENY = ('PODPISKI', 'KATALOG', 'DOMA', 'ALERT', 'ZAMOK', 'PROC_ROOT', 'SVESTI')  # PK_<имя> → переменная <имя>; список фиксированный
+_klyuch = os.environ.get('PK_STEND', '')
+_zadany = [v for v in PODMENY if os.environ.get('PK_' + v)]
+if _klyuch == '1':
+    if 'SVESTI' not in _zadany:
+        print('ОТКАЗ: PK_STEND=1 без PK_SVESTI — стенд тронул бы БОЕВЫЕ права токенов; ничего не тронуто', file=sys.stderr)
+        sys.exit(2)
+    for _v in _zadany:
+        globals()[_v] = os.environ['PK_' + _v]
+    print('ПОДМЕНЕНО: ' + (' '.join(_zadany) or 'ничего'), flush=True)  # первой строкой и в трубе
+elif _klyuch == '':
+    if _zadany:
+        print('ИГНОРИРУЮ (нет PK_STEND=1), беру боевые: ' + ' '.join('PK_' + v for v in _zadany), file=sys.stderr)
+else:
+    print(f'ОТКАЗ: PK_STEND=«{_klyuch}» — допустимо только 1 (стенд) или пусто (бой); ничего не тронуто', file=sys.stderr)
+    sys.exit(2)
+PODPISKI = PODPISKI.split()
+
+def proizv(n): return os.path.join(KATALOG.format(n=n), 'auth.json')
+def polnyj(n): return os.path.join(KATALOG.format(n=n), 'polnyj', 'auth.json')
+
+def trevoga(tekst):
+    try:
+        return os.access(ALERT, os.X_OK) and subprocess.run(
+            [ALERT, f'переключатель Codex ({os.uname().nodename}): {tekst}'], capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+def otkaz(tekst, kod=2):
+    print(f'ОТКАЗ: {tekst}', file=sys.stderr); sys.exit(kod)
+
+def dostup(*dovody):
+    """B-N-1621: svesti-dostup-podpisok → (код, последняя строка). Код 9 — помощник не запустился."""
+    try:
+        r = subprocess.run([SVESTI, *dovody], capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        return 9, type(e).__name__
+    hvost = (r.stdout + r.stderr).strip().splitlines()
+    return r.returncode, (hvost[-1] if hvost else '')
+
+def jwt_pl(j):
+    pl = j.split('.')[1]; pl += '=' * (-len(pl) % 4)
+    return json.loads(base64.urlsafe_b64decode(pl))
+
+def akkaunt(d):
+    t = (d or {}).get('tokens') or {}
+    if t.get('account_id'):
+        return str(t['account_id'])
+    try:
+        return str(jwt_pl(t['id_token'])['https://api.openai.com/auth']['chatgpt_account_id'])
+    except Exception:
+        return None
+
+def kak_v_yunite(yunit):
+    """Учётка и группы процесса юнита — как их выставит systemd (тот же разбор, что у codex-auth-watch)."""
+    r = subprocess.run(['systemctl', 'show', yunit, '-p', 'LoadState', '-p', 'User', '-p', 'Group',
+                        '-p', 'SupplementaryGroups'], capture_output=True, text=True)
+    v = dict(x.split('=', 1) for x in r.stdout.splitlines() if '=' in x)
+    if v.get('LoadState') != 'loaded' or not v.get('User'):
+        return None
+    pw = pwd.getpwnam(v['User'])
+    osn = v.get('Group') or grp.getgrgid(pw.pw_gid).gr_name
+    gr = [grp.getgrgid(g).gr_name for g in os.getgrouplist(pw.pw_name, pw.pw_gid)] + v.get('SupplementaryGroups', '').split()
+    return pw.pw_name, osn, list(dict.fromkeys(gr))
+
+def chitaet(yunit, put):
+    kak = kak_v_yunite(yunit)
+    if kak is None:
+        return False
+    kto, osn, gr = kak
+    return subprocess.run(['runuser', '-u', kto, '-g', osn] + [k for g in gr for k in ('-G', g)] + ['--', 'test', '-r', put],
+                          capture_output=True).returncode == 0
+
+def postavit(dom, cel):
+    """Ссылка dom/auth.json → cel: новая рядом, затем rename (атомарно)."""
+    a = os.path.join(dom, 'auth.json'); tmp = os.path.join(dom, f'.auth.json.pk-{os.getpid()}')
+    if os.path.lexists(tmp):
+        os.unlink(tmp)
+    os.symlink(cel, tmp); os.replace(tmp, a)
+
+def live_subscriptions():
+    """Живые юниты → /proc → CODEX_HOME → ссылка следующего хода; секреты не читаются."""
+    registered = {os.path.realpath(proizv(n)): n for n in PODPISKI}
+    result = {}
+    for item in DOMA.split():
+        expected, unit = item.rsplit(':', 1)
+        try:
+            p = subprocess.run(['systemctl', 'show', unit, '-p', 'MainPID', '--value'],
+                               capture_output=True, text=True, timeout=5, check=True)
+            pid = p.stdout.strip()
+            if not pid.isdigit() or int(pid) <= 0:
+                raise ValueError('нет MainPID')
+            proc = os.path.join(PROC_ROOT, pid)
+            def start():
+                with open(os.path.join(proc, 'stat')) as f:
+                    return f.read().rsplit(')', 1)[1].split()[19]
+            generation = start()
+            with open(os.path.join(proc, 'environ'), 'rb') as f:
+                homes = [x.split(b'=', 1)[1].decode() for x in f.read().split(b'\0') if x.startswith(b'CODEX_HOME=')]
+            if len(homes) != 1 or homes[0] != expected:
+                raise ValueError('CODEX_HOME не совпадает с зарегистрированным домом')
+            link = os.path.join(homes[0], 'auth.json')
+            number = registered.get(os.path.realpath(link)) if os.path.islink(link) else None
+            if number is None:
+                raise ValueError('auth.json не ссылка на зарегистрированную подписку')
+            if generation != start():
+                raise ValueError('процесс сменился во время чтения')
+            result[unit] = (number, pid, generation)
+        except (OSError, ValueError, IndexError, UnicodeError, subprocess.SubprocessError) as e:
+            otkaz(f'живой шлюз {unit}: {e if isinstance(e, ValueError) else type(e).__name__}')
+    if not result:
+        otkaz('живых Codex-шлюзов нет')
+    numbers = {x[0] for x in result.values()}
+    if len(numbers) != 1:
+        otkaz('СМЕШАННОЕ: ' + ', '.join(f'{u}={v[0]}' for u, v in result.items()))
+    return result
+
+
+def toggle_limit_guard(n):
+    """Read-only замер сторожа (таймер 10 мин); максимум 900с, одна попытка 5с.
+    Не запускает сторож/модель, не расходует кредиты. Не резервирует квоту.
+    Порог исчерпания 100%; изменение порога 90% — вне B-N-1438.
+    """
+    try:
+        p = subprocess.run(['journalctl', '_SYSTEMD_UNIT=codex-limit-watch.service', '--since', '-15min',
+                            '-n', '200', '--no-pager', '-o', 'json'],
+                           capture_output=True, text=True, timeout=5, check=True)
+        records = [json.loads(line) for line in p.stdout.splitlines() if line.strip()]
+        if not records or not records[-1].get('_SYSTEMD_INVOCATION_ID'):
+            raise ValueError('последний запуск сторожа/замер неизвестен')
+        invocation = records[-1]['_SYSTEMD_INVOCATION_ID']
+        # Отказ последнего запуска тоже результат измерения, а не отсутствие замера.
+        for record in records:
+            if record.get('_SYSTEMD_INVOCATION_ID') != invocation or record.get('_TRANSPORT') != 'stdout':
+                continue
+            line = record.get('MESSAGE')
+            if not isinstance(line, str): continue
+            part = re.search(r'(?:^| · )' + re.escape(n) + r': НЕ ИЗМЕРЕНО .*?(?= · (?:[34](?: \([^)]*\))?:|активная |решение:)|$)', line)
+            if not part: continue
+            detail = part[0]
+            if not re.search(r'HTTP\s*429\b|(?:error|status|code)\s*[:=]?\s*429\b|hit your (?:(?:usage|session|weekly) )?limit|usage_limit_reached', detail, re.I): continue
+            reset = re.search(r'(?:resets?|try again at|сброс)\s*[:=]?\s*(\d{4}-\d{2}-\d{2}[T ][0-9:.]+(?:Z|[+-]\d{2}:\d{2})?|(?:[A-Za-z]{3,9} \d{1,2},? (?:at )?)?\d{1,2}(?::\d{2})?(?:am|pm)(?:\s*\([A-Za-z_+/-]+\))?)', detail, re.I)
+            otkaz(f'у подписки {n} лимит выбран; отказ последнего замера' + ('; сброс (из отказа): ' + reset[1] if reset else ''))
+        samples = []
+        for record in records:
+            if record.get('_SYSTEMD_INVOCATION_ID') != invocation:
+                continue
+            line = record.get('MESSAGE')
+            if isinstance(line, str) and line.startswith('RATE_LIMITS '):
+                item = json.loads(line.removeprefix('RATE_LIMITS '))
+                if item.get('subscription') == n:
+                    samples.append(item)
+        if not samples:
+            raise ValueError('расход неизвестен: замер целевой подписки отсутствует')
+        sample = samples[-1]
+        def numeric(x):
+            return type(x) in (int, float) and math.isfinite(x)
+        at = sample.get('at'); now = time.time()
+        if not numeric(at):
+            raise ValueError('время замера неизвестно')
+        if at > now:
+            raise ValueError('замер из будущего')
+        if now - at > 900:
+            raise ValueError('старый замер: больше 900с')
+        if sample.get('limitIds') != ['codex']:
+            raise ValueError('набор лимитов неизвестен')
+        exhausted = []
+        for slot in ('primary', 'secondary'):
+            window = sample.get(slot)
+            if not isinstance(window, dict): continue
+            used = window.get('usedPercent')
+            if numeric(used) and used == 100:
+                detail = slot + ': 100%'
+                reset = window.get('resetsAt')
+                if numeric(reset) and reset > 0:
+                    try: detail += '; сброс ' + datetime.fromtimestamp(reset, timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+                    except (ValueError, OverflowError, OSError): pass
+                exhausted.append(detail)
+        if exhausted or sample.get('spendControlReached') is True:
+            otkaz(f'у подписки {n} лимит выбран; ' + ('; '.join(exhausted) or 'spendControlReached=true'))
+        if sample.get('ordinaryUsageAllowed') is not True or sample.get('spendControlReached') is not False:
+            raise ValueError('использование запрещено или разрешение неизвестно')
+        for slot in ('primary', 'secondary'):
+            w = sample.get(slot)
+            if slot == 'secondary' and slot in sample and w is None:
+                continue  # API: у этого плана второго окна нет.
+            if not isinstance(w, dict):
+                raise ValueError(f'{slot}: окно неизвестно')
+            used, reset, duration = (w.get(k) for k in ('usedPercent', 'resetsAt', 'windowDurationMins'))
+            if not numeric(used) or not 0 <= used <= 100:
+                raise ValueError(f'{slot}: расход неизвестен')
+            if used >= 100:
+                raise ValueError(f'{slot}: лимит выбран')
+            if not numeric(reset) or reset <= now or not numeric(duration) or duration <= 0:
+                raise ValueError(f'{slot}: окно истекло/неизвестно, нужен новый замер')
+    except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError) as e:
+        otkaz(f'заслон Codex, подписка {n}: {e if isinstance(e, ValueError) else type(e).__name__}')
+
+
+def imya_yunita(yunit):
+    """coder-gateway@alfa.service / coder-gateway-marc.service → alfa / marc."""
+    return re.sub(r'\.service$', '', re.sub(r'^coder-gateway[@-]', '', yunit))
+
+def glavnaya():
+    vybor = sys.argv[2:]
+    if vybor and (len(sys.argv) < 3 or sys.argv[1] not in PODPISKI):
+        otkaz(f'имена агентов — только при номере подписки ({"|".join(PODPISKI)}), не при «{sys.argv[1]}»; ничего не тронуто')
+    izvestnye = [imya_yunita(z.rsplit(':', 1)[1]) for z in DOMA.split()]
+    if vybor and (len(set(vybor)) != len(vybor) or not set(vybor) <= set(izvestnye)):
+        otkaz(f'агенты {" ".join(vybor)}: повтор или неизвестное имя (известны: {" ".join(izvestnye)}); ничего не тронуто')
+    if len(sys.argv) < 2 or (len(sys.argv) != 2 and not vybor) or sys.argv[1] not in [*PODPISKI, 'toggle', 'toggle-force']:
+        sost = []
+        for z in DOMA.split():
+            a = os.path.join(z.rsplit(':', 1)[0], 'auth.json')
+            sost.append(f'{z.rsplit(":", 1)[1].replace(".service", "")} → {os.readlink(a) if os.path.islink(a) else "НЕ ссылка"}')
+        otkaz(f'зов: pereklyuchatel-codex <{"|".join(PODPISKI)}> (получено: {" ".join(sys.argv[1:]) or "ничего"}) · сейчас: ' + ' · '.join(sost))
+    n = sys.argv[1]
+    try:
+        zf = open(ZAMOK, 'w'); fcntl.flock(zf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        otkaz('идёт другой прогон переключателя')
+    except OSError as e:
+        otkaz(f'замок {ZAMOK} недоступен ({type(e).__name__})')
+    snapshot = None
+    if n in ('toggle', 'toggle-force'):
+        bez_zaslona = n == 'toggle-force'
+        snapshot = live_subscriptions()
+        previous = next(iter(snapshot.values()))[0]
+        if PODPISKI != ['3', '4']:
+            otkaz('toggle поддерживает только зарегистрированную пару 3↔4')
+        n = '4' if previous == '3' else '3'
+        if not bez_zaslona:
+            toggle_limit_guard(n)
+    cel = proizv(n)
+    # цель годна?
+    try:
+        d = json.load(open(cel, encoding='utf-8')); t = d['tokens']
+        exp = int(jwt_pl(t['access_token'])['exp'])
+    except (OSError, ValueError, KeyError, IndexError, TypeError) as e:
+        otkaz(f'производный подписки {n} ({cel}) не читается как auth.json Codex ({type(e).__name__}) — обновитель подписки {n} прогонялся?')
+    if t.get('refresh_token'):
+        otkaz(f'в производном подписки {n} НЕПУСТОЙ refresh_token — шлюзам такой не даём')
+    if exp - time.time() < 3600:
+        otkaz(f'access подписки {n} истекает меньше чем через час ({(exp - time.time()) / 3600:.1f} ч) — нужен прогон обновителя или вход')
+    try:
+        ap = akkaunt(json.load(open(polnyj(n), encoding='utf-8')))
+    except (OSError, ValueError) as e:
+        otkaz(f'полный носитель подписки {n} не читается ({type(e).__name__})')
+    if not akkaunt(d) or akkaunt(d) != ap:
+        otkaz(f'производный подписки {n} — ДРУГОГО аккаунта, чем её полный: смешение подписок, переключать некуда')
+    # дома: только ссылки на зарегистрированные подписки
+    zareg = {os.path.realpath(proizv(m)): m for m in PODPISKI}
+    doma, byl = [], {}
+    for z in DOMA.split():
+        dom, yunit = z.rsplit(':', 1); a = os.path.join(dom, 'auth.json')
+        if not os.path.islink(a):
+            otkaz(f'{a} — НЕ ссылка (копия или нет файла): чинить руками, переключатель не трогает')
+        m = zareg.get(os.path.realpath(a))
+        if m is None:
+            otkaz(f'{a} ведёт не на зарегистрированную подписку ({os.readlink(a)})')
+        doma.append((dom, yunit)); byl[dom] = (m, os.readlink(a))
+    vybrannye = [(dom, yunit) for dom, yunit in doma if not vybor or imya_yunita(yunit) in vybor]
+    menyat = [(dom, yunit) for dom, yunit in vybrannye if byl[dom][0] != n]
+    if not menyat:
+        print(f'уже на подписке {n}: {", ".join(y.replace(".service", "") for _, y in vybrannye)} — ничего не менялось'); sys.exit(0)
+    if snapshot is not None and live_subscriptions() != snapshot:
+        otkaz('живые шлюзы/ссылки сменились за время проверки; ничего не переключено')
+    # B-N-1621: учётки шлюзов должны ЧИТАТЬ цель ДО перевески (сверка chitaet ниже) — выдать, ничего не отзывая
+    kod, hvost = dostup('--dobavit', '--codex', n)
+    if kod != 0:
+        otkaz(f'доступ к подписке {n} не выдан (svesti-dostup-podpisok --dobavit --codex {n}, код {kod}): {hvost}')
+    smeneno = []
+    try:
+        for dom, yunit in menyat:
+            postavit(dom, cel); smeneno.append((dom, yunit))
+    except OSError as e:
+        bedy = [f'смена {dom} упала: {e.strerror}']
+    else:
+        bedy = []
+    # сверка другим срезом
+    for dom, yunit in smeneno:
+        a = os.path.join(dom, 'auth.json')
+        if os.path.realpath(a) != os.path.realpath(cel):
+            bedy.append(f'{a} после смены ведёт на {os.readlink(a) if os.path.islink(a) else "НЕ ссылку"}')
+        elif not chitaet(yunit, a):
+            bedy.append(f'{a} НЕ читается от {yunit}')
+    if bedy:
+        ne_vernul = []
+        for dom, yunit in smeneno:
+            try:
+                postavit(dom, byl[dom][1])
+            except OSError as e:
+                ne_vernul.append(f'{dom}: {e.strerror}')
+        kod, hvost = dostup('--svesti')   # выданное под цель — отозвать: ссылки снова на прежней
+        tekst = (f'🔴 переключение на подписку {n} НЕ СОШЛОСЬ: {" · ".join(bedy)} · откат: '
+                 + (f'НЕ УДАЛСЯ у {", ".join(ne_vernul)}' if ne_vernul else f'все {len(smeneno)} возвращены на прежние')
+                 + (' · доступ сведён' if kod == 0 else f' · ⚠️ доступ НЕ сведён (svesti --svesti код {kod}): {hvost}'))
+        print(tekst); dostavlena = trevoga(tekst)
+        if not dostavlena:
+            print(f'🔴 ТРЕВОГА НЕ ДОСТАВЛЕНА (канал {ALERT})')
+        sys.exit(3 if ne_vernul else 1)
+    kod, hvost = dostup('--svesti')   # прежняя подписка — отозвать; сбой переключение не отменяет
+    if snapshot is not None:
+        print(f'Codex: подписка {previous} → {n}; текущие ходы доработают на прежней')
+    print(f'переключено на подписку {n}: '
+          + ', '.join(f'{y.replace(".service", "")} ({byl[d][0]}→{n})' for d, y in smeneno)
+          + (f' · уже были на {n}: ' + ', '.join(y.replace('.service', '') for d, y in vybrannye if (d, y) not in smeneno)
+             if len(smeneno) < len(vybrannye) else '')
+          + (' · не трогались: ' + ', '.join(f'{imya_yunita(y)} ({byl[d][0]})' for d, y in doma if (d, y) not in vybrannye)
+             if len(vybrannye) < len(doma) else '')
+          + ' · перезапуск не нужен: новый ход — новый процесс Codex; идущий ход доживает на прежней')
+    print('доступ сведён: прежняя подписка шлюзам больше не читается' if kod == 0 else
+          f'⚠️ доступ НЕ сведён (svesti-dostup-podpisok --svesti код {kod}): прежняя подписка ещё читается — {hvost}')
+    sys.exit(0)
+
+if __name__ == '__main__':
+    glavnaya()

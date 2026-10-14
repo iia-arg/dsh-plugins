@@ -1,0 +1,49 @@
+[Unit]
+Description=Scheduled memory maintenance: proposals only
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=omega
+Group=omega
+ExecStartPre=+/usr/bin/python3 -I -S -B /usr/local/lib/dsh-pamyat-obsluzhivanie/prepare_key.py prepare
+ExecStopPost=+/usr/bin/python3 -I -S -B /usr/local/lib/dsh-pamyat-obsluzhivanie/prepare_key.py remove
+# RU: Пути к токену и чату канала тревог, реестр агентов, источник ключа и место установки runner.py — данные
+#     конкретной машины: они задаются вставкой машины (LoadCredential=alert-token:…, alert-chat:…,
+#     Environment=AGENTS_REGISTRY, OBSL_KLYUCH_HOME, OBSL_KLYUCH_HRANILISHCHE, OBSL_RUNNER), а не этим файлом.
+# EN: Paths to the alert channel token and chat, the agent registry, the key source and the runner.py install
+#     location are machine data: a machine drop-in sets them (LoadCredential=alert-token:…, alert-chat:…,
+#     Environment=AGENTS_REGISTRY, OBSL_KLYUCH_HOME, OBSL_KLYUCH_HRANILISHCHE, OBSL_RUNNER), not this file.
+Environment=DEEPSEEK_CREDENTIAL_FILE=/run/dsh-pamyat-obsluzhivanie-key/deepseek
+Environment=AGENT_ALERT_TOKEN_FILE=%d/alert-token
+Environment=AGENT_ALERT_CHAT_FILE=%d/alert-chat
+ExecStart=/opt/omega/venv/bin/python3 -B ${OBSL_RUNNER} --run
+StateDirectory=dsh-pamyat-obsluzhivanie
+StateDirectoryMode=0700
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=OPENBLAS_NUM_THREADS=1
+TimeoutStartSec=60min
+TimeoutStopSec=90s
+KillMode=control-group
+Restart=no
+Nice=10
+MemoryMax=4G
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+# RU: писателю уроков (учётка omega) нужна запись в OMEGA; судья открывает источник только на чтение (mode=ro).
+# EN: the omega lesson writer needs write access; the judge opens the source read-only (mode=ro).
+# RU: root-помощники — только стандартная библиотека, установлены вне каталогов пакета, доступных на запись.
+# EN: root helpers are stdlib-only, installed outside writable package trees.
+Environment=HOME=/var/lib/omega
+Environment=OMEGA_HOME=/var/lib/omega/.omega
+Environment=OMEGA_EMBEDDING_MODEL=bge-m3
+Environment=OMEGA_EMBEDDING_MODEL_DIR=/var/lib/omega/.cache/omega/models/bge-m3-onnx
+Environment=OMEGA_EMBEDDING_DIM=1024
+Environment=OMEGA_EMBEDDING_POOLING=cls
+Environment=OMEGA_EMBEDDING_PAD_TOKEN=<pad>
+Environment=OMEGA_EMBEDDING_PAD_ID=1
+Environment=HF_HUB_OFFLINE=1
+Environment=OMEGA_RERANKER_AUTODOWNLOAD=0

@@ -1,10 +1,5 @@
-/**
- * Стенд разбора события компакции.
- *
- * Полезная нагрузка собрана ПО ТИПАМ ПЛАТФОРМЫ (dsh-compaction 0.1.1-rc.2,
- * SessionEventMap), а не по пересказу плана: поля summary / shadowedRange /
- * shadowedSeqs / shadowedTokenCount / provider / model взяты из d.ts.
- */
+// RU: Проверяем разбор события компакции по SessionEventMap dsh-compaction 0.1.1-rc.2. Поля summary, shadowedRange, shadowedSeqs, shadowedTokenCount, provider и model взяты из типов платформы.
+// EN: Test compaction-event parsing against dsh-compaction 0.1.1-rc.2 SessionEventMap. summary, shadowedRange, shadowedSeqs, shadowedTokenCount, provider, and model fields come from platform types.
 let razobratSvodku, tekstIzBlokov
 try {
   ;({ razobratSvodku, tekstIzBlokov } = await import('../src/razbor-sobytiya.js'))
@@ -15,9 +10,8 @@ try {
   process.exit(2)
 }
 
-// 🔴 ПЕЧАТЬ СИЛЬНЕЕ СПРАВКИ (03.09.2026). Справка в README верна на день, когда её
-// писали; эта строка верна всегда, потому что снимается с дерева в момент прогона.
-// Довод: «число в тексте — перечень из одного элемента, и он устаревает молча».
+// RU: Состав снимаем с дерева в момент прогона, чтобы число не зависело от устаревшей справки.
+// EN: Read contents from the tree during the run so the count does not depend on stale documentation.
 {
   const { createRequire } = await import('node:module')
   const trebovat = createRequire(import.meta.url)
@@ -28,9 +22,10 @@ try {
 }
 
 let vsego = 0, proshlo = 0;
+const sud = (v) => { if (v !== undefined && v !== true) throw new Error('тело пробы ВЕРНУЛО «' + String(v).slice(0, 60) + '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы (правка 06.09.2026)'); };
 const proba = (imya, f) => {
   vsego++;
-  try { f(); proshlo++; console.log('  ✅ ' + imya); }
+  try { sud(f()); proshlo++; console.log('  ✅ ' + imya); }
   catch (e) { console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 140)); }
 };
 

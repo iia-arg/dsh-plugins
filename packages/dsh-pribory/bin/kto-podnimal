@@ -1,0 +1,473 @@
+#!/usr/bin/env bash
+# kto-podnimal.sh — КТО перезапускал службу и КОГДА. Авторство снимается СЛЕДОМ,
+# а не памятью участников.
+#
+# ЗАЧЕМ. 04.09.2026 за вечер служба поднималась четыре раза. Я не заметила ни одного
+# (изнутри перезапуск неотличим от начала работы), а автор через два часа отрицал
+# один из своих же подъёмов — граница его рабочего захода стала границей его
+# действий в памяти. Два человека, два разных ответа, и ни один не проверяем словом.
+# След при этом ВСЁ ВРЕМЯ БЫЛ: sudo пишет в журнал, кто и какую команду звал.
+#
+# ЧТО ДЕЛАЕТ: для каждой остановки службы ищет рядом строку sudo с systemctl.
+# ГРАНИЦА: видит только вызовы ЧЕРЕЗ sudo. Перезапуск от root напрямую, автоподъём
+# по Restart= и остановку по падению он не покажет — там автора нет по построению,
+# и в выводе это НАЗЫВАЕТСЯ, а не пропускается молча.
+# EN: kto-podnimal.sh — WHO restarted the service and WHEN. Authorship is taken from the TRACE, not from the
+#     participants' memory.
+#     WHY. On 04.09.2026 the service was started four times in one evening. I noticed none of them (from inside,
+#     a restart is indistinguishable from the start of work), and two hours later the author denied one of their
+#     own starts — the boundary of their working turn became the boundary of their actions in memory. Two
+#     people, two different answers, and neither can be checked by word. Yet the trace WAS THERE ALL ALONG: sudo
+#     writes to the journal who called which command.
+#     WHAT IT DOES: for each stop of the service it looks for a nearby sudo line with systemctl.
+#     LIMIT: it sees only calls THROUGH sudo. A restart by root directly, an automatic start by Restart= and a
+#     stop by a crash it will not show — there is no author there by construction, and the output NAMES this
+#     rather than skipping it silently.
+
+set -u
+# RU/EN: Every journal/text/gate timestamp is UTC, independent of the caller.
+export TZ=UTC
+# Файл настройки пакета dsh-pribory: строки «КЛЮЧ=значение», «#» — комментарий; берётся последнее вхождение.
+# Путь меняет DSH_PRIBORY_CONF. Порядок: переменная → файл → нейтральное умолчание; нет ничего — СЛЕПОТА, код 2.
+# EN: Settings file of the dsh-pribory package: "KEY=value" lines, a line starting with "#" is a comment; the
+#     last occurrence wins.
+#     DSH_PRIBORY_CONF changes the path. Order: variable → file → neutral default; nothing at all — BLINDNESS,
+#     code 2.
+DSH_PRIBORY_CONF="${DSH_PRIBORY_CONF:-/etc/dsh-pribory/dsh-pribory.conf}"
+# « #» в значении — громкий отказ (stderr, код 2), а не склеивание пояснения со значением; зовущий обязан выйти: X=$(konf …) || exit 2.
+# EN: " #" in a value is a loud refusal (stderr, code 2), not gluing the note into the value; the caller must exit: X=$(konf …) || exit 2.
+konf() { local v; v=$(sed -n "s/^[[:space:]]*$1[[:space:]]*=//p" "$DSH_PRIBORY_CONF" 2>/dev/null | tail -n 1) || true; case "$v" in *[[:space:]]#*) echo "ОТКАЗ: значение ключа $1 в $DSH_PRIBORY_CONF содержит « #» — комментарий допускается только с начала строки" >&2; return 2;; esac; v=$(printf '%s' "$v" | sed "s/^[[:space:]]*//;s/[[:space:]]*$//"); printf '%s' "${v:-$2}"; }
+# Свои юниты (шлюз агента, соседи) — ключ KTO_OTKUDA «юнит[|юнит]=текст;…»: текст разряда «откуда» по имени юнита.
+# EN: Own units (the agent gateway, neighbours) — the KTO_OTKUDA key "unit[|unit]=text;…": the text of the "from
+#     where" class by unit name.
+KTO_OTKUDA_ZN=$(konf KTO_OTKUDA "") || exit 2   # читается здесь: внутри $(otkuda_iz_konf …) отказ не остановил бы прибор · EN: read here: inside $(otkuda_iz_konf …) a refusal would not stop the tool
+otkuda_iz_konf() { local para u IFS=';'; for para in $KTO_OTKUDA_ZN; do u=${para%%=*}; case "|$u|" in *"|$1|"*) printf '%s' "${para#*=}"; return;; esac; done; }
+# 🔴 НЕИЗВЕСТНЫЙ КЛЮЧ — ОТКАЗ, А НЕ «ИМЯ СЛУЖБЫ» (05.09.2026). Позвала с --okno, которого у
+# прибора нет; он взял ключ ЗА ИМЯ СЛУЖБЫ, напечатал «служба: --okno» и честную СЛЕПОТУ
+# «подъёмов не найдено». Слепота была верной по форме и ложной по смыслу: искали не там,
+# а читалось как «подъёмов не было». Умолчание, принимающее что угодно, превращает опечатку
+# в ответ о предмете.
+# EN: 🔴 AN UNKNOWN FLAG IS A REFUSAL, NOT "A SERVICE NAME" (05.09.2026). I called it with --okno, which the tool
+#     does not have; it took the flag FOR THE SERVICE NAME, printed "служба: --okno" and an honest BLINDNESS "no
+#     starts found". The blindness was right in form and false in meaning: it looked in the wrong place, yet it
+#     read as "there were no starts". A default that accepts anything turns a typo into an answer about the
+#     subject.
+case "${1:-}" in
+  -*) echo "🔴 ОТКАЗ: «$1» не похоже на имя службы. Прибор принимает ТОЛЬКО имя службы," >&2
+      echo "   ключей у него нет. Окно — ВТОРОЙ аргумент (умолчание: today)." >&2
+      echo "   Пример: $0 agent.service '2026-09-04'" >&2
+      exit 2 ;;
+esac
+SLUZHBA=${1:-$(konf KTO_SLUZHBA "")} || exit 2
+[ -n "$SLUZHBA" ] || { echo "🔴 ОТКАЗ: служба не названа — довод или ключ KTO_SLUZHBA в $DSH_PRIBORY_CONF" >&2; exit 2; }
+S_KOGDA=${2:-today}
+
+echo "машина: $(hostname)   снято: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+echo "служба: $SLUZHBA   окно: с $S_KOGDA"
+echo
+
+# 🔴 БЕРЁМ ДАТУ ВМЕСТЕ СО ВРЕМЕНЕМ (-o short-iso). Раньше брали только «чч:мм:сс», и день
+# для поиска автора приходилось подставлять отдельно — сперва «сегодня», потом «начало окна»,
+# и оба раза прибор врал на окне длиннее суток: подъёмы одного дня искали в журнале другого.
+# Дата обязана приходить ИЗ САМОГО ПОДЪЁМА, а не подставляться рядом.
+# 🔴 ДОСТУП К ЖУРНАЛУ ПРОВЕРЯЕТСЯ ДО ПОИСКА (05.09.2026, находка соседнего агента).
+# journalctl без групп adm/systemd-journal отдаёт НОЛЬ записей и ЧЕСТНО предупреждает
+# об этом — но подсказка уходит в stderr, а конвейер `| grep | awk` её съедает, оставляя
+# пустоту. Пустота тогда описывает ПРАВА ЧИТАЮЩЕГО, а не наличие подъёмов.
+# Замер обеими руками на этой машине: моей — 6 подъёмов, рукой dsh — пусто при тех же
+# записях. «Подъёмов не было» и «журнал не читается» — разные новости, и сливать их
+# в одну слепоту значит отправлять читающего гадать. Спрашиваем прямо и ДО дела.
+# EN: 🔴 WE TAKE THE DATE TOGETHER WITH THE TIME (-o short-iso). Previously only "hh:mm:ss" was taken, and the
+#     day for looking up the author had to be filled in separately — first "today", then "the window start", and
+#     both times the tool lied on a window longer than a day: starts of one day were searched for in another
+#     day's journal. The date must come FROM THE START ITSELF, not be filled in alongside.
+#     🔴 JOURNAL ACCESS IS CHECKED BEFORE THE SEARCH (05.09.2026, a neighbouring agent's finding). journalctl
+#     without the adm/systemd-journal groups returns ZERO records and HONESTLY warns about it — but the hint
+#     goes to stderr, and the `| grep | awk` pipeline eats it, leaving emptiness. The emptiness then describes
+#     THE READER'S RIGHTS, not the presence of starts. Measured with both hands on this machine: with mine — 6
+#     starts, with dsh's hand — empty with the same records. "There were no starts" and "the journal is
+#     unreadable" are different news, and merging them into one blindness sends the reader guessing. We ask
+#     directly and BEFORE the work.
+proba_zhurnala=$(journalctl --utc -u "$SLUZHBA" -n 1 --no-pager 2>&1); kod_zhurnala=$?
+if [ $kod_zhurnala -ne 0 ] || printf '%s' "$proba_zhurnala" | grep -q 'insufficient permissions'; then
+  echo "СЛЕПОТА: журнал НЕ ЧИТАЕТСЯ вашей рукой ($(id -un)) — это про ПРАВА, а не про подъёмы." >&2
+  echo "  Нужна группа adm или systemd-journal, либо зовите через sudo." >&2
+  echo "  Ваши группы: $(id -nG)" >&2
+  exit 2
+fi
+
+# 🔴 ПОТОК ОШИБОК НЕ ГЛУШИМ (06.09.2026, класс соседнего агента — и я на нём попалась ЗДЕСЬ ЖЕ).
+# Прежде стояло `2>/dev/null`. Я позвала прибор с окном «дата..дата» — journalctl такого не
+# понимает и сказал «Failed to parse timestamp», НО подавление съело строку, а КОД ВОЗВРАТА
+# у него нулевой. Прибор получил пустоту и уверенно напечатал «подъёмов НЕ БЫЛО» — про
+# подъём, который в этом окне БЫЛ. Пустота была создана нашим же подавлением, и она
+# оправдывала: «не было» вместо «я не понял, что ты просишь».
+# Разделяющий замер: та же команда без 2>/dev/null печатает причину, и она однозначна.
+# EN: 🔴 WE DO NOT SILENCE THE ERROR STREAM (06.09.2026, a neighbouring agent's class — and I got caught on it
+#     RIGHT HERE). Previously there was `2>/dev/null`. I called the tool with the window "date..date" —
+#     journalctl does not understand that and said "Failed to parse timestamp", BUT the suppression ate the
+#     line, and its EXIT CODE is zero. The tool got emptiness and confidently printed "there were NO starts" —
+#     about a start that WAS in this window. The emptiness was created by our own suppression, and it excused:
+#     "there were none" instead of "I did not understand what you are asking".
+#     The separating measurement: the same command without 2>/dev/null prints the cause, and it is unambiguous.
+oshibka_zhurnala=$(journalctl --utc -u "$SLUZHBA" --since "$S_KOGDA" -o short-iso --no-pager 2>&1 >/dev/null | head -2)
+if [ -n "$oshibka_zhurnala" ]; then
+  echo "СЛЕПОТА: журнал не отдал записи — journalctl --utc сказал: $oshibka_zhurnala" >&2
+  echo "  Окно задаётся ОДНИМ значением (--since), а не диапазоном: «2026-09-06 04:00» либо «-6h»." >&2
+  echo "  Это НЕ значит «подъёмов не было»: значит вопрос не понят." >&2
+  exit 2
+fi
+starty=$(journalctl --utc -u "$SLUZHBA" --since "$S_KOGDA" -o short-iso --no-pager 2>/dev/null \
+         | grep "Started " | awk '{print $1}')
+# Журнал читается (проверено выше) — значит пустота здесь про ПРЕДМЕТ, а не про права.
+# 🔴 ЭТО НЕ СЛЕПОТА, А ЧЕСТНЫЙ НОЛЬ (поправлено 06.09.2026 вопросом соседнего агента «что именно
+# решает исход»). Доступ к журналу проверен ВЫШЕ и подтверждён; значит пустота здесь — про
+# ПРЕДМЕТ, а не про прибор. Слово «СЛЕПОТА» и код 2 означают «проверить нечем» и по нашему
+# правилу ведут себя как «нельзя»: читающий получал бы «не могу знать» там, где ответ есть.
+# Текст я развела ещё утром, а КОД остался прежним — сведение было в выводе и не участвовало
+# в вердикте. Тот же класс, что нашла координатор у своего курьера подъёма.
+# ГДЕ НЕ ПРИМЕНЯЕТСЯ: «подъёмов не было» верно ДЛЯ ОКНА и для ЭТОГО имени службы. Опечатка
+# в имени даст тот же ноль — поэтому имя печатается в шапке, чтобы читающий сверил его сам.
+# EN: The journal is readable (checked above) — so emptiness here is about the SUBJECT, not about rights.
+#     🔴 THIS IS NOT BLINDNESS BUT AN HONEST ZERO (corrected 06.09.2026 by a neighbouring agent's question "what
+#     exactly decides the outcome"). Journal access is checked ABOVE and confirmed; so emptiness here is about
+#     the SUBJECT, not about the tool. The word "СЛЕПОТА" and code 2 mean "nothing to check with" and by our
+#     rule behave as "not allowed": the reader would get "cannot know" where there is an answer. I separated the
+#     text in the morning, but the CODE stayed the same — the distinction was in the output and did not take
+#     part in the verdict. The same class the coordinator found in their startup courier.
+#     WHERE IT DOES NOT APPLY: "there were no starts" holds FOR THE WINDOW and for THIS service name. A typo in
+#     the name gives the same zero — so the name is printed in the header for the reader to check themselves.
+[ -n "$starty" ] || { echo "подъёмов службы в окне НЕ БЫЛО (журнал читается, доступ проверен выше; имя службы — в шапке, сверьте его)"; exit 0; }
+
+najdeno=0; bez_avtora=0
+for t in $starty; do
+  DEN=${t%%T*}                    # 2026-09-04
+  VREMYA=${t#*T}; VREMYA=${VREMYA%%+*}   # 01:56:13
+  h=${VREMYA%:*}                  # чч:мм · EN: hh:mm
+  epoch=$(date -u -d "$t" +%s) || { echo "СЛЕПОТА: время подъёма $t не разобрано" >&2; exit 2; }
+  ZAPROS_OT=$(date -u -d "@$((epoch - 60))" '+%F %T UTC')
+  ZAPROS_DO=$(date -u -d "@$((epoch + 60))" '+%F %T UTC')
+  # 🔴 ГРАНИЦА ПЕРЕД ИМЕНЕМ СЛУЖБЫ (09.09.2026). Было ".*$SLUZHBA" — и прибор считал подъёмом
+  # ЧУЖУЮ службу, чьё имя содержит наше как ПОДСТРОКУ: перезапуск claude-oauth-gateway@<агент>.service
+  # попадал в выборку как "<агент>.service". Замер за сутки: без границы 2 попадания (одно ложное —
+  # мой же перезапуск шлюза), с границей 1 — ровно настоящий подъём. Пробел отделяет имя службы
+  # от хвоста длинного имени с @ или дефисом.
+  # -a — иначе строка не в UTF-8 печатается «[NB blob data]», и подъём с битой буквой в COMMAND
+  # не находится вовсе (замер 26.09: запись sudo 08:18:51Z). grep -a — сырые байты не принимать за двоичный файл.
+  # EN: 🔴 A BOUNDARY BEFORE THE SERVICE NAME (09.09.2026). It was ".*$SLUZHBA" — and the tool counted as a start
+  #     SOMEONE ELSE'S service whose name contains ours as a SUBSTRING: a restart of
+  #     claude-oauth-gateway@<agent>.service got into the selection as "<agent>.service". Measured over a day:
+  #     without the boundary 2 hits (one false — my own gateway restart), with the boundary 1 — exactly the real
+  #     start. A space separates the service name from the tail of a long name with @ or a hyphen.
+  #     -a — otherwise a line not in UTF-8 is printed as "[NB blob data]", and a start with a broken letter in
+  #     COMMAND is not found at all (measured 26.09: sudo record 08:18:51Z). grep -a — do not take raw bytes for
+  #     a binary file.
+  stroka=$(journalctl --utc -a --since "$ZAPROS_OT" --until "$ZAPROS_DO" -o short-iso --no-pager 2>/dev/null \
+    | python3 -c '
+import datetime, shlex, sys
+from pathlib import PurePosixPath
+cel=datetime.datetime.fromisoformat(sys.argv[1]); service=sys.argv[2]
+best=None; distance=None
+for line in sys.stdin.buffer.read().decode("utf-8", "replace").splitlines():
+    try:
+        stamp=datetime.datetime.fromisoformat(line.split()[0])
+        if "COMMAND=" not in line: continue
+        argv=shlex.split(line.split("COMMAND=",1)[1])
+        program=PurePosixPath(argv[0]).name
+        if program=="systemctl":
+            action=next((i for i,a in enumerate(argv) if a in ("start","restart")),None)
+            match=action is not None and service in argv[action+1:]
+        else: match=program=="podyom-uzla" and service in argv[1:]
+        delta=abs((stamp-cel).total_seconds())
+        if match and delta<=60 and (distance is None or delta<distance): best=line; distance=delta
+    except (ValueError,IndexError): continue
+if best is not None: print(best)
+' "$t" "$SLUZHBA")
+  avtor=$(printf '%s' "$stroka" | sed -E 's/.*sudo\[[0-9]+\]: *([^[:space:]:]+) *:.*/\1/')
+  # 🔴 НАЗВАННАЯ РУКА — ЕДИНСТВЕННЫЙ РАЗЛИЧИТЕЛЬ, КОТОРЫЙ ЗДЕСЬ РАБОТАЕТ (замер 06.09.2026).
+  # На этой машине руки фермы неразличимы НИЧЕМ: PWD у claude в 12216 случаях из 12400 —
+  # просто дом первой учётки (у соседа он несёт имя инстанса, у нас нет); ssh-ключ ОДИН на всех
+  # (5337 входов, один отпечаток ED25519); адрес источника один. То есть «рука: claude» —
+  # это «кто-то из троих», и по журналу дальше не разделить.
+  # Что РАБОТАЕТ и проверено опытом: переменная, переданная через sudo, попадает в журнал
+  # полем ENV=. Проверила своей рукой — `sudo RUKA=proba /bin/true` дало строку
+  # «ENV=RUKA=proba». Значит различитель есть, он ничего не стоит и зависит только от того,
+  # назовётся ли действующий сам. Печатаем ENV, если он есть.
+  # EN: 🔴 A NAMED HAND IS THE ONLY DISTINGUISHER THAT WORKS HERE (measured 06.09.2026). On this machine the
+  #     farm's hands are indistinguishable BY ANYTHING: PWD of claude in 12216 cases of 12400 is just the first
+  #     account's home (at the neighbour's it carries the instance name, here it does not); the ssh key is ONE
+  #     for all (5337 logins, one ED25519 fingerprint); the source address is one. So "рука: claude" means "one
+  #     of the three", and the journal cannot split it further.
+  #     What WORKS and was checked by experience: a variable passed through sudo gets into the journal in the
+  #     ENV= field. I checked with my own hand — `sudo RUKA=proba /bin/true` gave the line "ENV=RUKA=proba". So
+  #     a distinguisher exists, costs nothing and depends only on whether the actor names themselves. We print
+  #     ENV if present.
+  ruka_nazvana=$(printf '%s' "$stroka" | grep -oE 'ENV=[^;]+' | head -1)
+  # 🔴 РАЗРЯД «ОТКУДА ПРИШЛА КОМАНДА» — ЮНИТ (заведён 07.09.2026 после замера соседнего агента).
+  # Он закрывает ровно ту дыру, которую прибор объявляет ниже сам: у МОИХ команд номера
+  # сессии нет вовсе, и разряд соседей по заходу для них молчит по построению.
+  # ЗАМЕР, на котором это стоит (моя рука, журнал этой машины):
+  #     мои действия          claude-oauth-gateway@<агент>.service (НЕ <агент>.service!)
+  #     действия соседа       <сосед>.service
+  #     внешний вход по ssh   session-<номер>.scope — имени в нём нет
+  #     сторожа машины        <машина>-watch.service, registry-watchdog.service
+  #     мой отложенный подъём podyom-<агент>-<время>.service — имя дала я сама
+  # ⚠️ ПОПРАВКА К ЧУЖОЙ ФОРМУЛИРОВКЕ, важная для читающего: «агент бежит внутри СВОЕГО
+  # юнита» — верно по существу и неверно по имени. Мой юнит зовётся именем ШЛЮЗА, а не
+  # службы агента. Признак, построенный на догадке «<агент>.service», дал бы ноль и был бы
+  # прочитан как «её там не было». Имя берётся у предмета, а не из головы.
+  # ЧЕГО РАЗРЯД НЕ ДЕЛАЕТ: не называет ЧЕЛОВЕКА за внешним входом — там по-прежнему решает
+  # только названная рука. Он различает МЕСТО, а не лицо.
+  # EN: 🔴 THE "WHERE THE COMMAND CAME FROM" CLASS — THE UNIT (set up 07.09.2026 after a neighbouring agent's
+  #     measurement). It closes exactly the hole the tool itself declares below: MY commands have no session
+  #     number at all, and the session-neighbours class is silent for them by construction.
+  #     THE MEASUREMENT it rests on (my hand, this machine's journal): my actions —
+  #     claude-oauth-gateway@<agent>.service (NOT <agent>.service!); the neighbour's actions —
+  #     <neighbour>.service; an external ssh login — session-<number>.scope, no name in it; machine watchers —
+  #     <machine>-watch.service, registry-watchdog.service; my deferred start — podyom-<agent>-<time>.service, a
+  #     name I gave myself.
+  #     ⚠️ A CORRECTION TO SOMEONE ELSE'S WORDING, important for the reader: "the agent runs inside ITS OWN
+  #     unit" is right in substance and wrong in name. My unit is named after the GATEWAY, not the agent
+  #     service. A sign built on the guess "<agent>.service" would give zero and be read as "it was not there".
+  #     The name is taken from the subject, not from one's head.
+  #     WHAT THE CLASS DOES NOT DO: it does not name the PERSON behind an external login — there only a named
+  #     hand still decides. It distinguishes the PLACE, not the face.
+  yunit=$(journalctl --utc _COMM=sudo --since "$ZAPROS_OT" --until "$ZAPROS_DO" \
+          -o json --output-fields=_SYSTEMD_UNIT,MESSAGE --no-pager 2>/dev/null \
+          | python3 -c '
+import json, shlex, sys, datetime
+from pathlib import PurePosixPath
+service = sys.argv[1]
+cel=datetime.datetime.fromisoformat(sys.argv[2]); best=None; distance=None
+for line in sys.stdin:
+    try:
+        row = json.loads(line)
+        message = row.get("MESSAGE", "")
+        # Не в UTF-8 journald отдаёт MESSAGE списком байтов — декодировать, не пропускать
+        if not isinstance(message, str):
+            try: message = bytes(message).decode("utf-8", "replace")
+            except (TypeError, ValueError): message = str(message)
+        if "COMMAND=" not in message: continue
+        argv = shlex.split(message.split("COMMAND=", 1)[1])
+        if not argv: continue
+        program = PurePosixPath(argv[0]).name
+        if program == "systemctl":
+            action = next((i for i, arg in enumerate(argv[1:], 1) if arg in ("restart", "start")), None)
+            matches = action is not None and service in argv[action+1:]
+        else:
+            matches = program == "podyom-uzla" and service in argv[1:]
+        if not matches: continue
+        stamp=datetime.datetime.fromtimestamp(int(row["__REALTIME_TIMESTAMP"])/1e6, datetime.timezone.utc)
+        delta=abs((stamp-cel).total_seconds())
+        if delta<=60 and (distance is None or delta<distance): best=row.get("_SYSTEMD_UNIT", ""); distance=delta
+    except (ValueError, TypeError, AttributeError, KeyError): continue
+if isinstance(best,str): print(best)
+' "$SLUZHBA" "$t")
+  otkuda=$(otkuda_iz_konf "$yunit"); [ -n "$otkuda" ] || case "$yunit" in
+    # свои юниты — выше, ключ KTO_OTKUDA; здесь прочие разряды
+    # (в ключе нет — разряд по виду юнита)
+    # EN: own units — above, the KTO_OTKUDA key; other classes here (not in the key — class by unit kind)
+    session-*.scope)                    otkuda="внешний вход по ssh ($yunit) — имени в нём НЕТ, различает только названная рука";;
+    "")                                 otkuda="юнит не снят — это «не смотрели», а не «изнутри»";;
+    *)                                  otkuda="служба: $yunit";;
+  esac
+  if [ -n "$avtor" ]; then
+    printf '  %s %s  рука: %s%s\n' "$DEN" "$VREMYA" "$avtor" \
+      "$([ -n "$ruka_nazvana" ] && printf '  · НАЗВАНО: %s' "$(printf '%s' "$ruka_nazvana" | cut -c1-90)")"
+    printf '    откуда: %s\n' "$otkuda"
+    najdeno=$((najdeno+1))
+    # 🔴 СОСЕДИ ПО ЗАХОДУ (05.09.2026). За ночь ЧЕТЫРЕ раза подряд подъём приписали не той
+    # руке — и каждый раз на достоверном числе, взятом не у того автора. Причина в том, что
+    # «рука: claude» одна на всю чужую ферму: под этой учётной записью ходят двое, и по имени
+    # они неразличимы.
+    # ЧТО РАЗЛИЧАЕТ: номер сессии входа. Он НЕ называет человека — он ГРУППИРУЕТ команды
+    # одного захода, и автор узнаёт себя по составу. Замер на двух спорных перезапусках:
+    #   сессия 64374  restart → journalctl шлюза → ss -tlnp    (три признака из отчёта одного)
+    #   сессия 64376  grep указателя ×2 → restart              (проверка из отчёта другого)
+    # 🔴 ЧЕГО ПРИЗНАК НЕ ДЕЛАЕТ, чтобы его не переоценили как я сначала: сессий за сутки
+    # 10165 при 11642 командах, то есть 1,1 команды на сессию — соединение открывается почти
+    # на каждую команду. Разные сессии НЕ значат разных людей; одинаковых не бывает вовсе.
+    # Годен он только на группировку: пусто рядом — заход был одиночным, и сказать нечего.
+    # И мои собственные команды сессии не имеют ВООБЩЕ (работаю из службы, не по ssh) —
+    # для них этот разряд молчит по построению.
+    # 🔴 СЕССИЮ БЕРЁМ ПО БЛИЖАЙШЕМУ ВРЕМЕНИ, А НЕ ПЕРВУЮ В ЧАСЕ. Первая редакция брала
+    # первую команду restart в часовом окне — и при ДВУХ подъёмах в одном часе приписала
+    # обоим один заход. Прибор, заведённый против неверного авторства, стал сам его
+    # производить, причём убедительнее прежнего: «рука: claude» хотя бы не притворялась
+    # точной. Чинишь ошибку авторства — проверь, что не породил её же.
+    # EN: 🔴 SESSION NEIGHBOURS (05.09.2026). During the night a start was attributed to the wrong hand FOUR
+    #     times in a row — and each time on a reliable number taken from the wrong author. The reason is that
+    #     "рука: claude" is one for the whole other farm: two people work under this account, and by name they
+    #     are indistinguishable.
+    #     WHAT DISTINGUISHES: the login session number. It does NOT name a person — it GROUPS the commands of
+    #     one turn, and the author recognises themselves by the composition. Measured on two disputed restarts:
+    #     session 64374 restart → gateway journalctl → ss -tlnp (three signs from one person's report); session
+    #     64376 grep of the pointer ×2 → restart (the check from the other person's report).
+    #     🔴 WHAT THE SIGN DOES NOT DO, so that it is not overrated as I did at first: 10165 sessions per day
+    #     with 11642 commands, i.e. 1.1 commands per session — a connection is opened for almost every command.
+    #     Different sessions do NOT mean different people; identical ones never happen. It is good only for
+    #     grouping: nothing nearby — the turn was single, and there is nothing to say. And my own commands have
+    #     no session AT ALL (I work from a service, not over ssh) — for them this class is silent by
+    #     construction.
+    #     🔴 THE SESSION IS TAKEN BY THE NEAREST TIME, NOT THE FIRST IN THE HOUR. The first edition took the
+    #     first restart command in the hour window — and with TWO starts in one hour attributed one turn to
+    #     both. A tool set up against wrong authorship started producing it itself, and more convincingly than
+    #     before: "рука: claude" at least did not pretend to be precise. When you fix an authorship error, check
+    #     that you did not produce the same one.
+    sess=$(journalctl --utc _COMM=sudo --since "$ZAPROS_OT" --until "$ZAPROS_DO" -o json --no-pager 2>/dev/null \
+           | python3 -c '
+import sys,json,datetime,shlex
+from pathlib import PurePosixPath
+cel=datetime.datetime.fromisoformat(sys.argv[1]); service=sys.argv[2]
+best=None; distance=None
+for line in sys.stdin:
+    try:
+        row=json.loads(line); message=row.get("MESSAGE", "")
+        if not isinstance(message,str): message=bytes(message).decode("utf-8", "replace")
+        if not row.get("_AUDIT_SESSION") or "COMMAND=" not in message: continue
+        argv=shlex.split(message.split("COMMAND=",1)[1])
+        if not argv: continue
+        program=PurePosixPath(argv[0]).name
+        action=next((i for i,a in enumerate(argv) if a in ("start","restart")),None)
+        match=(program=="systemctl" and action is not None and service in argv[action+1:]) or (program=="podyom-uzla" and service in argv[1:])
+        if not match: continue
+        stamp=datetime.datetime.fromtimestamp(int(row["__REALTIME_TIMESTAMP"])/1e6,datetime.timezone.utc)
+        delta=abs((stamp-cel).total_seconds())
+        if delta<=60 and (distance is None or delta<distance): best=row["_AUDIT_SESSION"];distance=delta
+    except (ValueError,TypeError,KeyError): continue
+if best is not None: print(best)
+' "$t" "$SLUZHBA" 2>/dev/null)
+    if [ -n "$sess" ]; then
+      sosedi=$(journalctl --utc _COMM=sudo --since "$ZAPROS_OT" --until "$ZAPROS_DO" -o json --no-pager 2>/dev/null \
+        | python3 -c '
+import sys,json
+for line in sys.stdin:
+    try:
+        row=json.loads(line)
+        if str(row.get("_AUDIT_SESSION"))!=sys.argv[1]: continue
+        message=row.get("MESSAGE", "")
+        if not isinstance(message,str): message=bytes(message).decode("utf-8", "replace")
+        if "COMMAND=" in message: print("      "+message.split("COMMAND=",1)[1][:70])
+    except (ValueError,TypeError): continue
+' "$sess" 2>/dev/null | head -4)
+      if [ -n "$sosedi" ]; then
+        echo "    заход $sess — что делала ЭТА ЖЕ рука рядом (узнайте себя):"
+        printf '%s\n' "$sosedi"
+      fi
+    fi
+  else
+    printf '  %s %s  рука НЕ НАЙДЕНА — не через sudo (root напрямую, автоподъём или падение)\n' "$t"
+    bez_avtora=$((bez_avtora+1))
+  fi
+done
+echo
+echo "подъёмов: $((najdeno+bez_avtora)) · с названной рукой: $najdeno · без следа: $bez_avtora"
+
+# 🔴 ПОДЪЁМ МИМО ВОРОТ ОБЪЯВЛЯЕТСЯ ГРОМКО (09.09.2026, решение координатора).
+# ЗАЧЕМ. Ворота (podyom-uzla) исправны, но их вызов НЕОБЯЗАТЕЛЕН: прямой
+# `systemctl restart` обходит их одной строкой и молча. За сутки 12 подъёмов,
+# через ворота 1, мимо 11; один из них увёз в бой пять непринятых версий ядра.
+# 📌 КЛАСС: исправность защиты и её ОБЯЗАТЕЛЬНОСТЬ — разные величины, а мерим мы
+# обычно первую. Механизм работает, просто его не зовут.
+# ЧТО ЭТО НЕ ДЕЛАЕТ: не запрещает прямой restart и не трогает права. Сегодня он был
+# НУЖЕН — агент стоял в тупике, и его вытащили снаружи. Запрет произвёл бы ровно тот
+# вред, от которого ставится: агента некому вытащить. Поэтому не запрет, а громкость.
+# EN: 🔴 A START BYPASSING THE GATE IS ANNOUNCED LOUDLY (09.09.2026, the coordinator's decision).
+#     WHY. The gate (podyom-uzla) works, but calling it is OPTIONAL: a direct `systemctl restart` bypasses it in
+#     one line and silently. In a day 12 starts, 1 through the gate, 11 around it; one of them carried five
+#     unaccepted core versions into production.
+#     📌 THE CLASS: a protection's working order and its BEING MANDATORY are different quantities, and we usually
+#     measure the first. The mechanism works, it simply is not called.
+#     WHAT THIS DOES NOT DO: it does not forbid a direct restart and does not touch rights. Today it was NEEDED
+#     — the agent was stuck, and it was pulled out from outside. A ban would cause exactly the harm it is set
+#     against: there would be nobody to pull the agent out. So not a ban but loudness.
+ZHURNAL_VOROT=${ZHURNAL_VOROT:-$(konf KTO_ZHURNAL_VOROT "")} || exit 2
+if [ -r "$ZHURNAL_VOROT" ]; then
+  mimo=0
+  while IFS= read -r kogda; do
+    [ -n "$kogda" ] || continue
+    # запись ворот считается близкой, если её минута совпадает с минутой подъёма
+    # starty даёт «2026-09-09T01:22:41+0000», журнал ворот — «2026-09-09 01:22:41 UTC».
+    # Сверяем по МИНУТЕ: секунды у ворот и у systemd расходятся на доли (запись ДО подъёма).
+    # EN: a gate record counts as close if its minute matches the start's minute: starty gives
+    #     "2026-09-09T01:22:41+0000", the gate log — "2026-09-09 01:22:41 UTC". We compare by MINUTE: the
+    #     seconds of the gate and of systemd differ by fractions (the record is BEFORE the start).
+    minuta="${kogda%%T*} ${kogda#*T}"; minuta=${minuta:0:16}
+    # Формат podyom-uzla: время | ДО/ПОСЛЕ | служба | ... . Сверяем поле, не подстроку.
+    # EN: podyom-uzla format: time | ДО/ПОСЛЕ | service | ... . We compare the field, not a substring.
+    python3 - "$ZHURNAL_VOROT" "$minuta" "$SLUZHBA" <<'PY_GATE'
+import pathlib, sys
+try:
+    rows = pathlib.Path(sys.argv[1]).read_text().splitlines()
+except (OSError, UnicodeError) as error:
+    print("СЛЕПОТА: журнал ворот не прочитан: " + str(error), file=sys.stderr)
+    sys.exit(2)
+for line in rows:
+    fields = [part.strip() for part in line.split("|")]
+    if len(fields) >= 3 and fields[0][:16] == sys.argv[2] and fields[2] == sys.argv[3]:
+        sys.exit(0)
+sys.exit(1)
+PY_GATE
+    kod_vorot=$?
+    if [ "$kod_vorot" -gt 1 ]; then
+      slepota_vorot=1
+      continue
+    fi
+    if [ "$kod_vorot" -eq 1 ]; then
+      echo "🔴 ПОДЪЁМ МИМО ВОРОТ: $kogda — записи в $ZHURNAL_VOROT нет."
+      echo "   Значит состав в бой уехал БЕЗ проверки: ни сверки с принятым, ни снимка базы."
+      mimo=$((mimo+1))
+    fi
+  done <<< "$starty"
+  if [ "$mimo" -gt 0 ]; then
+    echo "⚠️  подъёмов мимо ворот: $mimo из $((najdeno+bez_avtora)). Ворота исправны — их просто не звали."
+  else
+    echo "все подъёмы прошли через ворота (сверено с $ZHURNAL_VOROT)"
+  fi
+else
+  echo "⚠️  СЛЕПОТА: журнал ворот $ZHURNAL_VOROT не читается — прошли ли подъёмы через ворота, НЕ ПРОВЕРЕНО."
+    slepota_vorot=1
+fi
+[ "$bez_avtora" -eq 0 ] || echo "⚠️  «без следа» НЕ значит «никто не делал»: значит вызов шёл мимо sudo."
+
+# ═══ КОНТРАКТ КОДОВ 0/1/2 (правка 09.09.2026 по замеру соседнего агента) ════════════════════════
+# 🔴 ЧТО БЫЛО СЛОМАНО, ЕГО ЗАМЕРОМ: при НАЙДЕННОМ обходе прибор возвращал КОД 0. В файле
+# четыре exit, три из них exit 2, ветки exit 1 НЕ БЫЛО ВОВСЕ. Сторож, построенный на
+# «позвать и посмотреть код», МОЛЧАЛ БЫ ПРИ ЖИВОМ ОБХОДЕ: прибор кричал текстом, а кодом
+# говорил «всё хорошо». Ложно-зелёное — хуже слепоты, потому что закрывает вопрос.
+# Соседний агент прогнал прибор своей рукой ПЕРЕД тем, как строить на нём сторожа, и потому
+# построил временный мост ПО ТЕКСТУ. Эта правка позволяет его мосту отмереть.
+#
+# КОНТРАКТ:
+#   0 — обходов нет: все подъёмы прошли через ворота, и это ПРОВЕРЕНО
+#   1 — обход НАЙДЕН и доказан: есть подъём без записи в журнале ворот
+#   2 — СЛЕПОТА: проверить не удалось (журнал ворот не читается, доступа нет)
+# ⚠️ ГРАНИЦА: код 0 значит «в ЭТОМ ОКНЕ и по ЭТОМУ журналу обходов нет». Подъём вне окна и
+# подъём без следа в systemd сюда не попадают — «без следа» НЕ равно «не было».
+# ⚠️ И ВТОРАЯ: СЛЕПОТА ПЕРЕВЕШИВАЕТ НОЛЬ. Не прочитав журнал ворот, мы не вправе сказать
+# «обходов нет» — мы не смотрели. Поэтому 2, а не 0.
+# EN: ═══ THE 0/1/2 CODE CONTRACT (edit of 09.09.2026 based on a neighbouring agent's measurement) ═══
+#     🔴 WHAT WAS BROKEN, BY THEIR MEASUREMENT: with a bypass FOUND the tool returned CODE 0. The file had four
+#     exit statements, three of them with code 2, and there was NO branch with code 1 AT ALL. A watcher built on
+#     "call it and look at the code" WOULD STAY SILENT ON A LIVE BYPASS: the tool shouted in text but said "all
+#     is well" in code. A false green is worse than blindness, because it closes the question.
+#     The neighbouring agent ran the tool with their own hand BEFORE building a watcher on it, and therefore
+#     built a temporary bridge ON THE TEXT. This edit lets that bridge die off.
+#     THE CONTRACT:
+#     0 — no bypasses: all starts went through the gate, and this is CHECKED
+#     1 — a bypass is FOUND and proven: there is a start without a record in the gate log
+#     2 — BLINDNESS: the check failed (the gate log is unreadable, no access)
+#     ⚠️ LIMIT: code 0 means "in THIS WINDOW and by THIS log there are no bypasses". A start outside the window
+#     and a start without a trace in systemd do not get here — "no trace" does NOT equal "did not happen".
+#     ⚠️ AND A SECOND ONE: BLINDNESS OUTWEIGHS ZERO. Without reading the gate log we have no right to say "no
+#     bypasses" — we did not look. So 2, not 0.
+if [ "${slepota_vorot:-0}" -eq 1 ]; then
+  echo "ИТОГ: 2 — СЛЕПОТА (журнал ворот не прочитан; «обходов нет» сказать НЕ ВПРАВЕ)"
+  exit 2
+elif [ "${mimo:-0}" -gt 0 ]; then
+  echo "ИТОГ: 1 — ОБХОД НАЙДЕН И ДОКАЗАН ($mimo подъёмов мимо ворот)"
+  exit 1
+else
+  echo "ИТОГ: 0 — обходов в этом окне нет (сверено с журналом ворот)"
+  exit 0
+fi

@@ -1,0 +1,57 @@
+#!/bin/sh
+# bwrap-bez-zhurnala — раннер песочницы гостя (B-N-1679 вариант Б; ОСТРОВ-ledger; ОСТРОВ-IDENTITY Д3, наряд Забавы 06.10 00:44Z).
+# Платформа (dsh-sandbox-local, настройка runnerCommand; только у гостя — @@ESLI GOST@@) зовёт:
+#   <этот файл> <профиль bwrap> -- <команда>.
+# Перед первым «--» (после «--ro-bind / /» и «--bind <workspace>» профиля — раньше их корень и привязка перекрыли бы
+# вставку) кладёт МАСКУ только для чтения — «--tmpfs P --remount-ro P» — на каждый СУЩЕСТВУЮЩИЙ каталог P из списка:
+#   /run/systemd/journal                     сокеты journald: иначе модель гостя пишет в журнал своей службы, в т. ч.
+#                                            поддельные «[continuation-marker]» (B-N-1677/1679);
+#   /opt/varvara/workspace/.message-receipts журнал квитанций Варвары (+ его -wal/-shm в том же каталоге): ОСТРОВ-ledger;
+#   /run/ostrov-most                         каталог сокета посредника ОСТРОВ-IDENTITY (Д3): bash не видит ipc.sock;
+#   /var/lib/ostrov-most                     store посредника (authority.sqlite);
+#   /run/credentials/ostrov-most.service     LoadCredential посредника (bot/call/confirm);
+#   /run/credentials/claude-oauth-gateway@varvara.service  LoadCredential шлюза гостя: токены подписок владельца (B-N-1621, Вениамин 08.10 21:1xZ; шлюз вне песочницы);
+#   /run/claude-oauth-gost-varvara           токен ВЫБРАННОЙ подписки шлюза гостя после B-N-1621 (gost-podpiska-vybor; Вениамин 08.10 21:2xZ);
+#   /run/ostrov-most-health                  снимок здоровья посредника (health.json) — второй слой;
+#   /var/lib/varvara-guest-data              карточки гостей с сырыми контактами (B-N-1645);
+#   /var/lib/gost-reestr-varvara             реестр маски ПДн гостя (root:varvara 0750 — varvara его ЧИТАЕТ, маска
+#                                            закрывает bash; шлюз гостя — свой юнит, не песочница, читает как прежде);
+#   /etc/ostrov-most                         ограда Д2 с одноразовым nonce (fence-varvara.json): хост признаёт по нему
+#                                            root-контроллер — bash его видеть не должен (Забава 06:34Z, отмена «без маски»);
+#   /run/varvara-handoff                     control.sock хоста: снимок очереди передачи с сырыми сообщениями гостей;
+#   /etc/dsh-telegram                        токены ботов и настройки доставки: varvara.token Варвары (root:varvara 0640)
+#                                            и чужие *.json (0644) читались из песочницы (находка Вениамина 06.10). Канал
+#                                            читает их в процессе платформы, вне песочницы, — маска его не касается.
+# Пути — канонические (Забава по предложению Михалыча, 06.10 00:47Z; CONTRACTS §2). /var/lib/ostrov-most (store) закрыт
+# и правами чужого UID — маска не мешает, оставлена. /etc/credstore* — только права, без маски. /etc/ostrov-most и
+# /run/varvara-handoff — по новой схеме Д2 (решение 06:31Z), пути предварительные (сокет согласуют Михалыч с Зарёй).
+# Каталоги /run посредника есть, только пока служба запущена, — отсюда правило «маска, только если каталог есть».
+# Маска — пустой tmpfs только для чтения: из песочницы каталог пуст, создать в нём ничего нельзя (Read-only file system).
+# Нет каталога на хосте — маски нет: bwrap не создаст точку монтирования под «--ro-bind / /» и отказал бы КАЖДОЙ команде.
+# Пути заданы явно (не из --bind): так маски стоят и в режиме read-only, где привязки workspace нет.
+# Остальные аргументы — без изменений и в прежнем порядке. /bin/sh (dash), не bash: bash исполнил бы $BASH_ENV ДО песочницы.
+# Нет «--» — отказ с подписью «bwrap: » (её ждёт runnerFailureSignatures), код 1.
+# Маски — только на КАТАЛОГИ (`[ -d ]`): путь, ставший файлом или сокетом не в своём каталоге (например, сокет Д2
+# прямо в /run), маски молча не получит — проверять при каждой смене путей.
+# Чего НЕ закрывает: файловые инструменты платформы (read/write/edit идут через dsh-fs-sandbox в процессе, не через bwrap);
+# сеть и абстрактные сокеты; пути не из списка. Маска — слой поверх UID/0700/ACL и peer-проверки посредника, не замена им.
+n=0; poz=0
+for a in "$@"; do
+  n=$((n + 1))
+  if [ "$a" = "--" ]; then poz=$n; break; fi
+done
+if [ "$poz" -eq 0 ]; then
+  echo "bwrap: bwrap-bez-zhurnala: нет разделителя -- (зовёт платформа: профиль -- команда)" >&2
+  exit 1
+fi
+vsego=$#; i=0
+while [ "$i" -lt "$vsego" ]; do
+  a=$1; shift; i=$((i + 1))
+  if [ "$i" -eq "$poz" ]; then
+    for p in /run/systemd/journal /opt/varvara/workspace/.message-receipts /run/ostrov-most /var/lib/ostrov-most /run/credentials/ostrov-most.service /run/credentials/claude-oauth-gateway@varvara.service /run/claude-oauth-gost-varvara /run/ostrov-most-health /var/lib/varvara-guest-data /var/lib/gost-reestr-varvara /etc/ostrov-most /run/varvara-handoff /etc/dsh-telegram; do
+      if [ -d "$p" ]; then set -- "$@" --tmpfs "$p" --remount-ro "$p"; fi
+    done
+  fi
+  set -- "$@" "$a"
+done
+exec /usr/bin/bwrap "$@"

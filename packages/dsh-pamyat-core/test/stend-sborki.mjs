@@ -1,12 +1,15 @@
-/**
- * Стенд сборки пакета: проверяет ФУНКЦИЮ целиком — плагин объявляет сервис,
- * сервис пишет, читает и объясняет отказы. Поддельный ctx намеренно минимален:
- * он повторяет ровно то, чем пакет пользуется (provide, on, logger), и ничего
- * больше — иначе стенд начнёт проверять выдуманное ядро вместо настоящего.
- */
+// RU: Проверяем сборку целиком: плагин объявляет службу, она пишет, читает и объясняет отказы. Минимальный подставной ctx содержит только используемые provide, on и logger, чтобы не моделировать лишнюю платформу.
+// EN: Test the complete assembly: the plugin exposes a service that writes, reads, and explains rejections. The minimal fake ctx contains only the used provide, on, and logger methods to avoid inventing extra platform behavior.
 import { mkdtempSync, rmSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+// RU: Каждый mkdtemp создаём через vremennyj(): уборка выполняется при обычном выходе, исключении, process.exit и SIGTERM/SIGINT, включая timeout 120. SIGKILL не перехватывается; временные файлы дочернего процесса убирает сам дочерний процесс.
+// EN: Create every mkdtemp through vremennyj(): cleanup runs on normal exit, exceptions, process.exit, and SIGTERM/SIGINT, including timeout 120. SIGKILL cannot be intercepted; a child process must clean up its own temporary files.
+import { mkdtempSync as mkdtempSync_, rmSync as rmSync_ } from 'node:fs'
+const VREMENNYE = []
+const vremennyj = (...a) => { const k = mkdtempSync_(...a); VREMENNYE.push(k); return k }
+process.on('exit', () => { for (const k of VREMENNYE) rmSync_(k, { recursive: true, force: true }) })
+process.on('SIGTERM', () => process.exit(143)); process.on('SIGINT', () => process.exit(130))
 let apply, name
 try {
   ;({ apply, name } = await import('../src/index.js'))
@@ -17,7 +20,8 @@ try {
   process.exit(2)
 }
 
-// Перехват настоящего вывода пакета: console.error — единственный его путь.
+// RU: Перехватываем console.error, фактический поток вывода пакета.
+// EN: Capture console.error, the package’s actual output stream.
 const nastoyashchiyKrik = [];
 const iznachalnyj = console.error;
 console.error = (...a) => { nastoyashchiyKrik.push(a.join(' ')); };
@@ -28,14 +32,17 @@ const proba = (imya, f) => {
   vsego++;
   try {
     const vernulos = f();
-    // 🔴 ПРИРОДА ТЕЛА ПРОВЕРЯЕТСЯ, А НЕ ПОДРАЗУМЕВАЕТСЯ (05.09.2026). Прогонщик синхронный —
-    // ждать не умеет. Ожидающее тело вернёт промис, try его НЕ поймает, проба зачтётся
-    // мгновенно, а брошенное внутри уйдёт в никуда. Такая проба не краснеет НИКОГДА, ни на
-    // каких данных: это не ложно-зелёное, а отсутствие проверки под видом проверки.
-    // Замер 05.09: семь стендов ядра из десяти зеленели на подложенном падении в ожидающем
-    // теле. Действующих async-тел не было ни одного — беда была впереди, и закрыта устройством.
+    // RU: Прогонщик синхронный и не ждёт промис: async-тело могло бы зачесть успех до исключения внутри. Возвращённый промис означает отказ пробы.
+    // EN: The runner is synchronous and does not await promises: an async body could record success before an inner exception. A returned promise fails the probe.
     if (vernulos && typeof vernulos.then === 'function') {
       throw new Error('тело пробы ОЖИДАЮЩЕЕ, а прогонщик синхронный: вынеси ожидание наружу');
+    }
+    // RU: Тело пробы должно бросить ошибку или вернуть undefined. Любое другое значение, включая строку, false, 0, null и объект, означает отказ: игнорирование возврата даёт ложный успех.
+    // EN: The probe body must throw an error or return undefined. Any other value, including a string, false, 0, null, or an object, means failure: ignoring returns produces false success.
+    if (vernulos !== undefined && vernulos !== true) {
+      throw new Error('тело пробы ВЕРНУЛО «' + String(vernulos).slice(0, 60) +
+                      '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы. ' +
+                      'Бросай ошибку либо ничего не возвращай');
     }
     proshlo++; console.log('  ✅ ' + imya); }
   catch (e) { console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 140)); }
@@ -47,16 +54,14 @@ function podelnyjCtx() {
   return {
     provide(imya, obj) { servisy[imya] = obj; },
     on() {},
-    // 🔴 03.09: раньше здесь стоял самодельный logger и пробы читали ЕГО —
-    // то есть проверяли путь, который в бою НЕМОЙ (буфер cordis никто не
-    // читает). Теперь ловим тот же поток, в который пакет пишет на самом деле.
-    // Конечный звук проверяет отдельный стенд stend-krik-zvuchit.
+    // RU: Ловим фактический поток вместо подставного logger; конечную слышимость отдельно проверяет stend-krik-zvuchit.
+    // EN: Capture the actual stream rather than a fake logger; stend-krik-zvuchit separately tests final audibility.
     logger: { error(m) { oshibki.push('ЧЕРЕЗ-ЛОГГЕР:' + m); } },
     servisy, oshibki,
   };
 }
 
-const katalog = mkdtempSync(join(tmpdir(), 'pamyat-sb-'));
+const katalog = vremennyj(join(tmpdir(), 'pamyat-sb-'));
 
 proba('стенд годен: плагин объявляет сервис pamyat', () => {
   const ctx = podelnyjCtx();
@@ -158,7 +163,9 @@ proba('ВОРОТА ВНУТРИ: отказ человека отличаетс
 
 proba('НАСТРОЙКА ДЕЙСТВУЕТ: предел чтения берётся из конфига, а не из литерала', () => {
   const ctx = podelnyjCtx();
-  apply(ctx, { putBazy: join(katalog, 'g.db'), agent: 'stend', chtenieSkolko: 2 });
+  // RU: klassyZnaniy задан явно, чтобы отбор по классу не подменил проверку предела чтения.
+  // EN: Set klassyZnaniy explicitly so class selection does not replace the read-limit test.
+  apply(ctx, { putBazy: join(katalog, 'g.db'), agent: 'stend', chtenieSkolko: 2, klassyZnaniy: ['zametka'] });
   const p = ctx.servisy.pamyat;
   for (let i = 0; i < 5; i++) p.zapisat({ klass: 'zametka', soderzhim: 'запись ' + i });
   const skolko = p.prochitat().length;
@@ -167,7 +174,9 @@ proba('НАСТРОЙКА ДЕЙСТВУЕТ: предел чтения берё
 
 proba('НАСТРОЙКА: без ключа работает умолчание схемы', () => {
   const ctx = podelnyjCtx();
-  apply(ctx, { putBazy: join(katalog, 'h.db'), agent: 'stend' });
+  // RU: Явный перечень изолирует умолчание chtenieSkolko от отбора по классам.
+  // EN: An explicit list isolates the chtenieSkolko default from class selection.
+  apply(ctx, { putBazy: join(katalog, 'h.db'), agent: 'stend', klassyZnaniy: ['zametka'] });
   const p = ctx.servisy.pamyat;
   for (let i = 0; i < 25; i++) p.zapisat({ klass: 'zametka', soderzhim: 'з' + i });
   const skolko = p.prochitat().length;
@@ -228,42 +237,22 @@ proba('ЕДИНСТВЕННЫЙ ПУТЬ: даже когда логгер ЕС�
   } finally { console.error = prezhnij; }
   const cherez = vyzovy.filter((v) => v.startsWith('logger:')).length;
   const konsol = vyzovy.filter((v) => v.startsWith('console:')).length;
-  // 🔴 03.09 ожидание ПЕРЕВЁРНУТО. Прежде здесь требовалось «через логгер 1,
-  // в консоль 0» — то есть проба закрепляла НЕМОЙ путь как правильный и была
-  // зелёной весь вечер. Логгер cordis 4.0.1 существует, но его сообщения
-  // уходят в буфер, который никто не читает. Верное ожидание обратное.
+  // RU: Ожидаем вывод в консоль, а не в logger cordis 4.0.1 с непрочитанным буфером.
+  // EN: Expect console output rather than the cordis 4.0.1 logger’s unread buffer.
   if (cherez !== 0) throw new Error('пакет писал в ctx.logger (' + cherez + ') — это НЕМОЙ путь, развилка вернулась');
-  // 🔴 Проверяем НАПРАВЛЕНИЕ вывода, а не число строк. Прежде здесь стояло «ровно одна»,
-  // и правка 03.09.2026 (безусловный след подъёма) честно её сломала: строк стало две.
-  // Число строк — деталь поведения, а требование пробы — «голос идёт в консоль, а не в
-  // немой логгер». Закрепив число, проба охраняла бы не смысл, а свою редакцию предмета.
+  // RU: Проверяем направление вывода, а не точное число строк: дополнительный след подъёма не должен ломать требование слышимости.
+  // EN: Check output destination rather than exact line count: an additional startup trace must not break the audibility requirement.
   if (konsol < 1) throw new Error('в консоли пусто — голос модуля не слышен вовсе');
-  // И отдельно: имя И версия в каждой строке (правило фермы 03.09.2026).
+  // RU: Каждая строка должна содержать имя пакета и версию.
+  // EN: Each line must contain the package name and version.
   const bezVersii = vyzovy.filter((v) => v.startsWith('console:') && !/\[dsh-pamyat-core \S+\]/.test(v));
   if (bezVersii.length) {
     throw new Error('строк без версии в имени: ' + bezVersii.length + ' — например ' + bezVersii[0].slice(0, 90));
   }
 });
 
-// ── КАЖДЫЙ СТЕНД НА ДИСКЕ ЗВАН ИЗ npm test ──────────────────────────────────
-// 🔴 ЗАВЕДЕНО 04.09.2026 ПО ЗАМЕРУ. `scripts.test` был цепочкой имён, ведённой РУКОЙ,
-// и называл шесть стендов из девяти: не звались stend-filtra-vhoda (31 проба),
-// stend-dolgovremennoj (10), stend-ocheredi-dostavki (19) — шестьдесят проб самой
-// свежей работы. У получателя `npm test` давал код 0 и про них не говорил ничего.
-// Стенд, лежащий на диске и не званный, неотличим от отсутствующего — и хуже него,
-// потому что числится сделанным.
-//
-// 🔴 ПЕРВОЕ ЛЕЧЕНИЕ БЫЛО СЛАБЫМ, И ЭТО ИЗМЕРЕНО, А НЕ ПРЕДПОЛОЖЕНО. Сперва сюда
-// вписали все девять имён и завели пробу «имена на диске = имена в команде». Прогон у
-// получателя (чистая установка одного ядра) показал второй порок той же цепочки: `&&`
-// обрывается на первом ненулевом коде, а stend-dolgovremennoj там ЗАКОННО слепнет —
-// нет пакета секретаря рядом. Получатель увидел ОДИН стенд из девяти вместо шести.
-// Поэтому перечень не сверяется, а СНИМАЕТСЯ С ДИСКА прогонщиком test/vse-stendy.mjs:
-// «забыли вписать» становится невозможным по устройству, а не по внимательности.
-// Проба сторожит теперь ДВА условия механизма, а не список имён.
-// ⚠️ ГРАНИЦА: проба смотрит на устройство прогонщика (обход каталога), а не на то, что
-// каждый стенд внутри что-то проверяет. Пустой файл test/stend-пустышка.mjs он подхватит
-// и зачтёт зелёным. Закрыто «забыли позвать», не закрыто «позвали пустышку».
+// RU: npm test должен перечислять стенды с диска через test/vse-stendy.mjs и продолжать после ненулевого кода. Ручной список забывает новые файлы, цепочка && пропускает всё после слепого стенда. Проверяем устройство обхода; пустой stend-*.mjs он тоже зачтёт успешным, содержимое проб здесь не проверяется.
+// EN: npm test must discover suites on disk through test/vse-stendy.mjs and continue after nonzero exit codes. Manual lists omit new files; && chains skip everything after an unobservable suite. Check discovery structure; it also counts an empty stend-*.mjs as successful, so probe contents are outside this check.
 proba('🔴 npm test зовёт ПРОГОНЩИКА, а не список имён рукой', () => {
   const komanda = JSON.parse(
     readFileSync(new URL('../package.json', import.meta.url), 'utf8')).scripts?.test ?? '';
@@ -279,7 +268,8 @@ proba('🔴 ПРОГОНЩИК берёт перечень С ДИСКА (обх
     throw new Error('в прогонщике нет обхода каталога — перечень стендов стал записанным,'
       + ' и новый стенд снова можно забыть');
   }
-  // И он обязан видеть все стенды, что лежат рядом: сверяем ЧИСЛО, снятое обходом.
+  // RU: Сверяем число обнаруженных стендов с обходом каталога.
+  // EN: Compare discovered suite count with directory traversal.
   const naDiske = readdirSync(new URL('.', import.meta.url))
     .filter((f) => f.startsWith('stend-') && f.endsWith('.mjs')).sort();
   if (naDiske.length < 2) {

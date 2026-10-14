@@ -1,0 +1,9 @@
+[Unit]
+Description=Check agent session writer conflicts once a minute
+[Timer]
+OnBootSec=60
+OnUnitInactiveSec=60
+AccuracySec=5
+Unit=session-writer-watch.service
+[Install]
+WantedBy=timers.target

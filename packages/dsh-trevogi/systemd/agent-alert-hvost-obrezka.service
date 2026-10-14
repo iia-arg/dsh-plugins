@@ -1,0 +1,11 @@
+[Unit]
+Description=Обрезка хвоста тревог · Alert tail trimming
+
+[Service]
+User=root
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+Type=oneshot
+ExecStart=/usr/local/sbin/agent-alert-hvost-obrezka

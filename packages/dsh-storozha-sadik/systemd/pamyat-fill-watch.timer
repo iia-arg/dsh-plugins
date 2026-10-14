@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily sadik memory filling check at 05:00 Moscow
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 UTC
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

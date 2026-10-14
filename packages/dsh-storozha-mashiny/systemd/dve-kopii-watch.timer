@@ -1,0 +1,12 @@
+# RU: Раз в сутки: при красном тревога повторяется на каждом прогоне, пока не починят.
+# EN: Once a day: while red, the alert repeats on every run until fixed.
+[Unit]
+Description=Суточный прогон dve-kopii-watch · Daily run of dve-kopii-watch
+
+[Timer]
+OnCalendar=*-*-* 06:47:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll socseti status once a minute (B-N-1496)
+
+[Timer]
+OnBootSec=60
+OnUnitInactiveSec=60
+AccuracySec=5
+Unit=socseti-watch.service
+
+[Install]
+WantedBy=timers.target

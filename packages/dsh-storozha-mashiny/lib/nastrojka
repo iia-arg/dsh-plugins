@@ -1,0 +1,132 @@
+#!/bin/sh
+# RU: nastrojka — ЕДИНСТВЕННОЕ место пакета dsh-storozha-mashiny, где решается, откуда взять настройку.
+# EN: nastrojka — the ONLY place in the dsh-storozha-mashiny package that decides where a setting comes from.
+#
+# RU: Вызов: nastrojka КЛЮЧ [УМОЛЧАНИЕ]  → печатает значение одной строкой на stdout, код 0.
+# EN: Usage: nastrojka KEY [DEFAULT]      → prints the value as one line on stdout, exit 0.
+#
+# RU: Порядок (первое непустое побеждает):
+# RU:   1. переменная окружения КЛЮЧ (пустая считается незаданной — как ${VAR:-…} в sh);
+# RU:   2. строка КЛЮЧ=значение в файле настроек (путь — переменная DSH_STOROZHA_MASHINY_CONF,
+# RU:      умолчание /etc/dsh-storozha-mashiny/dsh-storozha-mashiny.conf);
+# RU:   3. УМОЛЧАНИЕ из второго аргумента (переданное пустое "" — тоже годное умолчание: «выключено»).
+# RU: Нет ни переменной, ни строки в файле, ни второго аргумента → ГРОМКИЙ отказ: строка в stderr, код 2.
+# EN: Order (the first non-empty one wins):
+# EN:   1. the environment variable KEY (an empty one counts as unset — like ${VAR:-…} in sh);
+# EN:   2. a KEY=value line in the settings file (path — variable DSH_STOROZHA_MASHINY_CONF,
+# EN:      default /etc/dsh-storozha-mashiny/dsh-storozha-mashiny.conf);
+# EN:   3. DEFAULT from the second argument (an explicit empty "" is a valid default too: "off").
+# EN: No variable, no file line and no second argument → a LOUD refusal: one stderr line, exit 2.
+#
+# RU: Зачем: модули без своего юнита зовут руками, через sudo и из чужих служб. sudo сбрасывает окружение,
+# RU: чужая служба его не наследует — переменная «доехала» только у того, кто её задал. Файл настроек
+# RU: читается одинаково из любого вызывающего, поэтому машинные значения живут в нём, а не в окружении.
+# EN: Why: modules without their own unit are run by hand, via sudo and from other services. sudo resets the
+# EN: environment and another service does not inherit it — a variable "arrives" only for whoever set it. The
+# EN: settings file reads the same from any caller, so machine values live there, not in the environment.
+#
+# RU: Формат файла: строки КЛЮЧ=значение; пустые строки и строки, начинающиеся с «#», пропускаются;
+# RU: пробелы в начале строки допустимы; значение — всё после первого «=»; « #» или табуляция+# внутри
+# RU: значения — отказ 2 с именем ключа. Хвостовые пробелы/табуляции снимаются, затем одна пара внешних кавычек "…" или '…'.
+# RU: \r в конце (файл из Windows) снимается; при повторе ключа побеждает ПОСЛЕДНЯЯ строка
+# RU: (как при `. файл` в sh); `КЛЮЧ=` с пустым значением считается незаданным. Подстановок ($, `, *) НЕТ —
+# RU: значение берётся буквально, шаблон /opt/*/x остаётся шаблоном.
+# EN: File format: KEY=value lines; empty lines and lines starting with "#" are skipped; leading spaces are
+# EN: allowed; the value is everything after the first "="; " #" or tab+# inside a value gives exit 2 naming the key.
+# EN: Trailing spaces/tabs are removed, then one pair of outer quotes "…" or '…'; a trailing \r (Windows) is removed.
+# EN: On a repeated key the LAST line wins (as with `. file` in sh); `KEY=` with
+# EN: an empty value counts as unset. There is NO expansion ($, `, *) — the value is taken literally, a pattern
+# EN: /opt/*/x stays a pattern.
+#
+# RU: Отказ 2 вместо умолчания: путь настроек существует, но не обычный читаемый файл; ключ не похож на имя переменной;
+# RU: в значении выбранного ключа хвостовое пояснение « #» или табуляция+#.
+# EN: Refusal 2 instead of a default: the settings path exists but is not a readable regular file; invalid variable name;
+# EN: a trailing " #" or tab+# remark in the requested key's value.
+#
+# RU: Чего НЕ ловит: опечатку в имени ключа внутри файла (такая строка просто не совпадёт, и сработает
+# RU: умолчание); значение, неверное по смыслу (проверяет сам модуль); переменную окружения, заданную
+# RU: случайно, — она всегда главнее файла.
+# EN: What it does NOT catch: a typo in a key name inside the file (that line simply does not match and the
+# EN: default applies); a value wrong in meaning (the module checks that); an environment variable set by
+# EN: accident — it always beats the file.
+#
+# RU: Коды: 0 — значение напечатано · 2 — отказ (причина одной строкой в stderr).
+# EN: Exit codes: 0 — value printed · 2 — refusal (reason as one stderr line).
+set -u
+
+# RU: Проверка вызова. EN: Call check.
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+  echo "nastrojka: ОТКАЗ · REFUSED: вызов · usage: nastrojka KEY [DEFAULT]" >&2
+  exit 2
+fi
+klyuch=$1
+# RU: Ключ — только имя переменной: иначе eval ниже стал бы исполнением чужого текста.
+# EN: The key must be a variable name: otherwise the eval below would execute foreign text.
+case $klyuch in
+  ''|[0-9]*|*[!A-Za-z0-9_]*)
+    echo "nastrojka: ОТКАЗ · REFUSED: ключ «$klyuch» не имя переменной · key «$klyuch» is not a variable name" >&2
+    exit 2 ;;
+esac
+
+# RU: 1. Окружение. EN: 1. Environment.
+eval "znachenie=\${$klyuch-}"
+if [ -n "$znachenie" ]; then
+  printf '%s\n' "$znachenie"
+  exit 0
+fi
+
+# RU: 2. Файл настроек. EN: 2. Settings file.
+conf=${DSH_STOROZHA_MASHINY_CONF:-/etc/dsh-storozha-mashiny/dsh-storozha-mashiny.conf}
+if [ -e "$conf" ]; then
+  if [ ! -f "$conf" ] || [ ! -r "$conf" ]; then
+    echo "nastrojka: ОТКАЗ · REFUSED: файл настроек $conf есть, но не читается этой учёткой · settings file $conf exists but is not readable by this account" >&2
+    exit 2
+  fi
+  znachenie=
+  while IFS= read -r stroka || [ -n "$stroka" ]; do
+    # RU: \r в конце и пробелы в начале — снять. EN: strip a trailing \r and leading blanks.
+    stroka=${stroka%"$(printf '\r')"}
+    while :; do
+      case $stroka in
+        ' '*|'	'*) stroka=${stroka#?} ;;
+        *) break ;;
+      esac
+    done
+    case $stroka in
+      ''|'#'*) continue ;;
+      "$klyuch="*) znachenie=${stroka#*=}
+        # RU: Комментарий — только с начала строки. « #» внутри значения — громкий отказ с ключом,
+        # RU: а не тихое склеивание пояснения со значением (иначе «PUT=/x # пояснение» даст путь «/x # пояснение»).
+        # EN: A comment only starts a line. " #" inside a value is a loud refusal naming the key, not a silent
+        # EN: merge of the remark into the value (otherwise "PUT=/x # note" yields the path "/x # note").
+        case $znachenie in
+          *' #'*|*'	#'*)
+            echo "nastrojka: ОТКАЗ · REFUSED: в $conf у ключа $klyuch пояснение после значения (« #») — комментарий только с начала строки · key $klyuch in $conf has a trailing remark (\" #\") — comments only at line start" >&2
+            exit 2 ;;
+        esac ;;
+    esac
+  done < "$conf"
+  # RU: хвостовые пробелы до снятия внешних кавычек; значение остаётся буквальным.
+  # EN: remove trailing blanks before outer quotes; retain literal content.
+  while :; do
+    case $znachenie in *' '|*'	') znachenie=${znachenie%?} ;; *) break ;; esac
+  done
+  # RU: одна пара внешних кавычек. EN: one pair of outer quotes.
+  case $znachenie in
+    \"*\") znachenie=${znachenie#\"}; znachenie=${znachenie%\"} ;;
+    \'*\') znachenie=${znachenie#\'}; znachenie=${znachenie%\'} ;;
+  esac
+  if [ -n "$znachenie" ]; then
+    printf '%s\n' "$znachenie"
+    exit 0
+  fi
+fi
+
+# RU: 3. Умолчание. EN: 3. Default.
+if [ $# -eq 2 ]; then
+  printf '%s\n' "$2"
+  exit 0
+fi
+
+echo "nastrojka: ОТКАЗ · REFUSED: $klyuch не задан — нет переменной окружения, строки в $conf и умолчания · $klyuch is not set — no environment variable, no line in $conf, no default" >&2
+exit 2

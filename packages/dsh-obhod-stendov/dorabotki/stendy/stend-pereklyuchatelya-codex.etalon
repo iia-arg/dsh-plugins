@@ -1,0 +1,88 @@
+=== G: исправное
+   ПОДМЕНЕНО: KATALOG DOMA ALERT ZAMOK SVESTI
+   переключено на подписку 4: coder-gateway@alfa (3→4), coder-gateway@beta (3→4), coder-gateway@gamma (3→4), coder-gateway-marc (3→4) · перезапуск не нужен: новый ход — новый процесс Codex; идущий ход доживает на прежней
+   доступ сведён: прежняя подписка шлюзам больше не читается
+   код 0
+   ссылки: alfa→p4/auth.json beta→p4/auth.json gamma→p4/auth.json marc→p4/auth.json · тревог: 0
+   — повтор 4:
+   ПОДМЕНЕНО: KATALOG DOMA ALERT ZAMOK SVESTI
+   уже на подписке 4: coder-gateway@alfa, coder-gateway@beta, coder-gateway@gamma, coder-gateway-marc — ничего не менялось
+   код 0
+   ссылки: alfa→p4/auth.json beta→p4/auth.json gamma→p4/auth.json marc→p4/auth.json · тревог: 0
+   — обратно 3:
+   ПОДМЕНЕНО: KATALOG DOMA ALERT ZAMOK SVESTI
+   переключено на подписку 3: coder-gateway@alfa (4→3), coder-gateway@beta (4→3), coder-gateway@gamma (4→3), coder-gateway-marc (4→3) · перезапуск не нужен: новый ход — новый процесс Codex; идущий ход доживает на прежней
+   доступ сведён: прежняя подписка шлюзам больше не читается
+   код 0
+   ссылки: alfa→p3/auth.json beta→p3/auth.json gamma→p3/auth.json marc→p3/auth.json · тревог: 0
+=== V: ввод вне перечня
+   довод «»:
+   ПОДМЕНЕНО: KATALOG DOMA ALERT ZAMOK SVESTI
+   ОТКАЗ: зов: pereklyuchatel-codex <3|4> (получено: ничего) · сейчас: coder-gateway@alfa → <T>/p3/auth.json · coder-gateway@beta → <T>/p3/auth.json · coder-gateway@gamma → <T>/p3/auth.json · coder-gateway-marc → <T>/p3/auth.json
+   код 2
+   довод «--dry-run»:
+   ПОДМЕНЕНО: KATALOG DOMA ALERT ZAMOK SVESTI
+   ОТКАЗ: зов: pereklyuchatel-codex <3|4> (получено: --dry-run) · сейчас: coder-gateway@alfa → <T>/p3/auth.json · coder-gateway@beta → <T>/p3/auth.json · coder-gateway@gamma → <T>/p3/auth.json · coder-gateway-marc → <T>/p3/auth.json
+   код 2
+   довод «5»:
+   ПОДМЕНЕНО: KATALOG DOMA ALERT ZAMOK SVESTI
+   ОТКАЗ: зов: pereklyuchatel-codex <3|4> (получено: 5) · сейчас: coder-gateway@alfa → <T>/p3/auth.json · coder-gateway@beta → <T>/p3/auth.json · coder-gateway@gamma → <T>/p3/auth.json · coder-gateway-marc → <T>/p3/auth.json
+   код 2
+   ссылки: alfa→p3/auth.json beta→p3/auth.json gamma→p3/auth.json marc→p3/auth.json · тревог: 0
+=== R: порча — у цели НЕПУСТОЙ refresh
+   внесено: refresh производного 4 = True
+   ПОДМЕНЕНО: KATALOG DOMA ALERT ZAMOK SVESTI
+   ОТКАЗ: в производном подписки 4 НЕПУСТОЙ refresh_token — шлюзам такой не даём
+   код 2
+   ссылки: alfa→p3/auth.json beta→p3/auth.json gamma→p3/auth.json marc→p3/auth.json · тревог: 0
+=== A: порча — производный 4 несёт аккаунт 3
+   внесено: акк производного 4 = akk-3
+   ПОДМЕНЕНО: KATALOG DOMA ALERT ZAMOK SVESTI
+   ОТКАЗ: производный подписки 4 — ДРУГОГО аккаунта, чем её полный: смешение подписок, переключать некуда
+   код 2
+   ссылки: alfa→p3/auth.json beta→p3/auth.json gamma→p3/auth.json marc→p3/auth.json · тревог: 0
+=== F: порча — дом gamma: ФАЙЛ вместо ссылки
+   внесено: gamma/auth.json файл
+   ПОДМЕНЕНО: KATALOG DOMA ALERT ZAMOK SVESTI
+   ОТКАЗ: <T>/doma/gamma/auth.json — НЕ ссылка (копия или нет файла): чинить руками, переключатель не трогает
+   код 2
+   ссылки: alfa→p3/auth.json beta→p3/auth.json gamma→ФАЙЛ marc→p3/auth.json · тревог: 0
+=== U: порча помощника — «выдал» (код 0), а ACL не поставил; цель 0600 root
+   внесено: root 600, помощник подменён лжецом
+   ПОДМЕНЕНО: KATALOG DOMA ALERT ZAMOK SVESTI
+   🔴 переключение на подписку 4 НЕ СОШЛОСЬ: <T>/doma/alfa/auth.json НЕ читается от coder-gateway@alfa.service · <T>/doma/beta/auth.json НЕ читается от coder-gateway@beta.service · <T>/doma/gamma/auth.json НЕ читается от coder-gateway@gamma.service · <T>/doma/m
+   код 1
+   ссылки: alfa→p3/auth.json beta→p3/auth.json gamma→p3/auth.json marc→p3/auth.json · тревог: 1
+=== K: ключ PK_STEND
+   — с ключом, довода нет:
+   ПОДМЕНЕНО: KATALOG DOMA ALERT ZAMOK SVESTI
+   ОТКАЗ: зов: pereklyuchatel-codex <3|4> (получено: ничего) · сейчас: coder-gateway@alfa → <T>/p3/auth.json · coder-gateway@beta → <T>/p3/auth.json · coder-gateway@gamma → <T>/p3/auth.json · coder-gateway-marc → <T>/p3/auth.json
+   код 2
+   — без ключа (PK_* заданы), довода нет:
+   ИГНОРИРУЮ (нет PK_STEND=1), беру боевые: PK_KATALOG PK_DOMA PK_ALERT PK_ZAMOK PK_SVESTI
+   ОТКАЗ: зов: pereklyuchatel-codex <3|4> (получено: ничего) · сейчас: coder-gateway@alfa → /etc/claude-oauth/codex-podpiska-3/auth.json · coder-gateway@beta → /etc/claude-oauth/codex-podpiska-3/auth.json · coder-gateway@gamma → /etc/claude-oauth/codex-podpiska-3/auth.json · coder-gateway-marc 
+   код 2
+   — ключ 2, довод 4:
+   ОТКАЗ: PK_STEND=«2» — допустимо только 1 (стенд) или пусто (бой); ничего не тронуто
+   код 2
+   ссылки: alfa→p3/auth.json beta→p3/auth.json gamma→p3/auth.json marc→p3/auth.json · тревог: 0
+   — ключ 1, PK_SVESTI не задан, довод 4:
+   ОТКАЗ: PK_STEND=1 без PK_SVESTI — стенд тронул бы БОЕВЫЕ права токенов; ничего не тронуто
+   код 2
+   ссылки: alfa→p3/auth.json beta→p3/auth.json gamma→p3/auth.json marc→p3/auth.json · тревог: 0
+   боевые ссылки до/после: 6f536ac6 / 6f536ac6
+=== Д: доступ ACL — цель без ACL → выдан → переключено → прежняя отозвана (B-N-1621)
+   до: p3 читают: coders marc ; p4 читают: ; 
+   ПОДМЕНЕНО: KATALOG DOMA ALERT ZAMOK SVESTI
+   переключено на подписку 4: coder-gateway@alfa (3→4), coder-gateway@beta (3→4), coder-gateway@gamma (3→4), coder-gateway-marc (3→4) · перезапуск не нужен: новый ход — новый процесс Codex; идущий ход доживает на прежней
+   доступ сведён: прежняя подписка шлюзам больше не читается
+   код 0
+   ссылки: alfa→p4/auth.json beta→p4/auth.json gamma→p4/auth.json marc→p4/auth.json · тревог: 0
+   после 4: p3 читают: ; p4 читают: coders marc ; 
+   — обратно 3:
+   ПОДМЕНЕНО: KATALOG DOMA ALERT ZAMOK SVESTI
+   переключено на подписку 3: coder-gateway@alfa (4→3), coder-gateway@beta (4→3), coder-gateway@gamma (4→3), coder-gateway-marc (4→3) · перезапуск не нужен: новый ход — новый процесс Codex; идущий ход доживает на прежней
+   доступ сведён: прежняя подписка шлюзам больше не читается
+   код 0
+   ссылки: alfa→p3/auth.json beta→p3/auth.json gamma→p3/auth.json marc→p3/auth.json · тревог: 0
+   после 3: p3 читают: coders marc ; p4 читают: ; 

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# proba-v-katalog — прогнать команду во ВРЕМЕННОМ каталоге и убрать его, ВСЕГДА выйдя наружу.
+#
+# 🔴 ЗАЧЕМ. За сутки я семь раз удалила временный каталог, стоя внутри него: оболочка теряет
+# рабочий каталог, следующая команда падает с «getcwd: cannot access parent directories», и
+# вывод выглядит поломкой предмета, а не моей ошибкой. Дважды обещала себе «выходить наружу»
+# и дважды не исполнила — значит правило здесь не держит, держит только инструмент.
+#
+# ЧТО ДЕЛАЕТ: создаёт каталог, выполняет в нём команду, возвращается в БЕЗОПАСНЫЙ каталог и
+# только потом убирает временный. Код возврата — команды, не уборки.
+#
+# ГДЕ НЕ ПРИМЕНЯЕТСЯ: не для боевых каталогов и не для того, что должно пережить прогон —
+# каталог удаляется ВСЕГДА, даже при отказе команды. Нужен след для разбора — не этот
+# инструмент. И он не прячет вывод: всё печатается как есть.
+# EN: proba-v-katalog — run a command in a TEMPORARY directory and remove it, ALWAYS having stepped outside.
+#     🔴 WHY. In one day I removed a temporary directory seven times while standing inside it: the shell loses
+#     its working directory, the next command fails with "getcwd: cannot access parent directories", and the
+#     output looks like a breakage of the subject, not my mistake. Twice I promised myself to "step outside" and
+#     twice did not — so a rule does not hold here, only a tool does.
+#     WHAT IT DOES: creates the directory, runs the command in it, returns to a SAFE directory and only then
+#     removes the temporary one. The exit code is the command's, not the cleanup's.
+#     WHERE IT DOES NOT APPLY: not for production directories and not for what must survive the run — the
+#     directory is removed ALWAYS, even if the command fails. Need a trace for analysis — not this tool. And it
+#     does not hide output: everything is printed as is.
+set -uo pipefail
+# Файл настройки пакета dsh-pribory: строки «КЛЮЧ=значение», «#» — комментарий; берётся последнее вхождение.
+# Путь меняет DSH_PRIBORY_CONF. Порядок: переменная → файл → нейтральное умолчание; нет ничего — СЛЕПОТА, код 2.
+# EN: Settings file of the dsh-pribory package: "KEY=value" lines, a line starting with "#" is a comment; the
+#     last occurrence wins.
+#     DSH_PRIBORY_CONF changes the path. Order: variable → file → neutral default; nothing at all — BLINDNESS,
+#     code 2.
+DSH_PRIBORY_CONF="${DSH_PRIBORY_CONF:-/etc/dsh-pribory/dsh-pribory.conf}"
+# « #» в значении — громкий отказ (stderr, код 2), а не склеивание пояснения со значением; зовущий обязан выйти: X=$(konf …) || exit 2.
+# EN: " #" in a value is a loud refusal (stderr, code 2), not gluing the note into the value; the caller must exit: X=$(konf …) || exit 2.
+konf() { local v; v=$(sed -n "s/^[[:space:]]*$1[[:space:]]*=//p" "$DSH_PRIBORY_CONF" 2>/dev/null | tail -n 1) || true; case "$v" in *[[:space:]]#*) echo "ОТКАЗ: значение ключа $1 в $DSH_PRIBORY_CONF содержит « #» — комментарий допускается только с начала строки" >&2; return 2;; esac; v=$(printf '%s' "$v" | sed "s/^[[:space:]]*//;s/[[:space:]]*$//"); printf '%s' "${v:-$2}"; }
+BEZOPASNYJ="${PROBA_BEZOPASNYJ:-$(konf PROBA_BEZOPASNYJ /)}" || exit 2
+[ $# -gt 0 ] || { echo "proba-v-katalog <команда…>   — выполняется во временном каталоге" >&2; exit 2; }
+KAT=$(mktemp -d) || { echo "🔴 не создать временный каталог" >&2; exit 2; }
+cd "$KAT" || { echo "🔴 не войти в $KAT" >&2; rm -rf "$KAT"; exit 2; }
+"$@"
+KOD=$?
+cd "$BEZOPASNYJ" || cd /
+rm -rf "$KAT"
+exit $KOD

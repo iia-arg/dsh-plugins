@@ -1,0 +1,258 @@
+#!/bin/bash
+# refresh-skill-links — собрать каталог скиллов движка Claude Code из ДВУХ источников.
+#
+# Зачем: у движка каталог скиллов один — <config>/.claude/skills. Источников два:
+#   <общий набор>            — набор координатора, доставляется rsync --delete (чужой, не трогать);
+#   <полка агента>           — полка агента (своё, rsync координатора её не касается).
+# Скилл, положенный в первый каталог агентом, стирается ближайшей доставкой — это уже
+# случалось трижды за 20-21.08.2026. Поэтому своё живёт на полке, а здесь — только ссылки.
+#
+# Проверено 21.08.2026 живой сессией движка: символическая ссылка на каталог скилла
+# работает — скилл и виден в списке, и ТЕЛО читается. Вложенный подкаталог НЕ работает:
+# сканер не рекурсивен, скиллы должны лежать первым уровнем.
+#
+# 🔴 ГРАНИЦЫ. Скрипт трогает ТОЛЬКО содержимое TARGET и ТОЛЬКО символические ссылки.
+# Настоящий файл или каталог внутри TARGET он не удаляет никогда — сообщает и уходит с
+# ненулевым кодом. Источники не изменяет вовсе. При совпадении имён в обоих источниках
+# берёт полку, ГОВОРИТ об этом и уходит с кодом 1: молчаливый выбор одного из двух — это
+# ложь про состав, а код 0 при таком выборе делает её невидимой для того, кто зовёт скрипт
+# не руками.
+#
+# 🔴 РАСХОЖДЕНИЕ КАТАЛОГА И ПОЛЯ `name` — ГОВОРЮ, НО КОД НЕ ПОДНИМАЮ, и вот почему.
+# Скилл при таком расхождении РАБОТАЕТ и зовётся ПО ПОЛЮ. Ломается не сборка, а поиск
+# исходника: каталог на диске называется иначе, и человек, идущий от имени скилла к его
+# файлу, не найдёт. Замер 25.08.2026: таких скиллов было три, ВСЕ в общем наборе,
+# то есть в чужой раздаче, которую агент не правит и которая затирается доставкой (после
+# доставки 00:20 UTC их ноль). Подними я код — ежедневная тревога о том, что чинить не
+# мне, и через неделю тревоги перестанут читать. Это дороже самой беды.
+#
+# 🔴 А ВОТ ДУБЛЬ ПОЛЯ `name` — ОТКАЗ С КОДОМ 1, ХОТЯ РАЗДАЧА ТОЖЕ ЧУЖАЯ. Разница в цене:
+# расхождение каталог/поле косметическое, всё работает; дубль поля означает, что два
+# скилла получают у платформы ОДНО имя, и один из них становится недостижим. Пропажа
+# стоит тревоги, даже чужой. Какая именно редакция победит — НЕ УСТАНОВЛЕНО: обе лежат
+# в одном корне (каталог движка) через ссылки, то есть ранг источника у них одинаков,
+# и выбор определяется чем-то ещё, чего я не измеряла.
+# EN: refresh-skill-links — build the Claude Code engine's skill directory from TWO sources.
+#     Why: the engine has one skill directory — <config>/.claude/skills. There are two sources:
+#     <shared set> — the coordinator's set, delivered by rsync --delete (someone else's, do not touch);
+#     <agent shelf> — the agent's shelf (its own, the coordinator's rsync does not touch it).
+#     A skill put into the first directory by the agent is wiped by the next delivery — this happened three
+#     times on 20-21.08.2026. So its own skills live on the shelf, and here there are only links.
+#     Checked 21.08.2026 by a live engine session: a symbolic link to a skill directory works — the skill is
+#     both visible in the list and its BODY is read. A nested subdirectory does NOT work: the scanner is not
+#     recursive, skills must lie at the first level.
+#     🔴 LIMITS. The script touches ONLY the contents of TARGET and ONLY symbolic links. A real file or directory
+#     inside TARGET it never removes — it reports and exits with a non-zero code. It does not change the sources
+#     at all. On a name match in both sources it takes the shelf, SAYS so and exits with code 1: a silent choice
+#     of one of two is a lie about the composition, and code 0 with such a choice makes it invisible to whoever
+#     calls the script not by hand.
+#     🔴 A MISMATCH BETWEEN THE DIRECTORY AND THE `name` FIELD — I SAY IT, BUT DO NOT RAISE THE CODE, and here is
+#     why. With such a mismatch the skill WORKS and is called BY THE FIELD. What breaks is not the build but
+#     finding the source: the directory on disk is named differently, and a person going from the skill name to
+#     its file will not find it. Measured 25.08.2026: there were three such skills, ALL in the shared set, i.e.
+#     in someone else's distribution, which the agent does not edit and which delivery overwrites (after the
+#     00:20 UTC delivery there are zero). Were I to raise the code — a daily alarm about something that is not
+#     mine to fix, and in a week alarms stop being read. That costs more than the trouble itself.
+#     🔴 BUT A DUPLICATE `name` FIELD IS A REFUSAL WITH CODE 1, EVEN THOUGH THE DISTRIBUTION IS ALSO SOMEONE
+#     ELSE'S. The difference is in price: a directory/field mismatch is cosmetic, everything works; a duplicate
+#     field means two skills get ONE name from the platform, and one of them becomes unreachable. A loss is
+#     worth an alarm, even someone else's. Which edition wins is NOT ESTABLISHED: both lie in one root (the
+#     engine directory) via links, i.e. their source rank is the same, and the choice is determined by something
+#     else that I did not measure.
+set -u
+# Файл настройки пакета dsh-pribory: строки «КЛЮЧ=значение», «#» — комментарий; берётся последнее вхождение.
+# Путь меняет DSH_PRIBORY_CONF. Порядок: переменная → файл → нейтральное умолчание; нет ничего — СЛЕПОТА, код 2.
+# EN: Settings file of the dsh-pribory package: "KEY=value" lines, a line starting with "#" is a comment; the
+#     last occurrence wins.
+#     DSH_PRIBORY_CONF changes the path. Order: variable → file → neutral default; nothing at all — BLINDNESS,
+#     code 2.
+DSH_PRIBORY_CONF="${DSH_PRIBORY_CONF:-/etc/dsh-pribory/dsh-pribory.conf}"
+# « #» в значении — громкий отказ (stderr, код 2), а не склеивание пояснения со значением; зовущий обязан выйти: X=$(konf …) || exit 2.
+# EN: " #" in a value is a loud refusal (stderr, code 2), not gluing the note into the value; the caller must exit: X=$(konf …) || exit 2.
+konf() { local v; v=$(sed -n "s/^[[:space:]]*$1[[:space:]]*=//p" "$DSH_PRIBORY_CONF" 2>/dev/null | tail -n 1) || true; case "$v" in *[[:space:]]#*) echo "ОТКАЗ: значение ключа $1 в $DSH_PRIBORY_CONF содержит « #» — комментарий допускается только с начала строки" >&2; return 2;; esac; v=$(printf '%s' "$v" | sed "s/^[[:space:]]*//;s/[[:space:]]*$//"); printf '%s' "${v:-$2}"; }
+
+TARGET="${SKILL_LINKS_TARGET:-$HOME/.claude/skills}"
+# Порядок = приоритет. Пути переопределяются через SKILL_LINKS_SOURCES (через двоеточие)
+# — это нужно, чтобы приёмка гоняла ЭТОТ файл на подставных источниках, а не свою копию
+# с переписанными путями: копия проверяла бы себя, а не установленный скрипт.
+# EN: Order = priority. Paths are overridden via SKILL_LINKS_SOURCES (colon-separated) — this is needed so that
+#     acceptance runs THIS file on stand-in sources, not its own copy with rewritten paths: a copy would check
+#     itself, not the installed script.
+ISTOCHNIKI="${SKILL_LINKS_SOURCES:-$(konf SKILL_LINKS_SOURCES "")}" || exit 2
+IFS=':' read -r -a SOURCES <<< "$ISTOCHNIKI"
+[ "${#SOURCES[@]}" -gt 0 ] || { echo "СЛЕПОТА: источники скиллов не заданы — SKILL_LINKS_SOURCES или ключ SKILL_LINKS_SOURCES в $DSH_PRIBORY_CONF"; exit 2; }
+
+[ -d "$TARGET" ] || { echo "нет каталога $TARGET"; exit 2; }
+[ -L "$TARGET" ] && { echo "$TARGET — символическая ссылка, а должен быть настоящим каталогом"; exit 2; }
+
+# Имя из поля `name` фронтматтера — ТОЛЬКО между первым `---` и следующим `---`:
+# строка `name:` в теле скилла к делу не относится. Пробел после двоеточия обязателен —
+# проверено разбором YAML 25.08.2026: `name:bez-probela` разбирается как строка целиком,
+# а не как пара ключ-значение, то есть полем name не является.
+# EN: The name from the frontmatter `name` field — ONLY between the first `---` and the next `---`: a `name:`
+#     line in the skill body is irrelevant. A space after the colon is mandatory — checked by a YAML parse on
+#     25.08.2026: `name:bez-probela` is parsed as a whole string, not as a key-value pair, i.e. it is not a name
+#     field.
+imya_iz_polya(){
+    awk 'NR==1{ if($0!="---") exit; next }
+         $0=="---"{ exit }
+         /^name:[[:space:]]/ { sub(/^name:[[:space:]]*/,"");
+                               sub(/[[:space:]]+$/,"");
+                               gsub(/^["'"'"']|["'"'"']$/,"");
+                               print; exit }' "$1"
+}
+
+# RU: Недоступный источник не даёт доказать отсутствие навыков: ссылки не меняем.
+# EN: An unavailable source cannot prove missing skills: preserve every existing link.
+for src in "${SOURCES[@]}"; do
+    [ -d "$src" ] && [ -r "$src" ] && [ -x "$src" ] || { echo "источник отсутствует или не читается: $src; ссылок не трогаю"; exit 1; }
+done
+command -v agent-registry >/dev/null 2>&1 || { echo "СЛЕПОТА: agent-registry не установлен (пакет a2a-bus); ссылок не трогаю" >&2; exit 2; }
+rc=0
+raznoimennyh=0
+dublej_polya=0
+bez_polya=0
+declare -A want=()
+declare -A want_pole=()   # поле name -> каталог, в котором оно уже встретилось · EN: name field -> the directory where it was already met
+for src in "${SOURCES[@]}"; do
+    [ -d "$src" ] || { echo "источник отсутствует: $src"; rc=1; continue; }
+    for d in "$src"/*/; do
+        [ -f "$d/SKILL.md" ] || continue
+        n=$(basename "$d")
+        if [ -n "${want[$n]:-}" ]; then
+            # 🔴 Дубль имени в двух источниках — ОТКАЗ, а не приоритет. Раньше здесь стоял
+            # только текст при коде 0: доставленная редакция молча не использовалась, и
+            # прочитать об этом мог лишь тот, кто запускает скрипт руками, — а запускает его
+            # путевой юнит. Ссылку всё равно ставим по приоритету (иначе скилл пропадёт из
+            # каталога вовсе, а это хуже), но код возврата делает беду видимой.
+            # EN: 🔴 A name duplicated in two sources is a REFUSAL, not a priority. Previously there was only
+            #     text with code 0 here: the delivered edition was silently not used, and only whoever ran the
+            #     script by hand could read about it — while it is run by a path unit. We still put the link by
+            #     priority (otherwise the skill would vanish from the directory entirely, and that is worse),
+            #     but the exit code makes the trouble visible.
+            echo "🔴 дубль имени: $n есть и в ${want[$n]}, и в $src — беру ${want[$n]}, вторая редакция НЕ используется"
+            rc=1
+            continue
+        fi
+        # 🔴 Два независимых источника имени одного предмета: КАТАЛОГ и поле `name`.
+        # Разным потребителям они дают РАЗНОЕ имя, и это не описка, а устройство:
+        #   имя каталога -> имя ссылки здесь, в каталоге движка (это делает ЭТОТ скрипт);
+        #   поле `name`  -> имя, которым скилл зовётся ПЛАТФОРМОЙ и моделью.
+        # Платформа читает поле: dsh-skill-filesystem/lib/index.js:679 (`stringField(
+        # parsed.data,"name")`), оттуда в :597 и :120; имя каталога идёт только в локатор
+        # пути. Доказано и на живом A/B 25.08.2026: у трёх скиллов раздачи поменяли ТОЛЬКО
+        # поле (каталоги linux-* не трогали) — и имя в наборе модели поменялось следом,
+        # с `process-management` на `linux-process-management`.
+        # 🔴 Прежняя редакция этих строк утверждала ОБРАТНОЕ («движок возьмёт каталог») —
+        # вывод был сделан по имени ссылки, без чтения кода платформы. Заменено, а не
+        # приписано рядом: ложное объяснение рядом с работающим кодом убедительнее правды.
+        # EN: 🔴 Two independent sources of one subject's name: the DIRECTORY and the `name` field. They give
+        #     DIFFERENT names to different consumers, and this is not a typo but the design:
+        #     directory name -> the link name here, in the engine directory (THIS script does that);
+        #     `name` field -> the name by which the skill is called by the PLATFORM and the model.
+        #     The platform reads the field: dsh-skill-filesystem/lib/index.js:679
+        #     (`stringField(parsed.data,"name")`), from there to :597 and :120; the directory name goes only
+        #     into the path locator. Also proven by a live A/B on 25.08.2026: for three skills of the
+        #     distribution ONLY the field was changed (the linux-* directories were not touched) — and the name
+        #     in the model's set changed right after, from `process-management` to `linux-process-management`.
+        #     🔴 The previous edition of these lines claimed the OPPOSITE ("the engine will take the directory")
+        #     — the conclusion was drawn from the link name, without reading the platform code. Replaced, not
+        #     appended alongside: a false explanation next to working code is more convincing than the truth.
+        pole=$(imya_iz_polya "$d/SKILL.md")
+        # 🔴 Нет поля name — это НЕ расхождение, а пропажа, и потому код 1, а не строка.
+        # Платформа требует name И description и молча пропускает файл без них
+        # (index.js:679-683). Ссылка при этом встанет и каталог движка покажет лишний
+        # скилл — «настроено, но не действует» в чистом виде. Считаю отдельно от
+        # расхождения: проверка, краснеющая по нескольким причинам сразу, не доказывает
+        # ни одной. ГРАНИЦА: description обязателен ровно так же, а этот скрипт его
+        # не смотрит — скилл без description пропадёт так же тихо, и здесь этого не видно.
+        # EN: 🔴 A missing name field is NOT a mismatch but a loss, and so code 1, not a line. The platform
+        #     requires name AND description and silently skips a file without them (index.js:679-683). The link
+        #     will still be put and the engine directory will show an extra skill — "configured but not in
+        #     effect" in pure form. I count it separately from a mismatch: a check that goes red for several
+        #     reasons at once proves none of them. LIMIT: description is mandatory in exactly the same way, and
+        #     this script does not look at it — a skill without description will vanish just as quietly, and
+        #     that is not visible here.
+        if [ -z "$pole" ]; then
+            echo "🔴 $n: во фронтматтере нет поля name — платформа скилл ПРОПУСТИТ (index.js:681), ссылка встанет, а скилла не будет"
+            bez_polya=$((bez_polya+1))
+            rc=1
+        elif [ "$pole" != "$n" ]; then
+            echo "⚠️  $n: каталог «$n», а поле name «$pole» — платформа зовёт скилл «$pole», ссылка и исходник лежат под «$n»"
+            raznoimennyh=$((raznoimennyh+1))
+        fi
+        # 🔴 Дубль ПОЛЯ name при разных каталогах. Проверка дублей раньше стояла только на
+        # имени каталога — то есть не на том признаке, по которому судит потребитель:
+        # ссылки лягут обе, каталог движка покажет два скилла, а платформа увидит одно имя
+        # и один из них станет недостижим. Отказ, а не предупреждение: это пропажа скилла.
+        # EN: 🔴 A duplicate name FIELD with different directories. The duplicate check used to stand only on the
+        #     directory name — i.e. not on the sign the consumer judges by: both links are put, the engine
+        #     directory shows two skills, the platform sees one name and one of them becomes unreachable. A
+        #     refusal, not a warning: this is a loss of a skill.
+        if [ -n "$pole" ] && [ -n "${want_pole[$pole]:-}" ]; then
+            echo "🔴 дубль поля name: «$pole» и в «${want_pole[$pole]}», и в «$n» — платформа увидит ОДИН скилл, второй недостижим"
+            dublej_polya=$((dublej_polya+1))
+            rc=1
+        elif [ -n "$pole" ]; then
+            want_pole[$pole]="$n"
+        fi
+        want[$n]="$src"
+    done
+done
+
+# С 29.09.2026 (слово владельца: агенту — без эксплуатационных навыков): набор агента — СПИСКОМ РАЗРЕШЁННЫХ
+# из реестра (namerenie.navyki.tolko), а не ручными ссылками: следующий прогон не вернёт снятое. Нет поля (код 3) — полный
+# набор, как было. Разрешённый список, а не запретный: новый навык из доставки к ограниченному агенту САМ не попадёт.
+# ⚠️ НЕ ГРАНИЦА БЕЗОПАСНОСТИ: общий набор читается всеми, свои навыки агент может положить себе сам — это набор, а не доступ.
+# EN: Since 29.09.2026 (the owner's word: agents get no operational skills): the agent's set is an ALLOW LIST
+#     from the registry (namerenie.navyki.tolko), not manual links: the next run will not bring back what was
+#     removed. No field (code 3) — the full set, as before. An allow list, not a deny list: a new skill from a
+#     delivery will not reach a restricted agent BY ITSELF.
+#     ⚠️ NOT A SECURITY BOUNDARY: the shared set is readable by everyone, the agent can put its own skills for
+#     itself — this is a set, not access.
+IMYA="${SKILL_LINKS_AGENT:-$(id -un)}"
+if nav=$(agent-registry pole "$IMYA" navyki --json 2>&1); then
+    tolko=$(printf '%s' "$nav" | python3 -B -c 'import json,sys; t=json.load(sys.stdin).get("tolko"); assert isinstance(t,list) and t and all(isinstance(x,str) and x for x in t); print("\n".join(t))' 2>/dev/null) \
+        || { echo "🔴 ОТКАЗ: navyki агента $IMYA в реестре есть, но tolko — не непустой список имён; ссылок не трогаю"; exit 2; }
+    declare -A razresheno=()
+    while IFS= read -r n; do
+        [ -n "${want[$n]:-}" ] || { echo "🔴 ОТКАЗ: navyki.tolko $IMYA: «$n» нет ни в одном источнике (${SOURCES[*]}) — опечатка?; ссылок не трогаю"; exit 2; }
+        razresheno[$n]=1
+    done <<< "$tolko"
+    for n in "${!want[@]}"; do [ -n "${razresheno[$n]:-}" ] || unset "want[$n]"; done
+    echo "набор $IMYA — ТОЛЬКО разрешённые реестром: ${#want[@]} (namerenie.navyki.tolko)"
+else
+    k=$?
+    case "$nav" in
+        *"agent-registry-error: field-not-found"*|*"agent-registry-error: agent-not-found"*|*"нет поля 'navyki'"*|*"в реестре НЕТ"*) echo "набор $IMYA — полный (в реестре нет navyki: $(printf '%s' "$nav" | head -1 | cut -c1-90))";;
+        *) echo "🔴 ОТКАЗ: реестр не ответил про navyki $IMYA (код $k): $(printf '%s' "$nav" | head -1 | cut -c1-120); ссылок не трогаю"; exit 2;;
+    esac
+fi
+
+# убрать ссылки, которым больше нечего указывать
+# EN: remove links that have nothing left to point to
+for l in "$TARGET"/*; do
+    [ -e "$l" ] || [ -L "$l" ] || continue
+    n=$(basename "$l")
+    if [ ! -L "$l" ]; then
+        echo "🔴 $l — не ссылка, а настоящий файл или каталог. Не трогаю. Разберись руками."
+        rc=1
+        continue
+    fi
+    [ -n "${want[$n]:-}" ] || { rm -f "$l"; echo "убрана ссылка: $n"; }
+done
+
+# поставить недостающие и починить съехавшие
+# EN: put the missing ones and fix the ones that drifted
+for n in "${!want[@]}"; do
+    tgt="${want[$n]}/$n"
+    cur=$(readlink "$TARGET/$n" 2>/dev/null || true)
+    [ "$cur" = "$tgt" ] && continue
+    ln -sfn "$tgt" "$TARGET/$n" && echo "ссылка: $n -> $tgt"
+done
+
+echo "скиллов в каталоге движка: $(ls -1 "$TARGET" | wc -l)"
+[ "$raznoimennyh" -gt 0 ] && echo "⚠️  разошлось каталог/поле name: $raznoimennyh (код не поднимаю, см. границы в шапке)"
+[ "$dublej_polya" -gt 0 ] && echo "🔴 дублей поля name: $dublej_polya — столько скиллов недостижимо для платформы"
+[ "$bez_polya" -gt 0 ] && echo "🔴 без поля name: $bez_polya — столько ссылок стоит впустую"
+exit $rc

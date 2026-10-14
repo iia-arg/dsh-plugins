@@ -1,58 +1,207 @@
 #!/usr/bin/env bash
-# transcribe-archive-wrap — обёртка над transcribe-local-shared для voice-archive.
+# RU: transcribe-local-shared — АРХИВНАЯ обёртка над настоящим распознавателем.
+# EN: transcribe-local-shared — the ARCHIVE wrapper around the real transcriber.
 #
-# КОНТРАКТ (вызывает claudeclaw как WHISPER_TRANSCRIBER):
-#   args:   $1 = wavPath, $2 = language
-#   stdout: расшифровка (claudeclaw читает r.stdout) — БАЙТ-В-БАЙТ как настоящий
-#   exit:   код настоящего транскрайбера
-# Любой сбой нашей доп-логики НЕ должен влиять на stdout/exit (критический путь!).
+# RU: Внимание к имени: в прежней редакции шапка называла этот файл
+#     «transcribe-archive-wrap — обёртка над transcribe-local-shared». Это было
+#     неверно: файл и есть transcribe-local-shared, и он сам ничего не распознаёт.
+#     Он зовёт REAL_TRANSCRIBER (по умолчанию /usr/local/bin/transcribe-whispercpp-core —
+#     ядро из этого же пакета; переназначается только в конфиге).
+#     Место в цепочке: [transcribe-correct-wrap →] этот файл → transcribe-whispercpp-core.
+# EN: Note on the name: the previous header called this file
+#     "transcribe-archive-wrap — a wrapper over transcribe-local-shared". That was
+#     wrong: this file IS transcribe-local-shared and it recognises nothing itself.
+#     It calls REAL_TRANSCRIBER (default /usr/local/bin/transcribe-whispercpp-core —
+#     the core from this same package; reassigned only in the config).
+#     Place in the chain: [transcribe-correct-wrap →] this file → transcribe-whispercpp-core.
 #
-# SIDE-EFFECT: если первое слово расшифровки ∈ KEYWORDS — оригинал аудио
-#   (audio.<ext> в той же temp-папке, ещё НЕ удалён claudeclaw'ом) копируется
-#   в PENDING_DIR + .txt-сайдкар. Делается СИНХРОННО (до exit), пока claudeclaw
-#   ждёт нас и ещё не выполнил rmSync(tmpdir).
+# RU: КОНТРАКТ (так его зовёт канал агента — любая программа, умеющая запустить команду):
+#       аргументы: $1 = путь к аудиофайлу, $2 = язык (ru, en, auto …)
+#       stdout:    расшифровка от настоящего распознавателя, без изменений
+#       код:       код возврата настоящего распознавателя; свои коды обёртки:
+#                  2 — неверный VOICE_ARCHIVE_DISABLE, 3 — самовызов, 4 — распознавателя нет или он не исполняем
+#     Оговорка честности: «без изменений» — с точностью до хвостовых переводов строк.
+#     Подстановка $(...) ниже срезает их, поэтому байт-в-байт это НЕ так.
+# EN: CONTRACT (this is how the agent channel calls it — any program that can run a command):
+#       args:   $1 = path to the audio file, $2 = language (ru, en, auto …)
+#       stdout: the real transcriber's transcript, unchanged
+#       exit:   the real transcriber's exit code; the wrapper's own codes:
+#               2 — invalid VOICE_ARCHIVE_DISABLE, 3 — self-call, 4 — transcriber missing or not executable
+#     Honesty caveat: "unchanged" is modulo trailing newlines. The $(...) capture
+#     below strips them, so it is NOT byte-for-byte.
+# RU: Любой сбой нашей дополнительной логики (архива) НЕ должен влиять на stdout и
+#     код возврата — это критический путь, голос пользователя важнее архива.
+# EN: Any failure of our extra logic (the archive) must NOT affect stdout or the
+#     exit code — this is the critical path; the user's voice matters more than the archive.
+#
+# RU: ПОБОЧНЫЙ ЭФФЕКТ: если ПЕРВОЕ слово расшифровки входит в KEYWORDS, оригинал
+#     аудио копируется в PENDING_DIR вместе с .txt-файлом расшифровки. Делается
+#     СИНХРОННО, до выхода: канал обычно удаляет временный аудиофайл сразу после
+#     нашего завершения, позже копировать будет нечего.
+# EN: SIDE EFFECT: if the FIRST word of the transcript is in KEYWORDS, the original
+#     audio is copied into PENDING_DIR together with a .txt transcript sidecar. Done
+#     SYNCHRONOUSLY, before exit: the channel usually deletes the temporary audio
+#     right after we return, so later there is nothing left to copy.
+# RU: Чего архив НЕ делает: не публикует, не чистит каталог, не пишет журнал и не
+#     сообщает об отказе — неудачная копия молча пропадает.
+# EN: What the archive does NOT do: it does not publish, does not prune the directory,
+#     does not log and does not report failure — a failed copy disappears silently.
 
 set -uo pipefail
 
+# RU: Путь конфига. Конфиг ИСПОЛНЯЕТСЯ оболочкой (через «.»), это не просто
+#     key=value: кто может писать в этот файл, тот исполняет код от имени вызывающего.
+# EN: Config path. The config is EXECUTED by the shell (via "."), it is not plain
+#     key=value: whoever can write this file runs code as the calling user.
+# B-N-1691: caller-owned opt-out survives config sourcing. Unknown values refuse before I/O.
+readonly ARCHIVE_DISABLED_REQUEST="${VOICE_ARCHIVE_DISABLE-0}"
+case "$ARCHIVE_DISABLED_REQUEST" in
+  0|1) ;;
+  *) echo 'transcribe: неверный VOICE_ARCHIVE_DISABLE (ожидается 0 или 1)' >&2; exit 2 ;;
+esac
 CONF="${VOICE_ARCHIVE_CONF:-/etc/voice-archive.conf}"
+# RU: Слова-ключи архива (сравниваются с первым словом в нижнем регистре).
+#     Переменная окружения KEYWORDS ИГНОРИРУЕТСЯ — переопределить можно только в конфиге.
+# EN: Archive keywords (compared with the lower-cased first word).
+#     A KEYWORDS environment variable is IGNORED — it can only be overridden in the config.
 KEYWORDS="паблик public паблік"
-PENDING_DIR="${VOICE_ARCHIVE_DIR:-}"
-# 🔴 УМОЛЧАНИЕ ИСПРАВЛЕНО 2026-08-15. Раньше здесь стоял путь к ЭТОМУ ЖЕ файлу
-# (/usr/local/bin/transcribe-local-shared) — то есть скрипт по умолчанию вызывал
-# САМ СЕБЯ. На this-host это годами не проявлялось, потому что /etc/voice-archive.conf
-# переопределял переменную на настоящий движок. На bclaude такого конфига нет —
-# и распознавание уходило в бесконечную рекурсию: процессы плодились, вызов висел,
-# в журнале служб при этом было пусто. Отказ выглядел как «просто долго».
-REAL_TRANSCRIBER="/usr/local/bin/transcribe-local-core"
+# RU: Каталог архива. Берётся из VOICE_ARCHIVE_DIR окружения ДО чтения конфига, поэтому
+#     VOICE_ARCHIVE_DIR, записанный В КОНФИГЕ, не действует — в конфиге надо писать
+#     PENDING_DIR. Пусто — архив выключен (mkdir -p "" падает, захват тихо пропускается).
+# EN: Archive directory. Taken from the VOICE_ARCHIVE_DIR environment variable BEFORE the
+#     config is read, so VOICE_ARCHIVE_DIR written INSIDE the config has no effect — the
+#     config must set PENDING_DIR. Empty = archive off (mkdir -p "" fails, capture is skipped).
+PENDING_DIR="${VOICE_ARCHIVE_DIR:-}"   # каталог архива — из окружения или /etc/voice-archive.conf; пусто = не архивировать
+# RU: Умолчание REAL_TRANSCRIBER — ядро этого же пакета transcribe-whispercpp-core.
+#     История умолчания, две поломки одного класса «конфиг несёт нагрузку молча»:
+#     1) До 2026-08-15 здесь стоял путь к ЭТОМУ ЖЕ файлу — скрипт по умолчанию вызывал САМ
+#        СЕБЯ. На машине, где конфиг переопределял переменную, это не проявлялось; на машине
+#        без конфига распознавание уходило в бесконечную рекурсию: процессы плодились, вызов
+#        висел, в журнале служб было пусто. Отказ выглядел как «просто долго».
+#     2) До 2026-08-20 здесь стоял /usr/local/bin/transcribe-local-core — файла, которого на
+#        машине не было (и в пакете нет). Работало только потому, что конфиг переопределял
+#        переменную: конфиг был не настройкой, а несущей балкой — пропади он, и голос
+#        отваливался бы с невнятным «No such file». Теперь умолчание указывает на движок,
+#        который ставится этим пакетом, а конфиг снова только настройка.
+# EN: The REAL_TRANSCRIBER default is this package's own core, transcribe-whispercpp-core.
+#     History of the default — two breakages of one class, "the config silently carries load":
+#     1) Until 2026-08-15 it pointed at THIS VERY file — by default the script called ITSELF.
+#        On a host whose config overrode the variable it never showed; on a host without the
+#        config recognition went into endless recursion: processes multiplied, the call hung,
+#        the service journal stayed empty. The failure looked like "just slow".
+#     2) Until 2026-08-20 it pointed at /usr/local/bin/transcribe-local-core — a file that did
+#        not exist on the host (and is not in the package). It worked only because the config
+#        overrode the variable: the config was a load-bearing beam, not a setting — had it
+#        vanished, voice would have died with an obscure "No such file". Now the default points
+#        at the engine this package installs, and the config is just a setting again.
+# RU: Переменная окружения REAL_TRANSCRIBER ИГНОРИРУЕТСЯ (строка ниже её перезаписывает);
+#     переназначать только в конфиге. НЕ указывайте здесь transcribe-correct-wrap: его
+#     умолчание SAGE_INNER_TRANSCRIBER — этот самый файл, получится бесконечная петля, которую
+#     защита от самовызова ниже не ловит. Корректор ставится СНАРУЖИ: вызывающий зовёт
+#     transcribe-correct-wrap, а тот — этот файл.
+# EN: The REAL_TRANSCRIBER environment variable is IGNORED (the next line overwrites it);
+#     reassign it only in the config. Do NOT point it at transcribe-correct-wrap: its
+#     SAGE_INNER_TRANSCRIBER default is this very file, which makes an endless loop the
+#     self-call guard below does not catch. The corrector goes OUTSIDE: the caller invokes
+#     transcribe-correct-wrap, which invokes this file.
+REAL_TRANSCRIBER="/usr/local/bin/transcribe-whispercpp-core"
+# RU: Нет файла — работаем на умолчаниях; пустой каталог будет объявлен ниже. Ошибка конфига глушится
+#     (2>/dev/null, || true): сломанный конфиг НЕ виден, он просто частично не применится.
+# EN: No file — use defaults; an empty directory is reported below. Config errors are suppressed too
+#     (2>/dev/null, || true): a broken config is NOT visible, it is just partly not applied.
 # shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF" 2>/dev/null || true
 
+# RU: Пустой каталог выключает архив; сообщаем вызывающему, не меняя распознавание.
+# EN: An empty directory disables archiving; notify the caller without changing transcription.
+if [ "$ARCHIVE_DISABLED_REQUEST" = 1 ]; then
+  echo "архив голосовых выключен: VOICE_ARCHIVE_DISABLE=1" >&2
+elif [ -z "$PENDING_DIR" ]; then
+  echo "архив голосовых выключен: PENDING_DIR не задан" >&2
+fi
+
 WAV="${1:-}"
-# Язык по умолчанию — машинно-настраиваемый через DEFAULT_LANG в /etc/voice-archive.conf.
-# Раньше здесь был жёстко прибит "ru", и он ПЕРЕБИВАЛ настройку сервера: на bclaude
-# сервер распознавания подняли с --language auto, а обёртка всё равно передавала ru,
-# из-за чего английская речь возвращалась русским ПЕРЕВОДОМ, а не расшифровкой.
+# RU: Язык по умолчанию настраивается DEFAULT_LANG (окружение или конфиг), иначе ru.
+#     Раньше здесь был жёстко прибит "ru", и он ПЕРЕБИВАЛ настройку сервера: сервер
+#     распознавания подняли с --language auto, а обёртка всё равно передавала ru, из-за
+#     чего английская речь возвращалась русским ПЕРЕВОДОМ, а не расшифровкой.
+#     Умолчание срабатывает, только если $2 не передан или пуст; явный $2 главнее.
+# EN: The default language comes from DEFAULT_LANG (environment or config), else ru.
+#     It used to be hard-wired "ru", which OVERRODE the server setting: the recognition
+#     server was started with --language auto, but the wrapper still passed ru, so English
+#     speech came back as a Russian TRANSLATION instead of a transcript.
+#     The default applies only when $2 is missing or empty; an explicit $2 wins.
+# RU: Побочный эффект имени: LANG — это ещё и переменная локали. Если она экспортирована
+#     у вызывающего, значение вроде "ru" или "auto" уходит в дочерние процессы как
+#     локаль (недействительная). Здесь это проверено безвредным для python3 ниже.
+# EN: Side effect of the name: LANG is also the locale variable. If the caller exported it,
+#     a value like "ru" or "auto" reaches child processes as an (invalid) locale. Checked
+#     to be harmless for the python3 call below.
 LANG="${2:-${DEFAULT_LANG:-ru}}"
-# 🔴 ЗАЩИТА ОТ САМОВЫЗОВА. Если конфиг или правка снова направят нас на самих себя —
-# падаем с внятной ошибкой, а не уходим в рекурсию. Молчаливое зависание дороже отказа.
+# RU: 🔴 ЗАЩИТА ОТ САМОВЫЗОВА. Если конфиг или правка снова направят нас на самих себя —
+#     падаем с внятной ошибкой и кодом 3, а не уходим в рекурсию. Молчаливое зависание
+#     дороже отказа. Сравниваются пути после readlink -f, так что ссылка на себя тоже
+#     ловится.
+# EN: 🔴 SELF-CALL GUARD. If the config or an edit points us at ourselves again, fail
+#     with a clear error and exit code 3 instead of recursing. A silent hang costs more
+#     than a refusal. Paths are compared after readlink -f, so a symlink to ourselves is
+#     caught as well.
+# RU: Чего НЕ ловит: косвенную петлю (A → B → A, например REAL_TRANSCRIBER на
+#     transcribe-correct-wrap, чьё умолчание SAGE_INNER_TRANSCRIBER — этот файл).
+#     Отсутствующий REAL_TRANSCRIBER ловит следующая проверка (код 4).
+# EN: What it does NOT catch: an indirect loop (A → B → A, e.g. REAL_TRANSCRIBER pointing at
+#     transcribe-correct-wrap, whose SAGE_INNER_TRANSCRIBER default is this file).
+#     A missing REAL_TRANSCRIBER is caught by the next check (exit 4).
 _self="$(readlink -f "$0" 2>/dev/null || echo "$0")"
 _real="$(readlink -f "$REAL_TRANSCRIBER" 2>/dev/null || echo "$REAL_TRANSCRIBER")"
 if [ "$_self" = "$_real" ]; then
   echo "transcribe: САМОВЫЗОВ — REAL_TRANSCRIBER указывает на этот же файл ($_self)." >&2
-  echo "transcribe: поправь REAL_TRANSCRIBER (обычно /usr/local/bin/transcribe-local-core)" >&2
+  echo "transcribe: поправь REAL_TRANSCRIBER (на этой машине движок — /usr/local/bin/transcribe-whispercpp-core)" >&2
   echo "transcribe: либо в /etc/voice-archive.conf, либо в самом скрипте." >&2
   exit 3
 fi
 
-# 1) Настоящий транскрайбер — захватываем stdout и rc, не давая нашей логике сломать путь.
+# RU: 🔴 ДВИЖОК ДОЛЖЕН СУЩЕСТВОВАТЬ. Без этой проверки отсутствующий распознаватель давал
+#     пустой stdout и код 127 из глубины подстановки — снаружи это выглядело как «голосовое
+#     не распозналось», а не как «движка нет». Теперь отказ называет себя: две строки в
+#     stderr и код 4.
+#     Чего НЕ ловит: файл есть и исполняем, но сам не работает (сервер не поднят, нет модели) —
+#     это уже коды и сообщения самого распознавателя.
+# EN: 🔴 THE ENGINE MUST EXIST. Without this check a missing transcriber produced an empty
+#     stdout and exit 127 from deep inside the substitution — from outside it looked like "the
+#     voice note was not recognised" rather than "there is no engine". Now the failure names
+#     itself: two stderr lines and exit code 4.
+#     What it does NOT catch: the file exists and is executable but does not work itself
+#     (server down, no model) — those are the transcriber's own codes and messages.
+if [ ! -x "$REAL_TRANSCRIBER" ]; then
+  echo "transcribe: ДВИЖКА НЕТ: REAL_TRANSCRIBER=$REAL_TRANSCRIBER не найден или не исполняем." >&2
+  echo "transcribe: поправь /etc/voice-archive.conf или умолчание в $0." >&2
+  exit 4
+fi
+
+# RU: 1) Настоящий распознаватель — захватываем stdout и код возврата, не давая нашей
+#        логике сломать путь. stderr не перехватывается и уходит вызывающему как есть.
+# EN: 1) The real transcriber — capture stdout and exit code so our own logic cannot break
+#        the path. stderr is not captured and goes to the caller as is.
 OUT="$("$REAL_TRANSCRIBER" "$WAV" "$LANG")"; RC=$?
 
-# 2) Контракт stdout — отдаём расшифровку ровно как есть.
+# RU: 2) Контракт stdout — отдаём расшифровку как есть (без хвостовых переводов строк,
+#        см. оговорку в шапке). Печать ДО архива: архив не может задержать или испортить ответ.
+# EN: 2) stdout contract — hand the transcript back as is (minus trailing newlines, see the
+#        header caveat). Printed BEFORE the archive so the archive cannot delay or spoil it.
 printf '%s' "$OUT"
 
-# 3) Best-effort захват аудио. Полностью изолировано: ошибки глушатся, rc не трогаем.
-archive_capture() {
+# RU: 3) Захват аудио «по возможности». Полностью изолирован: ошибки глушатся, код возврата
+#        не трогается. Пустая расшифровка — не архивируем.
+# EN: 3) Best-effort audio capture. Fully isolated: errors are suppressed, the exit code is
+#        untouched. Empty transcript — nothing is archived.
+archive_capture() (
+  umask 077
   [ -n "$OUT" ] || return 0
+  # RU: Первое слово = первая последовательность букв (цифры и знаки пропускаются), в
+  #     нижнем регистре. Так «Паблик, …» и «PUBLIC.» совпадут с ключом.
+  # EN: First word = the first run of letters (digits and punctuation skipped), lower-cased.
+  #     So "Паблик, …" and "PUBLIC." both match the keyword.
   local first
   first="$(printf '%s' "$OUT" | python3 -c 'import sys,re
 t=sys.stdin.read()
@@ -63,18 +212,31 @@ print(m[0].lower() if m else "")' 2>/dev/null)" || return 0
   for k in $KEYWORDS; do [ "$first" = "$k" ] && match=1; done
   [ "$match" = "1" ] || return 0
 
-  mkdir -p "$PENDING_DIR" 2>/dev/null || return 0
+  mkdir -p -- "$PENDING_DIR" 2>/dev/null || return 0
   local src_dir orig ext base ts
   src_dir="$(dirname "$WAV")"
-  # оригинал = audio.* кроме .wav (это исходный opus/ogg от Telegram)
+  # RU: Оригинал = любой audio.* кроме .wav в каталоге входного файла (исходный opus/ogg,
+  #     который канал сохранил рядом с перекодированным .wav). Это соглашение об именах
+  #     ОДНОГО конкретного канала. Если канал кладёт файл под другим именем, берётся сам
+  #     входной файл. Если же входной файл лежит в общем каталоге (например /tmp) и там
+  #     случайно есть чужой audio.*, будет скопирован ЧУЖОЙ файл — эта ошибка не ловится.
+  # EN: Original = any audio.* other than .wav in the input file's directory (the source
+  #     opus/ogg the channel saved next to the converted .wav). That is the naming convention
+  #     of ONE particular channel. If your channel uses another name, the input file itself
+  #     is taken. If the input file sits in a shared directory (e.g. /tmp) that happens to
+  #     contain someone else's audio.*, THAT file is copied — this is not caught.
   orig="$(ls "$src_dir"/audio.* 2>/dev/null | grep -v '\.wav$' | head -1)"
   [ -n "$orig" ] || orig="$WAV"
   ext=".${orig##*.}"
+  # RU: Имя = время + PID + случайное число: два одновременных вызова не перетрут друг друга.
+  # EN: Name = timestamp + PID + random number: two concurrent calls do not overwrite each other.
   ts="$(date +%Y%m%d-%H%M%S 2>/dev/null)"
   base="$PENDING_DIR/${ts}-$$-${RANDOM}"
   cp -f "$orig" "${base}${ext}" 2>/dev/null || true
   printf '%s\n' "$OUT" > "${base}.txt" 2>/dev/null || true
-}
-archive_capture 2>/dev/null || true
+)
+if [ "$ARCHIVE_DISABLED_REQUEST" = 0 ] && [ "$RC" -eq 0 ]; then
+  archive_capture 2>/dev/null || true
+fi
 
 exit "$RC"

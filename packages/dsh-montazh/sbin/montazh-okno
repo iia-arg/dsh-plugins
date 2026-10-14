@@ -1,0 +1,1530 @@
+#!/usr/bin/env python3
+"""Addressed deployment window, one parser for all readers (B-N-2025).
+
+ЧЕГО НЕ ЛОВИТ: в пределах состава окна настоящая ошибка монтажа тоже может
+откладываться <=1800 секунд. Закрытие требует строгих проверок кодом. Это не
+ворота полномочий/качества: root может подложить неверный план. Команд из JSON
+не исполняем. Срок прекращает отсрочку независимо от жизни сторожа просрочки.
+"""
+import argparse
+import contextlib
+import datetime
+import fcntl
+import fnmatch
+import hashlib
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import tarfile
+import time
+import uuid
+
+LIMIT = 2097152
+TTL = 1800
+RE_ID = re.compile(r'[0-9a-f]{32}\Z')
+RE_SHA = re.compile(r'[0-9a-f]{64}\Z')
+RE_TASK = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z')
+BASE_KEYS = {'schema', 'id', 'task', 'actor', 'boot_id', 'opened_ns', 'deadline_ns',
+             'expires_utc', 'phase', 'subjects', 'checks'}
+
+
+def clock():
+    return time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+
+
+def boot():
+    return Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+
+
+def unique(pairs):
+    out = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError('duplicate JSON field')
+        out[key] = value
+    return out
+
+
+def safe(st, directory=False):
+    return (stat.S_ISDIR(st.st_mode) if directory else stat.S_ISREG(st.st_mode)) and st.st_uid == 0 and not st.st_mode & 0o022
+
+
+def read(root, name):
+    st = os.lstat(root)
+    if not safe(st, True):
+        raise ValueError('unsafe state directory')
+    directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        if not safe(os.fstat(directory), True):
+            raise ValueError('unsafe state directory fd')
+        before = os.stat(name, dir_fd=directory, follow_symlinks=False)
+        if not safe(before):
+            raise ValueError('unsafe window file')
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        try:
+            current = os.fstat(fd)
+            if not safe(current) or (before.st_dev, before.st_ino) != (current.st_dev, current.st_ino):
+                raise ValueError('window file changed')
+            raw = os.read(fd, LIMIT + 1)
+            if len(raw) > LIMIT:
+                raise ValueError('window too large')
+        finally:
+            os.close(fd)
+    finally:
+        os.close(directory)
+    return json.loads(raw, object_pairs_hook=unique)
+
+
+def tag_ref(ref):
+    """Public subjects keep their short name; every lookup uses the tag namespace."""
+    if not isinstance(ref, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/+-]*', ref):
+        raise ValueError('tag ref invalid')
+    if ref.startswith('refs/'):
+        if not ref.startswith('refs/tags/') or ref.startswith('refs/tags/refs/'):
+            raise ValueError('tag ref must name refs/tags')
+        qualified = ref
+    else:
+        qualified = 'refs/tags/' + ref
+    if subprocess.run(['git', 'check-ref-format', qualified], capture_output=True, timeout=5).returncode:
+        raise ValueError('tag ref invalid')
+    return qualified
+
+
+def git_command(repo):
+    uid = os.stat(repo).st_uid
+    prefix = ['sudo', '-n', '-u', pwd.getpwuid(uid).pw_name] if os.getuid() == 0 and uid else []
+    return prefix + ['git', '--no-optional-locks', '-C', repo]
+
+
+def tag_absent(c):
+    result = subprocess.run(git_command(c['repo']) + ['show-ref', '--verify', '--quiet', tag_ref(c['ref'])], capture_output=True, timeout=20)
+    if result.returncode not in {0, 1}: raise ValueError('tag absence not inspected: ' + c['ref'])
+    return result.returncode == 1
+
+
+def package_tree(repo, commit, subdir):
+    tree = run(git_command(repo) + ['rev-parse', '--verify', commit + ':' + subdir])
+    if not re.fullmatch(r'[0-9a-f]{40}', tree) or run(git_command(repo) + ['cat-file', '-t', tree]) != 'tree':
+        raise ValueError('tag package object is not a tree')
+    return tree
+
+
+def check_shape(c):
+    if not isinstance(c, dict) or c.get('kind') not in {'file', 'registry', 'unit', 'tag', 'tag_absent', 'absent', 'copy'}:
+        raise ValueError('unknown strict check')
+    kind = c['kind']
+    allowed = {'file': {'kind', 'path', 'sha256', 'mode', 'uid', 'gid'},
+               'registry': {'kind', 'path', 'id', 'expected', 'derevo_consistency', 'owned_files', 'values_consistency', 'owned_paths', 'owned_dirs', 'snapshot_sha256'},
+               'absent': {'kind', 'path'},
+               'unit': {'kind', 'unit', 'package', 'version'},
+               'tag': {'kind', 'repo', 'ref', 'commit', 'subdir', 'tree', 'vow_consistency', 'release_aliases'},
+               'tag_absent': {'kind', 'repo', 'ref', 'vow_consistency', 'release_aliases'},
+               'copy': {'kind', 'repo', 'commit', 'subdir', 'root', 'name', 'version', 'ref',
+                        'publication', 'policy', 'scope', 'exceptions', 'baseline', 'baseline_scope',
+                        'baseline_root', 'rollback', 'registry', 'entry_ids', 'config_sha256'}}[kind]
+    if set(c) - allowed:
+        raise ValueError('unknown strict-check field')
+    if kind in {'file', 'registry', 'absent'} and (not isinstance(c.get('path'), str) or not os.path.isabs(c['path']) or os.path.normpath(c['path']) != c['path']):
+        raise ValueError('check path must be canonical absolute')
+    if kind == 'file' and not RE_SHA.fullmatch(c.get('sha256', '')):
+        raise ValueError('file check needs SHA256')
+    for key in ('uid', 'gid', 'mode'):
+        if key in c and (type(c[key]) is not int or c[key] < 0 or (key == 'mode' and c[key] > 0o7777)):
+            raise ValueError('numeric check field invalid: ' + key)
+    if kind == 'registry' and (not isinstance(c.get('id'), str) or not isinstance(c.get('expected'), dict) or not c['expected']):
+        raise ValueError('registry check needs expected fields')
+    if 'snapshot_sha256' in c and (kind != 'registry' or not RE_SHA.fullmatch(c['snapshot_sha256']) or any(c.get(k) for k in ('values_consistency', 'derevo_consistency'))):
+        raise ValueError('registry snapshot contract invalid')
+    if 'derevo_consistency' in c and c['derevo_consistency'] is not True:
+        raise ValueError('derevo_consistency must be true')
+    if 'values_consistency' in c and c['values_consistency'] is not True:
+        raise ValueError('values_consistency must be true')
+    if 'owned_paths' in c and (not c.get('values_consistency') or not isinstance(c['owned_paths'], list) or not c['owned_paths'] or any(not isinstance(p, str) or not os.path.isabs(p) for p in c['owned_paths'])):
+        raise ValueError('owned_paths must pin absolute paths')
+    if 'owned_dirs' in c and (not c.get('values_consistency') or not isinstance(c['owned_dirs'], list) or any(not isinstance(p, str) or not os.path.isabs(p) or depth(p) < 3 for p in c['owned_dirs'])):
+        raise ValueError('owned_dirs must pin cd directories of depth >= 3')
+    if 'owned_files' in c:
+        if not c.get('derevo_consistency') or not isinstance(c['owned_files'], list) or not c['owned_files'] or any(not isinstance(f,dict) or set(f)!={'local','remote'} or not all(isinstance(v,str) and v for v in f.values()) for f in c['owned_files']):
+            raise ValueError('owned_files must pin local/remote pairs')
+    if kind == 'unit' and (not isinstance(c.get('unit'), str) or not re.fullmatch(r'[A-Za-z0-9@_.-]+\.service', c['unit']) or c.get('package') not in {'gateway', 'dsh-tool-bridge', 'dsh-subscription-adapter'} or not isinstance(c.get('version'), str)):
+        raise ValueError('unit check must identify package/version')
+    if kind in {'tag', 'tag_absent'}:
+        tag_ref(c.get('ref'))
+        if not isinstance(c.get('repo'), str) or not os.path.isabs(c['repo']): raise ValueError('tag repo invalid')
+        if 'vow_consistency' in c and c['vow_consistency'] is not True: raise ValueError('vow_consistency must be true')
+    if kind == 'tag' and not re.fullmatch(r'[0-9a-f]{40}', c.get('commit', '')):
+        raise ValueError('tag check needs pinned commit')
+    if kind == 'tag' and ('subdir' in c or 'tree' in c):
+        path = c.get('subdir')
+        if not isinstance(path, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]*', path) or any(x in {'', '.', '..'} for x in path.split('/')):
+            raise ValueError('tag package subdir invalid')
+        if not isinstance(c.get('tree'), str) or not re.fullmatch(r'[0-9a-f]{40}', c['tree']):
+            raise ValueError('tag package tree invalid')
+    if 'release_aliases' in c:
+        aliases = c['release_aliases']
+        if not isinstance(aliases, list) or not aliases or any(not isinstance(x, str) for x in aliases) or len(set(aliases)) != len(aliases) or c['ref'] not in aliases:
+            raise ValueError('release tag aliases invalid')
+        for ref in aliases: tag_ref(ref)
+    if kind == 'copy':
+        if any(not isinstance(c.get(k), str) or not os.path.isabs(c[k]) or os.path.normpath(c[k]) != c[k]
+               for k in ('repo', 'root')) or not re.fullmatch(r'[0-9a-f]{40}', c.get('commit', '')):
+            raise ValueError('copy source/root invalid')
+        if not re.fullmatch(r'packages/[A-Za-z0-9][A-Za-z0-9._-]*', c.get('subdir', '')):
+            raise ValueError('copy subdir invalid')
+        if not isinstance(c.get('name'), str) or not isinstance(c.get('version'), str):
+            raise ValueError('copy identity invalid')
+        tag_ref(c.get('ref'))
+        if type(c.get('policy')) is not int or c['policy'] not in {0, 1} or not isinstance(c.get('exceptions'), dict):
+            raise ValueError('copy policy invalid')
+        if not isinstance(c.get('scope'), list) or any(not isinstance(s, str) or not s or os.path.isabs(s) or os.path.normpath(s) != s or s.startswith('../') for s in c['scope']):
+            raise ValueError('copy publication scope invalid')
+        if not RE_SHA.fullmatch(c.get('config_sha256', '')):
+            raise ValueError('copy config binding missing')
+        files = c.get('publication')
+        if not isinstance(files, list) or not files or len(files) > 16384:
+            raise ValueError('copy publication missing')
+        paths = []
+        for item in files:
+            if not isinstance(item, dict) or set(item) != {'path', 'sha256', 'mode', 'uid', 'gid'}:
+                raise ValueError('copy publication row invalid')
+            rel = item['path']
+            if not isinstance(rel, str) or not rel or os.path.isabs(rel) or os.path.normpath(rel) != rel or rel.startswith('../'):
+                raise ValueError('copy publication path invalid')
+            check_shape(dict(kind='file', path=c['root'] + '/' + rel,
+                             **{k: item[k] for k in ('sha256', 'mode', 'uid', 'gid')}))
+            paths.append(rel)
+        if len(set(paths)) != len(paths) or 'package.json' not in paths:
+            raise ValueError('copy publication incomplete/duplicate')
+        if not isinstance(c.get('baseline'), list): raise ValueError('copy baseline missing')
+        for row in c['baseline']:
+            if not isinstance(row, dict) or set(row) != {'path', 'sha256', 'mode', 'uid', 'gid'}:
+                raise ValueError('copy baseline row invalid')
+            if not isinstance(row['path'], str) or os.path.isabs(row['path']) or os.path.normpath(row['path']) != row['path'] or row['path'].startswith('../'):
+                raise ValueError('copy baseline path invalid')
+            check_shape(dict(kind='file', path=c['root'] + '/' + row['path'],
+                             **{k: row[k] for k in ('sha256', 'mode', 'uid', 'gid')}))
+        if len({r['path'] for r in c['baseline']}) != len(c['baseline']):
+            raise ValueError('copy baseline duplicate')
+        if c.get('baseline_scope') is not None and (not isinstance(c['baseline_scope'], list) or
+                any(not isinstance(s, str) or not s or os.path.isabs(s) or os.path.normpath(s) != s or s.startswith('../') for s in c['baseline_scope'])):
+            raise ValueError('copy baseline scope invalid')
+        if not isinstance(c.get('baseline_root'), list) or len(c['baseline_root']) != 5 or any(type(x) is not int or x < 0 for x in c['baseline_root']):
+            raise ValueError('copy baseline root missing')
+        if 'rollback' in c and c['rollback'] is not True: raise ValueError('copy rollback flag invalid')
+        if not isinstance(c.get('registry'), str) or not os.path.isabs(c['registry']) or not isinstance(c.get('entry_ids'), list) or not c['entry_ids'] or any(not isinstance(s, str) for s in c['entry_ids']):
+            raise ValueError('copy registry binding missing')
+
+
+def plan_shape(subjects, checks):
+    if not isinstance(subjects, list) or not subjects or not all(isinstance(s, str) and s and '\n' not in s and not any(ch in s for ch in '*?[') for s in subjects) or len(set(subjects)) != len(subjects):
+        raise ValueError('explicit unique subjects required')
+    if not isinstance(checks, list) or not checks:
+        raise ValueError('strict checks required')
+    for c in checks:
+        check_shape(c)
+    covered = {'file:' + c['path'] for c in checks if c['kind'] in {'file', 'absent'}}
+    covered |= {'entry:' + c['id'] for c in checks if c['kind'] == 'registry'}
+    covered |= {'unit:' + c['unit'] + ':' + c['package'] for c in checks if c['kind'] == 'unit'}
+    covered |= {'tag:' + c['repo'] + ':' + c['ref'] for c in checks if c['kind'] in {'tag', 'tag_absent'}}
+    covered |= {copy_subject(c) for c in checks if c['kind'] == 'copy'}
+    for c in checks:
+        if c['kind'] != 'copy': continue
+        tag = [t for t in checks if t['kind'] in ({'tag', 'tag_absent'} if c.get('rollback') else {'tag'}) and t['repo'] == c['repo'] and t['ref'] == c['ref'] and (t['kind'] == 'tag_absent' or t['commit'] == c['commit'])]
+        if len(tag) != 1 or 'tag:' + c['repo'] + ':' + c['ref'] not in subjects:
+            raise ValueError('copy is not linked to the same release tag')
+        for eid in c['entry_ids']:
+            if 'entry:' + eid not in subjects or len([r for r in checks if r['kind'] == 'registry' and r['path'] == c['registry'] and r['id'] == eid]) != 1:
+                raise ValueError('copy is not linked to its registry entries')
+        for item in (c['baseline'] if c.get('rollback') else c['publication']):
+            expected = dict(kind='file', path=c['root'] + '/' + item['path'],
+                            **{k: item[k] for k in ('sha256', 'mode', 'uid', 'gid')})
+            if expected not in checks or 'file:' + expected['path'] not in subjects:
+                raise ValueError('copy is not linked to complete publication file checks')
+    if not set(subjects) <= covered:
+        raise ValueError('subject without strict closure check')
+
+
+def validate(record, name):
+    if not isinstance(record, dict) or not BASE_KEYS <= set(record) or set(record) - BASE_KEYS - {'closed_ns', 'notified_at', 'rollback_checks', 'rollback_plan', 'substitutions', 'closed_late', 'closed_boot_id'}:
+        raise ValueError('unknown window schema fields')
+    if type(record['schema']) is not int or record['schema'] != 1 or not RE_ID.fullmatch(record.get('id', '')) or name != record['id'] + '.json':
+        raise ValueError('window schema/id mismatch')
+    if not isinstance(record['task'], str) or not RE_TASK.fullmatch(record['task']) or not isinstance(record['actor'], str) or not record['actor'] or not isinstance(record['boot_id'], str):
+        raise ValueError('window identity missing')
+    if type(record['opened_ns']) is not int or type(record['deadline_ns']) is not int or record['opened_ns'] < 0 or not 0 < record['deadline_ns'] - record['opened_ns'] <= TTL * 10**9:
+        raise ValueError('window TTL outside 1..1800 seconds')
+    if record['phase'] not in {'open', 'closed', 'failed', 'rolled_back'} or not isinstance(record['expires_utc'], str):
+        raise ValueError('window phase/time invalid')
+    if 'closed_ns' in record and type(record['closed_ns']) is not int:
+        raise ValueError('closed time invalid')
+    if 'closed_late' in record and (record['closed_late'] is not True or record['phase'] != 'closed' or type(record.get('closed_ns')) is not int or (record.get('closed_boot_id', record['boot_id']) == record['boot_id'] and record['closed_ns'] < record['deadline_ns'])):
+        raise ValueError('late closure marker invalid')
+    if 'closed_boot_id' in record and (not record.get('closed_late') or not isinstance(record['closed_boot_id'], str) or not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', record['closed_boot_id'])):
+        raise ValueError('closure boot invalid')
+    plan_shape(record['subjects'], record['checks'])
+    if 'substitutions' in record:
+        values = record['substitutions']
+        if not isinstance(values, dict) or not values or set(values) - {'MO_COPY_PRIBOR', 'MO_COPY_CONFIG'} or any(not isinstance(v, str) for v in values.values()) or not any(c['kind'] == 'copy' for c in record['checks']):
+            raise ValueError('copy substitutions trace invalid')
+    if 'rollback_checks' in record: plan_shape(record['subjects'], record['rollback_checks'])
+    if 'rollback_plan' in record:
+        if set(record['rollback_plan']) != {'subjects', 'checks'} or set(record['rollback_plan']['subjects']) != set(record['subjects']):
+            raise ValueError('trusted rollback scope invalid')
+        plan_shape(record['subjects'], record['rollback_plan']['checks'])
+    return record
+
+
+def records(root, strict=False):
+    try:
+        names = os.listdir(root)
+    except FileNotFoundError:
+        return []
+    result = []
+    for name in sorted(names):
+        if not name.endswith('.json'):
+            continue
+        try:
+            result.append(validate(read(root, name), name))
+        except (OSError, ValueError, TypeError) as e:
+            if strict:
+                raise ValueError('unsafe existing window: ' + name) from e
+            print('montazh-okno: окна нет: ' + name + ': ' + str(e), file=sys.stderr)
+    return result
+
+
+@contextlib.contextmanager
+def locked(root):
+    fd = os.open(root / '.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        if not safe(os.fstat(fd)):
+            raise ValueError('unsafe metadata lock')
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise ValueError('metadata lock deadline 5 seconds')
+                time.sleep(0.05)
+        yield
+    finally:
+        os.close(fd)
+
+
+def atomic(root, record):
+    raw = (json.dumps(record, ensure_ascii=False, separators=(',', ':')) + '\n').encode()
+    if len(raw) > LIMIT:
+        raise ValueError('window too large')
+    validate(record, record['id'] + '.json')
+    fd, path = tempfile.mkstemp(prefix='.okno-', dir=root)
+    try:
+        os.fchmod(fd, 0o644)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(path, root / (record['id'] + '.json'))
+        directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        assert read(root, record['id'] + '.json') == record
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)
+
+
+def run(args):
+    return subprocess.run(args, capture_output=True, text=True, timeout=20, check=True).stdout.strip()
+
+
+def generation(st):
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_mode, st.st_uid, st.st_gid)
+
+
+
+def registry_entries(path):
+    try: import yaml
+    except ImportError as e: raise ValueError("python3-yaml is required for registry ownership") from e
+    class NoDuplicates(yaml.SafeLoader):
+        pass
+    def mapping(loader, node, deep=False):
+        keys = [loader.construct_object(key, deep=deep) for key, _ in node.value]
+        if len(keys) != len(set(keys)): raise ValueError('duplicate registry key')
+        return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
+    NoDuplicates.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
+    before = os.lstat(path)
+    if not stat.S_ISREG(before.st_mode): raise ValueError('registry not regular')
+    try: tree = yaml.load(Path(path).read_text(), Loader=NoDuplicates)
+    except yaml.YAMLError as e: raise ValueError('registry parse failed') from e
+    if not isinstance(tree, dict) or any(not isinstance(tree.get(k, []), list) for k in ('plugins','services')):
+        raise ValueError('registry shape invalid')
+    entries = [e for k in ('plugins','services') for e in tree.get(k, [])]
+    if any(not isinstance(e, dict) or not isinstance(e.get('id'), str) for e in entries):
+        raise ValueError('registry identity missing')
+    if len({e['id'] for e in entries}) != len(entries): raise ValueError('duplicate registry identity')
+    if generation(os.lstat(path)) != generation(before): raise ValueError('registry changed while reading')
+    return before, entries
+
+
+
+def vow_repo(identities):
+    fixture = os.environ.get('MO_DEREVO_REPO')
+    if fixture: return fixture
+    command = [os.environ.get('MO_SYSTEMCTL','systemctl'),'show','--property=LoadState,Environment,EnvironmentFiles','vypusk-okno-watch.service']
+    raw = run(command)
+    values = dict(line.split('=',1) for line in raw.splitlines() if '=' in line)
+    if values.get('LoadState') != 'loaded': raise ValueError('VOW config not loaded')
+    environment = values.get('Environment','')
+    matches = re.findall(r'(?:^| )VYPUSK_REPO=([^ ]+)(?= |$)',environment)
+    if 'VYPUSK_REPO=' in environment and len(matches)!=1: raise ValueError('unsupported VOW Environment')
+    repo = matches[0] if matches else ''
+    files = values.get('EnvironmentFiles','')
+    if files:
+        match = re.fullmatch(r'(/[^ ()\\\n]+) \(ignore_errors=(yes|no)\)',files)
+        if not match: raise ValueError('unsupported VOW EnvironmentFiles (one literal file required)')
+        path = match[1]
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode): raise ValueError('VOW env file not regular')
+        for line in Path(path).read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith('#'): continue
+            m = re.fullmatch(r'([A-Z_][A-Z0-9_]*)=(.*)',line)
+            if not m: raise ValueError('unsupported VOW env line')
+            value = m[2].strip()
+            if value.startswith(("'",'"')):
+                if len(value)<2 or not value.endswith(value[0]) or value[0] in value[1:-1]: raise ValueError('unsupported VOW multiline/quotes')
+                value = value[1:-1]
+            elif "'" in value or '"' in value: raise ValueError('unsupported VOW quotes')
+            if '\\' in value: raise ValueError('unsupported VOW escape')
+            if m[1]=='VYPUSK_REPO': repo=value
+        identities.append(('stat',path,generation(st)))
+    if not repo or not os.path.isabs(repo) or os.path.normpath(repo)!=repo or any(c.isspace() for c in repo):
+        raise ValueError('VOW repo is not a literal canonical absolute path')
+    identities.append(('vow-config',command,raw))
+    return repo
+
+
+def validate_derevo_files(dv):
+    files = dv.get('files')
+    if not isinstance(files,list) or any(not isinstance(f,dict) or not all(isinstance(f.get(k),str) and f[k] for k in ('local','remote')) for f in files):
+        raise ValueError('derevo.files local/remote missing')
+    if len({f['local'] for f in files}) != len(files) or len({f['remote'] for f in files}) != len(files):
+        raise ValueError('derevo.files local/remote ambiguous')
+    return files
+
+
+
+RE_PUT = re.compile(r'(?<![\w$.-])(/[^\s\'"|;&<>()`$*?\[\]{}]+)')
+RE_SEP = re.compile(r'\|\||&&|\||;|\$\(|`|\{|\n|\b(?:ba)?sh\s+-c\s+[\'"]')
+RE_CD = re.compile(r'(?<![\w$.-])cd\s+(?:--\s+)?[\'"]?(/[^\s\'"|;&<>()`$*?\[\]{}]*)')
+PREFIKS = {'sudo', 'env', 'exec', 'timeout', 'nice', 'nohup', 'command', 'stdbuf'}
+
+
+def check_text(entry):
+    return ' '.join(str(entry.get(k) or '') for k in ('installed_check', 'fingerprint_check'))
+
+
+def tool_starts(text):
+    """Начала слов в позиции КОМАНДЫ (после разделителя оболочки и префиксов sudo/env/timeout/VAR=…): путь там — инструмент."""
+    starts = set()
+    for b in [0] + [m.end() for m in RE_SEP.finditer(text)]:
+        i, skip = b, False
+        while (m := re.compile(r'\s*(\S+)').match(text, i)):
+            w, i = m.group(1), m.end()
+            if skip: skip = False; continue
+            if w in PREFIKS or w.startswith('-') or w.isdigit() or re.fullmatch(r'[A-Za-z_]\w*=\S*', w):
+                skip = w in ('-u', '-g'); continue
+            starts.add(m.start(1) + (1 if w[0] in '\'"' else 0)); break
+    return starts
+
+
+def check_paths(entry):
+    """B-N-2042: «файлы» записи без derevo — абсолютные пути (≥2 уровня), буквально стоящие АРГУМЕНТОМ в
+    installed_check/fingerprint_check. Путь, стоящий только в позиции команды, — инструмент, не предмет (У1 ворот).
+    Голый «/», каталоги верхнего уровня, /dev, /proc, /sys и токены с «//» отвергаются. Пути через переменные, подстановки и глобы не попадают."""
+    text = check_text(entry); tools = tool_starts(text)
+    return sorted({m.group(1).rstrip('/.,') for m in RE_PUT.finditer(text)
+                   if m.start(1) not in tools and m.group(1).rstrip('/.,').count('/') >= 2
+                   and not m.group(1).startswith(('/dev/', '/proc/', '/sys/')) and '//' not in m.group(1)})
+
+
+def depth(p):
+    return len([x for x in p.split('/') if x])
+
+
+def cd_dirs(entry):
+    return sorted({d.rstrip('/') or '/' for d in RE_CD.findall(check_text(entry))})
+
+
+def owns(paths, dirs, target):
+    """Точное совпадение с путём проверки; по префиксу — только каталог явного cd, допущенный podgotovit."""
+    return target in paths or any(target.startswith(d + '/') for d in dirs)
+
+
+def verify_entry_values(entry, identities):
+    """Use the registry consumer's actual run(..., verify=True), not a second shell policy."""
+    import ast
+    source = Path(os.environ.get('MO_REESTR_PRIBOR','/usr/local/bin/agent-plugins'))
+    before = os.lstat(source)
+    tree = ast.parse(source.read_text())
+    functions = [n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='run']
+    if len(functions)!=1: raise ValueError('registry strict run consumer not found uniquely')
+    namespace = {'subprocess':subprocess,'tempfile':tempfile,'re':re}
+    exec(compile(ast.Module(body=functions,type_ignores=[]),str(source),'exec'),namespace)
+    pairs = [('version','installed_check')]
+    if entry.get('fingerprint'): pairs.append(('fingerprint','fingerprint_check'))
+    for expected, command in pairs:
+        if not isinstance(entry.get(command),str) or not entry[command]:
+            raise ValueError('registry check missing: '+entry['id']+':'+expected)
+        state, value = namespace['run'](entry[command],15,verify=True)
+        if state!='zhivoj' or value!=str(entry.get(expected,'')):
+            raise ValueError('registry value not accepted: '+entry['id']+':'+expected)
+    if identities is not None: identities.append(('stat',str(source),generation(before)))
+
+
+def verify_derevo(entry, identities):
+    """Run the existing VOW Python consumer without launching its guard or channel."""
+    import yaml
+    dv = entry.get('derevo')
+    if not isinstance(dv, dict) or not isinstance(dv.get('address'), str) or not os.path.isabs(dv['address']):
+        raise ValueError('derevo address missing')
+    captured = []
+    validate_derevo_files(dv)
+    repo, ref = vow_repo(captured), dv.get('ref')
+    if dv['address'] != repo: raise ValueError('derevo address differs from effective VOW repo')
+    if not isinstance(ref, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]*', ref):
+        raise ValueError('derevo ref invalid')
+    check = dict(kind='tag', repo=repo, ref=ref)
+    env = dict(os.environ, GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='safe.directory', GIT_CONFIG_VALUE_0=repo)
+    commit = subprocess.run(['git','--no-optional-locks','-C',repo,'rev-parse','--verify',tag_ref(ref)+'^{commit}'],env=env,capture_output=True,text=True,timeout=20,check=True).stdout.strip()
+    captured.append(('tag',check,commit))
+    paths = [f['local'] for f in dv.get('files', [])] + [f['local'] for f in dv.get('links', [])]
+    for path in paths: captured.append(('stat',path,generation(os.lstat(path))))
+    source = Path(os.environ.get('MO_DEREVO_PRIBOR','/usr/local/sbin/vypusk-okno-watch.sh')).read_text()
+    begin = "<<'PY_DEREVO'\n"; end = "\nPY_DEREVO\n"
+    if source.count(begin) != 1 or source.count(end) != 1: raise ValueError('VOW derevo consumer not found uniquely')
+    body = source.split(begin,1)[1].split(end,1)[0]
+    # Only id+derevo are copied: no commands or secrets from other registry fields.
+    with tempfile.TemporaryDirectory(prefix='okno-derevo-') as tmp:
+        registry = Path(tmp)/'registry.yaml'
+        registry.write_text(yaml.safe_dump({'services':[{'id':entry['id'],'derevo':dv}]}))
+        result = subprocess.run([sys.executable,'-B','-',str(registry),repo],input=body,env=env,capture_output=True,text=True,timeout=20)
+    if result.returncode != 0: raise ValueError('strict derevo consumer failed')
+    rows = [line.split('\t') for line in result.stdout.splitlines()]
+    if any(row[0] in {'DIFF','SLEP','ZSLEP','GLOB'} for row in rows):
+        raise ValueError('derevo not accepted: ' + entry['id'])
+    if sum(row[0]=='ZAP' and len(row)>2 and row[2]==entry['id'] for row in rows) != 1:
+        raise ValueError('derevo subject not inspected: ' + entry['id'])
+    if identities is not None: identities.extend(captured)
+
+
+def unchanged(identities):
+    for item in identities:
+        if item[0] == 'stat':
+            if generation(os.lstat(item[1])) != item[2]: return False
+        elif item[0] == 'copy-state':
+            if copy_observed(item[1]) != item[2]: return False
+        elif item[0] == 'absent':
+            try: os.lstat(item[1])
+            except FileNotFoundError: continue
+            return False
+        elif item[0] == 'vow-config':
+            if run(item[1]) != item[2]: return False
+        elif item[0] == 'tag':
+            c, expected = item[1:]
+            if run(git_command(c['repo']) + ['rev-parse', '--verify', tag_ref(c['ref']) + '^{commit}']) != expected: return False
+        elif item[0] == 'tag-absent':
+            if not tag_absent(item[1]): return False
+        elif item[0] == 'release-tags':
+            if release_tags(item[1]) != item[2]: return False
+        else:
+            unit, pid, start = item[1:]; control = os.environ.get('MO_SYSTEMCTL', 'systemctl')
+            if run([control, 'show', unit, '-p', 'MainPID', '--value']) != pid or run([control, 'show', unit, '-p', 'ActiveEnterTimestamp', '--value']) != start: return False
+    # Последний локальный барьер ПОСЛЕ любых внешних rechecks: они могли менять уже проверенный файл.
+    for item in identities:
+        if item[0] == 'stat' and generation(os.lstat(item[1])) != item[2]: return False
+        if item[0] == 'copy-state' and copy_observed(item[1]) != item[2]: return False
+        if item[0] == 'absent':
+            try: os.lstat(item[1])
+            except FileNotFoundError: continue
+            return False
+    return True
+
+
+def verify(checks, identities=None):
+    errors = []
+    for c in checks:
+        try:
+            if c['kind'] == 'absent':
+                try: os.lstat(c['path'])
+                except FileNotFoundError:
+                    if identities is not None: identities.append(('absent', c['path']))
+                    continue
+                raise ValueError('new file has not been removed: ' + c['path'])
+            if c['kind'] == 'file':
+                before = os.lstat(c['path'])
+                if not stat.S_ISREG(before.st_mode):
+                    raise ValueError('file not regular: ' + c['path'])
+                fd = os.open(c['path'], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                try:
+                    st = os.fstat(fd)
+                    if not stat.S_ISREG(st.st_mode) or (st.st_dev, st.st_ino) != (before.st_dev, before.st_ino):
+                        raise ValueError('file generation changed: ' + c['path'])
+                    digest = hashlib.sha256()
+                    while True:
+                        data = os.read(fd, 1048576)
+                        if not data:
+                            break
+                        digest.update(data)
+                    after = os.lstat(c['path'])
+                    current = os.fstat(fd)
+                    if (after.st_dev, after.st_ino) != (st.st_dev, st.st_ino) or (st.st_size, st.st_mtime_ns, st.st_ctime_ns) != (current.st_size, current.st_mtime_ns, current.st_ctime_ns) or digest.hexdigest() != c['sha256']:
+                        raise ValueError('file differs/changed: ' + c['path'])
+                finally:
+                    os.close(fd)
+                for key, actual in [('mode', stat.S_IMODE(st.st_mode)), ('uid', st.st_uid), ('gid', st.st_gid)]:
+                    if key in c and c[key] != actual:
+                        raise ValueError('file ' + key + ' differs: ' + c['path'])
+                if identities is not None: identities.append(('stat', c['path'], generation(st)))
+            elif c['kind'] == 'registry':
+                before, entries = registry_entries(Path(c['path']))
+                items = [e for e in entries if e['id'] == c['id']]
+                if len(items) != 1:
+                    raise ValueError('registry entry missing/duplicate: ' + c['id'])
+                if c.get('snapshot_sha256') and hashlib.sha256(json.dumps(items[0], sort_keys=True, separators=(',', ':')).encode()).hexdigest() != c['snapshot_sha256']:
+                    raise ValueError('registry entry differs from trusted snapshot: ' + c['id'])
+                for key, expected in c['expected'].items():
+                    value = dotted(items[0], key)
+                    if value != expected:
+                        raise ValueError('registry differs: ' + c['id'] + ':' + key)
+                if c.get('derevo_consistency'):
+                    if before.st_uid != 0 or before.st_mode & 0o002:
+                        raise ValueError('registry command source must be root-owned, not world-writable')
+                    current_files = items[0]['derevo']['files']
+                    for original in c.get('owned_files', []):
+                        if sum(f.get('local')==original['local'] and f.get('remote')==original['remote'] for f in current_files)!=1:
+                            raise ValueError('derevo ownership changed: '+original['local'])
+                    verify_derevo(items[0], identities)
+                    verify_entry_values(items[0], identities)
+                if c.get('values_consistency'):
+                    # B-N-2042: запись без derevo закрывается ТОЛЬКО когда её version/fingerprint = машине (после pravka).
+                    if before.st_uid != 0 or before.st_mode & 0o002:
+                        raise ValueError('registry command source must be root-owned, not world-writable')
+                    if check_paths(items[0]) != sorted(c.get('owned_paths', [])) or not set(c.get('owned_dirs', [])) <= set(cd_dirs(items[0])):
+                        raise ValueError('check paths changed: ' + c['id'])
+                    verify_entry_values(items[0], identities)
+                if generation(os.lstat(c['path'])) != generation(before): raise ValueError('registry changed during verification')
+                if identities is not None: identities.append(('stat', c['path'], generation(before)))
+            elif c['kind'] == 'copy':
+                verify_copy(c, identities)
+            elif c['kind'] in {'tag', 'tag_absent'}:
+                captured = []
+                if c.get('vow_consistency') and vow_repo(captured) != c['repo']:
+                    raise ValueError('tag repo differs from effective VOW repo')
+                if identities is not None: identities.extend(captured)
+                if c['kind'] == 'tag_absent':
+                    if not tag_absent(c): raise ValueError('tag still present: ' + c['ref'])
+                    if identities is not None: identities.append(('tag-absent', c))
+                    continue
+                commit = run(git_command(c['repo']) + ['rev-parse', '--verify', tag_ref(c['ref']) + '^{commit}'])
+                if 'tree' in c:
+                    if package_tree(c['repo'], commit, c['subdir']) != c['tree']:
+                        raise ValueError('tag package tree differs: ' + c['ref'])
+                elif commit != c['commit']:
+                    raise ValueError('tag differs: ' + c['ref'])
+                if c.get('release_aliases'):
+                    own = release_tags(c)
+                    if own != [c['ref']]: raise ValueError('release tag aliases ambiguous or missing')
+                    if identities is not None: identities.append(('release-tags', c, own))
+                if identities is not None: identities.append(('tag', c, commit))
+            else:
+                unit = c['unit']
+                control = os.environ.get('MO_SYSTEMCTL', 'systemctl')
+                pid = run([control, 'show', unit, '-p', 'MainPID', '--value'])
+                start = run([control, 'show', unit, '-p', 'ActiveEnterTimestamp', '--value'])
+                if not pid.isdigit() or int(pid) <= 0 or not start:
+                    raise ValueError('unit has no live PID: ' + unit)
+                journal = run([os.environ.get('MO_JOURNALCTL', 'journalctl'), '_PID=' + pid, '--since', start, '-o', 'cat', '--no-pager'])
+                rx = r'(?<![\w-])(?:dsh-)?subscription-gateway ([0-9][0-9A-Za-z.-]+)' if c['package'] == 'gateway' else r'\[' + re.escape(c['package']) + r' ([0-9][0-9A-Za-z.-]+)\]'
+                found = re.findall(rx, journal)
+                if not found or found[-1] != c['version'] or run([control, 'show', unit, '-p', 'MainPID', '--value']) != pid:
+                    raise ValueError('live version differs: ' + unit)
+                if identities is not None: identities.append(('unit', unit, pid, start))
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as e:
+            prefix = 'entry:' + c['id'] + ': ' if c['kind'] == 'registry' else ''
+            errors.append(prefix + str(e))
+    return errors
+
+
+def release_tags(c):
+    tags = set(run(git_command(c['repo']) + ['for-each-ref', '--format=%(refname:strip=2)', 'refs/tags']).splitlines())
+    return sorted(tags & set(c['release_aliases']))
+
+
+def copy_subject(c):
+    return 'copy:' + c['repo'] + ':' + c['subdir'] + ':' + c['root']
+
+
+def copy_environment(identities):
+    """Read only literal data used by the appointed VOW; no commands from config."""
+    fixture = os.environ.get('MO_COPY_CONFIG')
+    if fixture:
+        path = Path(fixture)
+        before = os.lstat(path)
+        if not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_mode & 0o022:
+            raise ValueError('copy fixture configuration unsafe')
+        values = json.loads(path.read_text(), object_pairs_hook=unique)
+        if not isinstance(values, dict) or any(k not in {'VYPUSK_REPO', 'VYPUSK_REESTR', 'VYPUSK_SOOTVETSTVIYA', 'VYPUSK_ISKLYUCHENIYA'}
+                or not isinstance(v, str) for k, v in values.items()):
+            raise ValueError('copy fixture configuration invalid')
+        if generation(os.lstat(path)) != generation(before): raise ValueError('copy config changed while reading')
+        identities.append(('stat', str(path), generation(before)))
+        return values
+    if os.environ.get('MO_DEREVO_REPO'):
+        return dict(VYPUSK_REPO=os.environ['MO_DEREVO_REPO'],
+                    VYPUSK_SOOTVETSTVIYA=os.environ.get('VYPUSK_SOOTVETSTVIYA', ''),
+                    VYPUSK_ISKLYUCHENIYA=os.environ.get('VYPUSK_ISKLYUCHENIYA', ''))
+    command = [os.environ.get('MO_SYSTEMCTL', 'systemctl'), 'show',
+               '--property=LoadState,Environment,EnvironmentFiles', 'vypusk-okno-watch.service']
+    raw = run(command)
+    fields = dict(line.split('=', 1) for line in raw.splitlines() if '=' in line)
+    if fields.get('LoadState') != 'loaded': raise ValueError('copy reader configuration not loaded')
+    import shlex
+    values = {}
+    for item in shlex.split(fields.get('Environment', '')):
+        if '=' in item:
+            key, value = item.split('=', 1)
+            if key in {'VYPUSK_REPO', 'VYPUSK_REESTR', 'VYPUSK_SOOTVETSTVIYA', 'VYPUSK_ISKLYUCHENIYA'}: values[key] = value
+    env_file = fields.get('EnvironmentFiles', '')
+    if env_file:
+        match = re.fullmatch(r'(/[^ ()\\\n]+) \(ignore_errors=(yes|no)\)', env_file)
+        if not match: raise ValueError('copy reader EnvironmentFiles unsupported')
+        path = Path(match[1]); before = os.lstat(path)
+        if not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_mode & 0o022:
+            raise ValueError('copy configuration source unsafe')
+        for line in path.read_text().splitlines():
+            if not line.strip() or line.lstrip().startswith('#'): continue
+            entry = re.fullmatch(r'([A-Z_][A-Z0-9_]*)=(.*)', line.strip())
+            if not entry: raise ValueError('copy reader environment syntax unsupported')
+            value = entry[2].strip()
+            if value.startswith(('"', "'")):
+                if len(value) < 2 or value[-1] != value[0] or value[0] in value[1:-1]:
+                    raise ValueError('copy reader environment quotes unsupported')
+                value = value[1:-1]
+            if '\\' in value: raise ValueError('copy reader environment escape unsupported')
+            if entry[1] in {'VYPUSK_REPO', 'VYPUSK_REESTR', 'VYPUSK_SOOTVETSTVIYA', 'VYPUSK_ISKLYUCHENIYA'}:
+                values[entry[1]] = value
+        if generation(os.lstat(path)) != generation(before): raise ValueError('copy config changed while reading')
+        identities.append(('stat', str(path), generation(before)))
+    values.setdefault('VYPUSK_ISKLYUCHENIYA', '/usr/local/sbin/vypusk-okno-watch.exceptions.list')
+    values.setdefault('VYPUSK_REESTR', '')  # VOW treats an absent setting as an empty registry area.
+    identities.append(('vow-config', command, raw))
+    return values
+
+
+def copy_configuration(c, identities):
+    values = copy_environment(identities)
+    if values.get('VYPUSK_REPO') != c['repo']: raise ValueError('copy repo differs from current reader')
+    if values.get('VYPUSK_REESTR', c['registry']) != c['registry']: raise ValueError('copy registry differs from current reader')
+    raw = run(git_command(c['repo']) + ['show', c['commit'] + ':' + c['subdir'] + '/package.json'])
+    meta = json.loads(raw)
+    aliases = {c['subdir'].split('/')[1], meta['name'], *meta.get('dsh', {}).get('prezhnie_imena', [])}
+    mapping = values.get('VYPUSK_SOOTVETSTVIYA', '')
+    keys, selected = set(), []
+    for line in mapping.splitlines():
+        if not line: continue
+        if '=' not in line: raise ValueError('copy mapping invalid')
+        name, roots = line.split('=', 1)
+        if not name or name in keys: raise ValueError('copy mapping duplicate/empty key')
+        keys.add(name)
+        if name in aliases: selected.append(roots)
+    if len(selected) > 1: raise ValueError('copy mapping aliases ambiguous')
+    policy = 0
+    if selected and selected[0]:
+        roots = [r for r in selected[0].split(':') if r]
+        if c['root'] not in roots: raise ValueError('copy root outside current reader mapping')
+        policy = 1
+    exceptions = {}
+    path = values.get('VYPUSK_ISKLYUCHENIYA')
+    if path:
+        before = os.lstat(path)
+        if not stat.S_ISREG(before.st_mode): raise ValueError('copy exceptions source not regular')
+        for line in Path(path).read_text().splitlines():
+            if not line.strip() or line.lstrip().startswith('#'): continue
+            parts = [s.strip() for s in line.split(' · ')]
+            if len(parts) != 4 or not all(parts) or parts[0] in exceptions:
+                raise ValueError('copy exceptions invalid')
+            name, separator, version = parts[0].rpartition('@')
+            if not separator or not name or not version: raise ValueError('copy exception identity invalid')
+            datetime.date.fromisoformat(parts[3])
+            exceptions[parts[0]] = dict(reason=parts[1], owner=parts[2], date=parts[3])
+        if generation(os.lstat(path)) != generation(before): raise ValueError('copy exceptions changed while reading')
+        identities.append(('stat', path, generation(before)))
+    signature = hashlib.sha256(json.dumps(dict(repo=c['repo'], registry=c['registry'], mapping=mapping, exceptions=exceptions),
+                                          sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    return policy, exceptions, signature
+
+
+@contextlib.contextmanager
+def copy_source(c):
+    """A private immutable-C snapshot, never the moving checkout or a guard process."""
+    with tempfile.TemporaryDirectory(prefix='okno-copy-source-') as temporary:
+        root = Path(temporary)
+        archive = root / 'source.tar'
+        result = subprocess.run(git_command(c['repo']) + ['archive', c['commit'], c['subdir']],
+                                capture_output=True, timeout=20, check=True)
+        if len(result.stdout) > 256 * 1024 * 1024: raise ValueError('copy source archive too large')
+        archive.write_bytes(result.stdout)
+        with tarfile.open(archive) as tar:
+            members = tar.getmembers()
+            if len(members) > 32768 or any(not (m.isfile() or m.isdir()) or
+                    os.path.isabs(m.name) or os.path.normpath(m.name.rstrip('/')) != m.name.rstrip('/') or
+                    not m.name.rstrip('/').startswith(c['subdir'].split('/')[0]) for m in members):
+                raise ValueError('copy source archive unsafe')
+            tar.extractall(root / 'tree', filter='data')
+        yield root / 'tree' / c['subdir']
+
+
+def publication_from_source(source):
+    """Admission-only recomputation; closing never repeats npm pack."""
+    with tempfile.TemporaryDirectory(prefix='okno-copy-pack-') as temporary:
+        env = dict(os.environ, npm_config_cache=temporary)
+        output = subprocess.run(['npm', 'pack', '--json', '--ignore-scripts'], cwd=source,
+                                env=env, capture_output=True, text=True, timeout=30, check=True)
+        data = json.loads(output.stdout)
+        filename = data[0]['filename']
+        if not isinstance(filename, str) or Path(filename).name != filename:
+            raise ValueError('publication archive name invalid')
+        rows = []
+        with tarfile.open(source / filename) as tar:
+            for member in tar:
+                if member.isdir(): continue
+                if not member.isfile() or not member.name.startswith('package/'):
+                    raise ValueError('publication member unsafe')
+                name = member.name[len('package/'):]
+                if os.path.normpath(name) != name or name.startswith('../') or os.path.isabs(name):
+                    raise ValueError('publication path unsafe')
+                rows.append(dict(path=name, sha256=hashlib.sha256(tar.extractfile(member).read()).hexdigest(),
+                                 mode=member.mode & 0o7777))
+        return sorted(rows, key=lambda x: x['path'])
+
+
+def entry_root(entry):
+    path = entry.get('path')
+    if isinstance(path, str) and os.path.isabs(path) and Path(path).is_dir():
+        return path
+    source = entry.get('source')
+    if isinstance(source, dict) and source.get('type') == 'local-dir' and isinstance(source.get('address'), str) and os.path.isabs(source['address']):
+        path = Path(source['address'])
+        return str(path if path.is_dir() else path.parent)
+    return None
+
+
+def dotted(entry, key):
+    value = entry
+    for part in key.split('.'):
+        if not isinstance(value, dict): return None
+        value = value.get(part)
+    return value
+
+
+def selected_roots(path, descriptor, registry, checks):
+    selector = json.loads(path.read_text(), object_pairs_hook=unique)
+    with copy_source(descriptor) as source:
+        meta = json.loads((source / 'package.json').read_text())
+        published = publication_from_source(source)
+    if not isinstance(selector, dict) or set(selector) != {'package', 'version', 'copies'} or selector['package'] != meta['name'] or selector['version'] != meta['version']:
+        raise ValueError('copies selector belongs to another package/version')
+    ids = selector['copies']
+    if not isinstance(ids, list) or not ids or len(ids) > 64 or any(not isinstance(e, str) for e in ids) or len(set(ids)) != len(ids):
+        raise ValueError('copies selector identity invalid')
+    _, entries = registry_entries(registry)
+    aliases = {meta['name'], descriptor['subdir'].split('/')[1], *meta.get('dsh', {}).get('prezhnie_imena', [])}
+    roots = []
+    for eid in ids:
+        matches = [e for e in entries if e['id'] == eid]
+        if len(matches) != 1: raise ValueError('copy ID unknown: ' + eid)
+        entry = matches[0]; root = entry_root(entry)
+        if not root or os.path.realpath(root) != root or not stat.S_ISDIR(os.lstat(root).st_mode):
+            raise ValueError('copy root not canonical: ' + eid)
+        if root in roots or Path(root).is_relative_to(descriptor['repo']):
+            raise ValueError('copy root duplicate or source itself: ' + eid)
+        live_meta = json.loads((Path(root) / 'package.json').read_text())
+        if not isinstance(live_meta, dict) or live_meta.get('name') not in aliases:
+            raise ValueError('copy belongs to another package: ' + eid)
+        if str(Path(root) / 'package.json') not in check_paths(entry):
+            raise ValueError('copy has no literal manifest check: ' + eid)
+        roots.append(root)
+    target = str(Path(descriptor['manifest']).parent)
+    if target not in roots: raise ValueError('target is outside selected copies')
+    if any(a != b and Path(a).is_relative_to(b) for a in roots for b in roots):
+        raise ValueError('selected copy roots overlap')
+    for root in roots:
+        if root == target: continue
+        for item in published:
+            destination = Path(root) / item['path']
+            if destination.exists() or destination.is_symlink():
+                st = os.lstat(destination)
+                if not stat.S_ISREG(st.st_mode) or os.path.realpath(destination) != str(destination):
+                    raise ValueError('published path is not regular: ' + str(destination))
+                uid, gid = st.st_uid, st.st_gid
+            else:
+                uid, gid = os.getuid(), os.getgid()
+            checks.append(dict(kind='file', path=str(destination), uid=uid, gid=gid,
+                               sha256=item['sha256'], mode=item['mode']))
+    return [dict(descriptor, manifest=root + '/package.json') for root in roots]
+
+
+def release_copy(data, tag, checks, registry):
+    program = Path(os.environ.get('MO_COPY_PRIBOR', '/usr/local/libexec/dsh-vypusk-watch/copy-compare.sh'))
+    program_stat = os.lstat(program)
+    if not stat.S_ISREG(program_stat.st_mode) or not os.access(program, os.X_OK):
+        raise ValueError('strict copy checker unavailable before admission')
+    if not os.environ.get('MO_COPY_PRIBOR') and not safe(program_stat):
+        raise ValueError('runtime copy checker must be root-owned, not writable by others')
+    root = str(Path(data['manifest']).parent)
+    if os.path.realpath(root) != root or not stat.S_ISDIR(os.lstat(root).st_mode):
+        raise ValueError('copy root is not a canonical regular directory')
+    descriptor = dict(repo=tag['repo'], commit=tag['commit'], subdir=data['subdir'])
+    with copy_source(descriptor) as source:
+        meta = json.loads((source / 'package.json').read_text())
+        publication = publication_from_source(source)
+    rows = {str(Path(c['path']).relative_to(root)): c for c in checks
+            if c['kind'] == 'file' and Path(c['path']).is_relative_to(root)}
+    if set(rows) != {x['path'] for x in publication}:
+        raise ValueError('copy publication rows incomplete')
+    for item in publication:
+        row = rows[item['path']]
+        target = Path(root) / item['path']
+        if os.path.realpath(target) != str(target) or (target.exists() and not stat.S_ISREG(os.lstat(target).st_mode)) or target.is_symlink():
+            raise ValueError('published target is not a canonical regular path: ' + str(target))
+        if row['sha256'] != item['sha256'] or row['mode'] != item['mode']:
+            raise ValueError('copy publication differs from pinned source: ' + item['path'])
+        item.update(uid=row['uid'], gid=row['gid'])
+    _, entries = registry_entries(registry)
+    main = [e for e in entries if entry_root(e) == root and str(Path(root) / 'package.json') in check_paths(e)]
+    if len(main) != 1: raise ValueError('copy registry/root ownership is missing or ambiguous: ' + root)
+    linked = [r for r in checks if r['kind'] == 'registry' and r['path'] == str(registry) and r['id'] == main[0]['id']]
+    if len(linked) != 1: raise ValueError('copy main registry entry is not in the plan')
+    for key in ('path', 'source.type', 'source.address'):
+        value = dotted(main[0], key)
+        if value is not None: linked[0]['expected'][key] = value
+    c = dict(kind='copy', **descriptor, root=root, name=meta['name'], version=meta['version'],
+             ref=tag['ref'], publication=publication, baseline=[], registry=str(registry),
+             entry_ids=[main[0]['id']], baseline_scope=None, baseline_root=[])
+    files = meta.get('files', [])
+    if not isinstance(files, list) or any(not isinstance(s, str) for s in files):
+        raise ValueError('source publication scope invalid')
+    c['scope'] = [s.removeprefix('./').rstrip('/') for s in files] + ['package.json']
+    c['policy'], c['exceptions'], c['config_sha256'] = copy_configuration(c, [])
+    if c['policy'] == 1:
+        try: old_meta = json.loads((Path(root) / 'package.json').read_text())
+        except FileNotFoundError: old_meta = {}
+        old_files = old_meta.get('files', [])
+        if not isinstance(old_files, list) or any(not isinstance(v, str) for v in old_files):
+            raise ValueError('old publication scope is unreadable')
+        c['baseline_scope'] = sorted(set([v.removeprefix('./').rstrip('/') for v in old_files] +
+                                        [v['path'] for v in publication] + ['package.json']))
+    st = os.lstat(root)
+    c['baseline_root'] = [stat.S_IMODE(st.st_mode), st.st_uid, st.st_gid, st.st_dev, st.st_ino]
+    c['baseline'] = copy_snapshot(c)
+    check_shape(c)
+    return c
+
+
+def copy_snapshot(c):
+    observed = copy_observed(dict(c, rollback=True))
+    rows = []
+    for rel in sorted(observed[0]):
+        path = Path(c['root']) / rel
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode): raise ValueError('baseline path not regular')
+        rows.append(dict(path=rel, sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                         mode=stat.S_IMODE(st.st_mode), uid=st.st_uid, gid=st.st_gid))
+    if copy_observed(dict(c, rollback=True)) != observed:
+        raise ValueError('copy changed while capturing rollback baseline')
+    return rows
+
+
+def trusted_rollback(subjects, checks):
+    copies = [c for c in checks if c['kind'] == 'copy']
+    result = []
+    for c in checks:
+        if c['kind'] == 'copy':
+            result.append(dict(c, rollback=True))
+            for row in c['baseline']:
+                result.append(dict(kind='file', path=c['root'] + '/' + row['path'],
+                                   **{k: row[k] for k in ('sha256', 'mode', 'uid', 'gid')}))
+        elif c['kind'] == 'file':
+            owner = next((copy for copy in copies if Path(c['path']).is_relative_to(copy['root'])), None)
+            if owner:
+                rel = str(Path(c['path']).relative_to(owner['root']))
+                if rel not in {row['path'] for row in owner['baseline']}:
+                    result.append(dict(kind='absent', path=c['path']))
+            else:
+                st = os.lstat(c['path'])
+                result.append(dict(kind='file', path=c['path'], sha256=hashlib.sha256(Path(c['path']).read_bytes()).hexdigest(),
+                                   mode=stat.S_IMODE(st.st_mode), uid=st.st_uid, gid=st.st_gid))
+        elif c['kind'] == 'registry':
+            _, entries = registry_entries(c['path'])
+            old = next(e for e in entries if e['id'] == c['id'])
+            result.append(dict(kind='registry', path=c['path'], id=c['id'], expected={'id': c['id']},
+                               snapshot_sha256=hashlib.sha256(json.dumps(old, sort_keys=True, separators=(',', ':')).encode()).hexdigest()))
+        elif c['kind'] == 'tag' and tag_absent(c):
+            result.append({k: v for k, v in dict(c, kind='tag_absent').items() if k not in {'commit', 'subdir', 'tree'}})
+        else:
+            result.append(c)
+    return dict(subjects=subjects, checks=result)
+
+
+def copy_observed(c):
+    """The exact in-scope name set and generations, including directory identity."""
+    root = Path(c['root'])
+    root_stat = os.lstat(root)
+    if not stat.S_ISDIR(root_stat.st_mode) or os.path.realpath(root) != str(root):
+        raise ValueError('copy root changed or became a link')
+    scope = None
+    if c.get('rollback'):
+        scope = c['baseline_scope']
+    elif c['policy'] == 1:
+        if c['scope'] == ['package.json']:
+            raise ValueError('copy publication policy has no literal files')
+        scope = c['scope']
+    result, directories = {}, {'.'}
+    for current, dirs, files in os.walk(root, followlinks=False):
+        dirs[:] = [d for d in dirs if d != 'node_modules' and not (Path(current) / d).is_symlink()]
+        for filename in files:
+            if any(fnmatch.fnmatchcase(filename, pattern) for pattern in ('*.bak*', '*.tar', '*.tgz')): continue
+            path = Path(current) / filename
+            rel = str(path.relative_to(root))
+            if scope is not None and not any(rel == s or rel.startswith(s + '/') for s in scope): continue
+            st = os.lstat(path)
+            if not stat.S_ISREG(st.st_mode): continue  # same regular-file scope as VOW find
+            result[rel] = generation(st)
+            parent = path.parent
+            while parent.is_relative_to(root):
+                directories.add(str(parent.relative_to(root)))
+                if parent == root: break
+                parent = parent.parent
+    # Ignore mtime/ctime caused solely by excluded backup names, but preserve real topology/ownership.
+    parents = {}
+    for rel in sorted(directories):
+        st = os.lstat(root / rel)
+        if not stat.S_ISDIR(st.st_mode): raise ValueError('copy directory became a link')
+        parents[rel] = (st.st_dev, st.st_ino, st.st_mode, st.st_uid, st.st_gid)
+    return result, parents
+
+
+def verify_copy(c, identities):
+    captured = []
+    policy, exceptions_data, signature = copy_configuration(c, captured)
+    if (policy, exceptions_data, signature) != (c['policy'], c['exceptions'], c['config_sha256']):
+        raise ValueError('copy policy/configuration changed: ' + c['root'])
+    st = os.lstat(c['root'])
+    if [stat.S_IMODE(st.st_mode), st.st_uid, st.st_gid, st.st_dev, st.st_ino] != c['baseline_root']:
+        raise ValueError('copy root ownership/identity changed')
+    if c.get('rollback'):
+        observed = copy_observed(c)
+        if copy_snapshot(c) != c['baseline']:
+            raise ValueError('copy rollback differs from trusted baseline: ' + c['root'])
+        if identities is not None:
+            identities.extend(captured)
+            identities.append(('copy-state', c, observed))
+        return
+    program = Path(os.environ.get('MO_COPY_PRIBOR', '/usr/local/libexec/dsh-vypusk-watch/copy-compare.sh'))
+    before = os.lstat(program)
+    if not stat.S_ISREG(before.st_mode) or not os.access(program, os.X_OK):
+        raise ValueError('strict copy checker unavailable')
+    if not os.environ.get('MO_COPY_PRIBOR') and not safe(before):
+        raise ValueError('runtime copy checker must be root-owned, not writable by others')
+    observed = copy_observed(c)
+    with copy_source(c) as source, tempfile.TemporaryDirectory(prefix='okno-copy-check-') as temporary:
+        exceptions = Path(temporary) / 'exceptions.json'
+        exceptions.write_text(json.dumps(c['exceptions']))
+        result = subprocess.run(['bash', '--', str(program), '--source', str(source), '--copy', c['root'],
+                                 '--name', c['name'], '--version', c['version'], '--published-only', str(c['policy']),
+                                 '--exceptions', str(exceptions), '--tag', c['ref']],
+                                capture_output=True, text=True, timeout=30)
+        value = json.loads(result.stdout)
+        count_keys = {'matched', 'total', 'source_count', 'copy_count'}
+        string_keys = {'source_version', 'outside_source', 'outside_copy_count', 'different', 'only_copy',
+                       'only_source', 'changelog_bad', 'copy_sums', 'copy_index_sha256'}
+        if not isinstance(value, dict) or set(value) != {'status'} | count_keys | string_keys or any(type(value[k]) is not int or value[k] < 0 for k in count_keys) or any(not isinstance(value[k], str) for k in string_keys):
+            raise ValueError('copy checker protocol invalid')
+        if (value['total'] != max(value['source_count'], value['copy_count']) or
+                value['copy_count'] != len(value['copy_sums'].splitlines()) or
+                hashlib.sha256(value['copy_sums'].encode()).hexdigest() != value['copy_index_sha256'] or
+                value['source_version'] != c['version'] or value['matched'] != value['total'] or
+                value['source_count'] != value['copy_count'] or not value['copy_count'] or
+                any(value[k] for k in ('different', 'only_copy', 'only_source', 'changelog_bad'))):
+            raise ValueError('copy checker incomplete or inconsistent match')
+        if result.returncode != 0 or value.get('status') != 'match':
+            raise ValueError('copy not accepted: ' + c['root'] + ': ' + str(value.get('reason') or value.get('different') or value.get('only_copy') or value.get('changelog_bad') or 'content differs'))
+    if copy_observed(c) != observed: raise ValueError('copy changed during verification: ' + c['root'])
+    if generation(os.lstat(program)) != generation(before): raise ValueError('copy checker changed during verification')
+    if identities is not None:
+        identities.extend(captured)
+        identities.append(('stat', str(program), generation(before)))
+        identities.append(('copy-state', c, observed))
+
+
+def release_check(path, checks):
+    """SMV's data descriptor binds the manifest rows to the immutable source."""
+    data = json.loads(path.read_text(), object_pairs_hook=unique)
+    if not isinstance(data, dict) or set(data) != {'repo', 'commit', 'subdir', 'manifest'}:
+        raise ValueError('release descriptor shape invalid')
+    repo, commit, subdir, manifest = (data[k] for k in ('repo', 'commit', 'subdir', 'manifest'))
+    if not isinstance(repo, str) or not os.path.isabs(repo) or os.path.normpath(repo) != repo:
+        raise ValueError('release repo invalid')
+    if not re.fullmatch(r'[0-9a-f]{40}', commit or '') or not isinstance(subdir, str) or not re.fullmatch(r'packages/[A-Za-z0-9][A-Za-z0-9._-]*', subdir):
+        raise ValueError('release source invalid')
+    if repo != vow_repo([]): raise ValueError('release repo differs from effective VOW repo')
+    rows = [c for c in checks if c['kind'] == 'file' and c['path'] == manifest]
+    if len(rows) != 1 or Path(manifest).name != 'package.json': raise ValueError('release manifest row missing')
+    raw = subprocess.run(git_command(repo) + ['show', commit + ':' + subdir + '/package.json'], capture_output=True, timeout=20, check=True).stdout
+    if hashlib.sha256(raw).hexdigest() != rows[0]['sha256']: raise ValueError('release manifest differs from pinned source')
+    meta = json.loads(raw)
+    if not isinstance(meta, dict): raise ValueError('release manifest is not an object')
+    version, name = meta.get('version'), meta.get('name')
+    if not isinstance(name, str) or not isinstance(version, str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?', version):
+        raise ValueError('release name/version invalid')
+    dsh = meta.get('dsh', {})
+    if not isinstance(dsh, dict): raise ValueError('release dsh aliases invalid')
+    old = dsh.get('prezhnie_imena', [])
+    if not isinstance(old, list) or len(old) > 16 or any(not isinstance(x, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', x) for x in old):
+        raise ValueError('release aliases invalid')
+    aliases = set([subdir.split('/')[1], name, *old])
+    tags = set(run(git_command(repo) + ['for-each-ref', '--format=%(refname:strip=2)', 'refs/tags']).splitlines())
+    own = sorted(tags & {x + '-v' + version for x in aliases})
+    if len(own) > 1: raise ValueError('release tag aliases ambiguous')
+    ref = own[0] if own else subdir.split('/')[1] + '-v' + version
+    run(git_command(repo) + ['check-ref-format', tag_ref(ref)])
+    tree = package_tree(repo, commit, subdir)
+    if own:
+        actual = run(git_command(repo) + ['rev-parse', '--verify', tag_ref(ref) + '^{commit}'])
+        if package_tree(repo, actual, subdir) != tree:
+            raise ValueError('release tag package tree differs from pinned source')
+    c = dict(kind='tag', repo=repo, ref=ref, commit=commit, subdir=subdir, tree=tree, vow_consistency=True, release_aliases=sorted(x + '-v' + version for x in aliases))
+    check_shape(c)
+    return c
+
+
+def stable_verify(checks):
+    identities = []
+    errors = verify(checks, identities)
+    if not errors and not unchanged(identities): errors.append('strict objects changed during verification')
+    return errors
+
+
+
+def close_time(record, allow_expired=False):
+    """Admission time for a new closure; recovery has no deployment deadline."""
+    same_boot = record['boot_id'] == boot()
+    if not same_boot and not allow_expired:
+        raise ValueError('window ' + record['id'] + ': closure belongs to another boot')
+    now = clock()
+    if same_boot and now < record['opened_ns']:
+        raise ValueError('window ' + record['id'] + ': closure clock precedes opening')
+    if now >= record['deadline_ns'] and not allow_expired:
+        print('НЕ ЗАКРЫТО: ' + record['id'] + ': срок истёк', file=sys.stderr)
+        return None
+    return now
+
+
+def main():
+    substitutions = {k: os.environ[k] for k in ('MO_COPY_PRIBOR', 'MO_COPY_CONFIG') if k in os.environ}
+    for name, value in substitutions.items():
+        shown = repr(value) if any(ch in value for ch in '\n\r\t') else value
+        print('⚠️ ПОДМЕНА: ' + name + '=' + shown, file=sys.stderr)
+    parser = argparse.ArgumentParser(allow_abbrev=False)
+    parser.add_argument('--state-dir', type=Path, default=Path(os.environ.get('MO_STATE_DIR', '/var/lib/montazh-okna')))
+    sub = parser.add_subparsers(dest='action', required=True)
+    q = sub.add_parser('otlozheno', allow_abbrev=False)
+    q.add_argument('--avto-montazh', action='store_true')
+    q.add_argument('--since-ns', type=int)
+    q.add_argument('--require', action='append', default=[])
+    q.add_argument('--with-generation', action='store_true')
+    q.add_argument('--record-sha256')
+    q.add_argument('--copy-policy', type=int, choices=[0, 1])
+    q.add_argument('--copy-config-sha256')
+    q.add_argument('--copy-registry')
+    q.add_argument('subject')
+    q = sub.add_parser('yunit-otlozheno', allow_abbrev=False)
+    q.add_argument('--avto-montazh', action='store_true')
+    q.add_argument('unit')
+    q = sub.add_parser('aktivno-id', allow_abbrev=False)
+    q.add_argument('--avto-montazh', action='store_true')
+    q.add_argument('id')
+    sub.add_parser('vremya', allow_abbrev=False)
+    p = sub.add_parser('otkryt', allow_abbrev=False)
+    p.add_argument('--plan', type=Path, required=True)
+    p.add_argument('--task', required=True)
+    p.add_argument('--actor', default='root')
+    p.add_argument('--ttl', type=int, default=TTL)
+    p = sub.add_parser('podgotovit', allow_abbrev=False)
+    p.add_argument('--rows', type=Path, required=True)
+    p.add_argument('--registry', type=Path)
+    p.add_argument('--release', type=Path)
+    p.add_argument('--copies', type=Path)
+    p.add_argument('--task', required=True)
+    p.add_argument('--actor', default='root')
+    p.add_argument('--ttl', type=int, default=TTL)
+    p.add_argument('--id')
+    p.add_argument('--plan', type=Path)
+    for name in ('zakryt', 'otkaz', 'vosstanovit'):
+        sub.add_parser(name, allow_abbrev=False).add_argument('id')
+    p = sub.add_parser('otkat-proveren', allow_abbrev=False)
+    p.add_argument('--plan', type=Path)
+    p.add_argument('id')
+    w = sub.add_parser('watch', allow_abbrev=False)
+    w.add_argument('--kanal', default='/usr/local/bin/agent-alert')
+    a = parser.parse_args()
+    root = a.state_dir
+    if a.action == 'vremya':
+        print(clock())
+        return 0
+    if a.action == 'aktivno-id':
+        if not a.avto_montazh or not RE_ID.fullmatch(a.id): return 0
+        for record in records(root):
+            if record['id'] != a.id: continue
+            if record['phase'] == 'open' and record['boot_id'] == boot() and record['opened_ns'] <= clock() < record['deadline_ns']:
+                print('ОТЛОЖЕНО ' + a.id + ' до ' + record['expires_utc']); return 4
+        return 0
+    if a.action == 'yunit-otlozheno':
+        if not a.avto_montazh or a.unit not in {'registry-watchdog.service', 'vypusk-okno-watch.service', 'zhivaya-versiya-watch.service', 'dve-kopii-watch.service'}: return 0
+        control = os.environ.get('MO_SYSTEMCTL', 'systemctl')
+        if run([control, 'show', a.unit, '-p', 'ExecMainStatus', '--value']) != '4': return 0
+        invocation = run([control, 'show', a.unit, '-p', 'InvocationID', '--value'])
+        if not RE_ID.fullmatch(invocation): return 0
+        journal = run([os.environ.get('MO_JOURNALCTL', 'journalctl'), '_SYSTEMD_INVOCATION_ID=' + invocation, '-o', 'cat', '-n', '100', '--no-pager'])
+        mentioned = [re.fullmatch(r'\s*ОТЛОЖЕНО ([0-9a-f]{32}) \S+ до \S+ (.+)', line) for line in journal.splitlines()]
+        mentioned = [m.groups() for m in mentioned if m]
+        if not mentioned: return 0
+        windows = {r['id']: r for r in records(root)}; now = clock(); fresh = True; messages = []
+        for ident, subject in mentioned:
+            record = windows.get(ident)
+            if not record or subject not in record['subjects'] or (record['boot_id'] if record['phase'] == 'open' else record.get('closed_boot_id', record['boot_id'])) != boot(): return 0
+            if record['phase'] == 'open' and record['opened_ns'] <= now < record['deadline_ns']:
+                fresh = False; messages.append('ОТЛОЖЕНО ' + ident + ' до ' + record['expires_utc'])
+            elif record['phase'] in {'closed', 'rolled_back'} and 0 <= now - record.get('closed_ns', 0) < TTL * 10**9:
+                if record['phase'] == 'rolled_back' and any(c['kind'] == 'copy' for c in record['checks']):
+                    return 0  # Physical restoration is not a health verdict for a pre-existing broken copy.
+                checks = record.get('rollback_checks', record['checks']) if record['phase'] == 'rolled_back' else record['checks']
+                if stable_verify(checks) or read(root, ident + '.json') != record: return 0
+            else: return 0
+        now = clock()  # stable_verify мог ждать приборы: старый now не продлевает срок open.
+        for ident, subject in mentioned:
+            record = windows[ident]
+            if read(root, ident + '.json') != record: return 0
+            if record['phase'] == 'open' and not record['opened_ns'] <= clock() < record['deadline_ns']: return 0
+        for text in sorted(set(messages)): print(text)
+        if fresh: print('ПЕРЕСНЯТО: строгая приёмка закрытых окон сошлась'); return 6
+        return 4
+    if a.action == 'otlozheno':
+        if not a.avto_montazh:
+            return 0
+        now = clock()
+        if a.since_ns is not None and not 0 <= a.since_ns <= now:
+            raise ValueError('invalid scan start time')
+        for record in records(root):
+            now = clock()  # каталог мог читаться долго; каждый предмет проверяется по свежему сроку
+            digest = hashlib.sha256(json.dumps(record, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+            if a.record_sha256 is not None and a.record_sha256 != digest: continue
+            if a.subject not in record['subjects'] or not set(a.require) <= set(record['subjects']):
+                continue
+            if a.subject.startswith('copy:'):
+                copies = [c for c in record['checks'] if c['kind'] == 'copy' and copy_subject(c) == a.subject]
+                if len(copies) != 1: continue
+                c = copies[0]
+                try:
+                    captured = []
+                    policy, exceptions, signature = copy_configuration(c, captured)
+                    if (policy, exceptions, signature) != (c['policy'], c['exceptions'], c['config_sha256']): continue
+                    if a.copy_policy is not None and a.copy_policy != c['policy']: continue
+                    if a.copy_config_sha256 is not None and a.copy_config_sha256 != signature: continue
+                    if a.copy_registry is not None and a.copy_registry != c['registry']: continue
+                    before, entries = registry_entries(c['registry'])
+                    captured.append(('stat', c['registry'], generation(before)))
+                    st = os.lstat(c['root'])
+                    if not stat.S_ISDIR(st.st_mode) or os.path.realpath(c['root']) != c['root'] or [stat.S_IMODE(st.st_mode), st.st_uid, st.st_gid, st.st_dev, st.st_ino] != c['baseline_root']:
+                        raise ValueError('copy root ownership/identity changed')
+                    for eid in c['entry_ids']:
+                        live = [e for e in entries if e['id'] == eid]
+                        pinned = next(r for r in record['checks'] if r['kind'] == 'registry' and r['path'] == c['registry'] and r['id'] == eid)
+                        if len(live) != 1 or entry_root(live[0]) != c['root'] or (pinned.get('values_consistency') and check_paths(live[0]) != pinned.get('owned_paths')) or any(dotted(live[0], key) != value for key, value in pinned['expected'].items()):
+                            raise ValueError('copy current registry ownership changed')
+                    if not unchanged(captured): continue
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    continue
+                if read(root, record['id'] + '.json') != record: continue
+                now = clock()
+            if record['phase'] == 'open' and record['boot_id'] == boot() and record['opened_ns'] <= now < record['deadline_ns']:
+                print('ОТЛОЖЕНО ' + record['id'] + ' ' + record['task'] + ' до ' + record['expires_utc'] + ' ' + a.subject)
+                if a.with_generation: print('ПОКОЛЕНИЕ ' + digest)
+                return 4
+            if a.since_ns is not None and record.get('closed_boot_id', record['boot_id']) == boot() and record['phase'] == 'closed' and a.since_ns <= record.get('closed_ns', 0) <= now:
+                # A slow reader must not send its pre-close snapshot. One strict
+                # addressed re-read, checked against the same record generation.
+                errors = stable_verify(record['checks'])
+                if not errors and read(root, record['id'] + '.json') == record:
+                    print('ПЕРЕСНЯТО: сошлось ' + a.subject)
+                    return 6
+        return 0
+    if os.getuid() != 0:
+        raise ValueError('writer requires root')
+    root.mkdir(mode=0o755, parents=True, exist_ok=True)
+    if not safe(os.lstat(root), True):
+        raise ValueError('unsafe state directory')
+    if a.action in {'otkryt', 'podgotovit'}:
+        if a.action == 'podgotovit':
+            checks = []
+            for line in a.rows.read_text().splitlines():
+                path, sha, uid, gid, mode = line.split('\t')
+                checks.append(dict(kind='file', path=path, sha256=sha, uid=int(uid), gid=int(gid), mode=int(mode, 8)))
+            descriptors = [json.loads(a.release.read_text(), object_pairs_hook=unique)] if a.release else []
+            prepared_tag = release_check(a.release, checks) if a.release else None
+            if a.copies:
+                if not a.release or not a.registry: raise ValueError('copies require release and registry')
+                descriptors = selected_roots(a.copies, descriptors[0], a.registry, checks)
+            subjects = ['file:' + c['path'] for c in checks]
+            if a.registry is not None:
+                _, entries = registry_entries(a.registry)
+                targets = {c['path'] for c in checks}
+                for entry in entries:
+                    dv = entry.get('derevo')
+                    if dv is None: continue
+                    if not isinstance(dv, dict) or not isinstance(dv.get('files'), list):
+                        raise ValueError('derevo.files is not a list')
+                    if any(not isinstance(f, dict) or not isinstance(f.get('local'), str) for f in dv['files']):
+                        raise ValueError('derevo.files local missing')
+                    if not targets & {f['local'] for f in dv['files']}: continue
+                    validate_derevo_files(dv)
+                    eid = entry['id']
+                    subjects.append('entry:' + eid)
+                    expected = {'id':eid,'derevo.address':dv.get('address'),'derevo.subdir':dv.get('subdir')}
+                    # B-N-2034: ВСЕ файлы записи, а не цели вызова — проверка записи одинакова у вызовов в разных каталогах.
+                    owned = [{'local':f['local'],'remote':f['remote']} for f in dv['files']]
+                    checks.append(dict(kind='registry', path=str(a.registry), id=eid, expected=expected, owned_files=owned, derevo_consistency=True))
+                # B-N-2042: записи БЕЗ derevo (однофайловые, профили, каталоги) — по пути, буквально стоящему в их проверке.
+                # Только с installed_check: без него закрыть по значению нечем. owned_paths — ВСЕ пути записи (одинаково у вызовов).
+                # По префиксу — только каталог явного cd глубиной ≥3, не равный и не предок cd другой записи (У1 ворот);
+                # широкий/общий cd, под которым лежит цель, — СЛЕПОТА в stderr, а не entry на всё.
+                cds = {e.get('id'): cd_dirs(e) for e in entries}
+                for entry in entries:
+                    if entry.get('derevo') is not None or not entry.get('installed_check'): continue
+                    eid = entry['id']; paths = check_paths(entry); dirs = []
+                    for d in cds.get(eid, []):
+                        shared = any(o == d or o.startswith(d + '/') for oid, ds in cds.items() if oid != eid for o in ds)
+                        if depth(d) >= 3 and not shared: dirs.append(d); continue
+                        if any(t.startswith(d.rstrip('/') + '/') for t in targets):
+                            print('СЛЕПОТА: запись ' + eid + ' — cd ' + d + (' общий с другой записью' if depth(d) >= 3 else ' шире двух уровней') + '; окно её не берёт', file=sys.stderr)
+                    if not paths or not any(owns(paths, dirs, t) for t in targets): continue
+                    if 'entry:' + eid in subjects: continue
+                    subjects.append('entry:' + eid)
+                    checks.append(dict(kind='registry', path=str(a.registry), id=eid, expected={'id': eid}, owned_paths=paths, owned_dirs=dirs, values_consistency=True))
+            if a.release is not None:
+                if a.registry is None: raise ValueError('release requires explicit registry')
+                c = prepared_tag
+                subjects.append('tag:' + c['repo'] + ':' + c['ref'])
+                checks.append(c)
+                for descriptor in descriptors:
+                    copy = release_copy(descriptor, c, checks, a.registry)
+                    subjects.append(copy_subject(copy))
+                    checks.append(copy)
+            actual = dict(subjects=subjects, checks=checks)
+            plan_shape(actual['subjects'], checks)
+            if a.id:
+                if a.plan: raise ValueError('id and plan are mutually exclusive')
+                if not RE_ID.fullmatch(a.id): raise ValueError('invalid window id')
+                with locked(root):
+                    existing = validate(read(root, a.id + '.json'), a.id + '.json')
+                    if existing['phase'] != 'open' or existing['boot_id'] != boot() or not existing['opened_ns'] <= clock() < existing['deadline_ns']:
+                        raise ValueError('window is not active')
+                    for copy in checks:
+                        if copy['kind'] != 'copy': continue
+                        pinned = [old for old in existing['checks'] if old['kind'] == 'copy' and copy_subject(old) == copy_subject(copy)]
+                        baseline_keys = {'baseline', 'baseline_scope', 'baseline_root'}
+                        if len(pinned) != 1 or {k: v for k, v in copy.items() if k not in baseline_keys} != {k: v for k, v in pinned[0].items() if k not in baseline_keys}:
+                            raise ValueError('copy join differs from immutable plan')
+                        copy.update({k: pinned[0][k] for k in baseline_keys})
+                    # B-N-2034: join дописывает ТОЛЬКО file-проверки своих целей, принадлежащих записи derevo, чья
+                    # проверка уже в окне и равна проверке вызова. Иное — вне неизменяемого плана; срок не меняется.
+                    owned = {f['local'] for c in existing['checks'] if c['kind'] == 'registry' and c.get('derevo_consistency') and c in checks for f in c.get('owned_files', [])}
+                    owned_p = [p for c in existing['checks'] if c['kind'] == 'registry' and c.get('values_consistency') and c in checks for p in c.get('owned_paths', [])]   # B-N-2042
+                    owned_d = [p for c in existing['checks'] if c['kind'] == 'registry' and c.get('values_consistency') and c in checks for p in c.get('owned_dirs', [])]
+                    extra = [c for c in checks if c not in existing['checks']]
+                    if any(c['kind'] != 'file' or (c['path'] not in owned and not owns(owned_p, owned_d, c['path'])) or 'file:' + c['path'] in existing['subjects'] for c in extra):
+                        raise ValueError('producer is outside immutable plan')
+                    added = ['file:' + c['path'] for c in extra]
+                    if not set(actual['subjects']) - set(added) <= set(existing['subjects']):
+                        raise ValueError('producer is outside immutable plan')
+                    if extra:
+                        atomic(root, dict(existing, subjects=existing['subjects'] + added, checks=existing['checks'] + extra))
+                print(a.id); return 0
+            plan = json.loads(a.plan.read_text(), object_pairs_hook=unique) if a.plan else actual
+            if not isinstance(plan, dict): raise ValueError('invalid plan')
+            if not set(actual['subjects']) <= set(plan.get('subjects', [])) or not all(c in plan.get('checks', []) for c in checks):
+                raise ValueError('producer does not match accepted plan')
+        else:
+            plan = json.loads(a.plan.read_text(), object_pairs_hook=unique)
+            if isinstance(plan, dict) and any(c.get('kind') == 'copy' for c in plan.get('checks', []) if isinstance(c, dict)):
+                raise ValueError('copy plans require automatic podgotovit admission')
+        if not isinstance(plan, dict) or set(plan) != {'subjects', 'checks'} or not 0 < a.ttl <= TTL:
+            raise ValueError('invalid plan/TTL')
+        plan_shape(plan['subjects'], plan['checks'])
+        copies = [c for c in plan['checks'] if c['kind'] == 'copy']
+        if copies:
+            if any(c not in checks or c.get('rollback') for c in copies):
+                raise ValueError('manual copy checks are outside the automatically prepared plan')
+            for c in copies:
+                if copy_snapshot(c) != c['baseline']:
+                    raise ValueError('copy changed after preparation: ' + c['root'])
+            preparation = [('copy-state', dict(c, rollback=True), copy_observed(dict(c, rollback=True))) for c in copies]
+            for c in copies:
+                before, entries = registry_entries(c['registry'])
+                preparation.append(('stat', c['registry'], generation(before)))
+                policy, exceptions, signature = copy_configuration(c, preparation)
+                if (policy, exceptions, signature) != (c['policy'], c['exceptions'], c['config_sha256']):
+                    raise ValueError('copy configuration changed after preparation')
+            for c in plan['checks']:
+                if c['kind'] != 'tag': continue
+                aliases = release_tags(c)
+                if aliases and aliases != [c['ref']]: raise ValueError('release aliases changed during preparation')
+                preparation.append(('release-tags', c, aliases))
+                if tag_absent(c): preparation.append(('tag-absent', c))
+                else:
+                    current = run(git_command(c['repo']) + ['rev-parse', '--verify', tag_ref(c['ref']) + '^{commit}'])
+                    if 'tree' in c:
+                        if package_tree(c['repo'], current, c['subdir']) != c['tree']:
+                            raise ValueError('release tag package tree changed during preparation')
+                    elif current != c['commit']:
+                        raise ValueError('release tag changed during preparation')
+                    preparation.append(('tag', c, current))
+        with locked(root):
+            for old in records(root, strict=True):
+                if old['phase'] in {'open', 'failed'} and set(old['subjects']) & set(plan['subjects']):
+                    raise ValueError('subject already has unfinished window')
+            now = clock()
+            record = dict(plan, schema=1, id=uuid.uuid4().hex, task=a.task, actor=a.actor,
+                boot_id=boot(), opened_ns=now, deadline_ns=now + a.ttl * 10**9,
+                expires_utc=(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=a.ttl)).isoformat(), phase='open')
+            if any(c['kind'] == 'copy' for c in plan['checks']):
+                record['rollback_plan'] = trusted_rollback(plan['subjects'], plan['checks'])
+                if substitutions: record['substitutions'] = substitutions
+                if not unchanged(preparation): raise ValueError('copy objects changed before publication')
+            atomic(root, record)
+        print(record['id'])
+        return 0
+    if a.action in {'zakryt', 'otkaz', 'otkat-proveren', 'vosstanovit'}:
+        if not RE_ID.fullmatch(a.id):
+            raise ValueError('invalid window id')
+        original = validate(read(root, a.id + '.json'), a.id + '.json')
+        if a.action == 'zakryt' and original['phase'] != 'closed' and close_time(original) is None:
+            return 1
+        identities = []
+        closure_checks = original['checks']
+        if a.action == 'otkat-proveren':
+            plan = json.loads(a.plan.read_text(), object_pairs_hook=unique) if a.plan else original.get('rollback_plan')
+            if original.get('rollback_plan') is not None and plan != original['rollback_plan']:
+                raise ValueError('rollback must use the trusted complete copy baseline')
+            if not isinstance(plan, dict) or set(plan) != {'subjects', 'checks'} or set(plan['subjects']) != set(original['subjects']): raise ValueError('rollback plan must cover the exact original subjects')
+            plan_shape(plan['subjects'], plan['checks'])
+            closure_checks = plan['checks']
+        if a.action in {'zakryt', 'otkat-proveren', 'vosstanovit'}:
+            errors = verify(closure_checks, identities)
+            if errors:
+                print('НЕ ЗАКРЫТО: ' + '; '.join(errors), file=sys.stderr)
+                return 1
+        with locked(root):
+            record = validate(read(root, a.id + '.json'), a.id + '.json')
+            if record != original:
+                raise ValueError('window changed during verification')
+            if a.action in {'zakryt', 'otkat-proveren', 'vosstanovit'} and not unchanged(identities):
+                raise ValueError('strict objects changed during verification; window remains open')
+            if a.action in {'zakryt', 'vosstanovit'}:
+                if record['phase'] == 'closed':
+                    return 0  # Already accepted: strict recheck, no renewed receipt.
+                accepted_ns = close_time(record, allow_expired=a.action == 'vosstanovit')
+                if accepted_ns is None:
+                    return 1
+            record.update(phase='rolled_back' if a.action == 'otkat-proveren' else 'closed' if a.action in {'zakryt', 'vosstanovit'} else 'failed')
+            if a.action in {'zakryt', 'otkat-proveren', 'vosstanovit'}:
+                record['closed_ns'] = accepted_ns if a.action in {'zakryt', 'vosstanovit'} else clock()
+            record.pop('closed_late', None)
+            record.pop('closed_boot_id', None)
+            if a.action == 'vosstanovit':
+                closure_boot = boot()
+                if closure_boot != record['boot_id']:
+                    record['closed_boot_id'] = closure_boot
+                if closure_boot != record['boot_id'] or accepted_ns >= record['deadline_ns']:
+                    record['closed_late'] = True
+            if a.action == 'otkat-proveren': record['rollback_checks'] = closure_checks
+            atomic(root, record)
+        if a.action == 'otkat-proveren' and original.get('rollback_plan'):
+            print('ВОССТАНОВЛЕНО: исходный снимок; здоровье восстановленного состояния не доказано')
+        return 0
+    # Network delivery never holds the metadata lock. One aggregate delivery per
+    # invocation, at most95s, then the same records are acknowledged separately.
+    # Терминальные записи нужны медленным reader24ч; failed/незакрытые не исчезают.
+    with locked(root):
+        for record in records(root, strict=True):
+            path = root / (record['id'] + '.json')
+            if record['phase'] in {'closed', 'rolled_back'} and time.time() - os.lstat(path).st_mtime >= 86400:
+                if read(root, path.name) != record: raise ValueError('terminal record changed before cleanup')
+                os.unlink(path)
+        directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        try: os.fsync(directory)
+        finally: os.close(directory)
+    due = []
+    wall = int(time.time())
+    for record in records(root, strict=True):
+        if record['phase'] in {'closed', 'rolled_back'} or (record['phase'] == 'open' and record['boot_id'] == boot() and clock() < record['deadline_ns']):
+            continue
+        if 0 <= wall - record.get('notified_at', 0) < 86400:
+            continue
+        due.append(record)
+    if not due:
+        return 0
+    messages, included = [], []
+    budget = 0
+    for record in due:
+        status = 'монтаж отказал' if record['phase'] == 'failed' else 'не закрыто за ' + str((record['deadline_ns'] - record['opened_ns']) // (60 * 10**9)) + ' мин'
+        # Bound each line independently so a large plan cannot starve every alert.
+        actor = repr(record['actor'])[1:-1][:160]
+        subjects = ', '.join(repr(s)[1:-1][:240] for s in record['subjects'][:2])
+        if len(record['subjects']) > 2: subjects += '; ещё ' + str(len(record['subjects']) - 2)
+        message = ('окно монтажа ' + record['task'] + '/' + record['id'] + ': ' + status
+                   + '; отсрочка снята; рука ' + actor + '; предметы ' + subjects)
+        cost = len(message.encode('utf-16-le')) // 2 + (1 if messages else 0)
+        if budget + cost > 2800:
+            break
+        budget += cost
+        messages.append(message)
+        included.append(record)
+    result = subprocess.run([a.kanal, '--plain'], input='\n'.join(messages), capture_output=True, text=True, timeout=95)
+    if result.returncode != 0:
+        return 2
+    with locked(root):
+        for old in included:
+            current = validate(read(root, old['id'] + '.json'), old['id'] + '.json')
+            current['notified_at'] = wall
+            atomic(root, current)
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, TypeError, json.JSONDecodeError, subprocess.SubprocessError) as error:
+        print('montazh-okno: ' + str(error), file=sys.stderr)
+        sys.exit(2)

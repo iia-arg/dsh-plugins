@@ -1,0 +1,26 @@
+# B-N-1776 r10 (Заря, 07.10.2026; слово владельца 22:18/22:56 МСК; признаки Вениамина 19:56Z): остаток денег DeepSeek по ключам конфига.
+# Своя учётка без шелла (sysusers: limity-ds), НЕ root; ключ — только через LoadCredential (права файла ключа не трогаются): строку
+# LoadCredential=dsh-limity-<ключ>:<klyuch_fajl> на каждый ключ пишет `dsh-limity-podpiski klyuch <ключ>` drop-in'ом в dsh-limity-deepseek.service.d/.
+# Снимок — в приёмную (группа limity-vhod); тревоги — dsh-limity-zamer по таблице. Код 2 — слепота конфига/состояния (названа в журнале).
+[Unit]
+Description=Баланс DeepSeek для службы лимитов: раз в час на ключ, своя учётка, ключ через LoadCredential (B-N-1776)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=limity-ds
+Group=limity-ds
+SupplementaryGroups=limity-vhod
+ExecStart=/usr/local/libexec/dsh-limity-deepseek
+SuccessExitStatus=0
+TimeoutStartSec=120
+StateDirectory=dsh-limity-deepseek
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/spool/dsh-limity/vhod
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=

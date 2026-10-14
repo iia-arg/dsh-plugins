@@ -1,0 +1,45 @@
+{
+  "agents": [
+    {
+      "name": "alfa",
+      "cwd": "/opt/coders/alfa/workspace",
+      "dsh_dir": "/opt/coders/alfa/.dsh/sessions",
+      "codex_dir": "/var/lib/coder-gateway-alfa/codex-home/sessions",
+      "gateway_db": "/var/lib/coder-gateway-alfa/sessii.db",
+      "memory_db": "/opt/coders/alfa/pamyat/pamyat.db"
+    },
+    {
+      "name": "beta",
+      "cwd": "/opt/coders/beta/workspace",
+      "dsh_dir": "/opt/coders/beta/.dsh/sessions",
+      "codex_dir": "/var/lib/coder-gateway-beta/codex-home/sessions",
+      "gateway_db": "/var/lib/coder-gateway-beta/sessii.db",
+      "memory_db": "/opt/coders/beta/pamyat/pamyat.db"
+    },
+    {
+      "name": "gamma",
+      "cwd": "/opt/coders/gamma/workspace",
+      "dsh_dir": "/opt/coders/gamma/.dsh/sessions",
+      "codex_dir": "/var/lib/coder-gateway-gamma/codex-home/sessions",
+      "gateway_db": "/var/lib/coder-gateway-gamma/sessii.db",
+      "memory_db": "/opt/coders/gamma/pamyat/pamyat.db"
+    }
+  ],
+  "shlyuzy_bez_datchika": [
+    {
+      "name": "marc",
+      "unit": "coder-gateway-marc.service",
+      "fajl": "/var/lib/codex-compaction-sobytiya/marc.jsonl"
+    },
+    {
+      "name": "anna",
+      "unit": "coder-gateway-anna.service",
+      "fajl": "/var/lib/codex-compaction-sobytiya/anna.jsonl"
+    },
+    {
+      "name": "master",
+      "unit": "coder-gateway-master.service",
+      "fajl": "/var/lib/codex-compaction-sobytiya/master.jsonl"
+    }
+  ]
+}

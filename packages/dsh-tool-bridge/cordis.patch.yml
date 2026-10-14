@@ -1,0 +1,19 @@
+# RU: Адреса монтажа моста; числовая политика находится в отдельном YAML каталоге limitsDir.
+# EN: Bridge mounting addresses; numerical policy belongs to separate YAML under limitsDir.
+- insert:
+    - name: dsh-tool-bridge
+      id: dsh-tool-bridge
+      config:
+        limitsAgent: agent
+
+        limitsDir: ./limits
+
+        alertCommand: ''
+
+        serverName: bridge
+
+        port: 0
+
+        domains: [goals]
+
+        heartbeatNoticeDir: ''

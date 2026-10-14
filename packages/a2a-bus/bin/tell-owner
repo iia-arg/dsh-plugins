@@ -14,33 +14,98 @@ set -uo pipefail
 who="$(id -un)"
 conf="/etc/agent-tell/${who}.conf"
 
+# 🔴 КЛЮЧ — НЕ ТЕКСТ (B-N-975, 25.09.2026). Прежде `tell-owner --help` ушёл бы владельцу в
+# Telegram текстом «--help» — тот же класс, что у zabava-tell, где это случилось на деле.
+# Довод на «-» — справка (-h/--help) или ОТКАЗ до чтения настройки; текст с «-» — после «--».
+# ⚠️ Чего не ловит: ключ не первым доводом (`tell-owner текст --help` уйдёт целиком).
+ISPOLZOVANIE='использование: tell-owner "текст" | echo "текст" | tell-owner | tell-owner -- "-текст"'
+case "${1:-}" in
+  -h|--help) echo "$ISPOLZOVANIE"; exit 0 ;;
+  --) shift ;;
+  -*) echo "tell-owner: неизвестный ключ «$1» — сообщение НЕ отправлено. Текст с «-» — после «--»." >&2
+      echo "$ISPOLZOVANIE" >&2; exit 2 ;;
+esac
 msg="${*:-}"
 [ -z "$msg" ] && msg="$(cat)"
-[ -z "$msg" ] && { echo "tell-owner: пустое сообщение"; exit 1; }
+[ -z "$msg" ] && { echo "tell-owner: пустое сообщение" >&2; exit 1; }
 
 if [ ! -r "$conf" ]; then
   # Молчать нельзя: неотправленный отчёт выглядит как «агент не отчитался».
-  echo "tell-owner: нет настройки $conf — сообщение НЕ отправлено"; exit 1
+  echo "tell-owner: нет настройки $conf — сообщение НЕ отправлено" >&2; exit 1
 fi
-# shellcheck disable=SC1090
-. "$conf"
+# Конфиг — данные, не shell: ровно две пары KEY=value. Читаем тот же fd,
+# на котором проверены root-owner, отсутствие group/other write и тип файла.
+if ! nastrojka="$(python3 - "$conf" <<'PY'
+import os, re, shlex, stat, sys
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022 or st.st_size > 16384:
+            raise ValueError('нужен обычный root-owned конфиг без записи группе/прочим, не больше 16384 Б')
+        data = os.read(fd, 16385)
+        if len(data) > 16384:
+            raise ValueError('конфиг крупнее 16384 Б')
+        raw = data.decode('utf-8')
+    finally:
+        os.close(fd)
+    values = {}
+    for number, line in enumerate(raw.splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        key, sep, value = line.partition('=')
+        key = key.strip()
+        if not sep or key not in ('TOKEN_FILE', 'CHAT_ID') or key in values:
+            raise ValueError(f'негодная или повторная пара в строке {number}')
+        parts = shlex.split(value, comments=True, posix=True)
+        if len(parts) != 1 or any(c in parts[0] for c in '\r\n\0'):
+            raise ValueError(f'негодное значение в строке {number}')
+        values[key] = parts[0]
+    if set(values) != {'TOKEN_FILE', 'CHAT_ID'}:
+        raise ValueError('нужны TOKEN_FILE и CHAT_ID')
+    if not os.path.isabs(values['TOKEN_FILE']):
+        raise ValueError('TOKEN_FILE должен быть абсолютным путём')
+    if not re.fullmatch(r'-?[1-9][0-9]*', values['CHAT_ID']):
+        raise ValueError('CHAT_ID должен быть непустым числовым ID')
+    print(values['TOKEN_FILE'])
+    print(values['CHAT_ID'])
+except (OSError, UnicodeError, ValueError) as error:
+    # Не печатаем строку конфига или её значение: там может оказаться секрет.
+    reason = error.args[0] if isinstance(error, ValueError) and not isinstance(error, UnicodeError) else 'конфиг не прочитан или тип/права не годятся'
+    print('tell-owner: настройка отклонена: ' + str(reason), file=sys.stderr)
+    sys.exit(1)
+PY
+)"; then
+  exit 1
+fi
+TOKEN_FILE="${nastrojka%%$'\n'*}"
+CHAT_ID="${nastrojka#*$'\n'}"
 
 token="$(cat "${TOKEN_FILE:-}" 2>/dev/null | head -1 | tr -d '[:space:]')"
-[ -z "$token" ] && { echo "tell-owner: не прочитан токен (${TOKEN_FILE:-не задан})"; exit 1; }
-[ -z "${CHAT_ID:-}" ] && { echo "tell-owner: не задан CHAT_ID в $conf"; exit 1; }
+[ -z "$token" ] && { echo "tell-owner: не прочитан токен (${TOKEN_FILE:-не задан})" >&2; exit 1; }
 
 # 🔴 Адрес с токеном подаётся curl ЧЕРЕЗ СТАНДАРТНЫЙ ВВОД (--config -), а не
 # аргументом: строка запуска процесса (/proc/<pid>/cmdline) читается ЛЮБЫМ
 # пользователем машины, и токен утекал бы при каждой отправке. printf —
 # встроенная команда оболочки, отдельного процесса с токеном не появляется.
-# Текст сообщения секретом не является и остаётся аргументом: так меньше
-# экранирования, а значит меньше шансов молча испортить сообщение.
+# 🔴 ТЕКСТ — ТОЖЕ НЕ АРГУМЕНТОМ (B-N-1663, 05.10.2026): письмо владельцу видно в
+# cmdline curl любому пользователю машины, пока идёт отправка (до 25 с). Стандартный
+# ввод занят адресом, поэтому текст идёт третьим дескриптором: «text@файл» curl
+# читает целиком, с переводами строк, и сам кодирует. printf — встроенная, текста
+# в строке запуска не появляется.
+# ⚠️ Чего не ловит: `tell-owner "текст"` — текст в строке запуска САМОГО скрипта
+# (и в журнале sudo, если звали через sudo). Закрыто только для `… | tell-owner`.
 resp="$(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$token" \
   | curl -s -m 25 -X POST --config - \
   --data-urlencode "chat_id=${CHAT_ID}" \
-  --data-urlencode "text=${msg}" 2>&1)"
+  --data-urlencode "text@/dev/fd/3" 3< <(printf '%s' "$msg") 2>&1)"
+kod_curl=$?
+if [ "$kod_curl" -ne 0 ]; then
+  echo "tell-owner: curl отказал (код $kod_curl) — доставка не подтверждена" >&2; exit 1
+fi
 
 case "$resp" in
   *'"ok":true'*) exit 0 ;;
-  *) echo "tell-owner: телеграм отказал: ${resp:0:200}"; exit 1 ;;
+  *) echo "tell-owner: телеграм отказал: ${resp:0:200}" >&2; exit 1 ;;
 esac

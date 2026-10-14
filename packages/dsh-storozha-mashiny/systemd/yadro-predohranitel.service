@@ -1,0 +1,17 @@
+[Unit]
+Description=Предохранитель первой загрузки нового ядра (возврат в saved_entry GRUB) · New-kernel first-boot fuse (fall back to GRUB saved_entry)
+# RU: Юнит запускается только взведённым: файл метки содержит имя целевого ядра.
+# RU: Адрес проверки сети — YP_TARGET_IP в drop-in машины; без него предохранитель не действует (код 2).
+# EN: The unit runs only when armed: the marker file holds the target kernel name.
+# EN: The network probe address is YP_TARGET_IP in a machine drop-in; without it the fuse does not act (exit 2).
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/yadro-predohranitel/armed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/yadro-predohranitel
+TimeoutStartSec=15min
+
+[Install]
+WantedBy=multi-user.target

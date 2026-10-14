@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# dvojniki — найти ТЁЗОК исполняемых файлов и сказать, какой из них исполняется.
+#
+# 🔴 ЗАЧЕМ. 05.09.2026 класс «двойник» сработал за час трижды и в РАЗНЫЕ стороны:
+#   • координатор правил живой сборщик, приёмщик читал мёртвую копию того же имени
+#     (3483 б от 19.08 против 14765 б живого) и вынес верный по прочитанному
+#     файлу и неверный по предмету вывод;
+#   • я, проверяя своё хозяйство, сравнила тёзок циклом — и получила «расходятся»
+#     там, где diff просто ОТКАЗАЛ ПО ПРАВАМ (чужой дом, режим 700).
+# Общее: «какой файл исполняется» и «какой файл я читаю» — разные вопросы, и
+# второй молча подменяет первый.
+#
+# ЧТО ДЕЛАЕТ: для каждого исполняемого в PATH-каталогах ищет тёзок в наших
+# деревьях и печатает ТРИ РАЗНЫХ исхода — совпало / РАЗОШЛОСЬ / не читается.
+#
+# 🔴 И ЧЕТВЁРТЫЙ, КОТОРЫЙ ПРИБОР НАЗЫВАЕТ, НО НЕ РЕШАЕТ (09.09.2026, слово координатора):
+# «РАЗОШЛИСЬ ПО ЗАМЫСЛУ». Сверка содержимого не отличает беду от намерения НИКОГДА:
+# копия в PATH может законно отставать или быть обезличена под другую машину. Поэтому
+# при расхождении прибор печатает оговорку и отсылает к человеку — иначе следующий
+# примет его молчание за «различий нет по существу».
+#
+# 🔴 ТРЕТИЙ ИСХОД ЗАВЕДЁН НАМЕРЕННО. Без него отказ по правам неотличим от
+# расхождения содержимого: diff возвращает 1 на «разные» и 2 на «не смог», и
+# цикл, смотрящий только на «не ноль», объявит чужой нечитаемый файл двойником.
+#
+# ЧЕГО НЕ ДЕЛАЕТ И ЧТО ЗНАЧИТ ЕГО МОЛЧАНИЕ:
+#   • не ищет тёзок вне названных деревьев — молчание значит «в этих каталогах
+#     тёзок нет», а не «двойников не существует»;
+#   • не смотрит черновики кандидатов (*/workspace/kandidaty/, */workspace/kandidat-*,
+#     с 26.09.2026): основы и раскладки, оставленные после ворот, расходятся с боем по
+#     построению и давали 37 из 39 «РАЗОШЛИСЬ». Тёзка-исходник, положенный в черновик,
+#     этим прибором теперь не виден — исходники живут в dorabotki и дереве;
+#   • не читает юниты: какой файл ИСПОЛНЯЕТСЯ службой, здесь не спрашивается.
+#     Для служб источник правды — ExecStart, и это отдельный вопрос;
+#   • совпадение содержимого не значит, что копия нужна: две одинаковые копии
+#     разойдутся при первой же правке одной из них.
+#
+# КОДЫ: 0 тёзок нет либо все совпали · 1 есть расхождение · 2 есть нечитаемые
+# EN: dvojniki — find NAMESAKES of executable files and say which of them is executed.
+#     🔴 WHY. On 05.09.2026 the "twin" class fired three times in an hour and in DIFFERENT directions:
+#     • the coordinator edited the live builder, while the acceptor read a dead copy of the same name (3483
+#     bytes from 19.08 against 14765 bytes of the live one) and reached a conclusion right for the file read and
+#     wrong for the subject;
+#     • I, checking my own things, compared namesakes in a loop — and got "differ" where diff simply REFUSED FOR
+#     PERMISSIONS (someone else's home, mode 700).
+#     Common to both: "which file is executed" and "which file am I reading" are different questions, and the
+#     second silently replaces the first.
+#     WHAT IT DOES: for each executable in the PATH directories it looks for namesakes in our trees and prints
+#     THREE DIFFERENT outcomes — matched / DIFFERS / unreadable.
+#     🔴 AND A FOURTH, WHICH THE TOOL NAMES BUT DOES NOT DECIDE (09.09.2026, the coordinator's word): "DIFFER BY
+#     DESIGN". A content comparison NEVER tells trouble from intent: a copy on PATH may legitimately lag behind
+#     or be anonymised for another machine. So on a divergence the tool prints a caveat and refers to a human —
+#     otherwise the next reader takes its silence for "no differences in substance".
+#     🔴 THE THIRD OUTCOME IS INTENTIONAL. Without it a permission refusal is indistinguishable from a content
+#     divergence: diff returns 1 for "different" and 2 for "could not", and a loop looking only at "non-zero"
+#     declares someone else's unreadable file a twin.
+#     WHAT IT DOES NOT DO AND WHAT ITS SILENCE MEANS:
+#     • it does not look for namesakes outside the named trees — silence means "no namesakes in these
+#     directories", not "no twins exist";
+#     • it does not look at candidate drafts (*/workspace/kandidaty/, */workspace/kandidat-*, since 26.09.2026):
+#     bases and layouts left after the gate differ from production by construction and gave 37 of 39 "DIFFERS".
+#     A source namesake put into a draft is now invisible to this tool — sources live in dorabotki and the tree;
+#     • it does not read units: which file a service EXECUTES is not asked here. For services the source of
+#     truth is ExecStart, and that is a separate question;
+#     • matching content does not mean the copy is needed: two identical copies will diverge at the first edit
+#     of one of them.
+#     CODES: 0 no namesakes or all matched · 1 there is a divergence · 2 there are unreadable ones
+set -uo pipefail
+# Файл настройки пакета dsh-pribory: строки «КЛЮЧ=значение», «#» — комментарий; берётся последнее вхождение.
+# Путь меняет DSH_PRIBORY_CONF. Порядок: переменная → файл → нейтральное умолчание; нет ничего — СЛЕПОТА, код 2.
+# EN: Settings file of the dsh-pribory package: "KEY=value" lines, a line starting with "#" is a comment; the
+#     last occurrence wins.
+#     DSH_PRIBORY_CONF changes the path. Order: variable → file → neutral default; nothing at all — BLINDNESS,
+#     code 2.
+DSH_PRIBORY_CONF="${DSH_PRIBORY_CONF:-/etc/dsh-pribory/dsh-pribory.conf}"
+# « #» в значении — громкий отказ (stderr, код 2), а не склеивание пояснения со значением; зовущий обязан выйти: X=$(konf …) || exit 2.
+# EN: " #" in a value is a loud refusal (stderr, code 2), not gluing the note into the value; the caller must exit: X=$(konf …) || exit 2.
+konf() { local v; v=$(sed -n "s/^[[:space:]]*$1[[:space:]]*=//p" "$DSH_PRIBORY_CONF" 2>/dev/null | tail -n 1) || true; case "$v" in *[[:space:]]#*) echo "ОТКАЗ: значение ключа $1 в $DSH_PRIBORY_CONF содержит « #» — комментарий допускается только с начала строки" >&2; return 2;; esac; v=$(printf '%s' "$v" | sed "s/^[[:space:]]*//;s/[[:space:]]*$//"); printf '%s' "${v:-$2}"; }
+PATH_KAT="${DVOJNIKI_PATH_KAT:-/usr/local/bin /usr/local/sbin}"
+DEREVYA="${DVOJNIKI_DEREVYA:-$(konf DVOJNIKI_DEREVYA "")}" || exit 2
+[ -n "$DEREVYA" ] || { echo "СЛЕПОТА: деревья поиска не заданы — DVOJNIKI_DEREVYA или ключ DVOJNIKI_DEREVYA в $DSH_PRIBORY_CONF"; exit 2; }
+GLUBINA="${DVOJNIKI_GLUBINA:-4}"
+
+echo "снято: $(date -u '+%F %T UTC') на $(hostname)"
+echo "каталоги PATH: $PATH_KAT"
+echo "деревья поиска: $DEREVYA (глубина $GLUBINA; вне области: черновики */workspace/kandidaty/, */workspace/kandidat-*)"
+echo
+
+for d in $DEREVYA; do
+  [ -d "$d" ] && [ -r "$d" ] && [ -x "$d" ] || { echo "СЛЕПОТА: дерево $d отсутствует или не читается" >&2; exit 2; }
+done
+SPISOK=$(find $DEREVYA -maxdepth "$GLUBINA" -type f) || { echo "СЛЕПОТА: обход деревьев $DEREVYA неполон" >&2; exit 2; }
+sovpalo=0; razoshlos=0; nechitaemyh=0
+for kat in $PATH_KAT; do
+  [ -d "$kat" ] || continue
+  for f in "$kat"/*; do
+    [ -f "$f" ] || continue
+    n=$(basename "$f")
+    case "$n" in *.bak-*|node|npm|npx) continue;; esac
+    while IFS= read -r d; do
+      [ -n "$d" ] || continue
+      [ "${d##*/}" = "$n" ] || continue
+      [ "$d" = "$f" ] && continue
+      # 26.09.2026 (слово координатора): черновики кандидатов — не исходники; 37 из 39 «РАЗОШЛИСЬ» были ими (разбор tyozki-39-razbor.tsv)
+      # EN: 26.09.2026 (the coordinator's word): candidate drafts are not sources; 37 of 39 "DIFFERS" were
+      #     drafts (analysis tyozki-39-razbor.tsv)
+      case "$d" in *.bak-*|*/node_modules/*|*MERTVAYA*|*/workspace/kandidaty/*|*/workspace/kandidat-*) continue;; esac
+      if ! [ -r "$d" ]; then
+        echo "⚠️  НЕ ЧИТАЕТСЯ  $n ← $d (владелец $(stat -c '%U' "$d" 2>/dev/null || echo '?'))"
+        nechitaemyh=$((nechitaemyh+1)); continue
+      fi
+      if diff -q "$f" "$d" >/dev/null 2>&1; then
+        sovpalo=$((sovpalo+1))
+      else
+        echo "🔴 РАЗОШЛИСЬ   $n"
+        echo "     в PATH: $f  ($(wc -c <"$f") б, $(stat -c '%y' "$f" | cut -c1-16))"
+        echo "     тёзка:  $d  ($(wc -c <"$d") б, $(stat -c '%y' "$d" | cut -c1-16))"
+        razoshlos=$((razoshlos+1))
+      fi
+    done <<< "$SPISOK"
+  done
+done
+
+echo
+echo "итог: совпало $sovpalo · РАЗОШЛОСЬ $razoshlos · не читается $nechitaemyh"
+echo "⚠️ «не читается» — это про МОИ права, а не про предмет: такой тёзка может быть"
+echo "   и копией, и другим файлом. Разобрать может только тот, кому он доступен."
+if [ "$razoshlos" -gt 0 ]; then
+  echo "⚠️ «РАЗОШЛИСЬ» НЕ ЗНАЧИТ «ДЕФЕКТ». Сверка содержимого не отличает БЕДУ от ЗАМЫСЛА:"
+  echo "   копия в PATH может законно отставать (её ещё не обновляли) или законно отличаться"
+  echo "   (обезличена, урезана, собрана под другую машину). Прибор этого не решает и решать"
+  echo "   не может — он называет пару и предъявляет размеры и время, а судит ЧЕЛОВЕК."
+  echo "   Порядок разбора: сперва спросить владельца пары, потом смотреть diff."
+fi
+if [ "$razoshlos" -gt 0 ]; then exit 1; fi
+if [ "$nechitaemyh" -gt 0 ]; then exit 2; fi
+exit 0

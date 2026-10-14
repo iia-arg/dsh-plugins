@@ -1,0 +1,48 @@
+{
+  "name": "dsh-pamyat-kompakt-dsh",
+  "version": "3.1.2",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "index.mjs",
+  "description": "Наша сводка внутри родного механизма сжатия платформы DSH: переопределён объявленный крючок summarize, удержание ≤ ½ поверхности, ожидание свежего usage на маршруте Codex, отметка продолжения после сжатия · Our summary inside the native compaction of the DSH platform: the declared summarize hook overridden, retention ≤ ½ of the surface, waiting for fresh usage on the Codex route, a continuation marker after compaction",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "сжатие · compaction",
+    "сводка · summary",
+    "контекст · context",
+    "память агента · agent memory",
+    "продолжение · continuation",
+    "codex"
+  ],
+  "files": [
+    "index.mjs",
+    "CHANGELOG.md",
+    "stend-*.mjs",
+    "marker-step.mjs",
+    "continuation-mode.mjs",
+    "README.md",
+    "docs/",
+    "README.en.md"
+  ],
+  "peerDependencies": {
+    "dsh-pamyat-kompakt": ">=3.1.1",
+    "@deepseek-ai/dsh-compaction-basic": ">=0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": ">=0.2.0-rc.2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-compaction-basic": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "dsh-pamyat-kompakt": "file:../dsh-pamyat-kompakt"
+  },
+  "license": "MIT",
+  "author": "Aleksandr Argelander"
+}

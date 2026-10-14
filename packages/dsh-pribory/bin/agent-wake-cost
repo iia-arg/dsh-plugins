@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""
+Учёт цены самопробуждения: сколько ходов и токенов агент истратил БЕЗ человека.
+
+ЗАЧЕМ. Механизм heartbeat ставит агенту ходы сам. Пока никто не считает, «агент
+сам продолжил работу» и «агент сжёг квоту на пустых кругах» выглядят одинаково.
+
+ОТКУДА ЧИСЛА. Журнал сессии платформы ($DSH_HOME/sessions/**/session.jsonl.zstd).
+Ход (turn) относим к тому, кто его вызвал: первое ПОЛЬЗОВАТЕЛЬСКОЕ сообщение
+ВНУТРИ хода. 🔴 Именно внутри, а не перед: turn/start пишется РАНЬШЕ вызвавшего
+сообщения (проверено по журналу: turn/start seq 5, сообщение seq 8). Привязка «до
+turn/start» даёт сдвиг на один ход и молча приписывает человеку работу автомата. Источник kind=user — человек; kind=goal — автоматический раунд
+цели; kind=plugin/skill-catalog — не вызыватели хода, а впрыски в чужой ход, и в
+привязке они не участвуют.
+
+🔴 ПОЧЕМУ СЧИТАЕМ assistant/chunk, А НЕ assistant/message. На маршруте через шлюз
+подписки один ход платформы = много вызовов API внутри движка, и каждый вызов
+оплачивается отдельно. Шлюз отдаёт расход по каждому; платформа кладёт его в
+assistant/chunk. В assistant/message попадает расход только ПОСЛЕДНЕГО вызова —
+на нашем опыте это 26437 из 46260 прочитанных из кэша, то есть недосчёт вдвое.
+
+ГРАНИЦЫ. Считает то, что записано в журнал: если ход шёл в момент снятия и ещё не
+сброшен на диск, он не попадёт. Ничего не меняет и никуда не ходит по сети.
+"""
+# EN: Accounting for the cost of self-wakeups: how many turns and tokens the agent spent WITHOUT a human.
+#     WHY. The heartbeat mechanism schedules turns for the agent by itself. While nobody counts, "the agent
+#     continued work on its own" and "the agent burned its quota on empty rounds" look the same.
+#     WHERE THE NUMBERS COME FROM. The platform session log ($DSH_HOME/sessions/**/session.jsonl.zstd). A turn
+#     is attributed to whoever triggered it: the first USER message INSIDE the turn. 🔴 Exactly inside, not
+#     before: turn/start is written BEFORE the triggering message (checked in the log: turn/start seq 5, message
+#     seq 8). Binding "before turn/start" gives a shift of one turn and silently attributes the automaton's work
+#     to the human. Source kind=user is a human; kind=goal is an automatic goal round; kind=plugin/skill-catalog
+#     are not turn triggers but injections into someone else's turn, and they do not take part in the binding.
+#     🔴 WHY WE COUNT assistant/chunk, NOT assistant/message. On the route through the subscription gateway one
+#     platform turn = many API calls inside the engine, and each call is billed separately. The gateway reports
+#     spend per call; the platform puts it into assistant/chunk. assistant/message gets the spend of the LAST
+#     call only — in our experience that is 26437 of 46260 read from cache, i.e. an undercount by half.
+#     LIMITS. It counts what is written in the log: if a turn was running at the moment of taking and has not
+#     been flushed to disk yet, it will not be included. It changes nothing and goes nowhere over the network.
+import argparse, json, os, re, subprocess, sys
+# Файл настройки пакета dsh-pribory: строки «КЛЮЧ=значение», «#» — комментарий; берётся последнее вхождение.
+# Путь меняет DSH_PRIBORY_CONF. Порядок: переменная → файл → нейтральное умолчание; нет ничего — СЛЕПОТА, код 2.
+# EN: Settings file of the dsh-pribory package: "KEY=value" lines, a line starting with "#" is a comment; the
+#     last occurrence wins.
+#     DSH_PRIBORY_CONF changes the path. Order: variable → file → neutral default; nothing at all — BLINDNESS,
+#     code 2.
+KONF=os.environ.get('DSH_PRIBORY_CONF','/etc/dsh-pribory/dsh-pribory.conf')
+def _konf(key,default):
+    value=None
+    try:
+        with open(KONF,encoding='utf-8') as f:
+            for s in f:
+                s=s.strip()
+                if s and not s.startswith('#') and s.partition('=')[0].strip()==key:value=s.partition('=')[2]
+    except OSError:pass
+    # « #» в значении — громкий отказ (код 2), а не склеивание пояснения со значением: комментарий только с начала строки.
+    # EN: " #" in a value is a loud refusal (code 2), not gluing the note into the value: a comment only from the line start.
+    if value is not None and (' #' in value or '\t#' in value):
+        print(f'ОТКАЗ: значение ключа {key} в {KONF} содержит « #» — комментарий допускается только с начала строки'); raise SystemExit(2)
+    value=value.strip() if value else value
+    return value or default
+from collections import defaultdict
+from pathlib import Path
+
+# DSH 0.1.7+/0.2.0 пишет журнал новым ПОКОЛЕНИЕМ в session.vN.jsonl(.zstd) рядом со старым session.jsonl(.zstd),
+# а старый замирает (dsh-session-format 0.2.0 :474 «session.v${N}.jsonl»). Читаем в каждом каталоге сессии ТОЛЬКО новейшее
+# поколение. Имена — точные (копии вида session.jsonl.zstd.bak-… не подходят: урок 22.08).
+# EN: DSH 0.1.7+/0.2.0 writes the log as a new GENERATION in session.vN.jsonl(.zstd) next to the old
+#     session.jsonl(.zstd), and the old one freezes (dsh-session-format 0.2.0 :474 "session.v${N}.jsonl"). In
+#     each session directory we read ONLY the newest generation. Names are exact (copies like
+#     session.jsonl.zstd.bak-… do not match: lesson of 22.08).
+POKOLENIE_ZHURNALA=re.compile(r'^session(?:\.v([1-9][0-9]*))?\.jsonl(\.zstd)?$')
+def novejshie_pokoleniya(puti,tolko_zstd=False):
+    luchshee={}
+    for p in puti:
+        m=POKOLENIE_ZHURNALA.match(p.name)
+        if not m or (tolko_zstd and not m.group(2)):continue
+        k=(int(m.group(1) or 0),1 if m.group(2) else 0)
+        if p.parent not in luchshee or k>luchshee[p.parent][0]:luchshee[p.parent]=(k,p)
+    return sorted(p for _,p in luchshee.values())
+
+FIELDS = ("inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens")
+# Источники, которые не вызывают ход, а дописываются в уже открытый.
+# EN: Sources that do not trigger a turn but are appended to one already open.
+NOT_A_TRIGGER = {"plugin", "skill-catalog"}
+
+
+def read_events(path: Path):
+    if path.suffix == ".zstd":
+        result = subprocess.run(["zstd", "-dc", str(path)], capture_output=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"не добыт журнал {path}: zstd код {result.returncode}")
+        raw = result.stdout
+    else:
+        raw = path.read_bytes()
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            yield json.loads(line)
+        except ValueError:
+            continue
+
+
+def analyse(path: Path):
+    triggers, turn_seq, usage, steps = [], {}, defaultdict(lambda: [0] * 4), defaultdict(int)
+    for e in read_events(path):
+        t, d = e.get("type"), e.get("data", {})
+        if t == "user/message":
+            kind = (d.get("source") or {}).get("kind")
+            if kind not in NOT_A_TRIGGER:
+                triggers.append((e.get("seq", 0), kind))
+        elif t == "turn/start":
+            turn_seq[d.get("turn")] = e.get("seq", 0)
+        elif t == "assistant/chunk" and (d.get("chunk") or {}).get("type") == "usage":
+            u = d["chunk"]["usage"]
+            turn = d.get("turn")
+            steps[turn] += 1
+            for i, f in enumerate(FIELDS):
+                usage[turn][i] += u.get(f) or 0
+    rows, order = [], sorted(turn_seq.items(), key=lambda kv: kv[1])
+    for i, (turn, seq) in enumerate(order):
+        stop = order[i + 1][1] if i + 1 < len(order) else float("inf")
+        kind = next((k or "неизвестно" for s, k in triggers if seq < s < stop), "неизвестно")
+        rows.append((turn, kind, steps[turn], usage[turn]))
+    return rows
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Цена ходов, которые агент сделал без человека.")
+    ap.add_argument("--home", default=os.environ.get("DSH_HOME") or _konf("WAKE_HOME", ""))
+    ap.add_argument("--session", help="подстрока имени каталога сессии")
+    ap.add_argument("--details", action="store_true", help="строка на каждый ход")
+    args = ap.parse_args()
+    if not args.home:
+        print(f"СЛЕПОТА: дом DSH не задан — --home, DSH_HOME или ключ WAKE_HOME в {KONF}"); return 2
+
+    # 🔴 22.08.2026. Образец был `session.jsonl*` и захватывал КОПИИ, оставленные
+    # рядом: файл вида session.jsonl.zstd.bak-... подходил под него, но `.zstd`
+    # оказывался в середине имени — распаковка не включалась, сжатые байты шли в
+    # разбор, и инструмент падал на первой же строке. Тот, кто клал копию, помнил,
+    # что это копия; образец поиска не помнил.
+    # Берём ТОЛЬКО точные имена, а не всё, что с них начинается.
+    # EN: 🔴 22.08.2026. The pattern was `session.jsonl*` and caught COPIES left alongside: a file like
+    #     session.jsonl.zstd.bak-... matched it, but `.zstd` ended up in the middle of the name — unpacking did
+    #     not kick in, compressed bytes went into parsing, and the tool failed on the very first line. Whoever
+    #     put the copy there remembered it was a copy; the search pattern did not.
+    #     We take ONLY exact names, not everything that starts with them.
+    files = novejshie_pokoleniya(Path(args.home, "sessions").rglob("session*.jsonl*"))
+    if args.session:
+        files = [f for f in files if args.session in str(f)]
+    if not files:
+        print("сессий не найдено — проверь --home и --session", file=sys.stderr)
+        return 2
+
+    total = defaultdict(lambda: [0, 0, [0] * 4])  # kind -> [ходов, вызовов API, расход] · EN: kind -> [turns, API calls, spend]
+    for f in files:
+        try:
+            rows = analyse(f)
+        except (OSError, RuntimeError) as error:
+            print(f"СЛЕПОТА: не разобран журнал {f}: {error}; сводный итог НЕ выдан", file=sys.stderr)
+            return 2
+        if args.details and rows:
+            print(f"\n{f.parent.name}")
+        for turn, kind, n, u in rows:
+            total[kind][0] += 1
+            total[kind][1] += n
+            for i in range(4):
+                total[kind][2][i] += u[i]
+            if args.details:
+                print(f"  ход {turn:>4} вызвал: {kind:<12} вызовов API {n:>3}  вход {u[0]:>7} выход {u[1]:>7} из кэша {u[2]:>9} в кэш {u[3]:>8}")
+
+    print(f"\nсессий разобрано: {len(files)}")
+    print(f"{'вызвал ход':<14}{'ходов':>7}{'вызовов API':>13}{'вход':>10}{'выход':>10}{'из кэша':>12}{'в кэш':>11}")
+    auto = [0, 0, [0] * 4]
+    for kind in sorted(total):
+        turns, calls, u = total[kind]
+        label = {"user": "человек", "goal": "цель (авто)"}.get(kind, kind)
+        print(f"{label:<14}{turns:>7}{calls:>13}{u[0]:>10}{u[1]:>10}{u[2]:>12}{u[3]:>11}")
+        if kind != "user":
+            auto[0] += turns
+            auto[1] += calls
+            for i in range(4):
+                auto[2][i] += u[i]
+    print(f"\nБЕЗ ЧЕЛОВЕКА: ходов {auto[0]}, вызовов API {auto[1]}, "
+          f"выход {auto[2][1]}, из кэша {auto[2][2]}, в кэш {auto[2][3]}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

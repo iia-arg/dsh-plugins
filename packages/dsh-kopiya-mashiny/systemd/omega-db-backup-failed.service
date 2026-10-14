@@ -1,0 +1,12 @@
+[Unit]
+# Тревога: копия базы памяти OMEGA упала. Зовёт OnFailure= у omega-db-backup.service.
+# B-N-756 (24.09.2026): команда вынесена в скрипт по образцу sadik-backup-failed (B-N-741) — прежняя строка в ExecStart
+# давала «Ignoring unknown escape sequences» при каждой перечитке.
+Description=Тревога: копия базы памяти не сделана
+
+[Service]
+Type=oneshot
+# B-H-561: общий скрипт трёх тревог копий (прежний omega-db-backup-failed.sh — тот же код с другим заголовком).
+ExecStart=/usr/local/sbin/kopiya-upala omega-db-backup.service "Копия базы памяти OMEGA не сделана"
+# agent-alert сам ограничен: 3 попытки по 20 с и паузы 5+15 с — 80 с. 120 с — граница сверху.
+TimeoutStartSec=120

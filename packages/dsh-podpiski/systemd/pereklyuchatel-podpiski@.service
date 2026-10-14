@@ -1,0 +1,10 @@
+[Unit]
+Description=Переключатель подписки Claude sadik, экземпляр %i (B-N-1151, Искра) — root, БЕЗ песочницы: пишет /etc/claude-oauth и отметку
+Documentation=man:pereklyuchatel-podpiski
+
+[Service]
+Type=oneshot
+User=root
+# 🔴 БЕЗ ProtectSystem/ReadWritePaths: этой единице НУЖНА запись в /etc/claude-oauth и /var/lib.
+# Изоляцию держит приёмник (sadik-komandy.service, strict), а root-действие вынесено сюда (красное Вениамина 18:13Z).
+ExecStart=/usr/local/sbin/pereklyuchatel-podpiski %i

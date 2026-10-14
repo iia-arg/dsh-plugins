@@ -1,0 +1,12 @@
+[Unit]
+Description=Сторож страхования модулей: монтаж в каталог пакета без страховки в montazh (журнал sudo, B-N-903)
+
+[Service]
+# B-N-961: stdout службы — под своим тегом; итог через logger остаётся ОДНОЙ строкой под тегом скрипта.
+SyslogIdentifier=strahovanie-modulej-watch-vyvod
+Type=oneshot
+ExecStart=/usr/local/sbin/strahovanie-modulej-watch
+# 1 = найден монтаж без страховки (тревога ушла) — не падение юнита; 2 = слепота/канал — failed.
+SuccessExitStatus=1
+TimeoutStartSec=10min
+Nice=10

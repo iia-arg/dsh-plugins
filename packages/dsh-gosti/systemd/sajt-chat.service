@@ -1,0 +1,39 @@
+# B-N-1499 (Искра, 03.10.2026): адаптер «чат сайта (Chatwoot на vps-ru) ↔ Варвара». Замысел и договор — kandidaty/B-N-1499.
+# r3 — ОБРАТНЫЙ КАНАЛ: сеть не слушает, только исходящие (Chatwoot API и шлюз виджета на vps-ru по awg9, Telegram — agent-alert).
+# Своя учётка без sudo; читает только /etc/sajt-chat (секреты, 600 sajtchat) и состояние /var/lib/sajt-chat (только чтение);
+# пишет — очереди /var/spool/sajt-chat и свою базу в StateDirectory. Группа agent-button — ТОЛЬКО ради agent-alert
+# (тревога «Варвара не забирает» обязана дойти, когда Варвара лежит).
+[Unit]
+Description=Адаптер чата сайта ↔ Варвара (B-N-1499)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=sajtchat
+Group=sajtchat
+SupplementaryGroups=agent-button
+ExecStart=/usr/local/sbin/sajt-chat
+Restart=on-failure
+RestartSec=10
+StateDirectory=sajt-chat-adapter
+StateDirectoryMode=0700
+UMask=0027
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+ReadWritePaths=/var/spool/sajt-chat /var/log/agent-alert/poslednie.log
+ReadOnlyPaths=/etc/sajt-chat /var/lib/sajt-chat
+
+[Install]
+WantedBy=multi-user.target

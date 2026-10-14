@@ -1,0 +1,484 @@
+#!/usr/bin/python3 -B
+# -*- coding: utf-8 -*-
+"""dsh-limity — служба лимитов подписок sadik (B-N-1776, 07.10.2026, Заря; слово владельца 07.10 19:14 и 19:24 МСК).
+
+Один проход = одна запись в таблицу и одна выдача; зовёт dsh-limity.timer раз в минуту. ЕДИНСТВЕННЫЙ писатель базы.
+  1. Codex: замер берётся из состояния codex-limit-watch (/var/lib/codex-limit-watch/sostoyanie.json, ключ zamer) —
+     тот уже спрашивает штатный клиент (codex app-server account/rateLimits/read). Новый момент замера → строка.
+  2. Приёмная /var/spool/dsh-limity/vhod/*.json — по одному замеру в файле (писатели: шлюзы Claude — такт 2,
+     замер раз в час штатным usage через вход владельца — dsh-limity-zamer, istochnik=sdk_usage, 1.0.4; он же несёт
+     кредиты — окно extra_usage). Годная строка → таблица, файл удаляется; негодная → otkaz/ с причиной в журнал.
+  3. Выдача: производный limity.json прежнего формата для lim.insmat.ru (забирает vps-ru через dsh-limity-vydat)
+     и для прочих читателей переходного периода.
+🔴 Служба НЕ ходит к провайдерам и НЕ читает токены: ни одного HTTP, ни одного файла токена (слово владельца 19:04 МСК).
+🔴 «Не измерено» ≠ 0: окно без замера выдаётся null; snyato_unix — момент ЗАМЕРА, а не выдачи (застывший замер не
+   выглядит свежим): у записи — её замер, вверху — САМЫЙ СТАРЫЙ из выданных (свежий Codex не освежит старый Claude).
+   Окно, у которого сброс прошёл после замера, выдаётся null — замер говорил о прошлом окне.
+ЧЕГО НЕ ЛОВИТ: расход вне источников (владелец в claude.ai, сторонние клиенты) — только ростом доли у следующего замера ·
+  поля прежнего сборщика, которых у источников нет (premium, kredity, tarif у Codex — null) · исправность страницы.
+Коды: 0 — проход состоялся; 2 — слепота источника или настройки (названа строкой «СЛЕПОТА: …»); 3 — ошибка вызова.
+"""
+import json, os, pwd, re, sqlite3, stat, sys, time
+from datetime import datetime
+from pathlib import Path
+# r4: конфиг подписок — общий модуль (дерево: ../lib; бой: /usr/local/lib/dsh-limity); номеров подписок в коде нет — всё из конфига
+for _l in (os.environ.get('DSH_LIMITY_LIB'), Path(__file__).resolve().parent.parent / 'lib', '/usr/local/lib/dsh-limity'):
+    if _l and (Path(_l) / 'dsh_limity_konfig.py').is_file(): sys.path.insert(0, str(_l)); break
+import dsh_limity_konfig
+
+if len(sys.argv) > 1:
+    print('ОТКАЗ: у dsh-limity нет доводов, всё задаётся окружением DSH_LIMITY_*', file=sys.stderr); sys.exit(3)
+E = os.environ.get
+BAZA = Path(E('DSH_LIMITY_BAZA', '/var/lib/dsh-limity/limity.db'))
+VHOD = Path(E('DSH_LIMITY_VHOD', '/var/spool/dsh-limity/vhod'))
+VYDACHA = Path(E('DSH_LIMITY_VYDACHA', '/var/lib/dsh-limity/vydacha/limity.json'))
+PODPISKI = Path(E('DSH_LIMITY_PODPISKI', '/etc/dsh-limity/podpiski.json'))
+CODEX_SOST = Path(E('DSH_LIMITY_CODEX_SOST', '/var/lib/codex-limit-watch/sostoyanie.json'))
+OTKAZ_SROK_SUT = int(E('DSH_LIMITY_OTKAZ_SROK_SUT', '7'))   # B-N-1776d LOW: otkaz/ — разбор отказов, не архив: старше срока снимается
+OTKAZ_PREDEL = int(E('DSH_LIMITY_OTKAZ_PREDEL', '200'))     # и не больше предела файлов (самые старые — вон)
+INSTANCE = Path(E('DSH_LIMITY_INSTANCE_DIR', '/etc/claude-oauth'))   # instance-<учётка>.env: GATEWAY_TOKEN_FILE → подписка по token_shlyuza конфига
+KONFIG = None   # r4: список записей конфига (dsh_limity_konfig.prochitat), None — конфиг негоден (слепота)
+HRANIT_S = 30 * 86400
+OKNA = {'five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'overage', 'extra_usage', 'codex_primary', 'codex_secondary'}
+STATUSY = {None, 'allowed', 'allowed_warning', 'rejected'}
+ISTOCHNIKI = {'sdk_event', 'sdk_usage', 'codex_app_server'}
+DS_UCH = E('DSH_LIMITY_DS_UCH', 'limity-ds')   # r10: снимки баланса DeepSeek — только от учётки dsh-limity-deepseek (не root)
+POHOZHE_NA_TOKEN = re.compile(r'sk-ant-|eyJ[A-Za-z0-9_-]{10}|Bearer\s', re.I)
+slepota = []
+
+SHEMA = '''
+CREATE TABLE IF NOT EXISTS zamer (
+  id INTEGER PRIMARY KEY, moment_utc REAL NOT NULL, prinyato_utc REAL NOT NULL,
+  provajder TEXT NOT NULL CHECK (provajder IN ('claude','codex')), podpiska INTEGER NOT NULL, okno TEXT NOT NULL,
+  dolya REAL CHECK (dolya IS NULL OR (dolya >= 0 AND dolya <= 1.5)), sbros_utc REAL, status TEXT,
+  izmereno INTEGER NOT NULL CHECK (izmereno IN (0,1)), prichina TEXT, istochnik TEXT NOT NULL, otkuda TEXT NOT NULL,
+  predel REAL, potracheno REAL,
+  CHECK (izmereno = 1 OR prichina IS NOT NULL),
+  UNIQUE (provajder, podpiska, okno, moment_utc, otkuda));
+CREATE TABLE IF NOT EXISTS usage_snimok (
+  id INTEGER PRIMARY KEY, provajder TEXT NOT NULL DEFAULT 'claude', podpiska INTEGER NOT NULL, moment_utc REAL NOT NULL,
+  prinyato_utc REAL NOT NULL, otkuda TEXT NOT NULL, tip TEXT, dannye TEXT NOT NULL, UNIQUE (provajder, podpiska, moment_utc, otkuda));
+CREATE VIEW IF NOT EXISTS poslednee AS
+  SELECT z.* FROM zamer z JOIN (SELECT provajder, podpiska, okno, MAX(moment_utc) m FROM zamer GROUP BY 1,2,3) p
+  ON z.provajder = p.provajder AND z.podpiska = p.podpiska AND z.okno = p.okno AND z.moment_utc = p.m;
+CREATE VIEW IF NOT EXISTS otpustilo AS
+  SELECT a.provajder, a.podpiska, a.okno, a.moment_utc AS bylo_rejected, b.moment_utc AS stalo_allowed
+  FROM zamer a JOIN zamer b ON a.provajder = b.provajder AND a.podpiska = b.podpiska AND a.okno = b.okno
+  AND a.status = 'rejected' AND b.status IN ('allowed','allowed_warning') AND b.moment_utc > a.moment_utc
+  AND NOT EXISTS (SELECT 1 FROM zamer c WHERE c.provajder = a.provajder AND c.podpiska = a.podpiska
+                  AND c.okno = a.okno AND c.moment_utc > a.moment_utc AND c.moment_utc < b.moment_utc);
+'''
+
+def chislo(x): return isinstance(x, (int, float)) and not isinstance(x, bool) and x == x and abs(x) != float('inf')
+
+def godnaya(z):
+    """Строка замера → (кортеж для вставки, None) или (None, причина отказа)."""
+    if not isinstance(z, dict): return None, 'не объект'
+    lishnie = set(z) - {'moment_utc', 'provajder', 'podpiska', 'okno', 'dolya', 'sbros_utc', 'status', 'izmereno',
+                        'prichina', 'istochnik', 'otkuda', 'predel', 'potracheno'}
+    if lishnie: return None, 'чужие поля: ' + ' '.join(sorted(lishnie))
+    if POHOZHE_NA_TOKEN.search(json.dumps(z, ensure_ascii=False)): return None, 'значение похоже на токен'
+    sejchas = time.time()
+    if not chislo(z.get('moment_utc')) or not (1.6e9 < z['moment_utc'] <= sejchas + 120): return None, 'moment_utc негоден'
+    if z.get('provajder') not in ('claude', 'codex'): return None, 'provajder негоден'
+    if type(z.get('podpiska')) is not int or not 1 <= z['podpiska'] <= 99: return None, 'podpiska негодна'
+    if z.get('okno') not in OKNA: return None, 'okno негодно'
+    izm = z.get('izmereno')
+    if izm not in (0, 1) or isinstance(izm, bool): return None, 'izmereno не 0/1'
+    d, s = z.get('dolya'), z.get('sbros_utc')
+    if izm == 1 and not (chislo(d) and 0 <= d <= 1.5): return None, 'dolya негодна при izmereno=1'
+    if izm == 0 and d is not None: return None, 'dolya при izmereno=0 обязана быть null'
+    if s is not None and not (chislo(s) and s > 1.6e9): return None, 'sbros_utc негоден'
+    if z.get('status') not in STATUSY: return None, 'status негоден'
+    pr = z.get('prichina')
+    if izm == 0 and not (isinstance(pr, str) and 0 < len(pr) <= 200): return None, 'izmereno=0 без причины'
+    if pr is not None and not (isinstance(pr, str) and len(pr) <= 200): return None, 'prichina негодна'
+    if z.get('istochnik') not in ISTOCHNIKI: return None, 'istochnik негоден'
+    ot = z.get('otkuda')
+    if not (isinstance(ot, str) and re.fullmatch(r'[A-Za-z0-9@._:-]{1,80}', ot)): return None, 'otkuda негодно'
+    pd, pt = z.get('predel'), z.get('potracheno')   # 1.0.4: кредиты в USD — только у окна extra_usage
+    if (pd is not None or pt is not None) and z['okno'] != 'extra_usage': return None, 'predel/potracheno только у окна extra_usage'
+    if any(v is not None and not (chislo(v) and 0 <= v < 1e7) for v in (pd, pt)): return None, 'predel/potracheno негодны'
+    return (z['moment_utc'], sejchas, z['provajder'], z['podpiska'], z['okno'], d, s, z.get('status'), izm, pr,
+            z['istochnik'], ot, pd, pt), None
+
+def vstavit(db, stroka):
+    cur = db.execute('INSERT OR IGNORE INTO zamer (moment_utc, prinyato_utc, provajder, podpiska, okno, dolya, sbros_utc,'
+                     ' status, izmereno, prichina, istochnik, otkuda, predel, potracheno) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', stroka)
+    return cur.rowcount
+
+def iz_codex(db):
+    """Адаптер: zamer {N: {at, dolya, okno: [limitId, primary|secondary, минут, resetsAt]}} codex-limit-watch."""
+    try: zamer = json.loads(CODEX_SOST.read_text())['zamer']
+    except FileNotFoundError: slepota.append(f'codex: нет состояния {CODEX_SOST}'); return 0
+    except (OSError, ValueError, KeyError, TypeError) as e: slepota.append(f'codex: состояние не разобрано ({type(e).__name__})'); return 0
+    if not isinstance(zamer, dict) or not zamer: slepota.append('codex: zamer пуст или не объект'); return 0
+    novyh = 0
+    for n, z in zamer.items():
+        try:
+            slot = z['okno'][1]
+            stroka, prichina = godnaya({'moment_utc': float(z['at']), 'provajder': 'codex', 'podpiska': int(n),
+                                       'okno': 'codex_' + slot, 'dolya': z['dolya'], 'sbros_utc': z['okno'][3],
+                                       'status': None, 'izmereno': 1, 'prichina': None,
+                                       'istochnik': 'codex_app_server', 'otkuda': 'codex-limit-watch'})
+        except (KeyError, IndexError, TypeError, ValueError) as e:
+            stroka, prichina = None, f'запись не разобрана ({type(e).__name__})'
+        if stroka is None: slepota.append(f'codex: подписка {n}: {prichina}'); continue
+        novyh += vstavit(db, stroka)
+        sy = z.get('syroe')   # r5: сырой ответ app-server (codex-limit-watch с B-N-1776, без account*) — снимком, как usage у Claude
+        if isinstance(sy, dict):
+            dannye = json.dumps(sy, ensure_ascii=False)
+            if len(dannye) > 65536 or POHOZHE_NA_TOKEN.search(dannye): slepota.append(f'codex: подписка {n}: сырой ответ отвергнут (размер/похоже на токен)')
+            else:
+                db.execute("INSERT OR IGNORE INTO usage_snimok (provajder, podpiska, moment_utc, prinyato_utc, otkuda, tip, dannye) VALUES ('codex',?,?,?,?,?,?)",
+                           (int(n), float(z['at']), time.time(), 'codex-limit-watch', ((sy.get('rateLimits') or {}).get('planType')), dannye))
+    return novyh
+
+def razlozhit_codex(r):
+    """r5: сырой ответ Codex app-server → поле выдачи `usage` (как у Claude): окна ПО ИМЕНИ (limitId/primary|secondary и каждое из
+    rateLimitsByLimitId), кредиты, план, досрочные сбросы; нераспознанное — «prochee» сырым."""
+    rl = r.get('rateLimits') if isinstance(r.get('rateLimits'), dict) else {}
+    def okno(imya, o):
+        return {'imya': imya, 'dolya': o['usedPercent'] / 100 if chislo(o.get('usedPercent')) else None, 'sbros_unix': o.get('resetsAt'),
+                'okno_minut': o.get('windowDurationMins'), 'prochee': {k: v for k, v in o.items() if k not in ('usedPercent', 'resetsAt', 'windowDurationMins') and v is not None} or None}
+    okna, vidano = [], set()
+    for lid, blok in [(rl.get('limitId') or 'codex', rl)] + sorted((r.get('rateLimitsByLimitId') or {}).items()):
+        if not isinstance(blok, dict): continue
+        for slot in ('primary', 'secondary'):
+            if isinstance(blok.get(slot), dict) and (lid, slot) not in vidano: vidano.add((lid, slot)); okna.append(okno(f'{lid}/{slot}', blok[slot]))
+    c = rl.get('credits') if isinstance(rl.get('credits'), dict) else {}
+    izv_rl = {'primary', 'secondary', 'credits', 'planType', 'limitId', 'spendControlReached', 'rateLimitReachedType'}
+    izv = {'rateLimits', 'rateLimitsByLimitId', 'ordinaryUsageAllowed', 'rateLimitResetCredits'}
+    return {'okna': okna, 'plan': rl.get('planType'), 'mozhno_obychno': r.get('ordinaryUsageAllowed'),
+            'predel_trat_dostignut': rl.get('spendControlReached'), 'tip_dostignutogo': rl.get('rateLimitReachedType'),
+            'kredity': {'est': c.get('hasCredits'), 'bezlimit': c.get('unlimited'), 'balans': c.get('balance'),
+                        'prochee': {k: v for k, v in c.items() if k not in ('hasCredits', 'unlimited', 'balance')} or None} if c else None,
+            'dosrochnye_sbrosy': r.get('rateLimitResetCredits'),
+            'prochee': {**{k: v for k, v in r.items() if k not in izv}, **{'rateLimits.' + k: v for k, v in rl.items() if k not in izv_rl}}}
+
+def podpiska_uchetki(uch, kesh):
+    """Номер подписки учётки по её instance-<учётка>.env: последняя строка GATEWAY_TOKEN_FILE — путь, который в конфиге стоит в
+    token_shlyuza ВКЛЮЧЁННОЙ подписки Claude (r4: не по имени файла) — или (None, причина)."""
+    if uch not in kesh:
+        try: stroki = (INSTANCE / f'instance-{uch}.env').read_text(encoding='utf-8').splitlines()
+        except OSError as e: kesh[uch] = (None, f'нет instance-{uch}.env ({type(e).__name__})')
+        else:
+            puti = [l.split('=', 1)[1].strip().strip('"\'') for l in stroki if l.strip().startswith('GATEWAY_TOKEN_FILE=')]
+            if not puti: kesh[uch] = (None, f'у учётки {uch} нет GATEWAY_TOKEN_FILE')
+            elif KONFIG is None: kesh[uch] = (None, 'конфиг подписок негоден')
+            else:
+                svoi = [p for p in KONFIG if p['provajder'] == 'claude' and puti[-1] in p['token_shlyuza']]
+                if not svoi: kesh[uch] = (None, f'токен шлюза {puti[-1]} не числится ни у одной подписки (token_shlyuza)')
+                elif not svoi[0]['vkl']: kesh[uch] = (None, f'подписка {svoi[0]["kluch"]} выключена в конфиге')
+                else: kesh[uch] = (svoi[0]['nomer'], None)
+    return kesh[uch]
+
+def prochest(f):
+    """(объект, учётка-владелец, None) или (None, None, причина). Без перехода по ссылке и без ожидания на FIFO; тип, размер и
+    владелец — с ОТКРЫТОГО дескриптора (fstat), а не с имени: между проверкой и чтением окна нет."""
+    try: fd = os.open(f, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as e: return None, None, f'не открыт ({e.errno == 40 and "ссылка" or type(e).__name__})'
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode): return None, None, 'не обычный файл (FIFO/устройство/каталог)'
+        if st.st_size > 65536: return None, None, 'больше 65536 байт'   # r3: полный снимок usage ~3 КБ
+        try: uch = pwd.getpwuid(st.st_uid).pw_name
+        except KeyError: return None, None, f'владелец uid {st.st_uid} без учётки'
+        try: return json.loads(os.read(fd, 65537).decode('utf-8')), uch, None
+        except (OSError, ValueError): return None, uch, 'не JSON'
+    finally: os.close(fd)
+
+def snimok(db, z, uch, zamer_uch):
+    """r3: полный снимок rate_limits usage → таблица usage_snimok; None — принят, иначе причина отказа."""
+    if set(z) - {'vid', 'moment_utc', 'podpiska', 'subscription_type', 'rate_limits', 'okno'}: return 'снимок: чужие поля'
+    if not chislo(z.get('moment_utc')) or not (1.6e9 < z['moment_utc'] <= time.time() + 120): return 'снимок: moment_utc негоден'
+    if type(z.get('podpiska')) is not int or not isinstance(z.get('rate_limits'), dict): return 'снимок: podpiska/rate_limits негодны'
+    if POHOZHE_NA_TOKEN.search(json.dumps(z, ensure_ascii=False)): return 'снимок: значение похоже на токен'
+    if zamer_uch is None: return f'снимок: перечень подписок {PODPISKI} не прочитан'
+    if uch != zamer_uch.get(z['podpiska']): return f'снимок подписки {z["podpiska"]} — только от {zamer_uch.get(z["podpiska"])}, а файл учётки {uch}'
+    tip = z.get('subscription_type') if isinstance(z.get('subscription_type'), str) else None
+    db.execute("INSERT OR IGNORE INTO usage_snimok (provajder, podpiska, moment_utc, prinyato_utc, otkuda, tip, dannye) VALUES ('claude',?,?,?,?,?,?)",
+               (z['podpiska'], z['moment_utc'], time.time(), f'zamer@{uch}', tip, json.dumps(z['rate_limits'], ensure_ascii=False)))
+    return None
+
+def snimok_deepseek(db, z, uch):
+    """r6/r10: снимок баланса DeepSeek → usage_snimok (provajder deepseek); кладёт его dsh-limity-deepseek под учёткой DS_UCH (r10: не root) —
+    поэтому только от неё и только для ВКЛЮЧЁННОЙ подписки deepseek конфига. None — принят, иначе причина отказа."""
+    if set(z) - {'vid', 'moment_utc', 'podpiska', 'dannye', 'oshibka'}: return 'баланс: чужие поля'
+    if uch != DS_UCH: return f'баланс DeepSeek — только от {DS_UCH} (dsh-limity-deepseek), а файл учётки {uch}'
+    if not chislo(z.get('moment_utc')) or not (1.6e9 < z['moment_utc'] <= time.time() + 120): return 'баланс: moment_utc негоден'
+    if KONFIG is None: return f'баланс: конфиг подписок {PODPISKI} не прочитан'
+    if type(z.get('podpiska')) is not int or not any(p['provajder'] == 'deepseek' and p['vkl'] and p['nomer'] == z['podpiska'] for p in KONFIG):
+        return f'баланс: deepseek {z.get("podpiska")!r} нет среди включённых в конфиге'
+    d, osh = z.get('dannye'), z.get('oshibka')
+    if (d is None) == (osh is None): return 'баланс: нужно ровно одно из dannye / oshibka'
+    if d is not None and not (isinstance(d, dict) and isinstance(d.get('balance_infos'), list)): return 'баланс: dannye без balance_infos'
+    if osh is not None and not (isinstance(osh, str) and len(osh) <= 300): return 'баланс: oshibka негодна'
+    tekst = json.dumps(z, ensure_ascii=False)
+    if POHOZHE_NA_TOKEN.search(tekst) or re.search(r'\bsk-[A-Za-z0-9]{16,}', tekst): return 'баланс: значение похоже на ключ'
+    db.execute("INSERT OR IGNORE INTO usage_snimok (provajder, podpiska, moment_utc, prinyato_utc, otkuda, tip, dannye) VALUES ('deepseek',?,?,?,?,?,?)",
+               (z['podpiska'], z['moment_utc'], time.time(), f'zamer@{uch}', None, json.dumps({'dannye': d, 'oshibka': osh}, ensure_ascii=False)))
+    return None
+
+def razlozhit(rl):
+    """r3: снимок usage → поле выдачи `usage`: ЛЮБОЕ окно с utilization — по имени, как пришло; известные составные — по-русски;
+    всё нераспознанное (и неизвестные подполя) — в «prochee» сырым, ничего не выбрасывается молча."""
+    def sek(iso):
+        try: return round(datetime.fromisoformat(iso).timestamp()) if isinstance(iso, str) else None   # пояс из строки; доли — округлением
+        except ValueError: return None
+    dolya = lambda x: x / 100 if chislo(x) else None
+    def dengi(m):   # r9: нет exponent — единица неизвестна ⇒ None, а не деление на 100 по догадке
+        return m['amount_minor'] / 10 ** m['exponent'] if isinstance(m, dict) and chislo(m.get('amount_minor')) and isinstance(m.get('exponent'), int) else None
+    def ostatok(d, izv): return {k: v for k, v in d.items() if k not in izv and v is not None} or None
+    vyhod = {'okna': [], 'limits': [], 'po_modelyam': [], 'razbivka_nedeli': None, 'kredity': None, 'spend': None, 'prochee': {}}
+    for k, v in rl.items():
+        if v is None: continue
+        if isinstance(v, dict) and 'utilization' in v and k != 'extra_usage':
+            vyhod['okna'].append({'imya': k, 'dolya': dolya(v.get('utilization')), 'sbros_unix': sek(v.get('resets_at')),
+                                  'limit_usd': v.get('limit_dollars'), 'potracheno_usd': v.get('used_dollars'), 'ostatok_usd': v.get('remaining_dollars'),
+                                  'blokirovka': v.get('locked_reason'),
+                                  'prochee': ostatok(v, {'utilization', 'resets_at', 'limit_dollars', 'used_dollars', 'remaining_dollars', 'locked_reason'})})
+        elif k == 'limits' and isinstance(v, list):
+            for l in v:
+                if not isinstance(l, dict): vyhod['prochee'].setdefault('limits', []).append(l); continue
+                sc = l.get('scope') if isinstance(l.get('scope'), dict) else {}
+                vyhod['limits'].append({'vid': l.get('kind'), 'gruppa': l.get('group'), 'procent': l.get('percent'), 'uroven': l.get('severity'),
+                                        'sbros_unix': sek(l.get('resets_at')), 'aktiven': l.get('is_active'),
+                                        'model': (sc.get('model') or {}).get('display_name') if isinstance(sc.get('model'), dict) else None,
+                                        'poverhnost': sc.get('surface'),
+                                        'prochee': ostatok(l, {'kind', 'group', 'percent', 'severity', 'resets_at', 'is_active', 'scope'})})
+        elif k == 'model_scoped' and isinstance(v, list):
+            vyhod['po_modelyam'] = [{'model': m.get('display_name'), 'dolya': dolya(m.get('utilization')), 'sbros_unix': sek(m.get('resets_at')),
+                                     'prochee': ostatok(m, {'display_name', 'utilization', 'resets_at'})} for m in v if isinstance(m, dict)]
+        elif k == 'seven_day_breakdown' and isinstance(v, dict):
+            vyhod['razbivka_nedeli'] = {'na_moment_unix': sek(v.get('as_of')), 'nachalo_okna_unix': sek(v.get('window_started_at')),
+                                        'stroki': [{'kluch': s.get('key'), 'imya': s.get('display_name'), 'procent': s.get('percent')}
+                                                   for s in (v.get('rows') or []) if isinstance(s, dict)],
+                                        'prochee': ostatok(v, {'as_of', 'window_started_at', 'rows'})}
+        elif k == 'extra_usage' and isinstance(v, dict):
+            dp = 10 ** v['decimal_places'] if isinstance(v.get('decimal_places'), int) else None   # суммы — в младших единицах (1417 ⇒ 14.17); r9: нет — неизвестна
+            mn = lambda x: x / dp if chislo(x) and dp else None
+            vyhod['kredity'] = {'vklyucheny': v.get('is_enabled'), 'mesyachnyj_predel': mn(v.get('monthly_limit')), 'potracheno': mn(v.get('used_credits')),
+                                'dolya': dolya(v.get('utilization')), 'valyuta': v.get('currency'), 'predel_dostignut': v.get('spend_limit_reached'),
+                                'prichina_otklyucheniya': v.get('disabled_reason'), 'otklyuchil_polzovatel': v.get('user_disabled'),
+                                'v_den': v.get('daily'), 'v_nedelyu': v.get('weekly'), 'edinica_neizvestna': dp is None,
+                                'prochee': ostatok(v, {'is_enabled', 'monthly_limit', 'used_credits', 'utilization', 'currency', 'spend_limit_reached',
+                                                       'disabled_reason', 'user_disabled', 'daily', 'weekly', 'decimal_places'})}
+        elif k == 'spend' and isinstance(v, dict):
+            vyhod['spend'] = {'potracheno': dengi(v.get('used')), 'predel': dengi(v.get('limit')),
+                              'valyuta': (v.get('used') or {}).get('currency') if isinstance(v.get('used'), dict) else None,
+                              'procent': v.get('percent'), 'uroven': v.get('severity'), 'vklyucheno': v.get('enabled'),
+                              'prichina_otklyucheniya': v.get('disabled_reason'), 'balans': v.get('balance'), 'avtopopolnenie': v.get('auto_reload'),
+                              'mozhno_kupit': v.get('can_purchase_credits'), 'mozhno_pereklyuchit': v.get('can_toggle'),
+                              'prochee': ostatok(v, {'used', 'limit', 'percent', 'severity', 'enabled', 'disabled_reason', 'balance', 'auto_reload',
+                                                     'can_purchase_credits', 'can_toggle'})}
+        else:
+            vyhod['prochee'][k] = v
+    return vyhod
+
+def ubrat_otkaz(otkaz):
+    """B-N-1776d LOW: уборка otkaz/ внутри службы, на каждом проходе приёмной. Снимает файлы старше OTKAZ_SROK_SUT суток и сверх
+    OTKAZ_PREDEL (самые старые по mtime). Только обычные файлы и ссылки-файлы самого каталога (lstat, по ссылкам не ходит).
+    → (снято по сроку, снято сверх предела). ЧЕГО НЕ ЛОВИТ: mtime ставит класть-учётка (f.replace сохраняет его) — свой отказ она может
+    «состарить» или «омолодить»; предел числа держит каталог в границах при любом mtime."""
+    if not otkaz.is_dir(): return 0, 0
+    teper, fajly = time.time(), []
+    for f in otkaz.iterdir():
+        try: st = f.lstat()
+        except OSError: continue
+        if stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode): fajly.append((st.st_mtime, f))
+    fajly.sort()
+    po_sroku = [f for m, f in fajly if teper - m > OTKAZ_SROK_SUT * 86400]
+    ostatok = [f for m, f in fajly if teper - m <= OTKAZ_SROK_SUT * 86400]
+    sverh = ostatok[:max(0, len(ostatok) - OTKAZ_PREDEL)]
+    snyato = [0, 0]
+    for i, spisok in enumerate((po_sroku, sverh)):
+        for f in spisok:
+            try: f.unlink(); snyato[i] += 1
+            except OSError: pass
+    if sum(snyato): print(f'otkaz/: снято {sum(snyato)} (старше {OTKAZ_SROK_SUT} сут — {snyato[0]}, сверх {OTKAZ_PREDEL} — {snyato[1]}), осталось {len(ostatok) - snyato[1]}')
+    return snyato[0], snyato[1]
+
+def iz_vhoda(db):
+    """Приёмная: доверие НЕ содержимому (B-N-1776 1.0.3, Вениамин 18:05Z). otkuda — по владельцу файла; podpiska — только своя
+    (по instance-<учётка>.env); из приёмной — только claude/sdk_event (Codex служба берёт сама). Чужое — в otkaz/ с причиной."""
+    prinyato = otkazano = 0
+    if not VHOD.is_dir(): slepota.append(f'приёмная: нет каталога {VHOD}'); return 0, 0
+    otkaz, kesh = VHOD.parent / 'otkaz', {}
+    zamer_uch = None if KONFIG is None else {   # учётка замера ВКЛЮЧЁННОЙ подписки Claude со способом claude_usage — из конфига
+        p['nomer']: p['zamer'] for p in KONFIG if p['provajder'] == 'claude' and p['sposob'] == 'claude_usage' and p['vkl']}
+    for f in sorted(VHOD.glob('*.json')):
+        z, uch, prichina = prochest(f)
+        stroka = None
+        if prichina is None and isinstance(z, dict) and z.get('vid') in ('usage_snimok', 'deepseek_balans'):   # r3/r6: снимки — отдельная таблица
+            prichina = snimok(db, z, uch, zamer_uch) if z['vid'] == 'usage_snimok' else snimok_deepseek(db, z, uch)
+            if prichina is None: f.unlink(); prinyato += 1; continue
+            otkaz.mkdir(mode=0o700, exist_ok=True); f.replace(otkaz / f.name); otkazano += 1
+            print(f'ОТКАЗ приёмной: {f.name}{" от " + uch if uch else ""}: {prichina}'); continue
+        if prichina is None and len(json.dumps(z)) > 4096: prichina = 'строка замера больше 4096 байт'
+        if prichina is None:
+            stroka, prichina = godnaya(z)
+        if stroka is not None:
+            if (stroka[2], stroka[10]) == ('claude', 'sdk_usage'):   # 1.0.4: только от учётки замера ЭТОЙ подписки (номер — по владельцу)
+                if zamer_uch is None: stroka, prichina = None, f'перечень подписок {PODPISKI} не прочитан — учётку замера не сверить'
+                elif not zamer_uch.get(stroka[3]): stroka, prichina = None, f'у подписки Claude {stroka[3]} нет учётки замера в перечне'
+                elif uch != zamer_uch[stroka[3]]: stroka, prichina = None, f'sdk_usage подписки {stroka[3]} — только от {zamer_uch[stroka[3]]}, а файл учётки {uch}'
+                else: stroka = stroka[:11] + (f'zamer@{uch}',) + stroka[12:]
+            elif (stroka[2], stroka[10]) != ('claude', 'sdk_event'):
+                stroka, prichina = None, f'из приёмной только claude/sdk_event и claude/sdk_usage, а здесь {stroka[2]}/{stroka[10]}'
+            elif stroka[4] == 'extra_usage':
+                stroka, prichina = None, 'окно extra_usage — только из sdk_usage'
+            else:
+                svoya, net = podpiska_uchetki(uch, kesh)
+                if svoya is None: stroka, prichina = None, f'подписка учётки {uch} не установлена: {net}'
+                elif stroka[3] != svoya: stroka, prichina = None, f'подписка {stroka[3]} ≠ подписке учётки {uch} ({svoya})'
+                else: stroka = stroka[:11] + (f'gateway@{uch}',) + stroka[12:]
+        if stroka is None:
+            otkaz.mkdir(mode=0o700, exist_ok=True); f.replace(otkaz / f.name); otkazano += 1
+            print(f'ОТКАЗ приёмной: {f.name}{" от " + uch if uch else ""}: {prichina}'); continue
+        vstavit(db, stroka); f.unlink(); prinyato += 1
+    ubrat_otkaz(otkaz)   # B-N-1776d LOW: уборка — каждым проходом, после нового отказа
+    return prinyato, otkazano
+
+def vydat(db):
+    if KONFIG is None: slepota.append(f'выдача: конфиг подписок {PODPISKI} негоден — выдача не обновлена'); return None
+    podpiski = sorted(KONFIG, key=lambda p: (p['poryadok'], p['kluch']))   # r4: порядок и подписи — из конфига
+    def okno(prov, n, imya):
+        r = db.execute('SELECT dolya, status, sbros_utc, moment_utc, izmereno FROM poslednee'
+                       ' WHERE provajder=? AND podpiska=? AND okno=?', (prov, n, imya)).fetchone()
+        if r is None or r[4] == 0: return None, None
+        if r[2] is not None and r[2] <= sejchas: return None, None   # сброс прошёл после замера: замер — о прошлом окне
+        return {'izrashodovano_dolya': r[0], 'sostoyanie': r[1], 'sbros_unix': r[2]}, r[3]
+    vyhod, momenty, sejchas = {}, [], time.time()
+    for p in podpiski:
+        prov, n, kl = p['provajder'], int(p['nomer']), p['kluch']
+        if not p['vkl']:   # выключенная — в выдаче, помеченная, без данных (не пропадает молча)
+            vyhod[kl] = {'podpis': p['podpis'], 'poryadok': p['poryadok'], 'vyklyuchena': True, 'postavshchik': prov, 'organizaciya': p.get('organizaciya'),
+                         'snyato_unix': None, 'pyat_chasov': None, 'nedelya': None, 'zhdyom': 'выключена в конфиге — не замеряется'}
+            continue
+        if prov == 'claude':
+            o5, m5 = okno('claude', n, 'five_hour'); o7, m7 = okno('claude', n, 'seven_day')
+            m = max([x for x in (m5, m7) if x] or [None]) if (m5 or m7) else None
+            kr = db.execute('SELECT status, dolya, predel, potracheno, moment_utc, prichina FROM poslednee'
+                            " WHERE provajder='claude' AND podpiska=? AND okno='extra_usage' AND izmereno=1", (n,)).fetchone()
+            # 1.0.4: pererashod — для страницы (она рисует sostoyanie: allowed ⇒ «разрешён», rejected ⇒ «запрещён»); kredity — ОТДЕЛЬНОЕ
+            # поле с суммами для сторожа и владельца (Вениамин 19:06Z). Оба — только из usage (sdk_usage); нет замера ⇒ null, не ноль.
+            pererashod = None if kr is None else {'sostoyanie': kr[0], 'snyato_unix': int(kr[4]), 'prichina': kr[5]}
+            kredity = None if kr is None else {'vklyucheny': kr[5] is None or 'выключены' not in kr[5], 'predel_dostignut': kr[0] == 'rejected'
+                                               and kr[5] is not None and 'предел' in kr[5], 'dolya': kr[1], 'predel_usd': kr[2],
+                                               'potracheno_usd': kr[3], 'valyuta': None, 'snyato_unix': int(kr[4])}   # r8: валюта — из ответа (ниже), не константой
+            vyhod[kl] = {'organizaciya': p.get('organizaciya'), 'snyato_unix': int(m) if m else None,
+                         'pyat_chasov': o5, 'nedelya': o7, 'pererashod': pererashod, 'kredity': kredity, 'http': None, 'premium': None}
+            sn = db.execute("SELECT moment_utc, tip, dannye FROM usage_snimok WHERE provajder='claude' AND podpiska=? ORDER BY moment_utc DESC LIMIT 1", (n,)).fetchone()
+            if sn is None: vyhod[kl]['usage'] = None   # r3: всё, что отдаёт usage (как страница usage клиента); нет снимка ⇒ null
+            else:
+                try: razb = razlozhit(json.loads(sn[2]))
+                except Exception as e: razb = {'oshibka_razbora': type(e).__name__, 'syroe': json.loads(sn[2])}   # не выбрасывать молча
+                vyhod[kl]['usage'] = {'snyato_unix': int(sn[0]), 'tip_podpiski': sn[1], **razb}
+            if kredity is not None:   # r8 (Вениамин, мелочь 3): нет валюты в ответе ⇒ null, а не «USD»
+                kredity['valyuta'] = ((vyhod[kl].get('usage') or {}).get('kredity') or {}).get('valyuta')
+            neud = db.execute("SELECT prichina, moment_utc FROM poslednee WHERE provajder='claude' AND podpiska=? AND izmereno=0"
+                              " ORDER BY moment_utc DESC LIMIT 1", (n,)).fetchone()
+            if not m and neud:   # 1.0.4: последняя попытка замера не удалась — её причина, а не общее «не измерено»
+                vyhod[kl]['zhdyom'] = (f'не измерено: {neud[0]} (попытка {time.strftime("%d.%m %H:%MZ", time.gmtime(neud[1]))})'
+                                       ' (это НЕ «ноль» и НЕ «остановится»)')
+            elif not m:   # страница lim.insmat.ru рисует pererashod=null как «запрещён — агент ОСТАНОВИТСЯ»; zhdyom — её штатная ветка «не измеряется»
+                bylo = db.execute('SELECT MAX(moment_utc) FROM zamer WHERE provajder=? AND podpiska=? AND izmereno=1', (prov, n)).fetchone()[0]
+                vyhod[kl]['zhdyom'] = ('не измерено: ни одного замера этой подписки нет' if bylo is None else
+                                       'не измерено: последний замер ' + time.strftime('%d.%m %H:%MZ', time.gmtime(bylo))
+                                       + ' — о прошедшем окне (сброс уже был), нового нет') + ' (это НЕ «ноль» и НЕ «остановится»)'
+        elif prov == 'deepseek':   # r6 (слово владельца 22:18 МСК): остаток денег по ключу API, не usage
+            m = None; porog, val = p.get('porog_ostatka'), p.get('valyuta_poroga')
+            vyhod[kl] = {'postavshchik': 'deepseek', 'snyato_unix': None, 'vozrast_minut': None, 'dostupen': None, 'balansy': None,
+                         'porog_ostatka': porog, 'valyuta_poroga': val, 'nizhe_poroga': None, 'oshibka': None, 'usage': None}
+            if p.get('mashina') and p['mashina'] != os.uname().nodename:
+                vyhod[kl]['zhdyom'] = (f'ключ на машине {p["mashina"]} — {os.uname().nodename} его не видит, не измеряется '
+                                       '(ключ сюда не копируется без слова владельца)')
+            else:
+                riad = [(t, json.loads(dn)) for t, dn in db.execute("SELECT moment_utc, dannye FROM usage_snimok WHERE provajder='deepseek'"
+                                                                     ' AND podpiska=? ORDER BY moment_utc DESC LIMIT 50', (n,))]
+                if riad and riad[0][1].get('oshibka'):   # последняя попытка не удалась — её причина видна, даже если ниже есть старый баланс
+                    vyhod[kl]['oshibka'] = f'{riad[0][1]["oshibka"]} (попытка {time.strftime("%d.%m %H:%MZ", time.gmtime(riad[0][0]))})'
+                udacha = next(((t, s['dannye']) for t, s in riad if s.get('dannye')), None)
+                if udacha:
+                    m, d = udacha
+                    def chislo_iz(x):
+                        try: return float(x)
+                        except (TypeError, ValueError): return None
+                    bal = [{'valyuta': b.get('currency'), 'ostatok': chislo_iz(b.get('total_balance')), 'podareno': chislo_iz(b.get('granted_balance')),
+                            'popolneno': chislo_iz(b.get('topped_up_balance')),   # числа — для страницы (она рисует только number)
+                            'kak_prishlo': {k: b.get(k) for k in ('total_balance', 'granted_balance', 'topped_up_balance')}}   # r10: строки как пришли
+                           for b in d['balance_infos'] if isinstance(b, dict)]   # валюты НЕ складываются
+                    from decimal import Decimal, InvalidOperation
+                    try: pervyj = next((Decimal(str(b['kak_prishlo']['total_balance'])) for b in bal if b['valyuta'] == val), None)   # порог — к валюте ПО ИМЕНИ, Decimal строки
+                    except (InvalidOperation, ValueError): pervyj = None
+                    vyhod[kl].update(snyato_unix=int(m), vozrast_minut=int((sejchas - m) // 60), dostupen=d.get('is_available'), balansy=bal,
+                                     nizhe_poroga=None if porog is None or pervyj is None or not pervyj.is_finite() else pervyj < Decimal(str(porog)), usage={'snyato_unix': int(m), **d})
+                else:
+                    vyhod[kl]['zhdyom'] = 'не измерено: ' + (vyhod[kl]['oshibka'] or 'ни одного запроса баланса ещё не было') + ' (это НЕ «ноль»)'
+        else:
+            o1, m1 = okno('codex', n, 'codex_primary'); o2, m2 = okno('codex', n, 'codex_secondary')
+            m = max([x for x in (m1, m2) if x] or [0]) or None
+            vyhod[kl] = {'snyato_unix': int(m) if m else None, 'postavshchik': 'codex', 'organizaciya': p.get('organizaciya'),
+                         'tarif': p.get('tarif'), 'pyat_chasov': None, 'nedelya': o1, 'vtoroe_okno': o2, 'http': None,
+                         'vozrast_minut': int((sejchas - m) // 60) if m else None,   # страница по нему краснит «число устарело» (>40)
+                         'chego_net': 'kredity, sostoyanie, predel_dostignut, okno_sekund — источник (состояние codex-limit-watch) их не несёт'}
+            sn = db.execute("SELECT moment_utc, dannye FROM usage_snimok WHERE provajder='codex' AND podpiska=? ORDER BY moment_utc DESC LIMIT 1", (n,)).fetchone()
+            if sn is not None:   # r5: из сырого ответа — то, что страница УЖЕ рисует (предел, кредиты, длина окна, сбросы), и поле usage целиком
+                try:
+                    r = json.loads(sn[1]); rl = r.get('rateLimits') or {}; c = rl.get('credits') or {}
+                    try: bal = round(float(c.get('balance')), 2)
+                    except (TypeError, ValueError): bal = c.get('balance')
+                    for pole, slot in (('nedelya', 'primary'), ('vtoroe_okno', 'secondary')):
+                        o = rl.get(slot)
+                        if isinstance(o, dict) and chislo(o.get('usedPercent')) and (o.get('resetsAt') is None or o['resetsAt'] > sejchas):
+                            vyhod[kl][pole] = {'izrashodovano_dolya': o['usedPercent'] / 100, 'sostoyanie': None, 'sbros_unix': o.get('resetsAt'),
+                                               'okno_sekund': o['windowDurationMins'] * 60 if chislo(o.get('windowDurationMins')) else None}
+                    dostupny = c.get('hasCredits') is True and (c.get('unlimited') is True or (chislo(bal) and bal > 0)) and rl.get('spendControlReached') is not True
+                    vyhod[kl].update(
+                        predel_dostignut=(r.get('ordinaryUsageAllowed') is False) or rl.get('rateLimitReachedType') is not None,
+                        tip_dostignutogo=rl.get('rateLimitReachedType'), limit_rashodov_dostignut=rl.get('spendControlReached') is True,
+                        kredity={'est': c.get('hasCredits'), 'bezlimit': c.get('unlimited'), 'ostatok': bal, 'pererashod_ischerpan': not dostupny} if c else None,
+                        sbrosy_kvoty={'dostupno': (r.get('rateLimitResetCredits') or {}).get('availableCount'), 'primenimo_seychas': None},
+                        plan=rl.get('planType'), chego_net='оценка сообщений на кредиты, модели — источник (app-server account/rateLimits/read) их не отдаёт',
+                        usage={'snyato_unix': int(sn[0]), **razlozhit_codex(r)})
+                except Exception as e:   # не выбрасывать молча
+                    vyhod[kl]['usage'] = {'oshibka_razbora': type(e).__name__, 'syroe': sn[1][:20000]}
+        vyhod[kl].update(podpis=p['podpis'], poryadok=p['poryadok'], vyklyuchena=False)   # r4: для страницы без ключей в коде
+        if m and prov != 'deepseek': momenty.append(m)   # r6: общий snyato_unix — по подпискам (Claude/Codex), как прежде; баланс DeepSeek в него не входит
+    obshchee = int(min(momenty)) if momenty else None   # консервативно: САМЫЙ СТАРЫЙ выданный замер (читатель смотрит только сюда)
+    dok = {'snyato_unix': obshchee,
+           'snyato_chelovecheski': time.strftime('%Y-%m-%d %H:%M:%S MSK', time.gmtime(obshchee + 3 * 3600)) if obshchee else None,
+           'vydano_unix': int(time.time()),   # r20 (Забава 21:28Z): момент сборки выдачи — по нему замер видит «служба молчит»
+           'istochnik': 'sadik dsh-limity: snyato_unix — самый старый из выданных замеров, у записи — её замер; момент выдачи — vydano_unix',
+           'poryadok': list(vyhod),   # r4: ключи в порядке конфига
+           'podpiski': vyhod}
+    VYDACHA.parent.mkdir(parents=True, exist_ok=True)
+    tmp = VYDACHA.with_name('.' + VYDACHA.name + '.tmp')
+    tmp.write_text(json.dumps(dok, ensure_ascii=False, indent=1) + '\n', encoding='utf-8'); tmp.chmod(0o644); tmp.replace(VYDACHA)
+    return obshchee
+
+def main():
+    global KONFIG
+    KONFIG, oshibki, na_godnom = dsh_limity_konfig.prochitat_rabochij(PODPISKI)   # r7: негодный — последняя годная редакция; тревогу шлёт замер
+    if oshibki and not na_godnom: KONFIG = None; slepota.extend('конфиг: ' + o for o in oshibki)
+    elif oshibki: print(f'ВНИМАНИЕ: конфиг {PODPISKI} НЕГОДЕН ({"; ".join(oshibki)[:300]}) — выдача по последней годной редакции {dsh_limity_konfig.GODEN}')
+    BAZA.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(BAZA, timeout=30); db.execute('PRAGMA journal_mode=WAL'); db.executescript(SHEMA)
+    if 'provajder' not in {r[1] for r in db.execute('PRAGMA table_info(usage_snimok)')}:   # r5: снимки r3/r4 — без поставщика ⇒ claude
+        db.execute("ALTER TABLE usage_snimok ADD COLUMN provajder TEXT NOT NULL DEFAULT 'claude'")
+    est = {r[1] for r in db.execute('PRAGMA table_info(zamer)')}   # 1.0.4: миграция таблицы прежних версий — два пустых столбца
+    for kol in ('predel', 'potracheno'):
+        if kol not in est: db.execute(f'ALTER TABLE zamer ADD COLUMN {kol} REAL')
+    with db:
+        nc = iz_codex(db); pv, ov = iz_vhoda(db)
+        db.execute('DELETE FROM zamer WHERE moment_utc < ?', (time.time() - HRANIT_S,))
+        db.execute('DELETE FROM usage_snimok WHERE moment_utc < ?', (time.time() - HRANIT_S,))
+    obshchee = vydat(db); db.close()
+    print(f'dsh-limity: codex новых {nc} · приёмная принято {pv}, отказано {ov} · выдача снято '
+          f'{time.strftime("%H:%M:%SZ", time.gmtime(obshchee)) if obshchee else "нет замеров"}')
+    for s in slepota: print('СЛЕПОТА: ' + s)
+    return 2 if slepota else 0
+
+if __name__ == '__main__':
+    sys.exit(main())

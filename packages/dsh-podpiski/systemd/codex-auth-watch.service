@@ -1,0 +1,12 @@
+[Unit]
+Description=Сторож токена Codex подписки: срок, обновитель жив, ссылки 4 домов, refresh у шлюзов пуст (B-N-800)
+Documentation=file:///usr/local/sbin/codex-auth-watch
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/codex-auth-watch
+SuccessExitStatus=1
+TimeoutStartSec=60
+StandardOutput=journal
+StandardError=journal

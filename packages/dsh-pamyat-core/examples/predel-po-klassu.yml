@@ -1,0 +1,4 @@
+# RU: Параметры predelZnakov и predelyZnakovPoKlassam больше не ограничивают длину записи; это совместимость для диагностики старой настройки.
+# EN: predelZnakov and predelyZnakovPoKlassam no longer limit record length; they remain for diagnosing legacy configuration.
+# RU: Для новой установки эти ключи можно не задавать. Тип и доступ к данным проверяет конвейер записи, а не этот пустой пример.
+# EN: New deployments can omit these fields. The write pipeline validates record data and access; this empty example does not enforce a limit.

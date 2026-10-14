@@ -1,0 +1,11 @@
+[Unit]
+Description=Автопереключение общих Claude-шлюзов при исчерпании подписки (B-N-1806, слово владельца 08.10 00:00 МСК)
+After=network-online.target dsh-limity.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/libexec/dsh-limity-avtoperekl
+# 2 — слепота (названа строкой «СЛЕПОТА: …»); переключатель ждёт концов ходов до 600 с + перезапуски
+SuccessExitStatus=0
+TimeoutStartSec=1200

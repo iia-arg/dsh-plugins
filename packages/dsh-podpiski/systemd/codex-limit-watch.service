@@ -1,0 +1,16 @@
+[Unit]
+Description=Заслон лимита Codex-подписок: account/rateLimits/read обеих, тревога, авто-переключение по выключателю (B-N-1232)
+Documentation=file:///usr/local/sbin/codex-limit-watch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/codex-limit-watch
+# два чтения ≤ 2×70 с + переключатель ≤ 180 с
+TimeoutStartSec=420
+StateDirectory=codex-limit-watch
+StateDirectoryMode=0700
+StandardOutput=journal
+StandardError=journal

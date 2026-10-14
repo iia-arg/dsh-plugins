@@ -1,0 +1,122 @@
+{
+  "requests": 3,
+  "sawImage": true,
+  "files": [
+    "config/projects/-tmp-bn1367-sdk-MnpWCy/e73ba710-3f1b-4337-85c8-19aa5e5679fd.jsonl"
+  ],
+  "rows": [
+    {
+      "parentUuid": "dfa25763-1281-416f-b660-b557e418a8c7",
+      "isSidechain": false,
+      "message": {
+        "id": "fixture-1",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-opus-5-5",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "image-call",
+            "name": "mcp__fixture__read_image",
+            "input": {}
+          }
+        ],
+        "stop_reason": "tool_use",
+        "usage": {
+          "input_tokens": 10,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 1,
+          "output_tokens_details": {
+            "thinking_tokens": 0
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "",
+          "iterations": [],
+          "speed": "standard"
+        },
+        "stop_details": null
+      },
+      "apiBlockIndex": 0,
+      "type": "assistant",
+      "uuid": "b28e5743-a9e5-4c06-90c5-f2cf41eff3fe",
+      "timestamp": "2026-10-01T15:33:24.425Z",
+      "effort": "medium",
+      "perTurnEffort": "medium",
+      "userType": "external",
+      "entrypoint": "sdk-ts",
+      "cwd": "/tmp/bn1367-sdk-MnpWCy",
+      "sessionId": "e73ba710-3f1b-4337-85c8-19aa5e5679fd",
+      "version": "2.1.280",
+      "gitBranch": "HEAD"
+    },
+    {
+      "parentUuid": "b28e5743-a9e5-4c06-90c5-f2cf41eff3fe",
+      "isSidechain": false,
+      "promptId": "34f15fee-4504-43c7-846a-2d3b634c1aa6",
+      "type": "user",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "tool_use_id": "image-call",
+            "type": "tool_result",
+            "content": [
+              {
+                "type": "text",
+                "text": "<dsh-read-image-v1>"
+              },
+              {
+                "type": "text",
+                "text": "fixture red pixel"
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "base64",
+                  "media_type": "image/png",
+                  "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "uuid": "1e317eb9-40d3-4b01-9c14-7bd76a14ca5c",
+      "timestamp": "2026-10-01T15:33:24.434Z",
+      "toolUseResult": [
+        {
+          "type": "text",
+          "text": "<dsh-read-image-v1>"
+        },
+        {
+          "type": "text",
+          "text": "fixture red pixel"
+        },
+        {
+          "type": "image",
+          "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+          }
+        }
+      ],
+      "sourceToolAssistantUUID": "b28e5743-a9e5-4c06-90c5-f2cf41eff3fe",
+      "userType": "external",
+      "entrypoint": "sdk-ts",
+      "cwd": "/tmp/bn1367-sdk-MnpWCy",
+      "sessionId": "e73ba710-3f1b-4337-85c8-19aa5e5679fd",
+      "version": "2.1.280",
+      "gitBranch": "HEAD"
+    }
+  ]
+}

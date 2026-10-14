@@ -1,4 +1,17 @@
-/** Стенд счёта: арифметика расхода. Числа взяты из контракта, не из головы. */
+/**
+ * RU: Стенд счёта: арифметика расхода (src/schet.js). Числа взяты из контракта, не из головы. Восемь проб:
+ *     простой вызов; вход — сумма трёх счётчиков (DISJOINT); занижение по одному inputTokens поймано;
+ *     reasoningTokens не слагаемое; не объект и отрицательное поле — отказ словами и с именем поля; отсутствие
+ *     числа — не ноль; итог называется нижней оценкой (neMenshe).
+ *     Запуск: node test/stend-scheta.mjs из каталога пакета; код 0 — все пробы зелёные, 1 — есть красные, 2 —
+ *     СЛЕПОТА (предмет не загрузился, обычно не установлены зависимости: npm install).
+ * EN: Count stand: spend arithmetic (src/schet.js). The numbers come from the contract, not from a guess. Eight
+ *     probes: a plain call; input is the sum of three counters (DISJOINT); under-counting by inputTokens alone
+ *     is caught; reasoningTokens is not an addend; a non-object and a negative field — a refusal in words and
+ *     naming the field; a missing number is not zero; the total is called a lower bound (neMenshe).
+ *     Run: node test/stend-scheta.mjs from the package directory; exit 0 — all probes green, 1 — some are red,
+ *     2 — BLINDNESS (the subject did not load, usually dependencies are missing: npm install).
+ */
 let raskhodVyzova, zavestiSchet
 try {
   ;({ raskhodVyzova, zavestiSchet } = await import('../src/schet.js'))
@@ -9,9 +22,12 @@ try {
   process.exit(2)
 }
 
-// 🔴 ПЕЧАТЬ СИЛЬНЕЕ СПРАВКИ (03.09.2026). Справка в README верна на день, когда её
-// писали; эта строка верна всегда, потому что снимается с дерева в момент прогона.
-// Довод: «число в тексте — перечень из одного элемента, и он устаревает молча».
+// RU: 🔴 ПЕЧАТЬ СИЛЬНЕЕ СПРАВКИ (03.09.2026). Справка в README верна на день, когда её писали; эта строка верна
+//     всегда, потому что снимается с дерева в момент прогона. Довод: «число в тексте — перечень из одного
+//     элемента, и он устаревает молча».
+// EN: 🔴 PRINTING BEATS A REFERENCE NOTE (03.09.2026). A note in the README is true on the day it was written;
+//     this line is always true because it is taken from the tree at run time. The argument: "a number in text
+//     is a list of one item, and it goes stale silently".
 {
   const { createRequire } = await import('node:module')
   const trebovat = createRequire(import.meta.url)
@@ -22,7 +38,8 @@ try {
 }
 
 let vsego = 0, proshlo = 0;
-const proba = (imya, f) => { vsego++; try { f(); proshlo++; console.log('  ✅ ' + imya); }
+const sud = (v) => { if (v !== undefined && v !== true) throw new Error('тело пробы ВЕРНУЛО «' + String(v).slice(0, 60) + '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы. Проверка ПО УСТРОЙСТВУ, а не по перечню значений (06.09.2026)'); };
+const proba = (imya, f) => { vsego++; try { sud(f()); proshlo++; console.log('  ✅ ' + imya); }
   catch (e) { console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 180)); } };
 
 proba('стенд годен: простой вызов без кеша считается прямо', () => {
@@ -31,7 +48,8 @@ proba('стенд годен: простой вызов без кеша счит
 });
 
 proba('🔴 ВХОД — СУММА ТРЁХ: кеш прибавляется, а не теряется', () => {
-  // В контракте: counts are DISJOINT, billed input = sum of the three.
+  // RU: В контракте: counts are DISJOINT, billed input = sum of the three.
+  // EN: In the contract: counts are DISJOINT, billed input = sum of the three.
   const r = raskhodVyzova({ inputTokens: 100, cacheReadTokens: 900, cacheWriteTokens: 50, outputTokens: 10 });
   if (r.vhod !== 1050) throw new Error('вход ' + r.vhod + ', а должен быть 1050 — кеш потерян');
 });
@@ -42,8 +60,10 @@ proba('🔴 ЗАНИЖЕНИЕ ПОЙМАНО БЫ: счёт по одному i
 });
 
 proba('🔴 reasoningTokens НЕ СЛАГАЕМОЕ: это часть выхода, а не отдельная статья', () => {
-  // В адаптере: reasoning = completion_tokens_details.reasoning_tokens,
-  // outputTokens = completion_tokens. Сложить — двойной счёт.
+  // RU: В адаптере: reasoning = completion_tokens_details.reasoning_tokens, outputTokens = completion_tokens.
+  //     Сложить — двойной счёт.
+  // EN: In the adapter: reasoning = completion_tokens_details.reasoning_tokens, outputTokens =
+  //     completion_tokens. Adding them is double counting.
   const r = raskhodVyzova({ inputTokens: 10, outputTokens: 100, reasoningTokens: 80 });
   if (r.vsego !== 110) throw new Error('итог ' + r.vsego + ' — рассуждение посчитано дважды');
   if (r.izNihRassuzhdenie !== 80) throw new Error('рассуждение не показано справочно');

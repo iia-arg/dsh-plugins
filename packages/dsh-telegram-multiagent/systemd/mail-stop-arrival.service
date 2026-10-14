@@ -1,0 +1,19 @@
+[Unit]
+Description=Observe signed mail-control arrival before receiver processing
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/node /opt/agent-plugins/dsh-telegram-multiagent/src/observe-mail-stop.mjs /etc/dsh-mail-stop/arrival-observer.json
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/dsh-mail-stop-arrivals
+
+[Install]
+WantedBy=multi-user.target

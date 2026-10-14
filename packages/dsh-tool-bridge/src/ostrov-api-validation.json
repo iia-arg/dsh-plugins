@@ -1,0 +1,868 @@
+{
+  "description": "Остров CRM: карточки, расчёты, сотрудники и связи по правам текущего доверенного входа. Context/requestKey назначает код; Site и гостевой Telegram не повышаются в staff.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "const": "catalog",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": false,
+          "properties": {},
+          "required": [],
+          "type": "object"
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "const": "objects",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "const": "quote",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "group",
+                "biggroup",
+                "resident"
+              ],
+              "type": "string"
+            },
+            "plan": {
+              "description": "Поля плана: group — policyVersion:3, week (суббота YYYY-MM-DD из catalog), adults/teens (участники без команды), extraTeam, group=adults+teens, foodDays:7, organizer/title, housing:[{resource,occupancy,quantity}], activities:[{resource,day:0..7,slot,options:[]}]; основные мастера добавляются сервером по catalog. biggroup — policyVersion:3, week, adults, teens, extraTeam, organizer, title. resident — name, arrival/departure (YYYY-MM-DD), adults, children:[возраста из правил catalog, не количество], housing:[{resource,occupancy}] по строке на комнату, bathVisits. Жильё покрывает всех людей/команду. resource/slot/options только из свежего catalog; не добавлять все залы/баню автоматически. При неполном расселении уточнить жильё, не уменьшать людей ради прохода. Возрастные/тарифные/семантические ограничения проверяет API.",
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "plan"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "const": "identity",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": false,
+          "properties": {},
+          "required": [],
+          "type": "object"
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "plan.create"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "group",
+                "biggroup",
+                "resident"
+              ],
+              "type": "string"
+            },
+            "plan": {
+              "description": "Поля плана: group — policyVersion:3, week (суббота YYYY-MM-DD из catalog), adults/teens (участники без команды), extraTeam, group=adults+teens, foodDays:7, organizer/title, housing:[{resource,occupancy,quantity}], activities:[{resource,day:0..7,slot,options:[]}]; основные мастера добавляются сервером по catalog. biggroup — policyVersion:3, week, adults, teens, extraTeam, organizer, title. resident — name, arrival/departure (YYYY-MM-DD), adults, children:[возраста из правил catalog, не количество], housing:[{resource,occupancy}] по строке на комнату, bathVisits. Жильё покрывает всех людей/команду. resource/slot/options только из свежего catalog; не добавлять все залы/баню автоматически. При неполном расселении уточнить жильё, не уменьшать людей ради прохода. Возрастные/тарифные/семантические ограничения проверяет API.",
+              "type": "object"
+            },
+            "catalogVersion": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "plan",
+            "catalogVersion"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "plan.read"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "group",
+                "biggroup",
+                "resident"
+              ],
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "plan.edit"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "group",
+                "biggroup",
+                "resident"
+              ],
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "documentVersion": {
+              "type": "string"
+            },
+            "plan": {
+              "description": "Поля плана: group — policyVersion:3, week (суббота YYYY-MM-DD из catalog), adults/teens (участники без команды), extraTeam, group=adults+teens, foodDays:7, organizer/title, housing:[{resource,occupancy,quantity}], activities:[{resource,day:0..7,slot,options:[]}]; основные мастера добавляются сервером по catalog. biggroup — policyVersion:3, week, adults, teens, extraTeam, organizer, title. resident — name, arrival/departure (YYYY-MM-DD), adults, children:[возраста из правил catalog, не количество], housing:[{resource,occupancy}] по строке на комнату, bathVisits. Жильё покрывает всех людей/команду. resource/slot/options только из свежего catalog; не добавлять все залы/баню автоматически. При неполном расселении уточнить жильё, не уменьшать людей ради прохода. Возрастные/тарифные/семантические ограничения проверяет API.",
+              "type": "object"
+            },
+            "catalogVersion": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "documentVersion",
+            "plan",
+            "catalogVersion"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "plan.list"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "offset": {
+              "type": "integer"
+            },
+            "clientId": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "client.read"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "client.save"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "phone": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "notes": {
+                  "type": "string"
+                },
+                "messengers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "telegram",
+                          "whatsapp",
+                          "max"
+                        ]
+                      },
+                      "username": {
+                        "type": "string"
+                      },
+                      "userId": {
+                        "type": "string",
+                        "description": "Telegram ID — подтверждённая привязка. В своей Telegram-карточке назначает/сохраняет код; чужую карточку редактирует только подтверждённый сотрудник. При plan.create с clientProfile userId пустой."
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "username"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "phone",
+                "email",
+                "notes",
+                "messengers"
+              ],
+              "additionalProperties": false
+            },
+            "version": {
+              "oneOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "profile",
+            "version"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "plan.create"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "group",
+                "biggroup",
+                "resident"
+              ],
+              "type": "string"
+            },
+            "plan": {
+              "description": "Поля плана: group — policyVersion:3, week (суббота YYYY-MM-DD из catalog), adults/teens (участники без команды), extraTeam, group=adults+teens, foodDays:7, organizer/title, housing:[{resource,occupancy,quantity}], activities:[{resource,day:0..7,slot,options:[]}]; основные мастера добавляются сервером по catalog. biggroup — policyVersion:3, week, adults, teens, extraTeam, organizer, title. resident — name, arrival/departure (YYYY-MM-DD), adults, children:[возраста из правил catalog, не количество], housing:[{resource,occupancy}] по строке на комнату, bathVisits. Жильё покрывает всех людей/команду. resource/slot/options только из свежего catalog; не добавлять все залы/баню автоматически. При неполном расселении уточнить жильё, не уменьшать людей ради прохода. Возрастные/тарифные/семантические ограничения проверяет API.",
+              "type": "object"
+            },
+            "catalogVersion": {
+              "type": "integer"
+            },
+            "clientId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "plan",
+            "catalogVersion",
+            "clientId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "plan.create"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "group",
+                "biggroup",
+                "resident"
+              ],
+              "type": "string"
+            },
+            "plan": {
+              "description": "Поля плана: group — policyVersion:3, week (суббота YYYY-MM-DD из catalog), adults/teens (участники без команды), extraTeam, group=adults+teens, foodDays:7, organizer/title, housing:[{resource,occupancy,quantity}], activities:[{resource,day:0..7,slot,options:[]}]; основные мастера добавляются сервером по catalog. biggroup — policyVersion:3, week, adults, teens, extraTeam, organizer, title. resident — name, arrival/departure (YYYY-MM-DD), adults, children:[возраста из правил catalog, не количество], housing:[{resource,occupancy}] по строке на комнату, bathVisits. Жильё покрывает всех людей/команду. resource/slot/options только из свежего catalog; не добавлять все залы/баню автоматически. При неполном расселении уточнить жильё, не уменьшать людей ради прохода. Возрастные/тарифные/семантические ограничения проверяет API.",
+              "type": "object"
+            },
+            "catalogVersion": {
+              "type": "integer"
+            },
+            "clientProfile": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "phone": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "notes": {
+                  "type": "string"
+                },
+                "messengers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "telegram",
+                          "whatsapp",
+                          "max"
+                        ]
+                      },
+                      "username": {
+                        "type": "string"
+                      },
+                      "userId": {
+                        "type": "string",
+                        "description": "Telegram ID — подтверждённая привязка. В своей Telegram-карточке назначает/сохраняет код; чужую карточку редактирует только подтверждённый сотрудник. При plan.create с clientProfile userId пустой."
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "username"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "phone",
+                "email",
+                "notes",
+                "messengers"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "kind",
+            "plan",
+            "catalogVersion",
+            "clientProfile"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "staff.list"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "direction": {
+              "type": "string",
+              "enum": [
+                "calculations",
+                "applications",
+                "bookings",
+                "guests",
+                "finance"
+              ]
+            },
+            "offset": {
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "staff.read"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "client.list"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            },
+            "offset": {
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "client.create"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "phone": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "notes": {
+                  "type": "string"
+                },
+                "messengers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "telegram",
+                          "whatsapp",
+                          "max"
+                        ]
+                      },
+                      "username": {
+                        "type": "string"
+                      },
+                      "userId": {
+                        "type": "string",
+                        "description": "Telegram ID — подтверждённая привязка. В своей Telegram-карточке назначает/сохраняет код; чужую карточку редактирует только подтверждённый сотрудник. При plan.create с clientProfile userId пустой."
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "username"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "phone",
+                "email",
+                "notes",
+                "messengers"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "profile"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "plan.connections"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "group",
+                "biggroup",
+                "resident"
+              ],
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "plan.link"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "group",
+                "biggroup",
+                "resident"
+              ],
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "documentVersion": {
+              "type": "string"
+            },
+            "clientId": {
+              "type": "string"
+            },
+            "clientVersion": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "documentVersion",
+            "clientId",
+            "clientVersion"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "client.assign"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "version": {
+              "type": "integer"
+            },
+            "staffId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "version",
+            "staffId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "client.save"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "phone": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "notes": {
+                  "type": "string"
+                },
+                "messengers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "telegram",
+                          "whatsapp",
+                          "max"
+                        ]
+                      },
+                      "username": {
+                        "type": "string"
+                      },
+                      "userId": {
+                        "type": "string",
+                        "description": "Telegram ID — подтверждённая привязка. В своей Telegram-карточке назначает/сохраняет код; чужую карточку редактирует только подтверждённый сотрудник. При plan.create с clientProfile userId пустой."
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "username"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "phone",
+                "email",
+                "notes",
+                "messengers"
+              ],
+              "additionalProperties": false
+            },
+            "version": {
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "profile",
+            "version",
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "title": "Ostrov model tool arguments (not transport envelope)"
+}

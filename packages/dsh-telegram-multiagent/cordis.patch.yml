@@ -1,0 +1,10 @@
+# RU: Пример загрузочного состава: настрой пути и allowedUsers для своего экземпляра; это не готовая авторизация.
+# EN: Example loader composition: configure paths and allowedUsers for your own instance; this is not ready-made authorization.
+- insert:
+    - name: dsh-telegram-multiagent
+      config:
+        tokenFile: /etc/example-channel/bot.token
+        appDir: /srv/example-agent/app
+        allowedUsers: []
+        goalUsers: []
+        goalA2ASenders: []

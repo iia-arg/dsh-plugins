@@ -1,0 +1,5 @@
+// RU: Изолированный стенд stend-site-generation.mjs: проверяет реальные границы модуля на управляемых входах. Условия внешних сервисов и код слепоты читай в сценариях; прохождение не доказывает живую доставку.
+// EN: Isolated harness stend-site-generation.mjs: exercises module boundaries using controlled inputs. Read its scenarios for external-service requirements and blind outcomes; passing does not prove live delivery.
+import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
+import {MessageReceipts} from '../src/message-receipts.js';import {ConversationSessions} from '../src/conversation-sessions.js';
+const root=fs.mkdtempSync(path.join(os.tmpdir(),'site-generation-'));const l=new MessageReceipts(root);try{const c=new ConversationSessions(l);c.pin('site-12',{id:'telegram-site-12',createdAt:1});const r=l.receive('new','fixture',{hold:false});const next=c.begin('site-12',r.id);assert.match(next.new_id,/^telegram-site-12-v2-/);console.log('PASS memory exclusion prefix preserved across rotation');}finally{l.close();fs.rmSync(root,{recursive:true,force:true});}

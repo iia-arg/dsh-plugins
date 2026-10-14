@@ -1,0 +1,16 @@
+# /etc/systemd/system/zastryalo-v-shcheli@.service — НОВЫЙ файл (B-N-749, 24.09.2026, кандидат Зари).
+# Экземпляр на агента: zastryalo-v-shcheli@<учётка>. Код сторожа не меняется — щель и зеркало
+# он уже берёт из среды (ZASTRYALO_SHCHEL; A2A_ZERKALO по умолчанию $HOME/a2a/polnye, HOME даёт User=).
+# 🔴 ПОЧЕМУ ЭКЗЕМПЛЯРЫ, А НЕ ОБХОД СПИСКА: щели tell клонов — 0750 zarya:zarya / avrora:avrora.
+# Общий сторож работает под User=iskra и увидел бы их как СЛЕПОТУ (код 2), а не как письма.
+# Под User=%i каждый экземпляр читает свою щель своей учёткой.
+# ⚠️ ГРАНИЦА: %i обязан совпадать и с учёткой, и с каталогом /opt/%i. Для кодеров (/opt/coders/%i)
+# шаблон НЕ годится как есть. Прежний zastryalo-v-shcheli.service (Искра) не тронут.
+[Unit]
+Description=Сторож застрявшего письма: щель a2a агента %i
+
+[Service]
+Type=oneshot
+User=%i
+Environment=ZASTRYALO_SHCHEL=/opt/%i/a2a/tell
+ExecStart=/usr/local/sbin/zastryalo-v-shcheli

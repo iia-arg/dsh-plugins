@@ -1,0 +1,28 @@
+[Unit]
+Description=Ежедневный вопрос «что ждёт установки» · Daily question "what is waiting to be installed"
+
+[Timer]
+# RU: 🔴 ВРЕМЯ НЕ ПРИВЯЗАНО К ОКНУ ОБНОВЛЕНИЯ СПИСКОВ, И ЭТО НАМЕРЕННО.
+# RU: apt-daily.timer: OnCalendar=*-*-* 6,18:00 плюс RandomizedDelaySec=12h — то есть
+# RU: списки обновляются в любое время суток, «после окна» тут не существует. Ставить
+# RU: прогон впритык к какому-то часу бессмысленно; вместо этого свежесть списков
+# RU: проверяет сам скрипт (STALE_DAYS), и протухание — отдельная тревога с кодом 1.
+# RU: 07:35 выбрано, чтобы утренние сообщения машины приходили одной пачкой.
+# RU: Суффикс UTC написан явно: перевод часового пояса машины не должен молча
+# RU: сдвинуть прогон.
+# EN: 🔴 THE TIME IS NOT TIED TO THE LIST-REFRESH WINDOW, ON PURPOSE.
+# EN: apt-daily.timer: OnCalendar=*-*-* 6,18:00 plus RandomizedDelaySec=12h — lists refresh
+# EN: at any time of day, there is no "after the window". Instead the script itself checks
+# EN: list freshness (STALE_DAYS), and staleness is a separate alert with exit 1.
+# EN: 07:35 was chosen so the machine's morning messages arrive as one batch.
+# EN: The UTC suffix is explicit: changing the machine's time zone must not silently
+# EN: shift the run.
+OnCalendar=*-*-* 07:35:00 UTC
+# RU: Пропущенный из-за выключенной машины прогон делается при следующем подъёме.
+# EN: A run missed while the machine was off happens at the next boot.
+Persistent=true
+AccuracySec=1min
+Unit=apt-updates-notify.service
+
+[Install]
+WantedBy=timers.target

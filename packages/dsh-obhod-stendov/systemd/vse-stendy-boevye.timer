@@ -1,0 +1,12 @@
+[Unit]
+Description=Суточный прогон обходчика стендов (A-N-630)
+
+[Timer]
+# По календарю, не OnBootSec (урок 22.09): прогон не зависит от того, когда поднималась машина.
+OnCalendar=*-*-* 03:40:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=vse-stendy-boevye.service
+
+[Install]
+WantedBy=timers.target

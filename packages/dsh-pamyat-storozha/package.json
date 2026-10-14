@@ -1,7 +1,21 @@
 {
   "name": "dsh-pamyat-storozha",
-  "version": "0.1.0-alpha.7",
-  "description": "Сторожа обслуживания памяти: оповещение о каждом сжатии и вторая ступень заполнения",
+  "version": "3.1.3",
+  "description": "Сторожа обслуживания памяти агента DSH: оповещение о каждом сжатии, ступени заполнения от порога сжатия, сводка с охватом; приборы и сторожа памяти в bin/ · Memory maintenance guards for a DSH agent: a notice on every compaction, fill stages of the compaction threshold, a summary with coverage; memory tools and watchers in bin/",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "agent",
+    "memory",
+    "compaction",
+    "context-window",
+    "monitoring",
+    "guard",
+    "память · memory",
+    "сжатие · compaction",
+    "сторож · guard"
+  ],
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -9,20 +23,31 @@
   },
   "files": [
     "src",
+    "bin",
+    "systemd",
     "test",
+    "docs",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.en.md"
   ],
   "scripts": {
     "test": "r=0; for f in test/stend-*.mjs; do node \"$f\"; c=$?; if [ $c -eq 1 ]; then r=1; elif [ $c -eq 2 ] && [ $r -ne 1 ]; then r=2; elif [ $c -ne 0 ] && [ $c -ne 2 ] && [ $r -ne 1 ]; then r=$c; fi; done; exit $r"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/schemastery": "^3.18.1"
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "dsh-pamyat-kompakt": "^3.1.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
-    "@deepseek-ai/schemastery": "3.18.1"
+    "@deepseek-ai/schemastery": "3.18.1",
+    "dsh-pamyat-kompakt": "file:../dsh-pamyat-kompakt"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "author": "Aleksandr Argelander",
+  "engines": {
+    "node": ">=22"
+  }
 }

@@ -1,0 +1,9 @@
+[Unit]
+Description=Внешний прибор aclaude (C-H-088) — sh2: проба proba-snaruzhi по ssh (юниты, вебхук-серверы, диск, сторожа); тревога в @idomik_bot с sadik
+Documentation=file:///usr/local/sbin/aclaude-snaruzhi-watch
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/aclaude-snaruzhi-watch sh2
+TimeoutStartSec=90

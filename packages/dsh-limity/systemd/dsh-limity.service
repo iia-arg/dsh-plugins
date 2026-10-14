@@ -1,0 +1,12 @@
+# B-N-1776 (Заря, 07.10.2026): служба лимитов подписок — один проход: замер Codex из состояния codex-limit-watch и
+# приёмная → таблица /var/lib/dsh-limity/limity.db; выдача производного limity.json. К провайдерам НЕ ходит, токенов не читает.
+# Код 2 — слепота источника (названа в журнале), не сбой службы.
+[Unit]
+Description=Служба лимитов подписок sadik: таблица замеров и выдача limity.json (B-N-1776)
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/dsh-limity
+SuccessExitStatus=0 2
+TimeoutStartSec=60

@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily dynamic memory contract check
+[Timer]
+OnCalendar=*-*-* 06:20:00 UTC
+RandomizedDelaySec=120
+Persistent=true
+Unit=pamyat-seam.service
+[Install]
+WantedBy=timers.target

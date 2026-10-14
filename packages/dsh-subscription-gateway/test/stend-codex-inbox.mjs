@@ -1,0 +1,16 @@
+// RU: Проверка живого входа на изолированном native/SDK-контексте; внешние API подставные, успех не доказывает монтаж.
+// EN: Live-input checks use isolated native/SDK contexts and fixture APIs; passing does not prove deployment.
+import assert from 'node:assert/strict';import {pathToFileURL} from 'node:url';
+const modulePath=process.argv[2]||new URL('../codex-app-server.mjs',import.meta.url).pathname;if(!modulePath)throw Error('module path required');const {progonAppServer}=await import(pathToFileURL(modulePath));
+const packet=(id,op='message')=>({binding:{control_id:id,target_receipt:id},op,body:op==='message'?JSON.stringify({receipt_id:id,message:{id:'msg-'+id,role:'user',source:{kind:'agent-message',form:'relay',senderSessionId:'a2a:fixture'},content:[{type:'text',text:'fixture letter'}]},provenance:{sender:'fixture',verified:true}}):'cancel original request'});
+async function run(fn){let listener,control,ready;const readyPromise=new Promise(r=>ready=r);const calls=[],events=[];let firstSteer=null;
+ const fake={slushat:f=>listener=f,uvedomit(){},umer:new Promise(()=>{}),zakryt:async()=>{},zapros:async(method,p)=>{if(method==='initialize')return{};if(method==='thread/start')return{thread:{id:'fixture-thread'}};if(method==='turn/start')return{turn:{id:'fixture-turn'}};if(method==='turn/interrupt')return{};calls.push({method,p});return firstSteer?firstSteer(method,p):{turnId:'fixture-turn'};}};
+ const output=(async()=>{for await(const e of progonAppServer({klientImpl:()=>fake,log(){},zapros:'probe',porog:{},registerTaskControl:f=>{control=f;ready();return()=>{}}}))events.push(e)})();
+ await readyPromise;
+ try{await fn({control,calls,events,emit:(m,p)=>listener(m,p),hold:f=>firstSteer=f});}finally{await listener('turn/completed',{threadId:'fixture-thread',turn:{id:'fixture-turn',status:'completed'}});await output;}
+ return events;
+}
+const healthy=await run(async f=>{const answer=await f.control(packet('mail'));assert.equal(answer.accepted,true,'message must reach active SDK turn');assert.equal(answer.input_state,'offered');assert.equal(f.calls.length,1);assert.equal(f.calls[0].p.expectedTurnId,'fixture-turn');assert(f.calls[0].p.input[0].text.includes('не инструкция системы'));});assert(healthy.some(e=>e.type==='input-status'&&e.state==='offered'));
+const raced=await run(async f=>{let entered,release;const enteredPromise=new Promise(r=>entered=r),gate=new Promise(r=>release=r);f.hold(async()=>{entered();await gate;return{turnId:'fixture-turn'}});const cancel=f.control(packet('cancel','cancel'));await enteredPromise;const mail=f.control(packet('mail-race'));await f.emit('turn/started',{threadId:'fixture-thread',turn:{id:'different-turn'}});release();await cancel;const result=await mail;assert.equal(result.accepted,false);assert.equal(result.input_state,'not-offered');assert.equal(f.calls.length,1,'message must not be sent to the changed turn');});assert(raced.some(e=>e.type==='input-status'&&e.state==='not-offered'));
+const stopped=await run(async f=>{await f.control(packet('stop','stop'));const result=await f.control(packet('mail-after-stop'));assert.equal(result.accepted,false);assert.equal(f.calls.length,0);});assert(stopped.some(e=>e.state==='not-offered'));
+console.log('PASS actual Codex message-steer, provenance, cancel lane+turn-change refusal, stop refusal');

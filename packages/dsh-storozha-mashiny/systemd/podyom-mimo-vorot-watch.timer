@@ -1,0 +1,15 @@
+# RU: Такт 15 мин. Довод: обход ворот — чья-то рука прямо сейчас; ответить надо, пока она ещё за работой, а не
+# RU: к утру. Цена такта — прогон ~21 с (замер на копии состояния) ≈ 2% времени.
+# RU: Свежесть итога для healthcheck — 40 мин (два пропущенных такта + запас на прогон).
+# EN: 15-minute tick. Reason: a gate bypass is someone's hand right now; answer while they are still at work, not
+# EN: by morning. Cost of the tick — a ~21 s run (measured on a state copy) ≈ 2% of the time.
+# EN: Result freshness for the healthcheck — 40 min (two missed ticks + run margin).
+[Unit]
+Description=Прогон сторожа подъёма мимо ворот каждые 15 минут · Start-bypassing-the-gate watchdog every 15 minutes
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+AccuracySec=1min
+Unit=podyom-mimo-vorot-watch.service
+[Install]
+WantedBy=timers.target

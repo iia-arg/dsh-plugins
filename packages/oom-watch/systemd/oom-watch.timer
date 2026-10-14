@@ -1,8 +1,24 @@
+# RU: Таймер oom-watch — раз в минуту запускает oom-watch.service (одноимённую службу).
+# RU: Включать именно его: systemctl enable --now oom-watch.timer.
+# EN: The oom-watch timer — starts oom-watch.service (the same-named unit) once a minute.
+# EN: This is the unit to enable: systemctl enable --now oom-watch.timer.
+# RU: Описание ниже говорит только о «memory-cgroup kills», но служба сообщает и о
+# RU: глобальных убийствах (нехватка памяти на всей машине) — см. docs/GUARDS.md.
+# EN: The description below mentions only "memory-cgroup kills", but the service also
+# EN: reports global kills (machine-wide memory shortage) — see docs/GUARDS.md.
 [Unit]
 Description=OOM watchdog: read the kernel journal for new memory-cgroup kills every minute
 
 [Timer]
+# RU: Каждую минуту в :00. Точность срабатывания — по умолчанию systemd
+# RU: (AccuracySec=1min), то есть проход может сдвинуться внутри минуты.
+# EN: Every minute at :00. Firing accuracy is the systemd default
+# EN: (AccuracySec=1min), so a pass may drift within the minute.
 OnCalendar=*-*-* *:*:00
+# RU: Persistent=true: пропущенный за время выключения запуск догоняется при старте.
+# RU: Курсор читает сохранённые kernel-записи всех загрузок после своей позиции; ротация или утрата курсора оставляет пробел.
+# EN: Persistent=true: a run missed while the machine was off is caught up at boot.
+# EN: The cursor reads retained kernel entries across boots; vacuuming or a lost cursor leaves a gap.
 Persistent=true
 
 [Install]

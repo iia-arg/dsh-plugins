@@ -1,0 +1,17 @@
+# B-N-1499 (03.10.2026, Аврора): срок 30 суток для переписки посетителей сайта у Варвары (решение владельца 21:19 МСК).
+# Удаляет только гостевые сессии telegram-site-* и telegram-gost-* (B-N-1650) старше срока; живые (session.lock под flock) пропускает. Журнал — без содержимого.
+[Unit]
+Description=Срок 30 суток: гостевые сессии Варвары (telegram-site-*, telegram-gost-*) — удаление старше срока
+[Service]
+Type=oneshot
+# A-N-1963 (3), Михалыч 10.10: чистка от учётки Варвары — подмена каталога ссылкой между проверкой и rmtree не дотянется дальше
+# её собственных файлов. Каталоги .dsh/sessions, storages/session_projcache, .claude/projects и карта шлюза sessii.db — varvara:varvara.
+User=varvara
+Group=varvara
+ExecStart=/usr/bin/python3 -B /usr/local/sbin/site-sroki.py
+Environment=SITE_DOM=/opt/varvara
+Environment=SITE_SROK_SUT=30
+ProtectSystem=strict
+ReadWritePaths=/opt/varvara/.dsh /opt/varvara/.claude
+PrivateTmp=yes
+NoNewPrivileges=yes

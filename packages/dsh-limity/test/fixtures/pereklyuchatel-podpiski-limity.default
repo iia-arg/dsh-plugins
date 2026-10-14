@@ -1,0 +1,14 @@
+# /etc/default/pereklyuchatel-podpiski-limity — правило свежести для заслона лимита переключателя подписок Claude
+# (B-N-1776 такт 4; правило Вениамина 07.10.2026 19:24 МСК). Читатель: /usr/local/libexec/pereklyuchatel-podpiski-limity.py.
+# Чисел в коде читателя нет: нет файла, нет ключа, лишний ключ или значение не по форме — «не измерено» (переход только force).
+# Форма значения: число или произведение чисел (6*60). Доли 0..1.5, возраст в минутах > 0.
+#
+# «исчерпана»: status=rejected или доля ≥ ISCHERPANA_DOLYA_OT, пока не прошёл sbros_utc — без предела возраста.
+# «свободна»:  оба окна измерены, сброс не прошёл, five_hour доля < SVOBODNA_5CH_DOLYA_MENSHE и замер не старше
+#              SVOBODNA_5CH_VOZRAST_MIN минут; seven_day доля < SVOBODNA_7D_DOLYA_MENSHE и замер не старше SVOBODNA_7D_VOZRAST_MIN.
+# иначе «не измерено: последнее <доля> <N> мин назад».
+ISCHERPANA_DOLYA_OT=1.0
+SVOBODNA_5CH_DOLYA_MENSHE=0.80
+SVOBODNA_5CH_VOZRAST_MIN=30
+SVOBODNA_7D_DOLYA_MENSHE=0.90
+SVOBODNA_7D_VOZRAST_MIN=6*60

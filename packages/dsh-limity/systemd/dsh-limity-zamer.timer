@@ -1,0 +1,11 @@
+# B-N-1776: проход раз в 10 мин; замеряет обёртка не чаще раза в час на подписку и не больше 24 раз в сутки (её правила).
+[Unit]
+Description=Таймер источника Б службы лимитов (B-N-1776)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

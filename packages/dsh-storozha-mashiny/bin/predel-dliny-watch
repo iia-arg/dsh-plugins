@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+# RU: predel-dliny-watch — сторож ОТКАЗА ПО ДЛИНЕ ПРОМПТА у агента на этой машине.
+# EN: predel-dliny-watch — watcher for PROMPT-TOO-LONG REFUSALS of an agent on this machine.
+#
+# RU: ЗАЧЕМ. Однажды ход агента упал с «Prompt is too long». Служба при этом была жива и Result=success, а сторожей
+# RU: на это не было вовсе: беду нашли вручную, втроём, потратив на выяснение «блок или не блок» больше часа переписки.
+# EN: WHY. Once an agent turn failed with "Prompt is too long". The service stayed alive with Result=success, and there
+# EN: was no watcher for it at all: the trouble was found by hand, by three people, after more than an hour of
+# EN: back-and-forth on "is it a block or not".
+#
+# RU: 🔴 ПОЧЕМУ СМОТРИМ СОБЫТИЕ, А НЕ БЛИЗОСТЬ ПРЕДЕЛА. Замер по корпусу 247 ходов за сутки: очередь медиана 2,
+# RU: 90-й проц 28, максимум 45. Отказ был ОДИН — на 45, а 44/42/41/40 прошли. Значит длина очереди предиктором НЕ
+# RU: является (длина промпта зависит от размера сообщений, не от их числа), и порог по ней дал бы 12-25 ложных криков
+# RU: в сутки на один настоящий отказ. Прямой величины занятости в журнале шлюза НЕТ. Она есть у платформы
+# RU: (/compact-status), но по открытому долгу «врёт почти вдвое после компакта» — на негодной величине порог хуже
+# RU: отсутствия порога.
+# EN: 🔴 WHY WE WATCH THE EVENT, NOT THE PROXIMITY TO THE LIMIT. Measured on a corpus of 247 turns per day: queue
+# EN: median 2, 90th percentile 28, max 45. There was ONE refusal — at 45, while 44/42/41/40 passed. So queue length is
+# EN: NOT a predictor (prompt length depends on message size, not count), and a threshold on it would give 12-25 false
+# EN: alarms per day per real refusal. The gateway journal has NO direct occupancy value. The platform has one
+# EN: (/compact-status), but per an open issue it "lies almost twofold after compaction" — a threshold on an invalid
+# EN: value is worse than no threshold.
+#
+# RU: 🔴 ЗАМЕНА СОГЛАСОВАННОГО ПРИЗНАКА — НАЗЫВАЮ ЯВНО. Условились: «громче на ДВА отказа подряд БЕЗ УСПЕШНОГО ХОДА
+# RU: между ними». Буквально это неизмеримо: журнал шлюза НЕ печатает завершение хода вовсе (проверено узким грепом:
+# RU: 0 строк за сутки при 204 «мост подключён» и 65 сбоях). Поэтому здесь: ДВА И БОЛЕЕ отказа в окне OKNO_MIN.
+# RU: За сутки такое не случалось ни разу — фоном не станет.
+# EN: 🔴 THE AGREED SIGNAL WAS REPLACED — STATED EXPLICITLY. The agreement was: "louder on TWO refusals in a row WITH NO
+# EN: SUCCESSFUL TURN in between". Literally this is unmeasurable: the gateway journal does NOT log turn completion at
+# EN: all (checked with a narrow grep: 0 lines per day vs 204 "bridge connected" and 65 failures). So here: TWO OR MORE
+# EN: refusals within the OKNO_MIN window. That never happened in a day — it will not become background noise.
+#
+# RU: Настройки (окружение): UNIT, KOMU, PATTERN, OKNO_MIN, ALERT, PREDEL_YASHCHIKI, PREDEL_STATE_DIR — см. документацию.
+# RU: Коды: 0 — чисто / уже сообщено / сообщено; 2 — слепота или не настроено; 3 — отказ доставки агенту или владельцу, маркер не записан, повтор.
+# EN: Settings (environment): UNIT, KOMU, PATTERN, OKNO_MIN, ALERT, PREDEL_YASHCHIKI, PREDEL_STATE_DIR — see the docs.
+# EN: Exit codes: 0 — clean / already reported / reported; 2 — blindness or not configured; 3 — agent or owner delivery failed, no marker, retry.
+set -uo pipefail
+
+# RU: Отказ источника — не отсутствие предмета. Вызывающий проверяет код вне $(...).
+# RU: Одна попытка добычи за проход; законный пустой результат разбирается отдельно.
+# EN: A source failure is not the absence of the subject. The caller checks the exit code outside $(...).
+# EN: One fetch attempt per pass; a legitimate empty result is handled separately.
+net_dannyh() {
+  local msg="СЛЕПОТА: не добыто $1; код $2; ${3:0:200}"
+  printf '%s\n' "$msg" >&2
+  logger -t "predel-dliny-watch" -- "$msg" 2>/dev/null || true
+}
+
+STATE_DIR=${PREDEL_STATE_DIR:-/var/lib/predel-dliny-watch}
+mkdir -p "$STATE_DIR"
+# RU: Юнит шлюза агента, чей журнал читаем. Пусто — не настроено (отказ ниже).
+# EN: The agent gateway unit whose journal is read. Empty — not configured (refusal below).
+UNIT=${UNIT:-}
+# RU: 🔴 Переполнение пишется ПО-РАЗНОМУ у поставщиков. «Prompt is too long» — Anthropic; у Codex — «Input exceeds
+# RU: the maximum length … input_too_large» (живые строки; прежний образец их пропустил и сказал «чисто»).
+# RU: «(perepolnenie:» — СВОЯ строка шлюза 0.4.5+ (продолжение сессии не удалось по переполнению): она не зависит от
+# RU: слов поставщика, но есть только на пути продолжения — на свежем запросе остаётся лишь текст поставщика. Поэтому
+# RU: ловим все. Образец — ERE; скобка — классом [(]: «\(» внутри ${:-} теряет обратную косую, и grep -E падал бы на
+# RU: непарной «(» (код 2).
+# RU: ⚠️ Чего НЕ ловит: переполнение с формулировкой, которой здесь нет (новый поставщик, смена текста) при свежем запросе.
+# EN: 🔴 Overflow is worded DIFFERENTLY by providers. "Prompt is too long" — Anthropic; Codex — "Input exceeds the
+# EN: maximum length … input_too_large" (live lines; the earlier pattern missed them and said "clean").
+# EN: "(perepolnenie:" — the gateway's OWN line in 0.4.5+ (session continuation failed due to overflow): it does not
+# EN: depend on provider wording, but exists only on the continuation path — a fresh request has only the provider's
+# EN: text. So we catch all of them. The pattern is ERE; the bracket is a class [(]: "\(" inside ${:-} loses its
+# EN: backslash and grep -E would fail on an unpaired "(" (exit 2).
+# EN: ⚠️ Does NOT catch: an overflow worded in a way not listed here (new provider, changed text) on a fresh request.
+PATTERN=${PATTERN:-Prompt is too long|input_too_large|Input exceeds the maximum length|[(]perepolnenie:}
+OKNO_MIN=${OKNO_MIN:-35}
+# RU: Имя агента: ключ маркера и адресат письма. Пусто — не настроено (отказ ниже).
+# EN: Agent name: the marker key and the letter recipient. Empty — not configured (refusal below).
+KOMU=${KOMU:-}
+# RU: Без юнита и адресата смотреть нечего: отказ с причиной, ничего не шлём и маркер не пишем.
+# EN: Without a unit and a recipient there is nothing to watch: refuse with a reason, send nothing, write no marker.
+[ -n "$UNIT" ] && [ -n "$KOMU" ] || { printf 'СЛЕПОТА: не настроено — UNIT (юнит шлюза) и KOMU (имя агента) обязательны\n' >&2; exit 2; }
+# RU: 🔴 МАРКЕР НА АГЕНТА: при нескольких экземплярах общий файл last-seen ЗАТИРАЕТСЯ соседом — и тревога соседа
+# RU: глохнет как «уже сообщено». Строка стоит НИЖЕ KOMU: иначе подстановка пустая и все снова пишут в один файл.
+# EN: 🔴 ONE MARKER PER AGENT: with several instances a shared last-seen file gets OVERWRITTEN by a neighbour — and the
+# EN: neighbour's alert dies as "already reported". This line is BELOW KOMU: otherwise the substitution is empty and
+# EN: everyone writes into one file again.
+MARKER="$STATE_DIR/last-seen-${KOMU}"
+# RU: переопределяемы, чтобы пробу можно было гнать БЕЗ ложной тревоги владельцу
+# EN: overridable so a probe can run WITHOUT a false alert to the owner
+ALERT=${ALERT:-$(command -v agent-alert || echo /nonexistent)}
+HOST=$(hostname -s)
+
+# RU: 1.0.2: fire возвращает ИСХОД ДОСТАВКИ владельцу (было: код logger, то есть 0 и при отказе канала).
+# EN: 1.0.2: fire returns the owner DELIVERY outcome (was: logger's exit code, i.e. 0 even when the channel failed).
+fire() {
+  if [ -x "$ALERT" ] && "$ALERT" "$1"; then return 0; fi
+  logger -t predel-dliny-watch "ALERT НЕ доставлена (канал $ALERT): $1"; return 1
+}
+
+# RU: Письмо агенту — прямо во входящий каталог (a2a/in), который опрашивает его канал. Ящики — настройкой
+# RU: PREDEL_YASHCHIKI: пары «имя=каталог» через пробел; адресата нет в перечне — отказ доставки (код 3).
+# RU: Скрытое временное имя не читается приёмником, .txt становится виден после mv.
+# EN: The letter goes straight into the agent's inbox directory (a2a/in) that its channel polls. Inboxes come from
+# EN: PREDEL_YASHCHIKI: space-separated "name=directory" pairs; a recipient not in the list — delivery refused (exit 3).
+# EN: A hidden temporary name is ignored by the receiver; the .txt becomes visible after mv.
+tell_agenta() {
+  local inbox owner group tmp stamp destination para
+  inbox=""
+  for para in ${PREDEL_YASHCHIKI:-}; do
+    [ "${para%%=*}" = "$KOMU" ] && { inbox=${para#*=}; break; }
+  done
+  [ -n "$inbox" ] || { printf 'ОТКАЗ доставки: неизвестный адресат %s\n' "$KOMU" >&2; return 3; }
+  [ -d "$inbox" ] || { printf 'ОТКАЗ доставки %s: нет каталога %s\n' "$KOMU" "$inbox" >&2; return 3; }
+  owner=$(stat -c %U -- "$inbox") && group=$(stat -c %G -- "$inbox") || {
+    printf 'ОТКАЗ доставки %s: владелец/группа каталога не прочитаны\n' "$KOMU" >&2; return 3;
+  }
+  tmp=$(mktemp "$inbox/.predel-XXXXXX") || {
+    printf 'ОТКАЗ доставки %s: временный файл не создан\n' "$KOMU" >&2; return 3;
+  }
+  if ! install -m 644 -o "$owner" -g "$group" /dev/stdin "$tmp" <<< "$1"; then
+    rm -f -- "$tmp"
+    printf 'ОТКАЗ доставки %s: install в %s отказал\n' "$KOMU" "$inbox" >&2; return 3
+  fi
+  if ! stamp=$(date +%s%N); then
+    rm -f -- "$tmp"; printf 'ОТКАЗ доставки %s: date отказал\n' "$KOMU" >&2; return 3
+  fi
+  if [[ ! "$stamp" =~ ^[0-9]+$ ]]; then
+    rm -f -- "$tmp"; printf 'ОТКАЗ доставки %s: эпоха-ns не добыта\n' "$KOMU" >&2; return 3
+  fi
+  destination="$inbox/predel-$stamp.txt"
+  # RU: -n не затирает совпавшее имя; оставшийся tmp означает отказ публикации.
+  # EN: -n does not overwrite an existing name; a leftover tmp means publishing failed.
+  if ! mv -nT -- "$tmp" "$destination" || [ -e "$tmp" ]; then
+    rm -f -- "$tmp"
+    printf 'ОТКАЗ доставки %s: mv в %s отказал или имя занято\n' "$KOMU" "$destination" >&2; return 3
+  fi
+  return 0
+}
+
+# RU: -q: без служебной строки «-- No entries --» — иначе знаменатель ниже считал бы её строкой шлюза.
+# RU: 🔴 -t node — ТОЛЬКО строки самого шлюза. Агент работает внутри cgroup шлюза, и его sudo/sg/logger пишутся в журнал
+# RU: ТОГО ЖЕ юнита: у одного агента за 7 сут 243 413 строк sudo против 889 строк node. Команда агента со словом
+# RU: «input_too_large» дала ложную тревогу владельцу (проба), а знаменатель «строк шлюза» был на 96% чужим.
+# RU: ⚠️ Граница: шлюз, запущенный не бинарём node, даст 0 строк — знаменатель это покажет.
+# EN: -q: no "-- No entries --" service line — otherwise the denominator below would count it as a gateway line.
+# EN: 🔴 -t node — ONLY the gateway's own lines. The agent runs inside the gateway's cgroup, and its sudo/sg/logger
+# EN: land in the journal of THE SAME unit: one agent had 243,413 sudo lines vs 889 node lines in 7 days. An agent
+# EN: command containing "input_too_large" raised a false alert to the owner (a probe), and the "gateway lines"
+# EN: denominator was 96% foreign.
+# EN: ⚠️ Boundary: a gateway not started by a node binary gives 0 lines — the denominator will show it.
+zhurnal=$(journalctl -q -u "$UNIT" -t node --since "-${OKNO_MIN}min" --no-pager 2>&1); kod=$?
+if [ "$kod" -ne 0 ]; then
+  net_dannyh "журнал $UNIT за ${OKNO_MIN} мин (journalctl)" "$kod" "$zhurnal"
+  exit 2
+fi
+# RU: Знаменатель: сколько строк шлюза просмотрено. «Чисто» при 0 строк — это «шлюз молчал ИЛИ юнит не тот», не «нет отказов».
+# EN: Denominator: how many gateway lines were scanned. "Clean" with 0 lines means "gateway silent OR wrong unit", not "no refusals".
+strok=$(printf '%s' "$zhurnal" | grep -c '')
+sovpadeniya=$(printf '%s\n' "$zhurnal" | grep -E -- "$PATTERN"); kod=$?
+if [ "$kod" -gt 1 ]; then
+  net_dannyh "совпадения в журнале $UNIT (grep)" "$kod" "негодная маска или отказ разбора"
+  exit 2
+fi
+if [ "$kod" -eq 1 ]; then
+  otkazy=0; posledniy=''
+else
+  # RU: Считаем СОБЫТИЯ, а не строки: одно переполнение у 0.4.5+ даёт 2-3 строки в одну секунду (своя строка,
+  # RU: «сбой вызова», текст поставщика) — построчный счёт выдал бы «ДВА И БОЛЕЕ» на одном отказе.
+  # RU: ⚠️ Оценка снизу: два отказа в одну секунду сольются в один.
+  # RU: 🔴 Ключ — ПОЛЯ «месяц день время», не срез байтов: под системной локалью ru_RU журнал пишет «сен», а cut -c1-15
+  # RU: режет байты — «сен 23 23:29:48» (18 байт) терял секунды, и второй отказ в ту же минуту читался «уже сообщено»
+  # RU: (экземпляр без LC_ALL; под C.UTF-8 там «Sep» и 15 байт ровно).
+  # EN: We count EVENTS, not lines: one overflow in 0.4.5+ produces 2-3 lines in the same second (own line,
+  # EN: "call failed", provider text) — counting lines would report "TWO OR MORE" for a single refusal.
+  # EN: ⚠️ Lower bound: two refusals in the same second merge into one.
+  # EN: 🔴 The key is the FIELDS "month day time", not a byte slice: under the ru_RU system locale the journal writes the
+  # EN: Cyrillic month, and cut -c1-15 cuts bytes — the 18-byte Cyrillic timestamp lost its seconds, and a second refusal
+  # EN: within the same minute read as "already reported" (an instance without LC_ALL; under C.UTF-8 it is "Sep", exactly 15 bytes).
+  otkazy=$(printf '%s\n' "$sovpadeniya" | awk '{print $1" "$2" "$3}' | sort -u | wc -l)
+  posledniy=$(printf '%s\n' "$sovpadeniya" | tail -1 | awk '{print $1" "$2" "$3}')
+fi
+proshlyy=$(cat "$MARKER" 2>/dev/null || echo "")
+
+if [ "$otkazy" -eq 0 ]; then
+  logger -t predel-dliny-watch "чисто: отказов по длине за ${OKNO_MIN} мин нет · просмотрено строк шлюза $strok (юнит $UNIT)"
+  exit 0
+fi
+if [ "$posledniy" = "$proshlyy" ]; then
+  logger -t predel-dliny-watch "тот же отказ, уже сообщено ($posledniy) — молчу"
+  exit 0
+fi
+
+if [ "$otkazy" -ge 2 ]; then
+  txt="🚨 <b>${HOST}: ДВА И БОЛЕЕ отказа по длине промпта за ${OKNO_MIN} мин (${otkazy})</b>
+Агент, вероятно, не может завершить ход. Признак возврата к сбросу сессии выполнен.
+Юнит: <code>${UNIT}</code>"
+else
+  txt="⚠️ <b>${HOST}: отказ по длине промпта</b> (${otkazy} за ${OKNO_MIN} мин)
+Один отказ — ещё не блок: 05.09 после такого же ход поднялся сам через секунду.
+Смотреть СОСТОЯНИЕ, а не событие: <code>ps -eo pid,etimes,cmd | grep 'claude --output-format'</code>"
+fi
+fire "$txt"; kod_vl=$?
+# RU: 1.0.1: ящика агента нет в PREDEL_YASHCHIKI — это ОШИБКА НАСТРОЙКИ, не сбой доставки. Владельцу сказано —
+# RU: метку пишем (иначе та же тревога владельцу каждые 15 мин без конца), агенту не доставлено — «НЕ НАСТРОЕНО», код 2.
+# RU: Временный сбой доставки (нет каталога, mv отказал) — как прежде: метку не пишем, следующий таймер повторит.
+# EN: 1.0.1: no mailbox for the agent in PREDEL_YASHCHIKI is a SETTINGS ERROR, not a delivery failure. The owner was told —
+# EN: write the marker (otherwise the same owner alert every 15 min forever); the agent got nothing — "НЕ НАСТРОЕНО", exit 2.
+yashchik_est=0
+for para in ${PREDEL_YASHCHIKI:-}; do [ "${para%%=*}" = "$KOMU" ] && yashchik_est=1; done
+if [ "$yashchik_est" -eq 0 ]; then
+  # RU: 1.0.2: и владельцу не дошло — маркер не пишем, код 3, повтор.  EN: 1.0.2: owner not reached either — no marker, exit 3.
+  [ "$kod_vl" -eq 0 ] || { printf 'ОТКАЗ доставки: тревога владельцу не ушла, ящика агента %s нет — маркер не пишу, повторю\n' "$KOMU" >&2; exit 3; }
+  printf '%s' "$posledniy" > "$MARKER"
+  logger -t predel-dliny-watch "ALERT: отказов $otkazy за ${OKNO_MIN} мин, последний $posledniy; агенту $KOMU НЕ доставлено — ящика нет в PREDEL_YASHCHIKI"
+  printf 'НЕ НАСТРОЕНО: ящика агента %s нет в PREDEL_YASHCHIKI — владельцу сказано, агенту не доставлено\n' "$KOMU" >&2
+  exit 2
+fi
+tell_agenta "Сторож предела длины: за ${OKNO_MIN} мин отказов по длине промпта — ${otkazy} (из ${strok} строк шлюза $UNIT). Последний: ${posledniy}."; kod=$?
+# RU: Не отмечать недоставленное как сообщённое. Следующий таймер повторит в пределах окна.
+# EN: Do not mark undelivered as reported. The next timer run retries within the window.
+[ "$kod" -eq 0 ] || exit "$kod"
+# RU: 1.0.2: письмо агенту дошло, а тревога владельцу — нет: маркер не пишем, код 3, следующий таймер повторит.
+# EN: 1.0.2: the agent letter arrived but the owner alert did not: no marker, exit 3, the next timer retries.
+[ "$kod_vl" -eq 0 ] || { printf 'ОТКАЗ доставки: тревога владельцу не ушла — маркер не пишу, повторю\n' >&2; exit 3; }
+printf '%s' "$posledniy" > "$MARKER"
+logger -t predel-dliny-watch "ALERT: отказов $otkazy за ${OKNO_MIN} мин, последний $posledniy · просмотрено строк шлюза $strok"

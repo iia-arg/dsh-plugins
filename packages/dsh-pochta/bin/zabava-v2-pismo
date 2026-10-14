@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""Письмо Забавы в локальный a2a/in. Вызов: sudo zabava-v2-pismo ФАЙЛ ПОЛУЧАТЕЛЬ [--supersedes ID]."""
+import sys
+sys.dont_write_bytecode = True
+
+import argparse
+import importlib.util
+import json
+import os
+import pwd
+import sqlite3
+import tempfile
+import time
+import uuid
+from pathlib import Path
+
+ROUTES_FILE = Path('/etc/a2a/zabava-v2-receivers.json')
+HELPER_FILE = Path('/usr/local/libexec/a2a-v2.py')
+PROBE_SECONDS = 60
+RESULT_SECONDS = 60
+
+
+def publish(helper, route, metadata, body):
+    folder = Path(route['inbox']).resolve(strict=True)
+    account = pwd.getpwnam(route['owner'])
+    # Скрытый файл становится видимым только после записи, chmod/chown и fsync.
+    fd, temporary = tempfile.mkstemp(prefix='.zabava-v2-', dir=folder)
+    target = folder / f'zabava-{time.time_ns():019d}-{uuid.uuid4()}.txt'
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(helper.wire(metadata, body))
+            stream.flush()
+            os.fchown(stream.fileno(), account.pw_uid, account.pw_gid)
+            os.fchmod(stream.fileno(), route['mode'])
+            os.fsync(stream.fileno())
+        os.link(temporary, target)
+    finally:
+        os.unlink(temporary)
+    return target
+
+
+def send(helper, route, recipient, body, target_id):
+    def check_ledger():
+        with helper.ledger(route) as db:
+            identity = helper.identity(db, route)
+            if target_id and not db.execute(
+                'SELECT 1 FROM decision_index WHERE recipient=? AND decision_id=?',
+                (recipient, target_id)
+            ).fetchone():
+                raise ValueError(
+                    'supersedes: решение не зарегистрировано у получателя: ' + target_id +
+                    '; новое письмо НЕ отправлено, прежнее письмо НЕ отменено. '
+                    'Если оно ещё в ящике, повторите замену только после проверки регистрации; '
+                    'иначе проверьте получателя и decision_id. Не отправляйте прежнее письмо повторно.'
+                )
+            return identity
+
+    identity = check_ledger()
+    probe = {'kind': 'capability_probe', 'reply_channel': 'ledger', 'delivery_id': 'probe:' + str(uuid.uuid4()),
+             'recipient': {'id': recipient}, 'supersedes': {'decision_id': 'absent:' + str(uuid.uuid4())}}
+    started = int(time.time() * 1000)
+    publish(helper, route, probe, '')
+    deadline = time.monotonic() + PROBE_SECONDS
+    while True:
+        response = helper.verify_response(route, probe, started)
+        if response is not None:
+            break
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f'{PROBE_SECONDS}с: читатель v2 не подтвердил поддержку; решение НЕ отправлено')
+        time.sleep(.2)
+    if response['ledger_uuid'] != identity or check_ledger() != identity:
+        raise ValueError('ledger сменился; решение НЕ отправлено')
+    decision_id = 'zabava:' + str(uuid.uuid4())
+    metadata = {'kind': 'decision', 'delivery_id': 'delivery:' + str(uuid.uuid4()),
+                'decision_id': decision_id, 'recipient': {'id': recipient, 'ledger_uuid': identity}}
+    if target_id:
+        metadata['supersedes'] = {'decision_id': target_id, 'recipient': recipient, 'ledger_uuid': identity}
+    target = publish(helper, route, metadata, body)
+    return {'status': 'submitted', 'decision_id': decision_id,
+            'delivery_id': metadata['delivery_id'], 'file': str(target), 'recipient': recipient,
+            'cancellation_limit': 'Можно отменить только ожидающее письмо до исполнения; '
+                                  'уже взятое или исполненное письмо не отменяется.',
+            'cancellation': cancellation_result(helper, route, metadata) if target_id else {'status': 'not_requested'}}
+
+
+
+def cancellation_result(helper, route, metadata):
+    # После укладки отказ чтения/таймаут — неизвестный исход, НЕ отказ отправки.
+    deadline = time.monotonic() + RESULT_SECONDS
+    try:
+        while True:
+            with helper.ledger(route) as db:
+                if helper.identity(db, route) != metadata['recipient']['ledger_uuid']:
+                    return {'status': 'unknown', 'reason': 'ledger_changed'}
+                row = db.execute(
+                    'SELECT r.id,r.outcome,e.state,e.reason,e.metadata_json,t.outcome AS target_outcome '
+                    'FROM receipts r JOIN protocol_envelopes e ON e.receipt_id=r.id '
+                    'LEFT JOIN receipts t ON t.id=e.target_receipt WHERE r.logical_key=?',
+                    ('v2:' + metadata['delivery_id'],)
+                ).fetchone()
+            if row is not None:
+                if json.loads(row['metadata_json']) != metadata:
+                    return {'status': 'unknown', 'reason': 'metadata_mismatch'}
+                evidence = {key: row[key] for key in ['id', 'state', 'reason', 'outcome', 'target_outcome']}
+                if row['reason'] == 'target_canceled' and row['target_outcome'] == 'canceled_before_run':
+                    return {'status': 'confirmed', **evidence}
+                if row['outcome'] == 'supersedes_too_late':
+                    return {'status': 'too_late', 'replacement_executed': False,
+                            'action_required': 'B не исполнено; переподай без --supersedes.',
+                            **evidence}
+                if row['state'] == 'held' and row['reason'] != 'awaiting_cancellation':
+                    return {'status': 'held', **evidence}
+                if row['state'] in ('released_text', 'rejected'):
+                    return {'status': 'not_confirmed', **evidence}
+            if time.monotonic() >= deadline:
+                return {'status': 'unknown', 'reason': 'observation_timeout'}
+            time.sleep(.2)
+    except (OSError, ValueError, KeyError, TypeError, sqlite3.Error) as error:
+        return {'status': 'unknown', 'reason': 'observation_failed', 'error': str(error)}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    parser.add_argument('file', type=Path)
+    parser.add_argument('recipient')
+    parser.add_argument('--supersedes')
+    args = parser.parse_args()
+    spec = importlib.util.spec_from_file_location('a2a_v2', HELPER_FILE)
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    if args.supersedes is not None and not helper.valid(args.supersedes):
+        raise ValueError('негодный decision_id supersedes')
+    route = json.loads(ROUTES_FILE.read_text())[args.recipient]
+    if route['mode'] not in (0o644, 0o664):
+        raise ValueError('негодные права ящика')
+    body = args.file.read_bytes().decode('utf-8')
+    if not body.strip():
+        raise ValueError('пустое письмо')
+    print(json.dumps(send(helper, route, args.recipient, body, args.supersedes), ensure_ascii=False))
+
+
+def run():
+    try:
+        main()
+    # №17 A-N-1948 (10.10): IndexError/AttributeError — как в main() a2a-v2.py: ответ приёмника без пустой строки
+    # (verify_response: split('\n\n',1)[1]) давал traceback и код 1 вместо «ОТКАЗ … код 3».
+    except (OSError, ValueError, KeyError, IndexError, AttributeError, TypeError, sqlite3.Error, TimeoutError) as error:
+        print('ОТКАЗ zabava-v2-pismo: ' + str(error), file=sys.stderr)
+        sys.exit(3)
+
+
+if __name__ == '__main__':
+    run()

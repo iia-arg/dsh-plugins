@@ -1,0 +1,11 @@
+# B-N-1776 r10: проход раз в 10 мин; запрос баланса — не чаще раза в час на ключ и не больше 24 раз в сутки (правила dsh-limity-deepseek).
+[Unit]
+Description=Таймер баланса DeepSeek (B-N-1776 r10): раз в 10 мин; сам запрос — раз в час на ключ
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

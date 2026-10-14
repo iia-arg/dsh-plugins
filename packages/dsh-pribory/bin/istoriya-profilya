@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Снимок профиля в историю: коммит по событию файловой системы, а не рукой.
+#
+# 🔴 ЗАЧЕМ. 03.09.2026 на вопрос «что менялось в профиле в 11:40:19» ответить было
+# нечем: последняя копия — от 02.09 21:16 при трёх правках за день. Копии делались,
+# когда вспомню. Механизм, требующий вспомнить, ведёт себя как отсутствующий.
+#
+# ГДЕ НЕ ПРИМЕНЯЕТСЯ: история отвечает на «что и когда изменилось», и НЕ отвечает
+# на «кто изменил» — под правкой стоит один пользователь. И она не откатывает:
+# восстановление — отдельное решение человека, автоматического возврата тут нет.
+#
+# С 25.09.2026 (вердикт приёмки): АГЕНТ — ДОВОДОМ. Путь дома первого агента был зашит, и у клонов
+# сторожа истории не было вовсе. Без довода — агент из ключа ISTORIYA_AGENT: прежний istoriya-profilya.service не меняется.
+# Клонам — шаблон istoriya-profilya@<агент>.path/.service (User=<агент>).
+# Режим --zavesti "<первая строка>": завести историю, которой ещё нет, — один коммит от имени агента. Для клона
+# klon-agenta.sh пишет «клон от <образец>, <дата>»: история образца НЕ копируется (иначе клон рождается с чужой историей).
+# 🔴 ЗАПУСК ТОЛЬКО ОТ САМОГО АГЕНТА: .git под чужой учёткой — та же беда, что 03.09 (см. юнит). Чужой — отказ.
+# EN: A profile snapshot into history: a commit on a file-system event, not by hand.
+#     🔴 WHY. On 03.09.2026 there was nothing to answer the question "what changed in the profile at 11:40:19"
+#     with: the last copy was from 02.09 21:16 with three edits during the day. Copies were made whenever I
+#     remembered. A mechanism that requires remembering behaves as if absent.
+#     WHERE IT DOES NOT APPLY: history answers "what changed and when", and does NOT answer "who changed it" —
+#     one user stands under the edit. And it does not roll back: restoring is a separate human decision, there
+#     is no automatic return here.
+#     Since 25.09.2026 (acceptance verdict): THE AGENT IS AN ARGUMENT. The first agent's home path was
+#     hard-coded, and clones had no history watcher at all. Without an argument — the agent from the
+#     ISTORIYA_AGENT key: the former istoriya-profilya.service does not change. For clones — the template
+#     istoriya-profilya@<agent>.path/.service (User=<agent>).
+#     Mode --zavesti "<first line>": start a history that does not exist yet — one commit in the agent's name.
+#     For a clone klon-agenta.sh writes "clone of <template>, <date>": the template's history is NOT copied
+#     (otherwise the clone is born with someone else's history).
+#     🔴 RUN ONLY AS THE AGENT ITSELF: .git under another account is the same trouble as on 03.09 (see the unit).
+#     Another account — refusal.
+# RU: git add -A включает неигнорируемые секреты; .gitignore проверяет администратор.
+# EN: git add -A includes unignored secrets; the administrator must check .gitignore.
+set -u
+# Файл настройки пакета dsh-pribory: строки «КЛЮЧ=значение», «#» — комментарий; берётся последнее вхождение.
+# Путь меняет DSH_PRIBORY_CONF. Порядок: переменная → файл → нейтральное умолчание; нет ничего — СЛЕПОТА, код 2.
+# EN: Settings file of the dsh-pribory package: "KEY=value" lines, a line starting with "#" is a comment; the
+#     last occurrence wins.
+#     DSH_PRIBORY_CONF changes the path. Order: variable → file → neutral default; nothing at all — BLINDNESS,
+#     code 2.
+DSH_PRIBORY_CONF="${DSH_PRIBORY_CONF:-/etc/dsh-pribory/dsh-pribory.conf}"
+# « #» в значении — громкий отказ (stderr, код 2), а не склеивание пояснения со значением; зовущий обязан выйти: X=$(konf …) || exit 2.
+# EN: " #" in a value is a loud refusal (stderr, code 2), not gluing the note into the value; the caller must exit: X=$(konf …) || exit 2.
+konf() { local v; v=$(sed -n "s/^[[:space:]]*$1[[:space:]]*=//p" "$DSH_PRIBORY_CONF" 2>/dev/null | tail -n 1) || true; case "$v" in *[[:space:]]#*) echo "ОТКАЗ: значение ключа $1 в $DSH_PRIBORY_CONF содержит « #» — комментарий допускается только с начала строки" >&2; return 2;; esac; v=$(printf '%s' "$v" | sed "s/^[[:space:]]*//;s/[[:space:]]*$//"); printf '%s' "${v:-$2}"; }
+AGENT="${1:-$(konf ISTORIYA_AGENT "")}" || exit 2
+[ -n "$AGENT" ] || { echo "ОТКАЗ: агент не назван — довод или ключ ISTORIYA_AGENT в $DSH_PRIBORY_CONF"; exit 2; }
+case "$AGENT" in ""|-*|*[!a-z0-9-]*) echo "ОТКАЗ: имя агента «$AGENT» — только a-z, 0-9, «-»"; exit 2;; esac
+[ "$(id -un)" = "$AGENT" ] || { echo "ОТКАЗ: запущено от $(id -un), а профиль агента $AGENT — .git лёг бы под чужого"; exit 2; }
+KATALOG=$(konf ISTORIYA_KATALOG "$HOME/.dsh/profiles") || exit 2; KATALOG=${KATALOG//\{agent\}/$AGENT}   # шаблон с {agent} · EN: template with {agent}
+cd "$KATALOG" || { echo "СЛЕПОТА: каталога профилей нет: $KATALOG"; exit 2; }
+if [ "${2:-}" = --zavesti ]; then
+  [ -d .git ] && { echo "ОТКАЗ: история уже есть ($(git rev-list --count HEAD 2>/dev/null) коммитов) — заводить поверх нельзя"; exit 2; }
+  [ -f .gitignore ] || { echo "ОТКАЗ: нет $KATALOG/.gitignore — в историю ушли бы node_modules; положи .gitignore образца"; exit 2; }
+  [ -n "${3:-}" ] || { echo "ОТКАЗ: нет строки первого коммита"; exit 2; }
+  echo "ВНИМАНИЕ: до git add -A добавьте в .gitignore файлы с токенами и секретами; всё неигнорируемое попадёт в историю" >&2
+  git init -q && git add -A && git -c user.name="$AGENT" -c user.email="$AGENT@$(uname -n)" commit -q -m "$3" || {
+    echo "🔴 история НЕ заведена — разбирать рукой"; exit 1; }
+  echo "история заведена: $(git log --oneline -1), файлов в учёте $(git ls-files | wc -l)"; exit 0
+fi
+[ -z "${2:-}" ] || { echo "ОТКАЗ: неизвестный довод «$2» (есть только --zavesti)"; exit 2; }
+[ -d .git ] || { echo "СЛЕПОТА: истории нет (.git отсутствует) — снимать некуда"; exit 2; }
+
+# Ничего не изменилось — это законный исход, а не отказ: событие могло прийти на
+# файл из .gitignore.
+# EN: Nothing changed — this is a legitimate outcome, not a refusal: the event could have come for a file from
+#     .gitignore.
+if git diff --quiet && git diff --cached --quiet && [ -z "$(git status --porcelain)" ]; then
+  echo "изменений нет — снимок не нужен (событие пришло на файл вне учёта либо правка не поменяла содержимого)"
+  exit 0
+fi
+
+izmeneno=$(git status --porcelain | wc -l)
+git add -A
+git -c user.name="$AGENT" -c user.email="$AGENT@$(uname -n)" commit -q \
+  -m "снимок профиля $(date -u +%FT%TZ): изменено файлов $izmeneno" \
+  -m "$(git diff --cached --stat | tail -20)" || {
+    echo "🔴 коммит НЕ сделан — история отстала от диска, и это надо чинить рукой"; exit 1; }
+echo "снимок сделан: $(git log --oneline -1), изменено файлов $izmeneno"

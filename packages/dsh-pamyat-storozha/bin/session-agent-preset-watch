@@ -1,0 +1,215 @@
+#!/usr/bin/python3 -IB
+"""Check selected DSH session headers; no session loading, models, or repairs."""
+# ЧЕГО НЕ ЛОВИТ: пресет субагентской сессии, поднятой через адрес родителя, не проверен.
+# Заголовки origin=subagent исключаются из проверки agentPreset (граница приёмки).
+# EN: DOES NOT CATCH: the preset of a subagent session raised through the parent's address is not checked.
+#     Headers with origin=subagent are excluded from the agentPreset check (acceptance boundary).
+import argparse,fcntl,hashlib,json,os,re,selectors,stat,subprocess,sys,time,uuid
+from pathlib import Path
+import yaml
+PATTERN=re.compile(r'^session(?:\.v([1-9][0-9]*))?\.jsonl(\.zstd)?$')
+# Файл настройки пакета dsh-pamyat-storozha: строки «КЛЮЧ=значение», «#» — комментарий; берётся последнее вхождение.
+# Путь меняет DSH_PAMYAT_STOROZHA_CONF. Порядок: переменная → файл → нейтральное умолчание; нет ничего — СЛЕПОТА, код 2.
+# EN: Settings file of the dsh-pamyat-storozha package: "KEY=value" lines, a line starting with "#" is a
+#     comment; the last occurrence wins.
+#     DSH_PAMYAT_STOROZHA_CONF changes the path. Order: variable → file → neutral default; nothing at all —
+#     BLINDNESS, code 2.
+KONF=os.environ.get('DSH_PAMYAT_STOROZHA_CONF','/etc/dsh-pamyat-storozha/dsh-pamyat-storozha.conf')
+def _konf(key,default):
+    value=None
+    try:
+        with open(KONF,encoding='utf-8') as f:
+            for s in f:
+                s=s.strip()
+                if s and not s.startswith('#') and s.partition('=')[0].strip()==key:value=s.partition('=')[2]
+    except OSError:pass
+    # « #» в значении — громкий отказ, а не склеивание пояснения со значением: комментарий только с начала строки.
+    # Код 3 — провал для юнитов, считающих успехом 1 и 2 (omega) или 1 (writer).
+    # EN: " #" in a value is a loud refusal, not gluing the note into the value: a comment only from the line start.
+    #     Code 3 is a failure for units counting 1 and 2 (omega) or 1 (writer) as success.
+    if value is not None and (' #' in value or '\t#' in value):
+        print(f'ОТКАЗ: значение ключа {key} в {KONF} содержит « #» — комментарий допускается только с начала строки'); raise SystemExit(3)
+    value=value.strip() if value else value
+    return value or default
+REGISTRY=_konf('AGENT_REGISTRY','')
+STATE='/var/lib/session-agent-preset-watch'
+ALERT='/usr/local/bin/agent-alert'
+
+def small(path,limit):
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+    with os.fdopen(fd,'rb') as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):raise ValueError('не обычный файл')
+        data=f.read(limit+1)
+    if len(data)>limit:raise ValueError('превышен предел чтения')
+    return data
+
+def header(path,deadline):
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+    with os.fdopen(fd,'rb') as source:
+        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):raise ValueError('не обычный журнал')
+        if not str(path).endswith('.zstd'):line=source.readline(65537)
+        else:
+            proc=subprocess.Popen(['/usr/bin/zstd','-dc','--long=27'],stdin=source,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+            sel=selectors.DefaultSelector();sel.register(proc.stdout,selectors.EVENT_READ);line=b''
+            try:
+                end=min(deadline,time.monotonic()+5)
+                while b'\n' not in line and len(line)<=65536:
+                    left=end-time.monotonic()
+                    if left<=0 or not sel.select(left):raise ValueError('таймаут чтения заголовка5с')
+                    part=os.read(proc.stdout.fileno(),min(4096,65537-len(line)))
+                    if not part:break
+                    line+=part
+            finally:
+                sel.close()
+                if proc.poll() is None:proc.terminate()
+                try:proc.wait(timeout=1)
+                except subprocess.TimeoutExpired:proc.kill();proc.wait()
+                proc.stdout.close()
+            line=line.split(b'\n',1)[0]+(b'\n' if b'\n' in line else b'')
+        if len(line)>65536 or not line.endswith(b'\n'):raise ValueError('нет полной первой строки ≤64KiB')
+        value=json.loads(line)
+        if not isinstance(value,dict) or value.get('type')!='session':raise ValueError('первая строка не заголовок session')
+        return value
+
+def directories(path,deadline):
+    result=[]
+    with os.scandir(path) as entries:
+        for entry in entries:
+            if time.monotonic()>deadline or len(result)>=10000:raise ValueError('предел обхода60с/10000 каталогов')
+            if entry.name.startswith('.'):continue
+            if entry.is_symlink():raise ValueError('ссылка в дереве сессий: '+entry.path)
+            if entry.is_dir(follow_symlinks=False):result.append(Path(entry.path))
+    return sorted(result)
+
+def scan(registry):
+    out={'agents_total':0,'agents_scanned':0,'sessions_total':0,'headers_read':0,'subagents':0,'sessions':[],'agents':[],'bad':[],'errors':[]}
+    deadline=time.monotonic()+60
+    try:
+        data=yaml.safe_load(small(registry,4*1024*1024));agents=data.get('agenty') if isinstance(data,dict) else None
+        if not isinstance(agents,list) or not agents:raise ValueError('реестр без agenty')
+        out['agents_total']=len(agents);seen_names=set();seen_homes=set()
+        for agent in agents:
+            name=agent.get('imya') if isinstance(agent,dict) else None
+            try:
+                home=agent.get('namerenie',{}).get('dom')
+                if not isinstance(name,str) or not name or name in seen_names:raise ValueError('пустое/повторное имя')
+                if not isinstance(home,str) or not Path(home).is_absolute() or home=='/' or '..' in Path(home).parts or home in seen_homes:raise ValueError('пустой/негодный/повторный dom')
+                seen_names.add(name);seen_homes.add(home);count=0
+                for project in directories(Path(home)/'.dsh/sessions',deadline):
+                    for folder in directories(project,deadline):
+                        candidates=[]
+                        with os.scandir(folder) as entries:
+                            for entry in entries:
+                                if time.monotonic()>deadline:raise ValueError('предел обхода60с')
+                                match=PATTERN.fullmatch(entry.name)
+                                if match:candidates.append((int(match[1] or 0),bool(match[2]),Path(entry.path)))
+                        if not candidates:continue
+                        count+=1;out['sessions_total']+=1
+                        try:
+                            if len({c[1] for c in candidates})!=1:raise ValueError('одновременно jsonl и zstd — платформа откажет корню сессий (encodingMismatch: dsh-session-persistence-jsonl checkRootEncoding)')
+                            path=max(candidates,key=lambda c:c[0])[2];value=header(path,deadline);out['headers_read']+=1
+                            # Субагентскую сессию платформа по простому адресу не поднимает (validateAddress →
+                            # session/agent-busy, dsh-api-session-controller history.js) — на standard её не разбудить; не судим, считаем.
+                            # EN: The platform does not raise a subagent session by a plain address
+                            #     (validateAddress → session/agent-busy, dsh-api-session-controller history.js)
+                            #     — it cannot be woken on standard; we do not judge, we count.
+                            if value.get('origin')=='subagent':
+                                out['subagents']+=1;out['sessions'].append({'agent':name,'path':str(path),'origin':'subagent'});continue
+                            valid=isinstance(value.get('agentPreset'),str) and bool(value['agentPreset'].strip())
+                            row={'agent':name,'path':str(path),'has_agentPreset':valid};out['sessions'].append(row)
+                            if not valid:out['bad'].append(f'{name}: {path}: agentPreset отсутствует, пуст или не строка')
+                        except (OSError,ValueError,UnicodeError) as e:out['errors'].append(f'{name}: {folder}: {type(e).__name__}: {e}')
+                out['agents_scanned']+=1;out['agents'].append({'agent':name,'sessions':count})
+                if not count:out['errors'].append(f'{name}: {home}/.dsh/sessions: 0 сессий — полнота не подтверждена')
+            except (OSError,ValueError,TypeError,AttributeError) as e:out['errors'].append(f'{name}: {type(e).__name__}: {e}')
+        if out['sessions_total']==0:out['errors'].append('не найдено ни одной сессии')
+    except (OSError,ValueError,yaml.YAMLError) as e:out['errors'].append(f'реестр {registry}: {type(e).__name__}: {e}')
+    out['code']=1 if out['bad'] else 2 if out['errors'] else 0
+    return out
+
+def summary(result):
+    return (f"Сессии без agentPreset: заголовки {result['headers_read']}/{result['sessions_total']}, агенты {result['agents_scanned']}/{result['agents_total']}, субагентских {result['subagents']} (не судятся)\n"+
+            '\n'.join(result['bad']+result['errors']))
+
+def watch(registry,state,alert):
+    os.makedirs(state,mode=0o700,exist_ok=True);st=os.lstat(state)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid!=os.geteuid() or st.st_mode&0o077:raise ValueError('каталог состояния должен быть свой0700')
+    fd=os.open(Path(state)/'lock',os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW|os.O_NONBLOCK,0o600)
+    with os.fdopen(fd,'w') as lock:
+        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:return 0  # Another complete scan owns the notification state.
+        result=scan(registry);statefile=Path(state)/'last.json'
+        try:
+            previous=json.loads(small(statefile,16384))
+            if not isinstance(previous,dict) or not isinstance(previous.get('signature'),str) or not re.fullmatch('[0-9a-f]{64}',previous['signature']):raise ValueError('неверная форма состояния')
+        except FileNotFoundError:previous={}
+        except (OSError,ValueError) as e:
+            previous={};result['errors'].append(f'состояние {statefile}: {type(e).__name__}; прежнюю отметку не использую')
+            result['code']=1 if result['bad'] else 2
+        text=summary(result)
+        signature=hashlib.sha256(json.dumps(sorted(result['bad']+result['errors']),ensure_ascii=False).encode()).hexdigest()
+        if result['code']:
+            print(text)
+            if previous.get('signature')!=signature:
+                env={**os.environ,'AGENT_ALERT_POPYTOK':'3','AGENT_ALERT_TAJMAUT':'20','AGENT_ALERT_PAUZY':'5 15'}
+                sent=subprocess.run([alert,'--plain'],input=text,text=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=100,env=env)
+                if sent.returncode:print('Тревога не доставлена; отметка не обновлена');return 3
+        record={'signature':signature,'checked_at':time.time(),'code':result['code'],'coverage':{k:result[k] for k in ['agents_total','agents_scanned','sessions_total','headers_read','subagents']}}
+        temporary=Path(state)/('.last-'+uuid.uuid4().hex)
+        try:
+            f=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+            with os.fdopen(f,'w') as output:json.dump(record,output);output.flush();os.fsync(output.fileno())
+            os.replace(temporary,statefile)
+        finally:
+            if temporary.exists():temporary.unlink()
+        return 0  # Successful watch means scan + required notifications completed.
+
+def konf_prichina():
+    # Почему ключа нет: файла настройки нет / есть, но не читается / читается, а ключа нет. _konf отказ чтения глотает.
+    # EN: Why the key is missing: no settings file / it exists but is unreadable / readable but no key. _konf swallows a read failure.
+    try:
+        with open(KONF,encoding='utf-8') as f:f.read(1)
+        return f'файл {KONF} читается, ключа в нём нет или он пуст'
+    except FileNotFoundError:return f'файла {KONF} нет'
+    except OSError as e:return f'файл {KONF} есть, но не читается: {e}'
+
+def slepota(text,state,alert):
+    # Слепота настройки говорит в канал, как прочие беды сторожа: один раз на текст (подпись в last.json), повтор — строкой журнала.
+    # Новая причина (другой текст) — новая тревога; исправленная настройка даёт обычный прогон, и он перепишет подпись.
+    # EN: Settings blindness speaks to the channel like the watcher's other troubles: once per text (signature in last.json),
+    #     a repeat — as a journal line. A new cause (different text) — a new alarm; fixed settings give a normal run, which rewrites the signature.
+    print(text);statefile=Path(state)/'last.json'
+    signature=hashlib.sha256(json.dumps([text],ensure_ascii=False).encode()).hexdigest()
+    try:previous=json.loads(small(statefile,16384))
+    except (OSError,ValueError):previous={}
+    if isinstance(previous,dict) and previous.get('signature')==signature:return 2
+    env={**os.environ,'AGENT_ALERT_POPYTOK':'3','AGENT_ALERT_TAJMAUT':'20','AGENT_ALERT_PAUZY':'5 15'}
+    sent=subprocess.run([alert,'--plain'],input=text,text=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=100,env=env)
+    if sent.returncode:print('Тревога не доставлена; отметка не обновлена');return 2
+    os.makedirs(state,mode=0o700,exist_ok=True);temporary=Path(state)/('.last-'+uuid.uuid4().hex)
+    try:
+        f=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+        with os.fdopen(f,'w') as output:json.dump({'signature':signature,'checked_at':time.time(),'code':2},output);output.flush();os.fsync(output.fileno())
+        os.replace(temporary,statefile)
+    finally:
+        if temporary.exists():temporary.unlink()
+    return 2
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__);mode=parser.add_mutually_exclusive_group();mode.add_argument('--json',action='store_true');mode.add_argument('--watch',action='store_true');args=parser.parse_args()
+    overrides=any(k in os.environ for k in ['PRESET_WATCH_REGISTRY','PRESET_WATCH_STATE','PRESET_WATCH_ALERT'])
+    if overrides and os.environ.get('PRESET_WATCH_PROBA')!='1':parser.error('подмена требует PRESET_WATCH_PROBA=1')
+    registry=os.environ.get('PRESET_WATCH_REGISTRY',REGISTRY);state=os.environ.get('PRESET_WATCH_STATE',STATE);alert=os.environ.get('PRESET_WATCH_ALERT',ALERT)
+    if overrides:print(f'ПРОБА: registry={registry}, state={state}, alert={alert}',file=sys.stderr)
+    if not registry:
+        text=f'СЛЕПОТА preset-watch: реестр агентов не задан — ключ AGENT_REGISTRY в {KONF} ({konf_prichina()})'
+        if args.watch:return slepota(text,state,alert)
+        print(text);return 2
+    try:
+        if args.watch:return watch(registry,state,alert)
+        result=scan(registry)
+        if args.json:print(json.dumps(result,ensure_ascii=False,indent=2))
+        elif result['code']:print(summary(result))
+        return result['code']
+    except (OSError,ValueError,subprocess.SubprocessError) as e:print(f'СЛЕПОТА preset-watch: {type(e).__name__}: {e}');return 3
+if __name__=='__main__':sys.exit(main())

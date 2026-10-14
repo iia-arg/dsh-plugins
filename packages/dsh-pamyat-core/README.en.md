@@ -1,310 +1,146 @@
-# dsh-pamyat-core
+# dsh-pamyat-core — Operational agent memory
 
-Working memory for DSH agents: local storage, a decision journal, and a
-class-based write policy. **Zero external dependencies.**
+The local DSH memory core: SQLite records, a decision journal, input filtering, approval policy, relationships between knowledge items, and a delivery queue for long-term storage.
 
-This is the base of the `dsh-pamyat-*` family. It occupies no core seam of its
-own — it provides the `pamyat` service that the other packages build on
-(summarizer, post-compaction restore, hygiene, budget, nightly pass, search).
+## Why it exists
 
-## Why
+A session can end or be compacted while a verified decision needs to survive. Empty memory can mean four different things: no records yet, a policy refusal, rejected input, or unavailable storage. The core retains both data and decision reasons so an engineer can distinguish these states.
 
-DSH core has no memory: there is a session journal and compaction, but nothing
-that stores knowledge or serves it at session start. This package fills the base.
+The core works without an external memory service. A long-term provider is an additional layer; a secretary extracts knowledge from conversations, and a restore plugin selects it for a new turn. These packages use `ctx.pamyat`, rather than another copy of the local database.
 
-## Parts
+## System placement
 
-| Part | Role |
-|---|---|
-| storage | local SQLite on the built-in `node:sqlite` |
-| journal | every write **decision**, refusals and their nature included |
-| policy | which classes are written automatically, which need confirmation |
-
-## The key property: a failure never masquerades as emptiness
-
-"Memory stored nothing" can mean different things, and they need different fixes:
-
-| nature | what happened | decision or breakage |
-|---|---|---|
-| — | there was nothing to store | normal |
-| `otkazano-chelovekom` | a human declined | decision |
-| `otmeneno` | approval was interrupted before an answer | neither: ask again |
-| `net-kanala` | no approval channel exists | broken install |
-| `net-sluzhby` | approval unsupported by this build | broken install |
-| `net-agenta` | the call runs outside an agent, nobody to ask | broken install |
-| `ne-predyavleno` | the caller never asked for approval | fix the caller |
-
-The first four natures come **verbatim from the core source** (`dsh-tools`,
-`lib/index.js`): the core itself refuses differently "so the model can tell a
-human 'no' from an absent approval channel". This layer **carries that
-distinction forward** instead of collapsing it. Collapse it, and a broken install
-looks like a cautious human.
-
-🔴 **Three names are OURS, not the core's.** `not-supported`, `no-agent` and
-`ne-predyavleno` are never returned by the platform — the caller supplies them to
-describe a situation that never reached the approval service. Do not expect them
-from the core.
-
-**An unknown outcome is a failure with a code, not "a human".** If the core ever
-adds a new outcome, the package says so instead of silently blaming a person.
-
-## Belief in a record: empty is not zero
-
-A record carries an optional `vera` field (0..1) — the gating of retrieved
-knowledge rests on it (use / verify / ignore).
-
-🔴 **The field allows emptiness on purpose.** `null` means "belief was never
-measured", which is **not** the same as `0` — measured distrust. Collapse them,
-and a record nobody assessed becomes indistinguishable from one judged worthless,
-while the "verify" branch loses its meaning.
-
-An invalid value (outside 0..1, not a number) is **rejected with a code** rather
-than silently coerced to zero: coercion would turn a caller's mistake into quiet
-data corruption.
-
-Old databases migrate by adding a column; rows written before the field existed
-are **not** given a belief value — they never had one.
-
-
-## Record provenance: a boundary, not a zero default
-
-A record carries an optional `proishozhdenie` field plus a boundary — the record
-id at which the marking mechanism was introduced. The boundary lives **in the
-database** (table `nastrojki`), not as a constant in code: a database travels to
-another machine and gets restored from backup, and a number in the source would
-silently drift apart from the data.
-
-The status is asked for as a word, never derived by comparing a number —
-`statusProishozhdeniya(record)` returns three DISTINCT strings:
-
-| status | when | meaning |
-|---|---|---|
-| `do-protokola` | `id ≤ boundary` | no mechanism existed when the record landed — not a charge against it |
-| `ne-ustanovleno` | `id > boundary`, field empty | the mechanism existed, provenance was not set |
-| `uroven` | field set | a measurement; the number speaks for itself |
-
-🔴 **A zero default is refused on purpose.** Assigning `0` to old records would
-declare the entire accumulated memory untrusted — in one `ALTER`, silently. Zero
-means "the mechanism ran and failed"; to records below the boundary it never ran.
-
-🔴 **"Before the protocol" is permanent.** Setting a level on a record below the
-boundary is REFUSED. Otherwise any old record launders itself into a trusted one
-by a plain rewrite, without ever leaving the system.
-
-⚠️ **The constraint without which the boundary lies:** it holds only while the
-`id` sequence is ours. **Import preserving foreign `id`s is forbidden**: a
-foreign record with a small number would land below the boundary and inherit the
-privilege of our old memory. Imported records receive our `id`s and never
-inherit status by number.
-
-⚠️ Output ordering is **unchanged** by the field: "before the protocol" sorts
-neutrally — exactly as those records sorted before the field existed.
-
-## The gate lives inside the service
-
-The policy is not an advisory the caller may skip: `zapisat` applies it itself.
-A class requiring confirmation is **not written** without one, and the refusal
-goes to the journal with its nature. A guard you can forget to call rests on the
-caller's discipline, not on the design.
-
-The same holds for storage: if `node:sqlite` is unavailable or the database fails
-to open, the service still exists, but **every** call fails with a clear message,
-and the reason is logged loudly once.
-
-## Configuration
-
-Everything a user might reasonably want to change is exposed as configuration;
-the code keeps defaults as schema values, not literals scattered around.
-
-| key | default | meaning |
-|---|---|---|
-| `putBazy` | — (required) | path to the database file |
-| `agent` | — (required) | agent name: one machine hosts several |
-| `sprashivat` | `ogranichenie`, `navyk` | classes requiring confirmation |
-| `chtenieSkolko` | `20` | how many records a read returns |
-| `zhurnalSkolko` | `20` | how many journal rows a read returns |
-| `otvechayushchegoNet` | `false` | nobody to ask on this node: `ask` classes are stored with an in-record mark |
-
-`putBazy` and `agent` are required on purpose: published code knows nothing about
-the machines it will run on. A missing key must be distinguishable from a
-deliberately different value.
-
-ℹ️ The long-term layer's settings live in its own package, not here: a key
-belongs to the package that *executes* it. A key described where nobody reads it
-is a silent zero — "the setting never arrived" becomes indistinguishable from
-"switched off".
-
-### What is deliberately NOT configurable
-
-Configurable is what a user might want done differently. What protects them from
-a silent failure must not be configurable: one day someone will switch it off.
-
-1. **Table names and schema.** No real use case, while a configurable name is a
-   way to silently divorce schema from data: the old database simply stops being
-   found, and that looks exactly like empty memory.
-2. **Literal approval outcomes of the core.** Someone else's protocol, not our
-   decision — it can only be read from the platform source. A configurable
-   protocol literal is a way to drift from the platform unnoticed.
-3. **Failure behaviour** ("no source → do not write, and shout"). A configurable
-   fail-closed means the guard can be switched off by configuration.
-
-## How to call — one live example per function
-
-```js
-const pamyat = ctx.get('pamyat');
-
-const id = pamyat.zapisat({
-  klass: 'zametka',
-  soderzhim: 'a thought that must outlive the session',
-  istochnik: 'session#42',
-});
-
-pamyat.zapisat({
-  klass: 'navyk',
-  soderzhim: 'a technique useful to other agents',
-  podtverzhdenie: 'allowed-once',            // 'rejected' | 'cancelled' | 'unavailable' | …
-});
-
-const poslednie = pamyat.prochitat({ klass: 'zametka', skolko: 5 });
-const vse = pamyat.prochitat({});            // object argument, not positional
-
-const { reshenie, pochemu } = pamyat.reshit('navyk');   // 'ask' | 'auto'
-
-pamyat.otmetitOtkaz({ klass: 'navyk', priroda: 'otkazano-chelovekom', pochemu: 'declined' });
-
-const { zapisano, otkloneno, poPrirode } = pamyat.svodka();
-
-if (!pamyat.dostupna()) console.error(pamyat.pochemuNedostupna());
+```mermaid
+flowchart LR
+    A["Агент и сессия · Agent and session"] --> S["Секретарь · Secretary"]
+    S --> C["ctx.pamyat · Memory core"]
+    C --> F["Фильтр и политика · Filter and policy"]
+    F --> DB[("SQLite: записи и журнал · Records and journal")]
+    C --> Q[("Очередь доставки · Delivery queue")]
+    Q --> L["Долговременный провайдер · Long-term provider"]
+    DB --> R["Восстановитель · Restore plugin"]
+    R --> A
 ```
 
-⚠️ Common first-call mistakes (seen during review): the field is `soderzhim`, not
-`soderzhanie`; `prochitat` takes an OBJECT, not positional arguments; the agent
-name comes from configuration and is not passed per call. All three fail loudly
-with a code — but each costs an attempt.
+## Installation and requirements
 
-## Known about output
+**Where to install from.** The package is published to npm with release 3.1.2 (order and window — by the owner's decision). Until then the npm registry holds an old `0.1.0-alpha.*` edition (measured 10.10.2026, `npm view dsh-pamyat-core version`): `npm install dsh-pamyat-core` installs that one, not the one described here. Until the release, install from the source tree: `npm pack <дерево>/packages/dsh-pamyat-core`, then `npm install ./dsh-pamyat-core-<версия>.tgz`.
 
-The package shouts through **`console.error` only** — there is no branch. The
-reason matters, and the previous wording of this section was **wrong**: it said
-"the platform does not give plugins `ctx.logger` (verified 2026-09-02)".
+Requirements: Node.js 22+ with working `node:sqlite`, a DSH deployment with peer ranges Cordis `^4.0.1` and Schemastery `^3.18.1`, and a database directory writable by the platform account. SQLite is built into Node; no separate database server or native npm driver is required. Older Node builds may require a startup flag for built-in SQLite; verify the import first.
 
-What actually happens, measured at the gate on 2026-09-03 against cordis 4.0.1:
-`ctx.logger` **is created for every Context** (`cordis/lib/index.js:1687`), so it
-exists and calling `.error()` succeeds. But the only built-in exporter
-(`LoggerService`, lines 582–605) pushes the message into a 1000-entry ring
-buffer, and DSH installs no exporter of its own — **nothing reaches any stream**.
+```sh
+node --input-type=module -e "import('node:sqlite').then(() => console.log('SQLite available'))"
+npm pack <дерево>/packages/dsh-pamyat-core   # до выпуска 3.1.2 — из дерева · until release 3.1.2 — from the tree
+npm install ./dsh-pamyat-core-<версия>.tgz
+```
 
-Two consequences worth coming back here for:
+In a development directory, load the package through DSH's normal plugin configuration. `npm install` makes it available to Node; it does not activate it in a profile or create persistent agent memory by itself.
 
-1. **Checking that an output channel exists proves nothing.** The function is
-   there, the call succeeds, and no one hears it. Only a path traced all the way
-   to where a human reads it counts. Under a service `stderr` goes to the system
-   journal; that is verified by a probe, not by reasoning.
-2. **A platform upgrade may give the logger a voice** — and then output would be
-   printed twice. If DSH ever installs an exporter, rewrite this section together
-   with `krik()`, not on top of it.
+## Quick start
 
-⚠️ On the word "verified" in our documents: it must name the **method**, not just
-a date. "Verified 2026-09-02" cannot be re-checked, and the next reader simply
-believes it. The method here: call `krik` under a real `Context` and wait for the
-line on the process `stderr` — that is exactly what `stend-krik-zvuchit` does.
+Add one plugin row and configure a separate database and a stable logical agent name. The example path is neutral: create it with permissions for your platform account, and do not use another agent's directory.
 
+```yaml
+- name: dsh-pamyat-core
+  id: memory-core
+  config:
+    agent: example-agent
+    putBazy: /var/lib/example-memory/core.db
+    chtenieSkolko: 20
+    otvechayushchegoNet: false
+    otvechatNaSprosRazresheniya: false
+    isklyuchitSessii: []
+```
 
-## Input filter: invisible characters and secrets (E5.2)
+After loading, find the version and database path in platform stderr. Then call the service from integration code: `ctx.get('pamyat').dostupna()` must return `true`. Verify persistence by writing a `fakt` record, reading its returned ID, and reading the database again after a restart. Plugin registration alone does not prove that a record was saved.
 
-Wired into the **first lines** of `zapisat()`, before any branching. The function has seven
-exit points and two branches leading to an actual write; a filter placed "before the write"
-would miss one of them, and the hole would look closed.
+```js
+const memory = ctx.get('pamyat');
+if (!memory.dostupna()) throw new Error(memory.pochemuNedostupna());
+const id = memory.zapisat({
+  klass: 'fakt',
+  soderzhim: 'Интеграционная проверка хранилища · Storage integration check',
+  istochnik: 'example:integration-check',
+});
+console.log(id, memory.poIstochniku('example:integration-check'));
+```
 
-| what | mode | action |
-|---|---|---|
-| invisible, bidi, TAG characters | fail-open | cleans, records an `ochistka` mark in the record itself |
-| secrets (declared, high-entropy, structural, hex of unusual length) | fail-closed | rejects; the journal gets class and position — **never the value** |
-| service fields `klass`, `istochnik` | fail-closed | NFC-normalises; invisible characters cause a **refusal, not cleaning** |
-| the filter itself is broken | fail-closed | no write happens at all |
+This is an integration example for a plugin developer, not an additional model tool. The core exposes `pamyat_otnoshenie` and `pamyat_ocenit` to the model; the secretary or another integration writes records through the service.
 
-The asymmetry is deliberate: the filter is fail-open on invisible characters, but a **broken**
-filter is fail-closed. Otherwise a failure silently opens the gate.
+## Settings
 
-🔴 **What the filter does not close — three limits and one hole.** In full in the header of
-`src/filtr-vhoda.js`. Briefly: a model's retelling of foreign text (a text filter cannot catch
-this at all), homoglyphs, base64 blobs are limits; a **hex key exactly 32/40/64 characters
-long** is a hole — it is indistinguishable from md5/sha1/sha256, and checksums appear in every
-report of ours.
+| Key | Purpose |
+|---|---|
+| `putBazy`, `agent` | Database and logical agent boundary |
+| `sprashivat` | Classes requiring approval |
+| `klassyZnaniy` | Knowledge classes for retrieval and delivery |
+| `chtenieSkolko` | Default retrieval count |
+| `otvechayushchegoNet` | Explicit absence of an approval channel |
+| `otvechatNaSprosRazresheniya` | Approval-granting request handler |
+| `isklyuchitSessii` | Session prefixes excluded from memory |
+| `sledPodyomov` | External startup-wrapper trace |
+| `predelZnakov`, `predelyZnakovPoKlassam` | Legacy compatibility, not an active size limit |
+| `maskirovatObrazcy` | Secret-sample masking on writes, on by default |
+| `zhurnalSkolko` | Removed from Config (A-N-1870): never read; ignored in a profile |
+| `koren` | Not read (A-N-1870): the long-term delivery root is always `agent`; a profile key changes nothing |
 
-⚠️ **The provenance mark is written but read by nobody; judgement is E5.3, not done.**
+Types, defaults, examples, and consequences are documented in [SETTINGS](docs/SETTINGS.md). Do not confuse the absence of an approval channel with granting every approval request: these are different settings with different effects.
 
-Thresholds were verified by running over real records of the base, not over imagined text: the
-first revision blocked 5 records out of 6.
+## How it works
 
-## Testing
+Before a write, the core checks database availability and filter health. It normalizes and validates fields, recognizes known secret formats, removes service artifacts, and retains diagnostic annotations. Masking is not proof that no secret remains: detection is limited to the implemented patterns and heuristics.
 
-    npm test
+Policy is determined by the knowledge class. By default, `ogranichenie` and `navyk` require approval; an empty `sprashivat` restores that default. A human refusal, cancelled request, missing channel, and unknown result remain distinct. On a node without an approver, records may be accepted with an explicit `bez_podtverzhdeniya` annotation.
 
-Four stands, 31 probes. In every stand the first probe runs against a **known-good**
-subject: if it is red, the stand itself is broken and the remaining probes mean
-nothing. Every guard is verified **by corruption**: missing module, unopenable
-database, missing path, incomplete record, incomplete journal entry, missing class.
+A knowledge record and its local decision journal are written to the same SQLite database under a SAVEPOINT. A failure at either step rolls back that local group. Delivery to an external provider is separate from the local transaction: the network cannot participate in this SAVEPOINT.
 
-## Assumptions
+If the provider is installed but delivery fails, the record remains local and enters a queue. If no provider is installed, no queue item is created: the journal explicitly records local-only storage. An ambiguous `moglo-dojti-bez-id` outcome is not retried by writing: the previous attempt may already have created a record. If the long-term layer supports body search (`poTelu`) and the body is at least 80 characters long, the queue pass searches for it in the agent's root: exactly one match removes the item from the queue as delivered, several matches are journaled as `dubl` and the item waits for an operator. A queue pass makes at most one eligible write attempt per item; the attempt budget is accumulated in the database across passes. Exhausted items remain distinguishable. The core has no timer of its own: a queue pass is started by the calling integration or by the core itself after a confirmed delivery of a new record, at most once an hour per process and never overlapping.
 
-**Verified on the development stand (2026-09-02):** `node:sqlite` works on Node 24.19;
-all 23 probes green; plugin shape (`name` / `Config` / `apply`, `ctx.provide`)
-taken from the live `dsh-tool-bridge` reference; approval behaviour read from the
-types of `@deepseek-ai/dsh-tools@0.1.1-rc.2`, fetched from the registry at exactly
-the version installed on the stand.
+Event-derived trust and numeric `vera` are separate layers. Cancellation, lost support, refinement, and confirmation determine a trust state at read time. A model rating is accepted only for a welcome record issued in the current process, once per issuance; `null` means no measurement, not zero trust.
 
-**Accepted without verification:** behaviour on a live DSH node (not mounted yet —
-that is the second acceptance step); `ctx.logger` behaviour (stubbed in the fake
-ctx); that `ctx.provide` in 0.1.1-rc.2 behaves as in the reference.
+Sessions excluded by `isklyuchitSessii` are classified by the shared service. Restore, long-term injection, and secretary integrations must consult that service at their entry points. The core's model tools also refuse excluded sessions; a configuration entry alone cannot replace a missing consumer integration.
 
-## Delivery queue to the long-term layer
+## Verification and operations
 
-Undelivered knowledge is not lost: the record stays in the operational layer and
-enters a queue. A nightly pass (or a hand) calls `dostavitOtlozhennoe()` and gets
-a report **in numbers**, not prose.
+`npm test` runs all `test/stend-*.mjs` files through the shared runner. Exit `0` means success, `1` a mismatch, and `2` insufficient visibility; one blind test does not stop the others. Some contract tests require adjacent packages or external data: report missing prerequisites rather than treating them as successful checks.
 
-🔴 **The nature of the failure decides what to do, and is therefore stored.**
+Trust-state count for an external watcher — `node src/schet-doveriya.mjs <агент>=<absolute path to pamyat.db> [...]`. The agent name is `[a-z][a-z0-9_-]*`, the path absolute; otherwise «ОТКАЗ: формат …» (refusal: format) and exit 2 before any database is read. The database is opened read-only (`readOnly`), the schema is not migrated. One line per database: `доверие <агент>: знаний N · <state> N · … · otmenena_id [...]`; a database that could not be read gives `доверие <агент>: СЛЕПОТА — …; это «не измерено», не ноль` (blindness: not measured, not zero), and the remaining databases are still counted. Exit `0` — all counted, `2` — invalid arguments or at least one database unreadable. The command neither schedules runs nor sends alerts; trust state is not a test of knowledge truth.
 
-| nature | what happened | what the retry does |
-|---|---|---|
-| `ne-otpravleno` | no link before the call | writes again, no duplicate |
-| `ne-najdeno` | we asked, no such record | writes again, no duplicate |
-| `moglo-dojti-id-est` | id received, read failed | **asks**, does not write |
-| `moglo-dojti-bez-id` | send happened, no id | **left alone entirely** |
+Diagrams, contracts, and tables are in [ARCHITECTURE](docs/ARCHITECTURE.md); guards, callers, and limits are in [GUARDS](docs/GUARDS.md); diagnosis is in [TROUBLESHOOTING](docs/TROUBLESHOOTING.md).
 
-🔴 **Why the last row is not an omission.** The send happened, there is no id, and
-the store has no lookup by source — so "did it land?" is **not decidable by
-machine**. Any automatic retry either loses the knowledge or creates a second
-copy. The duplicate is worse: a missing delivery is visible in the queue and in
-the report, a duplicate dissolves into search and looks like knowledge. Such
-records wait for a human and are **counted separately** — otherwise "we do
-nothing" reads as forgetfulness.
+## Limitations
 
-⚠️ **Attempts are not spent when we did not ask.** Layer unavailability and a
-failed read do not increment the counter: otherwise the limit would burn out
-during one night of someone else's downtime.
+This is a logical memory boundary, not operating-system isolation. Anyone with access to the SQLite file can read or modify records. The core does not encrypt the database, replace backups, install external systemd monitors, or guarantee semantic truth. Evaluate the built-in filter separately against your own data.
 
-⚠️ **Exhaustion does not delete the record.** At the limit (5 by default) retries
-stop, the flag is set and the shout sounds **once** — the record stays in the
-queue. Deleting silently would lose the knowledge without anyone learning of it.
+## License and authorship
 
-⚠️ **On a node without the long-term layer no queue is created at all.** The layer
-is optional; a queue that can never empty stops being read.
+MIT (`"license": "MIT"` in `package.json`, text in [LICENSE](LICENSE); the file is not listed in `files`, but npm adds it to the package archive by itself); Iia-arg team. Source and family documentation: [system repository](https://github.com/iia-arg/dsh-plugins). In the source tree, adjacent packages document the provider, secretary, and restore integration separately.
 
-## Limits
+## Refusal, queue and diagnostic contracts
 
-* Requires **Node >= 22**: `node:sqlite` is marked experimental.
-* No distillation, no context injection, no model tools, no network — those are
-  other packages of the family.
-* The journal records a **decision**, not delivery: it does not prove that
-  knowledge reached the long-term layer.
+Approval classifications are `otkazano-chelovekom`, `otmeneno`, `net-kanala`, `net-sluzhby`, `net-agenta`, and `ne-predyavleno`. The four external outcomes are allowed-once/rejected/cancelled/unavailable; not-supported/no-agent/ne-predyavleno are names of OURS for situations before contacting approval, not additional platform replies.
 
-## License
+The queue distinguishes `ne-otpravleno`, `ne-najdeno`, `moglo-dojti-id-est`, and `moglo-dojti-bez-id`. Without an identifier, arrival is not decidable by machine using a blind retry: there is no address for an independent read, and another write may create a duplicate. Such an outcome is therefore never retried by writing. If the layer supports `poTelu` and the body is at least 80 characters long, the pass searches for the whole body in the agent's root: one match removes the item as delivered, several are marked `dubl`; without `poTelu`, with a short body, or with zero or several matches, operator reconciliation is needed. A known ID enables read-back.
 
-MIT
+`vera` retains absence deliberately: empty is not zero, and null means never measured. Its number is derived from ratings; receipt or issuance is not automatically a rating.
 
-## What it was tested against
+In the integration in use, a logger EXISTS: `ctx.logger` is created for every Context by Cordis, but its presence does not prove that an exporter reads the ring buffer. The core therefore reports through console.error. `test/stend-krik-zvuchit.mjs` checks actual stderr output; separately verify the stderr-to-readable-log path in your deployment.
 
-This package's test stands were run against `@deepseek-ai/cordis` 4.0.1 and `@deepseek-ai/schemastery` 3.18.1
-This is a MEASUREMENT, not a compatibility promise: other versions were not run. The `peerDependencies` range uses `^` by semver contract, not by our measurement.
+Table names, literal upstream outcomes, and mandatory refusal of unknown input are NOT configurable. Changing these invariants requires a new data contract rather than a cosmetic switch.
+
+```js
+const memory = ctx.get('pamyat');
+console.log(memory.dostupna(), memory.reshit('fakt'));
+console.log(memory.prochitat({ skolko: 1 }), memory.svodka());
+memory.otmetitOtkaz({
+  klass: 'fakt', priroda: 'example-diagnostic',
+  pochemu: 'Тестовая отметка журнала · Fixture journal event',
+  istochnik: 'example:diagnostic',
+});
+```
+
+The last call writes a journal event, not knowledge; run it against a test database. The earlier `zapisat` example demonstrates a knowledge write separately from reading and summary.
+
+## Verified operating system
+
+Documentation checks and the named stands for this candidate ran on Linux. Other operating systems and file/process-operation portability were not separately verified; memory and secret directories need the designated account's access policy.

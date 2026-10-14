@@ -1,0 +1,7 @@
+[Unit]
+Description=Сторож оборванных ходов: читатель ледджера квитанций (receipt-watch)
+Documentation=file:///opt/iskra/workspace/dsh-plugins/packages/dsh-pochta/README.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/receipt-watch

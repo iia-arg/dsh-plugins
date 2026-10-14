@@ -1,0 +1,10 @@
+[Unit]
+Description=Сторож застрявшего письма: щель a2a, письма лежат дольше порога
+Documentation=man:systemd.service(5)
+
+[Service]
+Type=oneshot
+User=iskra
+ExecStart=/usr/local/sbin/zastryalo-v-shcheli
+# 🔴 #286: без этого сторож писал бы только в stdout службы, а тревога никуда
+# не шла. Отправщик зовётся из самого скрипта (agent-alert), здесь ничего не нужно.

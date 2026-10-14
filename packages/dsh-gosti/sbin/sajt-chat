@@ -1,0 +1,604 @@
+#!/usr/bin/python3 -B
+# -*- coding: utf-8 -*-
+"""sajt-chat — узкий адаптер «чат сайта (Chatwoot на vps-ru) ↔ Варвара» на sadik (B-N-1499, Искра, 03.10.2026), r15.
+ТРЕВОГИ (agent-alert, группа agent-button от юнита): в тревогу — только собственные тексты адаптера, не текст посетителя; поле «na» ответа Варвары
+(номер конверта) входит в текст тревоги, только если имеет форму конверта адаптера cw-<разговор>-<сообщение>; иначе — «na неверной формы (длина N)»
+без значения. Отправку ответа форма НЕ решает — только наличие конверта в базе, как прежде (B-N-1913, 1.0.7).
+
+Замысел: kandidaty/B-N-1499/ZAMYSEL-B-N-1499.md + дополнения 1–2; договор с Варварой — INTERFEJS-adapter-varvara.md v1.1.
+Слово владельца 03.10 21:10 МСК; зелёный Вениамина на замысел 18:16Z (5 условий) и 18:17Z (предел копий, обратный канал).
+
+r3 — ОБРАТНЫЙ КАНАЛ (решение Забавы 18:17:54Z): входящего порта на sadik НЕТ. Адаптер сам раз в SAJT_POLL секунд опрашивает
+Chatwoot API (с r8 — через шлюз API Марка, исходящее соединение по awg9): список разговоров ящика → новые сообщения по курсору разговора.
+r8 — ОДИН токен узкого шлюза API Марка на vps-ru (192.168.99.3:4211): /etc/sajt-chat/api.token, 600 sajtchat. Шлюз сам держит
+токены Chatwoot (бот — для ответов, учётка-агент inbox 1 — для чтения) и пропускает только account 1/inbox 1 и разрешённые запросы;
+у sadik токенов Chatwoot нет. Токен — только у адаптера, к посетителю и Варваре не попадает (усл.1 в новой форме).
+
+ЧТО ДЕЛАЕТ. Каждое новое сообщение посетителя кладёт РОВНО в одно место: vhod/ (к модели) или kopii/ (только копия владельцу,
+с причиной). Ответы Варвары из vyhod/ отправляет в Chatwoot — только в разговор с входящим конвертом `na` (усл.2) и только при
+открытом сайте. Общий потолок передач модели час/сутки (усл.4). Конверт, не забранный за N с, забирает назад (усл.5).
+Копии отсечённого — не больше K на разговор и G на всех за окно, сверх — одна сводка «ещё N…» по окончании окна (условие 18:17Z).
+Состояние /sss (файл) раз в тик и при смене отправляет шлюзу виджета Марка подписанным POST (сердцебиение).
+При самом первом запуске (пустая база) существующие разговоры отмечаются прочитанными — историю не проигрывает.
+r4 — СРОК ХРАНЕНИЯ 30 сут (слово владельца 03.10 21:19 МСК): раз в SAJT_CHISTKA_PERIOD удаляет файлы папок обмена старше срока
+и строки базы dostavki/konverty/avto/otpravleno старше срока (см. chistka()).
+r5 — признак ворот 18:19Z «адаптер остановлен → окно скрыто ≤ 6 с»: SIGTERM шлёт шлюзу «закрыто» до выхода (ostanov()),
+сердцебиение 2 с (шлюз Марка считает закрытым после 2 пропусков = 4 с — на случай kill -9/падения).
+r6 — имена с точкой в начале (захват Варвары vhod/.claimed-*.json, договор v2) адаптер не забирает и не отправляет; чистка — удаляет.
+r9 — ответ отправляется не более одного раза на имя файла vyhod (таблица otpravleno); исход неизвестен (обрыв, таймаут) — не повторяет
+вслепую: файл в otkaz + тревога; отказ Chatwoot с кодом HTTP — повтор (стык Альфы 19:4xZ, п.5).
+r10 — в подписанном теле push шлюзу номер n (строго растёт, мс-основа — растёт и через перезапуск): шлюз принимает только n больше
+последнего принятого и ts не старше 10 с — повтор перехваченного «открыто» не проходит (условие Вениамина 18:38Z).
+r11 — сообщения разговора страницами after до пустой (Chatwoot без параметров отдаёт лишь последние 20 — всплеск терялся), курсор
+после каждой страницы, не больше SAJT_STRANIC страниц за проход; сверка последних 20 младше часа ловит поздний commit.
+r13 — список разговоров страницами до водораздела (25 на страницу, сортировка last_activity_at убыв.) — больше 25 оживших между
+опросами не теряются; last_activity_at в целых секундах — разговор, прочитанный в ту же секунду, перечитывается (условие Забавы 19:28Z).
+r15 — копии kopii детерминированы: at = created_at сообщения (сводка — конец окна, «не забрано» — received_at конверта),
+причины без переменных счётчиков: повторный разбор → побайтно та же копия (Аврора, хвост Искры 23:14Z).
+r14 — ответ посетителю повторяется ТОЛЬКО на 429/5xx; прочие 4xx (404 удалённого разговора) — otkaz + тревога, без вечного
+повтора; received_at конверта = created_at сообщения Chatwoot — повторный разбор даёт побайтно тот же конверт (Аврора, 03.10).
+
+ЧЕГО НЕ ДЕЛАЕТ. Не слушает сеть, не будит модель сам, не читает дом Варвары, не держит админский токен, не печатает в журнал
+ни секретов, ни текстов посетителей. Вложения не скачивает. ⚠️ НЕ ЛОВИТ: смысла ответов Варвары (копии и /sss); больше
+SAJT_STRANIC_RAZG×25 разговоров, оживших между двумя опросами; расхождения часов sadik и vps-ru больше SAJT_AKT_ZAPAS.
+
+Подмены — ТОЛЬКО при SAJT_STEND=1 (рецепт B-N-1394): без ключа SAJT_* игнорируются, иное значение ключа — отказ кодом 2.
+"""
+import hashlib, hmac, json, os, re, signal, sqlite3, stat, subprocess, sys, threading, time, urllib.error, urllib.request
+
+BOJ = {
+    "SAJT_ACCOUNT": "1", "SAJT_INBOX": "1",
+    "SAJT_SPOOL": "/var/spool/sajt-chat", "SAJT_STATE": "/var/lib/sajt-chat/zakryto",
+    "SAJT_DB": "/var/lib/sajt-chat-adapter/adapter.db", "SAJT_ETC": "/etc/sajt-chat",
+    "SAJT_ALERT": "/usr/local/bin/agent-alert",
+    "SAJT_MAX_TEXT": "2000", "SAJT_PER_CONV_MIN": "6", "SAJT_MAX_LIVE": "20", "SAJT_LIVE_SEC": "86400",
+    "SAJT_CAP_HOUR": "60", "SAJT_CAP_DAY": "300", "SAJT_NE_ZABRANO": "120", "SAJT_REPLY_AGE": "3600",
+    "SAJT_POLL": "2", "SAJT_ALERT_PAUSE": "3600",
+    "SAJT_KOPII_K": "5", "SAJT_KOPII_VSEGO": "30", "SAJT_KOPII_OKNO": "600",
+    "SAJT_SHLYUZ_SERDCE": "2", "SAJT_STRANIC": "10", "SAJT_SVERKA_SEK": "3600",
+    "SAJT_STRANIC_RAZG": "10", "SAJT_AKT_ZAPAS": "5",
+    "SAJT_HRANIT_SEK": str(30 * 86400), "SAJT_CHISTKA_PERIOD": "3600",
+}
+_k = os.environ.get("SAJT_STEND")
+if _k not in (None, "1"):
+    sys.stderr.write(f"ОТКАЗ: SAJT_STEND={_k!r} — допустимо только 1 (стенд)\n"); sys.exit(2)
+_pod = sorted(k for k in BOJ if k in os.environ)
+if _k == "1":
+    print("ПОДМЕНЕНО: " + (" ".join(_pod) or "—"), flush=True)
+    C = {k: os.environ.get(k, v) for k, v in BOJ.items()}
+else:
+    if _pod:
+        sys.stderr.write("ИГНОРИРУЮ (нет SAJT_STEND=1): " + " ".join(_pod) + "\n")
+    C = dict(BOJ)
+I = lambda k: int(C[k])
+SPOOL, STATE, ETC = C["SAJT_SPOOL"], C["SAJT_STATE"], C["SAJT_ETC"]
+VHOD, KOPII, VYHOD = (os.path.join(SPOOL, x) for x in ("vhod", "kopii", "vyhod"))
+OTKAZ = os.path.join(VYHOD, "otkaz")
+
+NEDOSTUPEN = "Оператор сейчас недоступен. Напишите, пожалуйста, позже."
+CHASTO = "Пожалуйста, чуть медленнее — я отвечу на предыдущее сообщение."
+DLINNO = "Сообщение слишком длинное — сократите, пожалуйста, до {n} знаков."
+VLOZHENIE = "Файлы пока не принимаю — опишите, пожалуйста, словами."
+OTSECH = ("otsecheno", "vlozhenie")        # копии отсечённого — под предел (условие 18:17Z)
+
+
+def log(s):
+    print(s, flush=True)
+
+
+def nastrojka(name):
+    """Файл /etc/sajt-chat/<name>: секрет (600 sajtchat) или адрес. Значение не печатается."""
+    try:
+        return open(os.path.join(ETC, name), encoding="utf-8").read().strip()
+    except OSError:
+        return ""
+
+
+def zakryto():
+    return os.path.exists(STATE)
+
+
+def zakryto_s():
+    try:
+        return os.stat(STATE).st_mtime
+    except OSError:
+        return 0.0
+
+
+class Baza:
+    def __init__(self, path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        self.lock = threading.Lock()
+        # WAL + NORMAL: без fsync на каждый запрос — флуд одного разговора не задерживает другие (стенд P19)
+        self.db.execute("PRAGMA journal_mode=WAL"); self.db.execute("PRAGMA synchronous=NORMAL")
+        self.db.executescript("""
+          CREATE TABLE IF NOT EXISTS dostavki(id TEXT PRIMARY KEY, at REAL NOT NULL);
+          CREATE TABLE IF NOT EXISTS konverty(id TEXT PRIMARY KEY, conv INTEGER NOT NULL, at REAL NOT NULL);
+          CREATE TABLE IF NOT EXISTS avto(kluch TEXT PRIMARY KEY, at REAL NOT NULL);
+          CREATE TABLE IF NOT EXISTS trevogi(vid TEXT PRIMARY KEY, at REAL NOT NULL);
+          CREATE TABLE IF NOT EXISTS kursor(conv INTEGER PRIMARY KEY, msg INTEGER NOT NULL, akt REAL NOT NULL);
+          CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS otpravleno(imya TEXT PRIMARY KEY, at REAL NOT NULL, ishod TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS kop_okno(kluch TEXT PRIMARY KEY, okno INTEGER NOT NULL, poslano INTEGER NOT NULL,
+                                              skryto INTEGER NOT NULL);""")
+
+    def q(self, sql, *a):
+        with self.lock:
+            return self.db.execute(sql, a).fetchall()
+
+
+B = None
+
+
+def zapisat(papka, imya, obj):
+    tmp = os.path.join(papka, f".{imya}.tmp")
+    put = os.path.join(papka, f"{imya}.json")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False)
+        f.flush(); os.fsync(f.fileno())
+    os.chmod(tmp, 0o640)
+    os.replace(tmp, put)
+    return put
+
+
+def bezopasnoe_imya(s):
+    return re.sub(r"[^A-Za-z0-9_-]", "_", str(s))[:80] or "x"
+
+
+def okno():
+    return int(time.time() // I("SAJT_KOPII_OKNO"))
+
+
+def poslano_v_okne(kluch):
+    """Сколько копий по ключу уже ушло в ТЕКУЩЕМ окне (прошлое окно — сводка и сброс)."""
+    ok = okno()
+    r = B.q("SELECT okno, poslano FROM kop_okno WHERE kluch=?", kluch)
+    if not r or r[0][0] != ok:
+        if r:
+            svodka_okna(kluch)
+        B.q("INSERT OR REPLACE INTO kop_okno(kluch,okno,poslano,skryto) VALUES(?,?,0,0)", kluch, ok)
+        return 0
+    return r[0][1]
+
+
+def mozhno_kopiyu(conv):
+    """Оба предела смотрятся ДО счёта: копия либо идёт (+1 «послано» обоим), либо скрыта (+1 «скрыто» превышенному)."""
+    k_conv, k_vse = f"conv:{conv}", "vsego"
+    p_conv, p_vse = poslano_v_okne(k_conv), poslano_v_okne(k_vse)
+    if p_conv < I("SAJT_KOPII_K") and p_vse < I("SAJT_KOPII_VSEGO"):
+        B.q("UPDATE kop_okno SET poslano=poslano+1 WHERE kluch IN (?,?)", k_conv, k_vse); return True
+    B.q("UPDATE kop_okno SET skryto=skryto+1 WHERE kluch=?", k_conv if p_conv >= I("SAJT_KOPII_K") else k_vse)
+    return False
+
+
+def svodka_okna(kluch):
+    r = B.q("SELECT okno, skryto FROM kop_okno WHERE kluch=?", kluch)
+    if r and r[0][1] > 0:
+        ot = time.strftime("%H:%M", time.gmtime(r[0][0] * I("SAJT_KOPII_OKNO")))
+        do = time.strftime("%H:%M", time.gmtime((r[0][0] + 1) * I("SAJT_KOPII_OKNO")))
+        conv = int(kluch.split(":")[1]) if kluch.startswith("conv:") else 0
+        kto = f"разговор {conv}" if conv else "все разговоры"
+        zapisat(KOPII, bezopasnoe_imya(f"svodka-{kluch}-{r[0][0]}"),
+                {"v": 1, "id": f"svodka-{kluch}-{r[0][0]}", "conversation_id": conv, "kind": "svodka",
+                 "reason": f"предел копий: ещё {r[0][1]} сообщений сверх предела, {kto} (окно {ot}–{do} UTC)", "text": "",
+                 "at": (r[0][0] + 1) * I("SAJT_KOPII_OKNO")})
+        log(f"сводка копий: {kto}, скрыто {r[0][1]}")
+    B.q("DELETE FROM kop_okno WHERE kluch=?", kluch)
+
+
+def svodki_proshlyh_okon():
+    for (kluch,) in B.q("SELECT kluch FROM kop_okno WHERE okno<?", okno()):
+        svodka_okna(kluch)
+
+
+def mig(t):
+    """r15: момент события, не момент записи — повторная запись того же конверта даёт те же байты (канал: fresh=false)."""
+    return t if type(t) in (int, float) and t > 0 else time.time()
+
+
+def kopiya(conv, vid, prichina, tekst, kid, at=None):
+    if vid in OTSECH and not mozhno_kopiyu(conv):
+        return
+    zapisat(KOPII, bezopasnoe_imya(f"{vid}-{kid}"), {"v": 1, "id": str(kid), "conversation_id": conv, "kind": vid,
+                                                     "reason": prichina, "text": tekst, "at": mig(at)})
+
+
+def trevoga(vid, tekst):
+    now = time.time()
+    r = B.q("SELECT at FROM trevogi WHERE vid=?", vid)
+    if r and now - r[0][0] < I("SAJT_ALERT_PAUSE"):
+        return False
+    B.q("INSERT OR REPLACE INTO trevogi(vid,at) VALUES(?,?)", vid, now)
+    try:
+        subprocess.run([C["SAJT_ALERT"], f"🔴 sajt-chat: {tekst}"], timeout=20, capture_output=True)
+        log(f"🔴 тревога [{vid}]: {tekst}")
+    except (OSError, subprocess.SubprocessError) as e:
+        log(f"🔴 тревога [{vid}] НЕ отправлена ({type(e).__name__}): {tekst}")
+    return True
+
+
+# B-N-1860 (08.10, Заря): у красной тревоги был только «вход» — при восстановлении служба молчала, владелец видел лишь красное.
+#   otmetit_otboj ставит в trevogi отметку «<вид>:otboj», только если красная действительно ушла (trevoga вернула True);
+#   otboj при первом успехе шлёт ОДНУ строку «✅ …» тем же каналом и снимает отметку. Отметка в базе — переживает перезапуск.
+#   Пауза красной (SAJT_ALERT_PAUSE) не трогается: при мигании за паузу — не больше одной пары «красное → отбой».
+#   ⚠️ НЕ ЛОВИТ: повторный сбой внутри паузы после отбоя — красная подавлена паузой (как и прежде), отбоя за ним не будет;
+#   отбой есть только у вида «shlyuz» (другие виды — без отметки, по наряду).
+def otmetit_otboj(vid):
+    B.q("INSERT OR REPLACE INTO trevogi(vid,at) VALUES(?,?)", vid + ":otboj", time.time())
+
+
+def otboj(vid, tekst):
+    if not B.q("SELECT at FROM trevogi WHERE vid=?", vid + ":otboj"):
+        return False
+    B.q("DELETE FROM trevogi WHERE vid=?", vid + ":otboj")
+    try:
+        subprocess.run([C["SAJT_ALERT"], f"✅ sajt-chat: {tekst}"], timeout=20, capture_output=True)
+        log(f"✅ отбой [{vid}]: {tekst}")
+    except (OSError, subprocess.SubprocessError) as e:
+        log(f"✅ отбой [{vid}] НЕ отправлен ({type(e).__name__}): {tekst}")
+    return True
+
+
+class BezPereadresacii(urllib.request.HTTPRedirectHandler):
+    """№16 A-N-1948 (10.10): 3xx — отказ, как в spisok-sotrudnikov. Открыватель по умолчанию шёл за Location и повторял
+    api_access_token (и подпись шлюзу виджета) на чужой хост. Отказ приходит как HTTPError с кодом 3xx — ветка «прочие 4xx»."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, 'переадресация не выполняется', headers, fp)
+
+
+OTKRYVATEL = urllib.request.build_opener(BezPereadresacii)
+
+
+def api(metod, put, telo=None):
+    base, tok = nastrojka("chatwoot-api"), nastrojka("api.token")
+    if not base or not tok:
+        raise RuntimeError("нет адреса API или токена в " + ETC)
+    data = json.dumps(telo).encode() if telo is not None else None
+    req = urllib.request.Request(f"{base.rstrip('/')}/api/v1/accounts/{I('SAJT_ACCOUNT')}{put}", data=data, method=metod,
+                                 headers={"Content-Type": "application/json", "api_access_token": tok})
+    with OTKRYVATEL.open(req, timeout=10) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def chatwoot_post(conv, tekst):
+    api("POST", f"/conversations/{int(conv)}/messages", {"content": tekst, "message_type": "outgoing", "private": False})
+
+
+def avtootvet(conv, kluch, tekst, kid, at=None):
+    if B.q("SELECT 1 FROM avto WHERE kluch=?", kluch):
+        return
+    B.q("INSERT OR REPLACE INTO avto(kluch,at) VALUES(?,?)", kluch, time.time())
+    try:
+        chatwoot_post(conv, tekst)
+        kopiya(conv, "avtootvet", "ответ адаптера посетителю", tekst, f"{kid}-avto", at)
+        log(f"автоответ разговору {conv} [{kluch.split(':')[0]}]")
+    except Exception as e:
+        log(f"🔴 автоответ разговору {conv} НЕ ушёл ({type(e).__name__})")
+        trevoga("chatwoot-otpravka", f"Chatwoot не принял сообщение ({type(e).__name__})")
+
+
+def reshit(conv, msg, kid):
+    """Входящее посетителя → vhod или kopii."""
+    mid = int(msg.get("id") or 0)
+    tekst = msg.get("content") or ""
+    vlozh = msg.get("attachments") or []
+    now = time.time()
+    # r14 (MED Вениамина 22:26Z): received_at — created_at сообщения Chatwoot, не время разбора. r15 (Искра 23:14Z): то же время —
+    # в копиях kopii; причины — без переменной части. Повторный разбор → побайтно тот же конверт → у канала fresh=false.
+    sozdano = msg.get("created_at")
+    received_at = mig(sozdano) if type(sozdano) in (int, float) and sozdano > 0 else now
+    if zakryto():
+        kopiya(conv, "otsecheno", "сайт закрыт (/sss)", tekst, kid, received_at)
+        avtootvet(conv, f"zakryto:{conv}:{int(zakryto_s())}", NEDOSTUPEN, kid, received_at)
+        return
+    if vlozh:
+        opis = "; ".join(f"{a.get('file_type', '?')} {str(a.get('data_url', ''))[-60:]} {a.get('file_size', '?')} Б" for a in vlozh[:5])
+        kopiya(conv, "vlozhenie", "вложение не передаётся модели", f"{tekst}\n[вложения: {opis}]", kid, received_at)
+        avtootvet(conv, f"vlozh:{conv}:{mid}", VLOZHENIE, kid, received_at)
+        return
+    if not tekst.strip():
+        return
+    if len(tekst) > I("SAJT_MAX_TEXT"):
+        kopiya(conv, "otsecheno", f"длиннее {I('SAJT_MAX_TEXT')} знаков ({len(tekst)})", tekst, kid, received_at)
+        avtootvet(conv, f"dlinno:{conv}:{mid}", DLINNO.format(n=I("SAJT_MAX_TEXT")), kid, received_at)
+        return
+    if B.q("SELECT COUNT(*) FROM konverty WHERE conv=? AND at>?", conv, now - 60)[0][0] >= I("SAJT_PER_CONV_MIN"):
+        kopiya(conv, "otsecheno", f"чаще {I('SAJT_PER_CONV_MIN')} в минуту", tekst, kid, received_at)
+        avtootvet(conv, f"chasto:{conv}:{int(now // 60)}", CHASTO, kid, received_at)
+        return
+    zhivye = {r[0] for r in B.q("SELECT DISTINCT conv FROM konverty WHERE at>?", now - I("SAJT_LIVE_SEC"))}
+    if conv not in zhivye and len(zhivye) >= I("SAJT_MAX_LIVE"):
+        kopiya(conv, "otsecheno", f"живых разговоров больше предела {I('SAJT_MAX_LIVE')}", tekst, kid, received_at)
+        avtootvet(conv, f"mnogo:{conv}", NEDOSTUPEN, kid, received_at)
+        trevoga("mnogo-razgovorov", f"живых разговоров {len(zhivye)} — новые не принимаются")
+        return
+    za_chas = B.q("SELECT COUNT(*) FROM konverty WHERE at>?", now - 3600)[0][0]
+    za_sutki = B.q("SELECT COUNT(*) FROM konverty WHERE at>?", now - 86400)[0][0]
+    if za_chas >= I("SAJT_CAP_HOUR") or za_sutki >= I("SAJT_CAP_DAY"):
+        kopiya(conv, "otsecheno", f"общий потолок ходов (час {I('SAJT_CAP_HOUR')}, сутки {I('SAJT_CAP_DAY')})", tekst, kid, received_at)
+        avtootvet(conv, f"potolok:{conv}:{int(now // 3600)}", NEDOSTUPEN, kid, received_at)
+        trevoga("potolok", f"общий потолок ходов сайта: час {za_chas}, сутки {za_sutki} — посетителям «недоступен»")
+        return
+    zapisat(VHOD, bezopasnoe_imya(kid), {"v": 1, "id": kid, "conversation_id": conv, "message_id": mid,
+                                         "text": tekst, "received_at": received_at})
+    B.q("INSERT OR IGNORE INTO konverty(id,conv,at) VALUES(?,?,?)", kid, conv, now)
+    log(f"конверт → vhod: разговор {conv}, сообщение {mid}, {len(tekst)} зн.")
+
+
+def razobrat_soobshchenie(conv, m):
+    mt = m.get("message_type")
+    if m.get("private"):
+        return
+    kid = f"cw-{conv}-{int(m['id'])}"
+    if B.q("SELECT 1 FROM dostavki WHERE id=?", kid):
+        return
+    if mt in (0, "incoming"):
+        reshit(conv, m, kid)
+    elif mt in (1, "outgoing") and ((m.get("sender") or {}).get("type") or "").lower() == "user":
+        kopiya(conv, "operator", "ответ человека-оператора в Chatwoot", m.get("content") or "", kid, m.get("created_at"))
+    B.q("INSERT OR IGNORE INTO dostavki(id,at) VALUES(?,?)", kid, time.time())
+
+
+def razgovory():
+    """r13: Chatwoot 4.18 отдаёт разговоры по 25 на страницу, last_activity_at убыв. (SortService.DEFAULT_SORT, исходник живого
+    образа). Листаем, пока на странице есть активность новее водораздела (минус запас — last_activity_at в целых секундах);
+    не больше SAJT_STRANIC_RAZG страниц. polno=False — упёрлись в предел: водораздел не двигаем, следующий проход повторит."""
+    W = float((B.q("SELECT v FROM meta WHERE k='vodorazdel'") or [["0"]])[0][0])
+    vse, polno = {}, False
+    for p in range(1, I("SAJT_STRANIC_RAZG") + 1):
+        d = api("GET", f"/conversations?inbox_id={I('SAJT_INBOX')}&status=all&page={p}")
+        spis = ((d.get("data") or {}).get("payload")) if isinstance(d.get("data"), dict) else d.get("payload")
+        if not spis:
+            polno = True; break
+        for c in spis:
+            if int(c.get("inbox_id", -1)) == I("SAJT_INBOX"):
+                vse.setdefault(int(c["id"]), c)
+        if min(float(c.get("last_activity_at") or 0) for c in spis) < W - I("SAJT_AKT_ZAPAS"):
+            polno = True; break
+    return list(vse.values()), polno
+
+
+def soobshcheniya(conv, posle=None):
+    """Chatwoot 4.18 MessageFinder (исходник живого образа, Марк 20:1xZ): без параметров — последние 20 по created_at;
+    after=<id> — id > after по created_at, не больше 100 за раз. Иных параметров адаптер не шлёт."""
+    q = "" if posle is None else f"?after={int(posle)}"
+    d = api("GET", f"/conversations/{int(conv)}/messages{q}")
+    return sorted(d.get("payload") or [], key=lambda m: int(m.get("id", 0)))
+
+
+def opros():
+    spis, polno = razgovory()
+    verh = max([float(c.get("last_activity_at") or 0) for c in spis] or [0.0])
+    if not B.q("SELECT 1 FROM meta WHERE k='baza'"):
+        for c in spis:
+            ms = soobshcheniya(int(c["id"]))
+            B.q("INSERT OR REPLACE INTO kursor(conv,msg,akt) VALUES(?,?,?)", int(c["id"]),
+                max([int(m["id"]) for m in ms] or [0]), float(c.get("last_activity_at") or 0))
+            for m in ms:     # последние 20 — отмечены доставленными: сверочный проход не проиграет их как «поздние»
+                B.q("INSERT OR IGNORE INTO dostavki(id,at) VALUES(?,?)", f"cw-{int(c['id'])}-{int(m['id'])}", time.time())
+        B.q("INSERT OR REPLACE INTO meta(k,v) VALUES('baza',?)", str(time.time()))
+        B.q("INSERT OR REPLACE INTO meta(k,v) VALUES('vodorazdel',?)", str(verh))
+        log(f"первый запуск: {len(spis)} разговоров отмечены прочитанными, история не проигрывается")
+        return
+    nedo = []
+    for c in spis:
+        conv, akt = int(c["id"]), float(c.get("last_activity_at") or 0)
+        r = B.q("SELECT msg, akt FROM kursor WHERE conv=?", conv)
+        if r and akt <= r[0][1]:
+            continue
+        mx, prezhn_akt, dochitano = (r[0][0] if r else 0), (r[0][1] if r else 0.0), False
+        # 1) страницы after до пустой; курсор — после КАЖДОЙ страницы (дедуп по dostavki страхует повтор); не больше
+        #    SAJT_STRANIC страниц за проход — остаток следующим проходом (akt не продвигаем, разговор будет снова взят)
+        for _ in range(I("SAJT_STRANIC")):
+            stranica = soobshcheniya(conv, mx)
+            if not stranica:
+                dochitano = True
+                break
+            for m in stranica:
+                razobrat_soobshchenie(conv, m)
+                mx = max(mx, int(m["id"]))
+            B.q("INSERT OR REPLACE INTO kursor(conv,msg,akt) VALUES(?,?,?)", conv, mx, prezhn_akt)
+        # 2) сверка: последние 20 младше SAJT_SVERKA_SEK — ловит поздний commit (id ≤ курсора, свежий created_at);
+        #    уже учтённые отсекает dostavki; старше окна не берёт (иначе после чистки 30 сут проиграл бы историю)
+        porog = time.time() - I("SAJT_SVERKA_SEK")
+        for m in soobshcheniya(conv):
+            if float(m.get("created_at") or 0) >= porog:
+                razobrat_soobshchenie(conv, m)
+        # r13: last_activity_at — целые секунды; прочитали в ту же секунду (с запасом на расхождение часов) — второе сообщение
+        #      той же секунды не сдвинет akt, и «akt ≤ курсора» его пропустит. Запоминаем akt−1: разговор перечитается.
+        if dochitano and time.time() < akt + I("SAJT_AKT_ZAPAS"):
+            dochitano, prezhn_akt = False, akt - 1
+        B.q("INSERT OR REPLACE INTO kursor(conv,msg,akt) VALUES(?,?,?)", conv, mx, akt if dochitano else prezhn_akt)
+        if not dochitano:
+            nedo.append(prezhn_akt)
+    if polno:
+        B.q("INSERT OR REPLACE INTO meta(k,v) VALUES('vodorazdel',?)", str(min([verh] + nedo)))
+
+
+def otpravit_otvety():
+    for f in sorted(os.listdir(VYHOD)):
+        if f.startswith(".") or not f.endswith(".json"):
+            continue
+        put = os.path.join(VYHOD, f)
+        try:
+            o = json.load(open(put, encoding="utf-8"))
+            conv, na, tekst = int(o["conversation_id"]), str(o["na"]), str(o["text"])
+        except (OSError, ValueError, KeyError, TypeError):
+            os.replace(put, os.path.join(OTKAZ, f)); log(f"🔴 ответ {f} не разобран → otkaz"); continue
+        if zakryto():
+            os.unlink(put); log(f"ответ разговору {conv} НЕ отправлен: сайт закрыт"); continue
+        r = B.q("SELECT conv, at FROM konverty WHERE id=?", na)
+        # B-N-1913 (1.0.7): na пишет Варвара и он входит в тревогу владельцу — в текст только форма конверта адаптера (cw-<conv>-<mid>,
+        # razobrat_soobshchenie), иначе длина без значения. Решает по-прежнему наличие конверта в базе: 1.0.6 отвергал по форме и ломал
+        # конверты с id иной формы (фикстура telegram stend-site-adapter) — откат 06:48Z.
+        na_t = na if re.fullmatch(r"cw-[0-9]{1,20}-[0-9]{1,20}", na) else f"na неверной формы (длина {len(na)})"
+        prich = ("нет входящего конверта " + na_t) if not r else \
+                (f"конверт {na_t} из разговора {r[0][0]}, а ответ в {conv}") if r[0][0] != conv else \
+                ("конверт старше предела") if time.time() - r[0][1] > I("SAJT_REPLY_AGE") else ""
+        if prich:
+            os.replace(put, os.path.join(OTKAZ, f)); log(f"🔴 ответ {f} отвергнут: {prich}")
+            trevoga("otvet-adresat", f"ответ Варвары отвергнут адаптером: {prich}"); continue
+        # Дедуп по имени файла vyhod (стабильное у Варвары): отметка ДО отправки. «ushlo» — повтор не шлём; «v-polyote» после падения
+        # и «neizvesten» — исход неизвестен: не повторяем вслепую, файл в otkaz + тревога. Отказ Chatwoot с кодом — исход известен: 429/5xx — повтор, прочие 4xx — otkaz (r14).
+        r = B.q("SELECT ishod FROM otpravleno WHERE imya=?", f)
+        if r and r[0][0] == "ushlo":
+            os.unlink(put); log(f"ответ {f} уже отправлялся — повтор не шлю"); continue
+        if r:
+            os.replace(put, os.path.join(OTKAZ, f)); log(f"🔴 ответ {f}: прежняя отправка с неизвестным исходом — не повторяю, → otkaz")
+            trevoga("chatwoot-neizvestno", "ответ посетителю: исход прежней отправки неизвестен — не повторён, файл в otkaz"); continue
+        B.q("INSERT INTO otpravleno(imya,at,ishod) VALUES(?,?,'v-polyote')", f, time.time())
+        try:
+            chatwoot_post(conv, tekst)
+        except urllib.error.HTTPError as e:
+            B.q("DELETE FROM otpravleno WHERE imya=?", f)
+            # r14 (LOW Вениамина 19:55Z): повтор ТОЛЬКО на 429 и 5xx — это временно. Прочие 4xx (404 удалённого разговора и т.п.)
+            # повтором не лечатся: файл в otkaz + тревога, иначе повтор раз в 2 с вечно.
+            if e.code == 429 or e.code >= 500:
+                log(f"🔴 ответ разговору {conv} не принят (HTTP {e.code}) — повтор")
+                trevoga("chatwoot-otpravka", f"Chatwoot не принял ответ (HTTP {e.code})"); continue
+            os.replace(put, os.path.join(OTKAZ, f)); log(f"🔴 ответ разговору {conv} отвергнут (HTTP {e.code}) — не повторяю, → otkaz")
+            trevoga("chatwoot-otkaz", f"Chatwoot отверг ответ посетителю (HTTP {e.code}) — не повторён, файл в otkaz"); continue
+        except Exception as e:
+            B.q("UPDATE otpravleno SET ishod='neizvesten' WHERE imya=?", f)
+            os.replace(put, os.path.join(OTKAZ, f)); log(f"🔴 ответ разговору {conv}: исход неизвестен ({type(e).__name__}) — не повторяю, → otkaz")
+            trevoga("chatwoot-neizvestno", f"ответ посетителю: исход отправки неизвестен ({type(e).__name__}) — не повторён, файл в otkaz"); continue
+        B.q("UPDATE otpravleno SET ishod='ushlo' WHERE imya=?", f)
+        os.unlink(put); log(f"ответ → разговор {conv} ({len(tekst)} зн.)")
+
+
+def zabrat_nezabrannye():
+    for f in sorted(os.listdir(VHOD)):
+        # точечные — захваченные Варварой (.claimed-*.json) и временные: не наши (договор v2, стенд P26)
+        if f.startswith(".") or not f.endswith(".json"):
+            continue
+        put = os.path.join(VHOD, f)
+        try:
+            if time.time() - os.stat(put).st_mtime < I("SAJT_NE_ZABRANO"):
+                continue
+            o = json.load(open(put, encoding="utf-8"))
+            os.unlink(put)
+        except (OSError, ValueError):
+            continue
+        conv = int(o["conversation_id"])
+        B.q("DELETE FROM konverty WHERE id=?", str(o["id"]))
+        kopiya(conv, "ne-zabrano", f"Варвара не забрала за {I('SAJT_NE_ZABRANO')} с", o.get("text", ""), o["id"], o.get("received_at"))
+        avtootvet(conv, f"nezabrano:{conv}:{int(time.time() // 3600)}", NEDOSTUPEN, o["id"], o.get("received_at"))
+        trevoga("ne-zabiraet", f"Варвара не забирает сообщения сайта (> {I('SAJT_NE_ZABRANO')} с) — посетителям «недоступен»")
+
+
+_chistka = {"t": 0.0}
+
+
+def chistka():
+    """Срок хранения переписки посетителей в адаптере — SAJT_HRANIT_SEK (30 сут, слово владельца 03.10 21:19 МСК).
+    Тексты посетителей и ответов лежат у адаптера ТОЛЬКО в файлах папок обмена (vhod, kopii, vyhod, vyhod/otkaz) — они и
+    удаляются по mtime. База текстов не держит; её строки (номера разговоров/сообщений и время) режутся тем же сроком, КРОМЕ
+    kursor: без курсора разговор при новой активности проигрался бы заново (одна строка на разговор, только числа).
+    ⚠️ НЕ ЛОВИТ: сессии site-* и память Варвары (её сторона), журнал службы (текстов в нём нет — только номера и длины),
+    копии в Telegram владельца/Марка (вне срока по слову владельца), сам Chatwoot на vps-ru (рука Марка)."""
+    now = time.time()
+    if now - _chistka["t"] < I("SAJT_CHISTKA_PERIOD"):
+        return
+    _chistka["t"] = now
+    porog = now - I("SAJT_HRANIT_SEK")
+    fajlov = 0
+    for d in (VHOD, KOPII, VYHOD, OTKAZ):
+        for f in os.listdir(d):
+            if not (f.endswith(".json") or f.endswith(".tmp")):
+                continue
+            try:
+                st = os.stat(os.path.join(d, f), follow_symlinks=False)
+                if stat.S_ISREG(st.st_mode) and st.st_mtime < porog:
+                    os.unlink(os.path.join(d, f)); fajlov += 1
+            except OSError:
+                pass
+    strok = 0
+    for t in ("dostavki", "konverty", "avto", "otpravleno"):
+        strok += B.q(f"SELECT COUNT(*) FROM {t} WHERE at<?", porog)[0][0]
+        B.q(f"DELETE FROM {t} WHERE at<?", porog)
+    if fajlov or strok:
+        log(f"чистка срока {I('SAJT_HRANIT_SEK') // 86400} сут: файлов {fajlov}, строк базы {strok}")
+
+
+_shlyuz = {"posl": None, "t": 0.0}
+
+
+_n = [0]
+
+
+def poslat_shlyuzu(url, sec, otkr, tajmaut):
+    _n[0] = max(_n[0] + 1, int(time.time() * 1000))
+    # r11: формат установленного шлюза Марка (решение Забавы 19:38Z): s — unix-секунды ЧИСЛОМ, подпись над СЫРЫМ телом.
+    telo = json.dumps({"otkryto": otkr, "s": int(time.time()), "n": _n[0]}).encode()
+    sig = "sha256=" + hmac.new(sec.encode(), telo, hashlib.sha256).hexdigest()
+    req = urllib.request.Request(url, data=telo, method="POST", headers={"Content-Type": "application/json",
+                                 "X-Ostrov-Signature": sig})
+    OTKRYVATEL.open(req, timeout=tajmaut).read()
+
+
+def ostanov(signum, frame):
+    """SIGTERM (systemctl stop/restart) → шлюзу виджета «закрыто» ДО выхода: окно скрывается сразу, не дожидаясь таймаута
+    сердцебиения. ⚠️ НЕ ЛОВИТ kill -9 и падение машины — там окно закрывает таймаут на стороне шлюза Марка."""
+    url, sec = nastrojka("shlyuz-url"), nastrojka("shlyuz.secret")
+    if url and sec:
+        try:
+            poslat_shlyuzu(url, sec, False, 2)
+            log("останов: шлюзу виджета ЗАКРЫТО")
+        except Exception as e:
+            log(f"🔴 останов: шлюз виджета не принял «закрыто» ({type(e).__name__})")
+    sys.exit(0)
+
+
+def shlyuz():
+    """Состояние /sss → шлюзу виджета Марка: при смене и сердцебиением. Нет адреса — не шлём (одна строка в журнал)."""
+    url, sec = nastrojka("shlyuz-url"), nastrojka("shlyuz.secret")
+    if not url or not sec:
+        if _shlyuz["posl"] != "net-nastrojki":
+            log("шлюз виджета не настроен (shlyuz-url/shlyuz.secret) — состояние не отправляется"); _shlyuz["posl"] = "net-nastrojki"
+        return
+    otkr = not zakryto()
+    if _shlyuz["posl"] == otkr and time.time() - _shlyuz["t"] < I("SAJT_SHLYUZ_SERDCE"):
+        return
+    try:
+        poslat_shlyuzu(url, sec, otkr, 5)
+        if _shlyuz["posl"] != otkr:
+            log(f"шлюзу виджета: {'ОТКРЫТО' if otkr else 'ЗАКРЫТО'}")
+        _shlyuz.update(posl=otkr, t=time.time())
+        otboj("shlyuz", "шлюз виджета Марка снова принимает состояние /sss")
+    except Exception as e:
+        log(f"🔴 шлюз виджета не принял состояние ({type(e).__name__})")
+        if trevoga("shlyuz", f"шлюз виджета Марка не принимает состояние /sss ({type(e).__name__})"):
+            otmetit_otboj("shlyuz")
+
+
+def main():
+    global B
+    for p in (VHOD, KOPII, VYHOD, OTKAZ):
+        if not os.path.isdir(p):
+            log(f"🔴 СЛЕПОТА: нет каталога {p}"); sys.exit(2)
+    if not nastrojka("api.token") or not nastrojka("chatwoot-api"):
+        log(f"🔴 СЛЕПОТА: нет токена шлюза API или адреса API в {ETC}"); sys.exit(2)
+    B = Baza(C["SAJT_DB"])
+    signal.signal(signal.SIGTERM, ostanov)
+    log(f"опрос Chatwoot раз в {C['SAJT_POLL']} с; account {C['SAJT_ACCOUNT']} inbox {C['SAJT_INBOX']}; входящего порта нет; "
+        f"сайт {'ЗАКРЫТ' if zakryto() else 'открыт'}")
+    sboj = 0
+    while True:
+        for shag in (shlyuz, otpravit_otvety, zabrat_nezabrannye, svodki_proshlyh_okon, chistka):
+            try:
+                shag()
+            except Exception as e:
+                log(f"🔴 {shag.__name__}: {type(e).__name__}")
+        try:
+            opros(); sboj = 0
+        except Exception as e:
+            sboj += 1
+            log(f"🔴 опрос Chatwoot не удался ({type(e).__name__}), подряд {sboj}")
+            if sboj >= 5:
+                trevoga("opros", f"опрос Chatwoot не удаётся {sboj} раз подряд ({type(e).__name__}) — посетители без ответа")
+        time.sleep(float(C["SAJT_POLL"]))
+
+
+if __name__ == "__main__":
+    main()

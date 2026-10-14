@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# RU: inet6-poyavlenie-watch — сторож ПОЯВЛЕНИЯ глобального IPv6.
+# EN: inet6-poyavlenie-watch — watchdog for the APPEARANCE of a global IPv6 address.
+#
+# RU: ЗАЧЕМ. Разобран отказ: Node при двух семействах адресов пробует IPv6 первым и валится парой
+# RU: ETIMEDOUT+ENETUNREACH, если v6-маршрута нет. В худший день таких пар было 26 в час. Лечение на машинах — v4-first:
+# RU:   sysctl net.ipv6.conf.all.disable_ipv6=1  И/ИЛИ  gai.conf «precedence ::ffff:0:0/96 100».
+# EN: WHY. A failure was analysed: with both address families Node tries IPv6 first and fails with an
+# EN: ETIMEDOUT+ENETUNREACH pair when there is no v6 route. On the worst day there were 26 such pairs per hour.
+# EN: The cure on the machines is v4-first:
+# EN:   sysctl net.ipv6.conf.all.disable_ipv6=1  AND/OR  gai.conf "precedence ::ffff:0:0/96 100".
+#
+# RU: 🔴 ГРАНИЦА, РАДИ КОТОРОЙ ЭТОТ СТОРОЖ И ЗАВЕДЁН:
+# RU: защита держится на ADDRCONFIG и МОЛЧА исчезнет при первом же глобальном inet6.
+# RU: Появится адрес — всё вернётся, и НИКТО не узнает: отказы выглядят как сетевые.
+# RU: Сторож и есть условие остановки для этой защиты.
+# EN: 🔴 THE BOUNDARY THIS WATCHDOG EXISTS FOR:
+# EN: the protection relies on ADDRCONFIG and will SILENTLY vanish with the first global inet6 address.
+# EN: Once an address appears, the failures come back and NOBODY will know: they look like network trouble.
+# EN: This watchdog is the stop condition for that protection.
+#
+# RU: ЧТО СМОТРИТ: наличие ГЛОБАЛЬНОГО inet6 и маршрута v6 по умолчанию — СОСТОЯНИЕ, а не событие.
+# RU: Порог не нужен: любой глобальный inet6 = тревога. Link-local (fe80::) и ::1 НЕ считаются — они есть
+# RU: всегда и на выбор семейства не влияют (ADDRCONFIG смотрит глобальные).
+# EN: WHAT IT LOOKS AT: presence of a GLOBAL inet6 address and of a default v6 route — a STATE, not an event.
+# EN: No threshold: any global inet6 = alert. Link-local (fe80::) and ::1 are NOT counted — they always exist
+# EN: and do not affect family selection (ADDRCONFIG looks at global ones).
+#
+# RU: АНТИ-СПАМ: один алерт при появлении, один при исчезновении. Состояние в файле.
+# EN: ANTI-SPAM: one alert on appearance, one on disappearance. State is kept in a file.
+#
+# RU: НАСТРОЙКА: INET6_STATE_DIR — каталог состояния (умолчание /var/lib/inet6-poyavlenie-watch).
+# RU: Канал тревоги — первая найденная в PATH команда agent-alert, иначе claudeclaw-alert; нет ни одной —
+# RU: строка в журнал (logger) с пометкой «no sink».
+# EN: SETTING: INET6_STATE_DIR — state directory (default /var/lib/inet6-poyavlenie-watch).
+# EN: Alert channel — the first of agent-alert, then claudeclaw-alert found in PATH; neither — a journal
+# EN: line (logger) marked "no sink".
+#
+# RU: КОДЫ: 0 — прогон состоялся, нужная тревога доставлена · 1 — не доставлена, состояние не изменено, повтор · 2 — слепота ip/разбора.
+# EN: EXIT: 0 — run completed, required alert delivered · 1 — not delivered, state unchanged, retry · 2 — ip/parsing blindness.
+set -uo pipefail
+
+# RU: Отказ источника — не отсутствие предмета. Вызывающий проверяет код вне $(...).
+# RU: Одна попытка добычи за проход; законный пустой результат разбирается отдельно.
+# EN: A source failure is not the absence of the subject. The caller checks the exit code outside $(...).
+# EN: One fetch attempt per run; a legitimately empty result is handled separately.
+net_dannyh() {
+  local msg="СЛЕПОТА: не добыто $1; код $2; ${3:0:200}"
+  printf '%s\n' "$msg" >&2
+  logger -t "inet6-poyavlenie-watch" -- "$msg" 2>/dev/null || true
+}
+
+STATE_DIR=${INET6_STATE_DIR:-/var/lib/inet6-poyavlenie-watch}
+STATE="$STATE_DIR/est-inet6"
+mkdir -p "$STATE_DIR"
+# RU: канал тревог выбирается по машине: штатный agent-alert (объявляет себя единственной точкой отправки и
+# RU: возвращает 0 только при подтверждённой доставке), иначе claudeclaw-alert. Порядок важен: agent-alert приоритетнее.
+# EN: the alert channel is chosen per machine: the standard agent-alert (declares itself the single sending point
+# EN: and returns 0 only on confirmed delivery), else claudeclaw-alert. Order matters: agent-alert wins.
+ALERT=$(command -v agent-alert || command -v claudeclaw-alert || echo /nonexistent)
+HOST=$(hostname -s)
+
+# RU: 1.0.1: fire возвращает ИСХОД ДОСТАВКИ (было: код logger, то есть 0 и при отказе канала).
+# EN: 1.0.1: fire returns the DELIVERY outcome (was: logger's exit code, i.e. 0 even when the channel failed).
+fire() {
+  if [ -x "$ALERT" ] && "$ALERT" "$1"; then return 0; fi
+  logger -t inet6-poyavlenie-watch "ALERT НЕ доставлена (канал $ALERT): $1"; return 1
+}
+
+# RU: ГЛОБАЛЬНЫЕ адреса: scope global. Явно исключаем link-local и loopback.
+# EN: GLOBAL addresses: scope global. Link-local and loopback are explicitly excluded.
+adresa_raw=$(ip -6 addr show scope global 2>&1); kod=$?
+if [ "$kod" -ne 0 ]; then
+  net_dannyh "глобальные IPv6-адреса (ip addr)" "$kod" "$adresa_raw"
+  exit 2
+fi
+marshruty_raw=$(ip -6 route show default 2>&1); kod=$?
+if [ "$kod" -ne 0 ]; then
+  net_dannyh "IPv6-маршруты по умолчанию (ip route)" "$kod" "$marshruty_raw"
+  exit 2
+fi
+# RU: Пустой успешный вывод ip законен: глобального IPv6 может не быть.
+# EN: An empty successful ip output is legitimate: there may be no global IPv6.
+adresa=$(printf '%s\n' "$adresa_raw" | grep -c "inet6"); kod=$?
+if [ "$kod" -gt 1 ]; then net_dannyh "счёт IPv6-адресов (grep)" "$kod" "отказ разбора"; exit 2; fi
+marshruty=$(printf '%s\n' "$marshruty_raw" | grep -c .); kod=$?
+if [ "$kod" -gt 1 ]; then net_dannyh "счёт IPv6-маршрутов (grep)" "$kod" "отказ разбора"; exit 2; fi
+# RU: закреплена ли защита настройкой (для текста тревоги)
+# EN: whether the protection is pinned by configuration (for the alert text)
+sysctl_all=$(/usr/sbin/sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo "?")
+prec=$(grep -vE "^\\s*#|^\\s*$" /etc/gai.conf 2>/dev/null | grep -c "precedence ::ffff:0:0/96"); prec=${prec:-0}
+
+if [ "$adresa" -gt 0 ] || [ "$marshruty" -gt 0 ]; then
+  if [ ! -f "$STATE" ]; then
+    if fire "🚨 <b>${HOST}: появился глобальный IPv6</b>
+Глобальных inet6: ${adresa} · маршрутов v6 по умолчанию: ${marshruty}
+Защита v4-first БОЛЬШЕ НЕ ГАРАНТИРОВАНА: слои — sysctl disable_ipv6=${sysctl_all}, precedence в gai.conf=${prec}.
+Ожидать пары ETIMEDOUT+ENETUNREACH в агентах.
+Проверить: <code>ip -6 addr show scope global; ip -6 route show default</code>"; then
+      date -Iseconds > "$STATE"
+      logger -t inet6-poyavlenie-watch "ALERT: inet6 появился (адресов $adresa, маршрутов $marshruty)"
+    else
+      # RU: 1.0.1: состояние НЕ пишется — следующий заход повторит тревогу (было: писалось, повтора не было).
+      # EN: 1.0.1: the state is NOT written — the next pass repeats the alert (was: written, no repeat).
+      echo "🔴 тревога о появлении IPv6 НЕ доставлена — состояние не пишу, повторю в следующий заход" >&2; exit 1
+    fi
+  fi
+else
+  if [ -f "$STATE" ]; then
+    if fire "✅ <b>${HOST}</b>: глобальный IPv6 исчез, защита v4-first снова опирается на отсутствие источника."; then
+      rm -f "$STATE"
+      logger -t inet6-poyavlenie-watch "RECOVERED: inet6 исчез"
+    else
+      echo "🔴 весть «IPv6 исчез» НЕ доставлена — состояние оставляю, повторю в следующий заход" >&2; exit 1
+    fi
+  fi
+  logger -t inet6-poyavlenie-watch "чисто: глобальных inet6 0, маршрутов v6 0 (слои: sysctl=$sysctl_all, precedence=$prec)"
+fi

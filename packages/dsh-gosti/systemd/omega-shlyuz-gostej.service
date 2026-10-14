@@ -1,0 +1,29 @@
+# Шлюз OMEGA для гостевых агентов sadik (B-N-1476, 03.10.2026, Аврора). Гость говорит со шлюзом СВОИМ ключом;
+# шлюз ходит в omega-memory (8377) боевым ключом (drop-in 15-omega-mcp-klyuch.conf) и пропускает только белый
+# список с принудительным корнем. Учётка omega-shlyuz — не omega, без групп /var/lib/omega и /etc/omega.
+# Стенд: sudo /opt/omega/venv/bin/python3 -B /usr/local/lib/omega-shlyuz/stend-shlyuza-omega.py — после каждого
+# обновления OMEGA и правки шлюза (скилл update-omega).
+[Unit]
+Description=Шлюз OMEGA для гостей (B-N-1476): ключ гостя → корень, белый список, корень принудительно
+After=omega-memory.service
+Wants=omega-memory.service
+
+[Service]
+User=omega-shlyuz
+Group=omega-shlyuz
+Environment=SHLYUZ_PORT=8379
+Environment=SHLYUZ_UPSTREAM=http://127.0.0.1:8377/mcp
+Environment=SHLYUZ_KLYUCHI=/etc/omega/gost-klyuchi.txt
+Environment=SHLYUZ_STATE=/var/lib/omega-shlyuz
+StateDirectory=omega-shlyuz
+StateDirectoryMode=0700
+ExecStart=/opt/omega/venv/bin/python3 -B /usr/local/lib/omega-shlyuz/omega-shlyuz-gostej.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

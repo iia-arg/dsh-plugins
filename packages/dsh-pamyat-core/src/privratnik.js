@@ -1,52 +1,47 @@
 /**
- * ПРИВРАТНИК — отвечающий на спрос разрешения (Т2).
+ * RU: Привратник — необязательный отвечающий на approval/request. Он выключен по умолчанию; при включении
+ *    разрешает любой дошедший до него запрос один раз через allowed-once. Он не проверяет инструмент и не
+ *    имеет веток rejected или cancelled.
+ * EN: The gatekeeper is an optional approval/request responder. It is disabled by default; when enabled, it
+ *    grants every request that reaches it once through allowed-once. It does not inspect the tool and has no
+ *    rejected or cancelled branches.
  *
- * ЗАЧЕМ. Платформа спрашивает разрешения на инструмент через водопад
- * `approval/request`. Если ни один отвечающий не откликнулся, служба
- * подтверждения возвращает `unavailable` — и инструмент НЕ выполняется.
- * У агента, работающего без человека рядом, отвечающего нет вовсе, поэтому
- * любой инструмент, требующий спроса, отказывает всегда. Привратник закрывает
- * ровно это: он отвечает «разрешено на один раз» и ничего больше.
+ * RU: Без отвечающего служба подтверждения возвращает unavailable, и инструмент не выполняется. Привратник
+ *    предоставляет ответ для работы без человека рядом; это сознательное разрешение всех запросов, а не
+ *    защита от опасных инструментов. Вне дошедших до его обработчика запросов он ничего не решает.
+ * EN: Without a responder, the approval service returns unavailable and the tool does not run. The
+ *    gatekeeper provides a response for operation without a human present; it deliberately grants all
+ *    requests rather than screening dangerous tools. It makes no decisions for requests that do not reach
+ *    its handler.
  *
- * 🔴 ПРАВА ОТКАЗЫВАТЬ У НЕГО НЕТ ВОВСЕ. Ни одной ветки, возвращающей
- * 'rejected' или 'cancelled', здесь нет и быть не должно. Замысел владельца
- * (12:46 04.09.2026): пакет памяти разрешает ЛЮБОЙ инструмент, ничего не
- * блокируя, отдельной настройкой, выключенной по умолчанию.
- * Если однажды такая ветка появится — это будет не расширение, а другой
- * предмет: запрещающий привратник посреди пакета памяти, о котором никто
- * не просил и которого никто не ждёт.
- *
- * 🔴 СЛОВАРЬ ИСХОДОВ — ЧУЖОЙ, СНЯТ С ПРЕДМЕТА, НЕ ВЫДУМАН.
- * @deepseek-ai/dsh-user-approval: OUTCOMES = allowed-once | rejected |
- * cancelled | unavailable, и «allowed-once is the only grant».
- * ⚠️ ЛОВУШКА, КОТОРУЮ НАДО ЗНАТЬ: возврат ВНЕ этого словаря служба
- * нормализует в 'unavailable' МОЛЧА, и бросок исключения — тоже. То есть
- * опечатка в одной строке превращает привратника, который «не может
- * отказывать», в отказывающий всем — и внешне это неотличимо от
- * «отвечающего нет». Поэтому имя исхода лежит здесь ОДНОЙ константой,
- * а стенд сверяет её со словарём платформы, а не с нашим представлением.
+ * RU: Контракт @deepseek-ai/dsh-user-approval: allowed-once | rejected | cancelled | unavailable; разрешает
+ *    только allowed-once. Исключение либо неизвестное значение служба нормализует в unavailable.
+ *    Единственная константа RAZRESHENO уменьшает риск опечатки; стенд должен сверять её со словарём
+ *    платформы.
+ * EN: The @deepseek-ai/dsh-user-approval contract is allowed-once | rejected | cancelled | unavailable; only
+ *    allowed-once grants approval. The service normalizes exceptions and unknown values to unavailable. A
+ *    single RAZRESHENO constant reduces the risk of typos; the test harness must compare it against the
+ *    platform vocabulary.
  */
-
-/** Единственный разрешающий исход платформы. Другого у нас нет и не будет. */
 export const RAZRESHENO = 'allowed-once';
 
-// Через сколько спросов повторять итог в журнале. Число здесь, а не в условии:
-// его должно быть видно тому, кто читает журнал и считает строки.
+/**
+ * RU: Итог повторяется каждые 10 запросов и на первом запросе. Именованная частота позволяет сопоставить
+ *    число строк журнала с количеством запросов; это частота итогов, а не предел числа разрешений.
+ * EN: The summary repeats every 10 requests and on the first request. A named interval lets readers relate
+ *    journal lines to request counts; it controls summary frequency, not the number of grants.
+ */
 const ITOG_KAZHDYE = 10;
 
 /**
- * ЧЕТЫРЕ ПРИЧИНЫ, ПО КОТОРЫМ НАШ СЧЁТЧИК МОЖЕТ БЫТЬ ПУСТ.
- * Все четыре снаружи выглядят одинаково — «спросов не было», — и это
- * единственное, чего они НЕ означают наверняка.
- *   1. спросов действительно не было;
- *   2. нас опередили: отвечающий, стоящий раньше, вернул свой ответ, и
- *      водопад до нас не дошёл (лечится prepend, см. ниже);
- *   3. мы не в той области видимости: водопад зовётся с областью агента
- *      (scopeTarget), и обработчик из чужой области не зовётся вовсе;
- *   4. политика сессии 'never': служба возвращает 'rejected' ДО водопада,
- *      то есть отвечающих не спрашивают совсем.
- * Четвёртую нашёл не замер устройства, а чтение самой службы — она была
- * пропущена в первом замере, где причин назвали три.
+ * RU: Нулевой счётчик имеет четыре возможные причины: запросов не было; более ранний отвечающий завершил
+ *    цепочку; обработчик зарегистрирован вне scopeTarget агента; политика сессии never возвращает rejected
+ *    до approval/request. Счётчик сам не различает эти причины, поэтому ноль не доказывает отсутствие
+ *    запросов.
+ * EN: A zero counter has four possible causes: no requests occurred; an earlier responder ended the chain;
+ *    the handler is registered outside the agent’s scopeTarget; or session policy never returns rejected
+ *    before approval/request. The counter cannot distinguish these causes, so zero does not prove there were
+ *    no requests.
  */
 export const PRICHINY_PUSTOGO_SCHYOTCHIKA = [
   'спросов не было',
@@ -56,18 +51,26 @@ export const PRICHINY_PUSTOGO_SCHYOTCHIKA = [
 ];
 
 /**
- * Поставить привратника.
+ * RU: Зарегистрировать отвечающего только при vklyuchyon===true. Первая строка журнала показывает
+ *    прочитанное значение настройки; вторая подтверждает возврат функции снятия регистрации. Отсутствие
+ *    исключения само по себе регистрацию не доказывает. Здесь функция снятия используется только как
+ *    признак; остановку и итог при выгрузке организует вызывающий.
+ * EN: Register a responder only when vklyuchyon===true. The first journal line shows the setting that was
+ *    read; the second confirms that an unsubscribe function was returned. Absence of an exception alone does
+ *    not prove registration. Here the unsubscribe function is only a registration signal; the caller
+ *    coordinates shutdown and the disposal summary.
  *
- * @param ctx        контекст плагина
- * @param vklyuchyon значение ключа настройки (умолчание — ВЫКЛЮЧЕНО)
- * @param gromko     функция громкой печати (одна на пакет)
- * @returns учёт: { vklyuchyon, vstal, sprosov, razresheno, otkazano, spisok }
+ * @param ctx RU: Контекст плагина с on для approval/request.
+ * EN: Plugin context with on for approval/request.
  *
- * 🔴 ДВЕ ГРОМКИЕ СТРОКИ, И ВТОРАЯ ВАЖНЕЕ ПЕРВОЙ.
- * Первая говорит, что ключ ПРОЧИТАН (иначе «настройка не доехала»
- * неотличимо от «выключено»). Вторая — что регистрация УДАЛАСЬ, и она
- * стоит на ВОЗВРАТЕ платформы, а не на том, что вызов не бросил. Молчаливо
- * сорванная регистрация даёт привратника, которого нет, при включённом ключе.
+ * @param vklyuchyon RU: Значение настройки; по умолчанию выключено.
+ * EN: Setting value; disabled by default.
+ *
+ * @param gromko RU: Функция вывода диагностических строк пакета.
+ * EN: Function that emits package diagnostics.
+ *
+ * @returns RU: Учёт { vklyuchyon, vstal, sprosov, razresheno, otkazano, spisok }.
+ * EN: Counters and state { vklyuchyon, vstal, sprosov, razresheno, otkazano, spisok }.
  */
 export function postavitPrivratnika(ctx, vklyuchyon, gromko) {
   const uchyot = {
@@ -87,45 +90,67 @@ export function postavitPrivratnika(ctx, vklyuchyon, gromko) {
   gromko('привратник: ключ otvechatNaSprosRazresheniya прочитан — ВКЛЮЧЕНО');
 
   const obrabotchik = (req, next) => {
-    // 🔴 ПОРЯДКОВЫЙ НОМЕР ВЫДАЁТСЯ ДО ОТВЕТА. Если ответ по какой-то причине
-    // не состоится, спрос всё равно уже посчитан: «спросили и не ответили»
-    // должно оставлять след, иначе оно неотличимо от «не спрашивали».
+    /**
+     * RU: Увеличить счётчик и запомнить инструмент до ответа. Если дальнейший вывод или ответ сорвётся, уже
+     *    поступивший запрос останется в учёте; иначе отказ ответа выглядел бы как отсутствие запроса.
+     * EN: Increment the counter and record the tool before responding. If later logging or response delivery
+     *    fails, the received request remains counted; otherwise a response failure would look like no request
+     *    occurred.
+     */
     uchyot.sprosov += 1;
     const nomer = uchyot.sprosov;
     const imya = req?.toolName ?? '(имя инструмента не названо)';
     uchyot.spisok.push({ nomer, imya });
 
-    // Права отказывать нет: единственная ветка — разрешить.
+    /**
+     * RU: Единственная ветка разрешает запрос. Счётчик razresheno отражает эту ветку, а не подтверждённое
+     *    выполнение инструмента платформой.
+     * EN: The only branch grants the request. The razresheno counter records this branch, not confirmed tool
+     *    execution by the platform.
+     */
     uchyot.razresheno += 1;
     gromko(`привратник: спрос ${nomer} на «${imya}» → ${RAZRESHENO}`);
 
-    // 🔴 ИТОГ ПЕЧАТАЕТСЯ И ПО ХОДУ, А НЕ ТОЛЬКО ПРИ ВЫГРУЗКЕ (замечание приёмки З1,
-    // 06.09.2026). Прежде он звался ровно один раз — на dispose. Значит при SIGKILL,
-    // OOM или падении процесса он не печатался НИКОГДА, и «привратник работал» нельзя
-    // было увидеть из журнала: счётчик жил только в памяти и умирал вместе с ней.
-    // ⚠️ Ровно наш класс: механизм кричит в сторону, где его слышат лишь при мягком
-    // закрытии, — а падение как раз тот случай, когда разбираться будут по журналу.
-    // ЧАСТОТА ЧИСЛОМ, А НЕ «ИНОГДА»: первый спрос и далее каждый десятый. Первый —
-    // чтобы участие в цепочке было видно с первого же случая; десятый — чтобы при
-    // потоке спросов журнал не заплыл. Оба числа названы здесь, а не спрятаны в условии.
+    /**
+     * RU: Печатать итог на первом и каждом 10-м запросе: вывод только при dispose пропал бы при SIGKILL, OOM или
+     *    аварии процесса. Периодические строки сохраняют след работы до такого завершения; они не гарантируют
+     *    сохранность последних запросов после предыдущего итога.
+     * EN: Print a summary on the first and every 10th request: output only during dispose would be lost on
+     *    SIGKILL, OOM or a process crash. Periodic lines preserve evidence of operation before such a
+     *    termination; they do not guarantee that requests since the previous summary are retained.
+     */
     if (nomer === 1 || nomer % ITOG_KAZHDYE === 0) {
-      try { gromko(itogPrivratnika(uchyot)); } catch { /* итог не должен ронять ответ */ }
+      try { gromko(itogPrivratnika(uchyot)); } catch { /**
+       * RU: Ошибка вывода периодического итога не должна сорвать разрешающий ответ. Этот catch защищает только
+       *    печать итога; остальные вызовы gromko здесь не перехватываются.
+       * EN: A periodic summary logging failure must not prevent the grant response. This catch protects summary
+       *    logging only; the other gromko calls here are not caught.
+       */ }
     }
     return RAZRESHENO;
 
-    // 🔴 ЗАЧЕМ ЗДЕСЬ next, ЕСЛИ ОН НЕДОСТИЖИМ. Он и не зовётся: мы отвечаем
-    // всегда. Оставлен в подписи намеренно — как напоминание, что цепочка
-    // существует и что всякая будущая ветка «не отвечаем» ОБЯЗАНА звать
-    // next(), а не возвращать что-либо своё: иначе мы сами станем тем, кто
-    // выключает остальных, имея на это меньше прав, чем кто бы то ни было.
-    // eslint-disable-next-line no-unreachable
+    /**
+     * RU: next сохранён в подписи как контракт цепочки, но недостижим после безусловного разрешения. Если
+     *    появится ветка, которая не отвечает, она обязана вызвать next(), чтобы передать запрос следующим
+     *    отвечающим.
+     * EN: next remains in the signature to document the chain contract, but is unreachable after the
+     *    unconditional grant. Any future branch that declines to answer must call next() to pass the request to
+     *    later responders.
+     */
+        // eslint-disable-next-line no-unreachable -- RU: Подпись цепочки сохранена. EN: Preserve the chain signature.
     void next;
   };
 
-  // 🔴 prepend: true — НЕ УКРАШЕНИЕ. Замер шести раскладок водопада:
-  // отвечающий, зарегистрированный вторым БЕЗ prepend, не зовётся вовсе,
-  // если первый вернул свой ответ. Без prepend участие в цепочке — дело
-  // удачи порядка загрузки плагинов, а выглядит это как «спросов не было».
+  // 🔴 prepend RU: KOD-якорь конца тела обработчика для стенда; сохранять дословно, перевод размещать рядом.
+  // EN: The suite uses the preceding source-text anchor as the end of the handler body; preserve it verbatim and keep translations adjacent.
+  /**
+   * RU: Запросить prepend:true, чтобы более ранний отвечающий не завершил цепочку до этого обработчика. Без
+   *    prepend второй обработчик не вызывается, если первый ответил. Опция запрашивает порядок; фактическую
+   *    позицию этот модуль не измеряет.
+   * EN: Request prepend:true so an earlier responder does not finish the chain before this handler runs.
+   *    Without prepend, a second handler is not called if the first answers. The option requests an order;
+   *    this module does not measure the actual position.
+   */
   let snyat = null;
   try {
     snyat = ctx.on?.('approval/request', obrabotchik, { prepend: true }) ?? null;
@@ -134,17 +159,24 @@ export function postavitPrivratnika(ctx, vklyuchyon, gromko) {
     uchyot.oshibkaRegistracii = e?.message ?? String(e);
   }
 
-  // Проверка ВОЗВРАТОМ: платформа отдаёт функцию-снималку. Нет функции —
-  // регистрации нет, чем бы это ни было вызвано.
+  /**
+   * RU: Платформа должна вернуть функцию снятия регистрации; только это считается признаком установки. Нет
+   *    функции — vstal=false, даже если on не бросил исключение. Признак не доказывает, что цепочка уже
+   *    вызывала обработчик.
+   * EN: The platform must return an unsubscribe function; only that counts as a registration signal. Without a
+   *    function, vstal=false even if on did not throw. This signal does not prove that the chain has invoked
+   *    the handler.
+   */
   uchyot.vstal = typeof snyat === 'function';
   if (uchyot.vstal) {
-    // 🔴 «СТОИМ ПЕРВЫМИ» БЫЛО УТВЕРЖДЕНИЕМ ПО НАМЕРЕНИЮ, А НЕ ЗАМЕРОМ (05.09.2026).
-    // Мы просим prepend, но проверить, куда нас поставили, изнутри НЕЧЕМ: список
-    // слушателей события плагину недоступен — замер на настоящем движке показал, что
-    // fiber._hooks пуст, а иного пути к цепочке из плагина нет. Значит прежняя строка
-    // печаталась бы слово в слово и в том случае, если бы prepend был проигнорирован,
-    // — то есть успокаивала бы ровно там, где нужен вопрос.
-    // Инструмент не должен называть словами область, которой не владеет.
+    /**
+     * RU: Журнал сообщает о регистрации и запрошенном prepend, а не о доказанной первой позиции. Список
+     *    слушателей недоступен плагину; пустой fiber._hooks не позволяет проверить порядок. Заявлять «первый» по
+     *    переданной опции нельзя.
+     * EN: The journal reports registration and the requested prepend option, not a verified first position. The
+     *    plugin cannot access the listener list; an empty fiber._hooks cannot establish order. Passing the
+     *    option is insufficient evidence for claiming to be first.
+     */
     gromko('привратник: регистрация УДАЛАСЬ (проверено возвратом снималки), событие '
       + '«approval/request», просили prepend: true. ⚠️ ПОЗИЦИЯ В ЦЕПОЧКЕ ИЗНУТРИ НЕ '
       + 'ПРОВЕРЯЕТСЯ: список слушателей плагину недоступен. Если нас поставили не первыми, '
@@ -159,11 +191,12 @@ export function postavitPrivratnika(ctx, vklyuchyon, gromko) {
 }
 
 /**
- * Строка итога. Зовётся периодически и при остановке.
- *
- * 🔴 «ОТКАЗАНО > 0» — СОСТОЯНИЕ НЕВОЗМОЖНОЕ. Ветки отказа в обработчике нет
- * вовсе, поэтому ненулевое число здесь означает не «мы отказали», а что
- * счётчик считает не то, что мы думаем, — и это надо кричать, а не печатать.
+ * RU: Сформировать итог для периодического вывода и выгрузки. otkazano>0 нарушает инвариант: у обработчика
+ *    нет ветки отказа, поэтому строка явно помечает счётчик как неверный. Если sprosov=0, перечислить
+ *    возможные причины обхода; итог не определяет конкретную причину.
+ * EN: Build a summary for periodic output and disposal. otkazano>0 violates an invariant: the handler has no
+ *    refusal branch, so the line explicitly flags the counter as invalid. If sprosov=0, list possible
+ *    reasons why the handler was bypassed; the summary does not identify the specific cause.
  */
 export function itogPrivratnika(uchyot) {
   if (!uchyot.vklyuchyon) return 'привратник: выключен ключом; спросов не считали';

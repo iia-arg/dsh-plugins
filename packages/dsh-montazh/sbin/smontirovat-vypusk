@@ -1,0 +1,347 @@
+#!/bin/bash
+# Монтаж выпуска ПО СОСТАВУ ПУБЛИКАЦИИ, а не по архиву дерева.
+# Причина (14.09.2026, нашла Искра, подтвердили Вениамин и Забава):
+#   дерево метки kompakt a11 = 16 файлов, состав публикации = 15.
+#   Лишний — CHITAT-PERED-PRAVKOJ-*.txt, записка, которой в пакете быть не должно.
+#   Монтаж «из архива метки» вёз бы её в бой и затирал боевой файл того же имени.
+# ⚠️ ГОТОВОГО ТАРБОЛА ДЛЯ МЕТКИ ОБЫЧНО НЕТ (замер 14.09: для a11 в хранилище нет).
+#   Поэтому состав СОБИРАЕТСЯ прогоном npm pack на копии метки, а не читается из tar tzf.
+set -u
+# B-N-1403 (02.10.2026, Искра): подмены из окружения — ПЕРВЫМИ строками вывода, по образцу smontirovat-fajly («⚠️ ПОДМЕНА»).
+# Ключа нет намеренно: подмены меняют только каталог страховок и руку коммита, не состав монтажа; через sudo (env_reset)
+# недостижимы; оба стенда (B-N-1263, B-N-1401) подают их законно без sudo. Молчание здесь = подмен нет.
+# B-N-2046 (а), LOW Вениамина: замок и каталог окон тоже объявляются (стенды подают их, чтобы не трогать боевые).
+# B-N-2043 Ш1 (Альфа): SMV_REESTR_PL — подмена реестра для помощника окна. Сведение объединением — Забава 14.10 (вердикт Вениамина 05:53Z).
+for v in SMV_MONTAZH SMF_RUKA SMV_ZAMOK MO_STATE_DIR SMV_REESTR_PL; do [ -n "${!v+x}" ] && echo "⚠️ ПОДМЕНА: $v=${!v}"; done
+# 🔴 B-N-1401 (02.10.2026, Искра; рецепт Вениамина): разбор СТРОГО, до любых действий. Было: позиции 1–5,
+# всё лишнее молча отбрасывалось — 6-й «--progon» проигнорирован, задуманный прогон стал боевым монтажом (a9, 03:22:30Z).
+# ФОРМА: smontirovat-vypusk <метка> <путь пакета> <боевой каталог> [--progon | --v-boj <пункт>]   (по умолчанию — прогон)
+# Позиционных ровно три; режим — только ключом; незнакомый «-…», лишний аргумент, повтор или оба ключа — ОТКАЗ код 2.
+otkaz_args() { echo "🔴 ОТКАЗ (аргументы): $1 — ничего не тронуто." >&2
+  echo "   форма: smontirovat-vypusk <метка> <путь пакета> <боевой каталог> [--progon | --v-boj <пункт>]" >&2; exit 2; }
+POZ=(); REZH=""; PUNKT=""; OKNO_ID=""; OKNO_PLAN=""; OKNO_COPIES=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --okno-id|--okno-plan|--okno-copies)
+      [ $# -ge 2 ] && [ -n "$2" ] || otkaz_args "$1 без значения"
+      case "$1" in
+        --okno-id) [ -z "$OKNO_ID" ] || otkaz_args 'okno-id повторён'; OKNO_ID=$2 ;;
+        --okno-plan) [ -z "$OKNO_PLAN" ] || otkaz_args 'okno-plan повторён'; OKNO_PLAN=$2 ;;
+        --okno-copies) [ -z "$OKNO_COPIES" ] || otkaz_args 'okno-copies повторён'; OKNO_COPIES=$2 ;;
+      esac; shift 2 ;;
+    --progon) [ -z "$REZH" ] || otkaz_args "режим задан дважды («$REZH» и «--progon»)"; REZH=--progon; shift ;;
+    --v-boj)  [ -z "$REZH" ] || otkaz_args "режим задан дважды («$REZH» и «--v-boj»)"
+              [ $# -ge 2 ] || otkaz_args "--v-boj без <пункт>"
+              [[ "$2" =~ ^[A-Za-z0-9-]+$ ]] && [[ "$2" != -* ]] || otkaz_args "--v-boj: пункт «$2» не буквы/цифры/дефис"
+              REZH=--v-boj; PUNKT=$2; shift 2 ;;
+    -*) otkaz_args "незнакомый ключ «$1»" ;;
+    *) POZ+=("$1"); shift ;;
+  esac
+done
+[ "${#POZ[@]}" = 3 ] || otkaz_args "позиционных ${#POZ[@]}, нужно ровно 3 (лишние: ${POZ[*]:3})"
+M=${POZ[0]}; P=${POZ[1]}; B=${POZ[2]}; REZH=${REZH:---progon}
+[ -z "$OKNO_ID" ] || [ -z "$OKNO_PLAN" ] || otkaz_args 'okno-id и okno-plan несовместимы'
+R=/opt/iskra/workspace/dsh-plugins
+REESTR_PL=${SMV_REESTR_PL:-/etc/agent-registry/plugins.yaml}
+# 🔴 B-N-888 (25.09.2026, Михалыч; решение главной по B-H-407): страховки монтажей — в ОДНОМ месте,
+# /var/backups/montazh/<пункт>/ (оно в копии, объявлено в реестре). Было: /opt/agent-plugins-tarbally/
+# STRAHOVKA-*.tgz — 15 шт, 1,6 ГБ, рядом с тарболами выпусков. Пункт обязателен для --v-boj и
+# проверяется ДО работы: без него страховка легла бы без адреса.
+MONTAZH=${SMV_MONTAZH:-/var/backups/montazh}   # SMV_MONTAZH — только для стенда (B-N-1263)
+T=$(mktemp -d "/tmp/montazh-$(hostname)-XXXXXX") || exit 1   # своё имя: чужой /tmp читается молча
+trap 'rm -rf "$T"' EXIT
+cd "$R" || exit 1
+# .sostav ВНЕ $T: иначе прибор попадает в собственный замер и уезжает в бой (14.09, проба)
+SOSTAV=$(mktemp /tmp/sostav-XXXXXX); SOSTAV2=$(mktemp /tmp/sostav2-XXXXXX); S=$(mktemp -d /tmp/strahovka-XXXXXX); REZHIMY=$(mktemp /tmp/rezhimy-XXXXXX)
+# 🔴 B-N-891 (25.09.2026, Михалыч): второй trap ЗАМЕНЯЕТ первый, а не дополняет. Было отдельной строкой
+# только rm SOSTAV — и $T (/tmp/montazh-*) не удалялся НИКОГДА (44 шт на 25.09). Теперь в одном trap всё.
+VREM=()   # B-N-1746: только наши незавершённые временные файлы рядом с целями
+zavershit() {
+  local code=$?
+  if [ -n "$OKNO_ID" ] && [ "${OKNO_OPUBLIKOVANO:-0}" = 1 ] && [ "$code" -ne 0 ]; then
+    "${MONTAZH_OKNO_BIN:-/usr/local/sbin/montazh-okno}" otkaz "$OKNO_ID" || echo "СЛЕПОТА: окно $OKNO_ID не переведено в failed" >&2
+  fi
+  for t in "${VREM[@]}"; do [ -n "$t" ] && rm -f -- "$t"; done
+  rm -rf "$T" "$S"; rm -f "$SOSTAV" "$SOSTAV2" "$REZHIMY"
+  return "$code"
+}
+trap zavershit EXIT
+# 🔴 B-N-1612 (05.10.2026, Искра; находка Вениамина 03:55Z): git archive по умолчанию tar.umask=002 — файлы 664/775, а root
+#   при распаковке права сохраняет, и cp -p ниже клал их в бой (telegram 2.5.78: 664/775 при архиве 644/755). umask 022 —
+#   права как у тарбола npm pack (он сам нормализует 644/755; замер 05.10: дерево 664 → тот же тарбол 058fb3d6).
+C=$(git rev-parse --verify "$M^{commit}" 2>/dev/null) || { echo '🔴 источник выпуска не дал commit'; exit 1; }
+git -c tar.umask=022 archive "$C" "$P" 2>/dev/null | tar -x -C "$T" --strip-components=2 || { echo "🔴 метка/путь не дали архива"; exit 1; }
+# ТОТ ЛИ ЭТО ПРЕДМЕТ — печатаем ДО замера (поправка Вениамина 14.09)
+echo "предмет: $(cd "$T" && node -p 'require("./package.json").name+" "+require("./package.json").version' 2>/dev/null || echo '🔴 манифест не прочитан')"
+DER=$(find "$T" -type f | wc -l)
+# №10 дополнение (Вениамин 01:4xZ, Забава 01:37Z): --ignore-scripts в ОБОИХ снятиях состава (здесь и тарбол ниже) — под sudo
+#   сценарии prepack/prepare пакета исполнялись бы от root; ключ в одном снятии без другого развёл бы два способа.
+(cd "$T" && npm pack --dry-run --json --ignore-scripts 2>/dev/null | grep -o '"path": *"[^"]*"' | sed 's/.*"path": *"//;s/"//' | sort) > "$SOSTAV"
+SOS=$(grep -c . "$SOSTAV")
+echo "дерево метки: $DER · СОСТАВ ПУБЛИКАЦИИ: $SOS"
+[ "$SOS" -gt 0 ] || { echo "🔴 состав ПУСТ — монтировать нечего (это НЕ «чисто»)"; exit 2; }
+# 🔴 ЧУЖОЕ БОЕВОЕ СОСТОЯНИЕ, КОТОРОЕ МОНТАЖ ЗАТРЁТ МОЛЧА.
+# 14.09.2026 я так затёрла dolyaPorogaPlatformy Петровича: он правил настройку НА ДИСКЕ,
+# в дерево правка не попала, монтаж положил версию из метки. Ни отказа, ни строки.
+# Класс (Искра): ФАЙЛ, КОТОРЫЙ ОДНОВРЕМЕННО И СОСТАВ ВЫПУСКА, И БОЕВОЕ СОСТОЯНИЕ,
+# теряет боевые правки при КАЖДОМ монтаже. Наши сверки этого не ловят ПО ПОСТРОЕНИЮ:
+# они сверяют бой С МЕТКОЙ ПОСЛЕ монтажа, а не боевое состояние ДО с тем, что кладут.
+# ГРАНИЦА: печатает и НЕ останавливает — решает человек, видя перечень полей поимённо.
+ZATRET=""
+while read -r F; do
+  case "$F" in nastrojki/*) ;; *) continue ;; esac
+  BF="$B/$F"; DF="$T/$F"
+  [ -f "$BF" ] || continue
+  cmp -s "$BF" "$DF" && continue
+  ZATRET="$ZATRET\n   🔴 $F — бой $(sha256sum "$BF"|cut -c1-12) против метки $(sha256sum "$DF"|cut -c1-12)"
+  for K in $(grep -oE '"[a-zA-Z_]+":' "$BF" 2>/dev/null | tr -d '":' | sort -u); do
+    grep -q "\"$K\":" "$DF" 2>/dev/null || ZATRET="$ZATRET\n        поле «$K» есть в БОЮ, в метке ОТСУТСТВУЕТ — БУДЕТ ЗАТЁРТО"
+  done
+done < "$SOSTAV"
+if [ -n "$ZATRET" ]; then
+  echo "🔴 БОЕВЫЕ НАСТРОЙКИ РАСХОДЯТСЯ С МЕТКОЙ — МОНТАЖ ИХ ПЕРЕЗАПИШЕТ:"
+  printf "%b\n" "$ZATRET"
+  echo "   ⇒ реши ДО монтажа: правка, сделанная на диске, исчезнет молча"
+else
+  echo "✅ боевые настройки = метке (или их нет в бою) — затирать нечего"
+fi
+echo "в дереве, но ВНЕ состава (в бой НЕ поедет):"
+(cd "$T" && find . -type f | sed 's|^\./||' | sort | comm -23 - "$SOSTAV" | sed 's/^/   ⚠️ /')
+
+# ── ВТОРОЙ СПОСОБ СНЯТИЯ СОСТАВА (лечение тавтологии, нашла Искра 14.09) ──
+# Было: клали по .sostav, считали N, сверяли N с SOS из ТОГО ЖЕ списка.
+# Состав снят неполно → положим неполно → сверим неполное с неполным → «СМОНТИРОВАНО».
+# Носителя правды ВНЕ списка не было. Теперь есть: РЕАЛЬНЫЙ тарбол против обещания dry-run.
+TGZ=$(cd "$T" && npm pack --silent --ignore-scripts 2>/dev/null | tail -1)
+if [ -n "${TGZ:-}" ] && [ -f "$T/$TGZ" ]; then
+  tar tzf "$T/$TGZ" 2>/dev/null | sed 's|^package/||' | grep -v '/$' | sort > "$SOSTAV2"
+  S2=$(grep -c . "$SOSTAV2")
+  if ! cmp -s "$SOSTAV" "$SOSTAV2"; then
+    echo "🔴 СОСТАВ СНЯТ ДВУМЯ СПОСОБАМИ ПО-РАЗНОМУ: dry-run $SOS · тарбол $S2"
+    echo "   различия:"; comm -3 "$SOSTAV" "$SOSTAV2" | sed 's/^/   /'
+    echo "   монтировать НЕ БУДУ: какой из двух верен — не знаю"; exit 4
+  fi
+  echo "состав подтверждён ВТОРЫМ способом (реальный тарбол): $S2"
+  # B-N-1612: права файлов ИЗ РЕАЛЬНОГО ТАРБОЛА — эталон для сверки прав после монтажа (не из $T: он и есть проверяемое)
+  python3 -c 'import sys,tarfile
+for m in tarfile.open(sys.argv[1]):
+    if m.isfile(): print("%o\t%s" % (m.mode & 0o7777, m.name.split("/",1)[1]))' "$T/$TGZ" > "$REZHIMY" 2>/dev/null
+  [ "$(grep -c . "$REZHIMY")" = "$S2" ] || { echo "🔴 права тарбола не сняты ($(grep -c . "$REZHIMY") из $S2) — это СЛЕПОТА, не «чисто»"; exit 4; }
+else
+  echo "🔴 второй способ ОТКАЗАЛ (тарбол не собрался) — это СЛЕПОТА, не «чисто»"; exit 4
+fi
+
+# ── B-N-1263 (30.09.2026, Искра; находка 30.09: 35 файлов 6 пакетов с 12:31Z лежали без коммита — инструмент не коммитил) ──
+# УЧЁТ GIT: коммит ТОЛЬКО положенных путей состава ($SOSTAV), а не каталога целиком — рядом с боевым каталогом бывает
+# дом службы. Корень и рука — способом smontirovat-fajly (B-N-923). Сообщение «<пакет> <версия> = <метка> (<пункт>)».
+# ИСХОД: 0 смонтировано (закоммичено / учёта нет / состав = закоммиченному) · 5 смонтировано и сверено, но коммит учёта
+#   НЕ сделан — монтаж В СИЛЕ (как код 5 у smontirovat-fajly) · 3 «БЕЗ ИЗМЕНЕНИЙ» (B-N-2025): файлы = метке, учёт git
+#   ДОГОНЯЕТСЯ (B-N-2046 (а)): был отставший коммит — он сделан, исход 0; коммитить нечего — 3; git отказал — 5.
+# ЧЕГО НЕ ДЕЛАЕТ: не коммитит чужое рядом (печатает число); не видит файлы, убранные из состава (монтаж их и не удаляет);
+#   не видит монтаж мимо инструмента.
+ruka_git() {
+  local u=${SUDO_USER:-$(id -un)}; RUKA_ZAM=""
+  if [ -n "${SMF_RUKA:-}" ]; then RUKA=$SMF_RUKA; return; fi
+  case "$u" in
+    claude) RUKA='Zabava <zabava@aclaude>' ;;
+    iskra) RUKA='Iskra <iskra@sadik>' ;;
+    zarya) RUKA='Zarya <zarya@sadik>' ;;
+    avrora) RUKA='Avrora <avrora@sadik>' ;;
+    *) RUKA="$u <$u@$(hostname -s)>"; RUKA_ZAM=" · ⚠️ рука не названа (учётки $u нет в таблице; SMF_RUKA='Имя <почта>')" ;;
+  esac
+}
+uchet_git() {
+KOD_GIT=0; KOMMIT=0
+KOREN=$(git -C "$B" rev-parse --show-toplevel 2>/dev/null)
+if [ -z "$KOREN" ]; then
+  if [[ "$(git -C "$B" rev-parse --show-toplevel 2>&1)" == *dubious* ]]; then
+    echo "учёт git: $B — git под чужим владельцем, не читается — коммита не будет"
+  else
+    echo "учёт git: $B вне git — учёта нет (не ошибка)"
+  fi
+elif [ "$(stat -c '%U' -- "$KOREN/.git" 2>/dev/null)" != root ]; then
+  echo "учёт git: корень $KOREN чужой (.git не root) — коммиты там рука хозяина — коммита не будет"
+else
+  ruka_git
+  REL=${B#"$KOREN"}; REL=${REL#/}
+  GP=(); while IFS= read -r f; do [ -n "$f" ] && GP+=("${REL:+$REL/}$f"); done < "$SOSTAV"
+  ISKL=(); for p in "${GP[@]}"; do ISKL+=(":(exclude,literal)$p"); done
+  ch=$(git --no-optional-locks -C "$KOREN" status --porcelain --untracked-files=all -- . "${ISKL[@]}" 2>/dev/null | wc -l)
+  NAZV=$(cd "$T" && node -p 'require("./package.json").name+" "+require("./package.json").version' 2>/dev/null || echo "$P")
+  if ! osh=$(GIT_LITERAL_PATHSPECS=1 git -C "$KOREN" add -f -- "${GP[@]}" 2>&1); then
+    echo "🔴 учёт git $KOREN: add отказал (монтаж В СИЛЕ) — ${osh:0:200}"; KOD_GIT=5
+  elif GIT_LITERAL_PATHSPECS=1 git -C "$KOREN" diff --cached --quiet -- "${GP[@]}"; then
+    echo "учёт git $KOREN: состав = закоммиченному — коммита нет"
+  elif osh=$(GIT_LITERAL_PATHSPECS=1 git -C "$KOREN" -c user.name="${RUKA% <*}" -c user.email="$(p=${RUKA##*<}; echo "${p%>}")" \
+        commit -q -m "$NAZV = $M ($PUNKT) · smontirovat-vypusk" -- "${GP[@]}" 2>&1); then
+    h=$(git -C "$KOREN" rev-parse --short HEAD 2>/dev/null)
+    ost=$(GIT_LITERAL_PATHSPECS=1 git --no-optional-locks -C "$KOREN" status --porcelain -- "${GP[@]}" 2>/dev/null | wc -l)
+    KOMMIT=1
+    echo "коммит $h в $KOREN · путей ${#GP[@]} · рука $RUKA$RUKA_ZAM$([ "$ost" -gt 0 ] && echo " · 🔴 после коммита НЕ ЧИСТО своих: $ost")"
+    [ "$ost" -gt 0 ] && KOD_GIT=5
+  else
+    echo "🔴 учёт git $KOREN: коммит НЕ сделан (монтаж В СИЛЕ) — ${osh:0:200}"; KOD_GIT=5
+  fi
+  [ "$ch" -gt 0 ] && echo "⚠️ учёт git $KOREN: чужих незафиксированных $ch — не тронуты, не закоммичены"
+fi
+}
+
+IZMENENIY=0
+while IFS=$'\t' read -r mode file; do
+  [ -n "$file" ] || continue
+  if ! cmp -s -- "$T/$file" "$B/$file" || [ "$(stat -c %a -- "$B/$file" 2>/dev/null)" != "$mode" ]; then IZMENENIY=$((IZMENENIY+1)); fi
+done < "$REZHIMY"
+if [ "$IZMENENIY" = 0 ]; then
+  [ -z "$OKNO_COPIES" ] || [ "$REZH" = --progon ] || [ -n "$OKNO_ID" ] || {
+    echo 'ОТКАЗ: первый target общего плана уже совпал; начни с выбранной копии, требующей замены' >&2; exit 2;
+  }
+  echo 'БЕЗ ИЗМЕНЕНИЙ: окно/страховка/замены не создаются'
+  # B-N-2046 (а): учёт git догоняется и здесь — иначе после кода 5 (индекс заперт, файлы в бою) коммит не появлялся никогда:
+  # каждый повтор уходил в «БЕЗ ИЗМЕНЕНИЙ» до шага учёта. Под тем же монтажным замком, что и монтаж; прогон не коммитит.
+  [ "$REZH" = "--progon" ] && exit 3
+  if ! exec 8>>"${SMV_ZAMOK:-/run/lock/smontirovat-fajly.lock}" || ! flock -w 300 8; then
+    echo 'ОТКАЗ: монтажный замок не получен за 300 с' >&2; exit 2
+  fi
+  uchet_git
+  [ "$KOD_GIT" = 0 ] && [ "$KOMMIT" = 0 ] && exit 3
+  exit $KOD_GIT
+fi
+if [ "$REZH" = "--progon" ]; then echo "⇒ ПРОГОН, бой не тронут"; exit 0; fi
+if ! exec 8>>"${SMV_ZAMOK:-/run/lock/smontirovat-fajly.lock}" || ! flock -w 300 8; then
+  echo 'ОТКАЗ: монтажный замок не получен за 300 с' >&2; exit 2
+fi
+# ── СТРАХОВКА ПО СОСТАВУ (B-N-1464, 03.10.2026, Искра; наряд Забавы) ──
+# Было: tar -czf ВСЕГО боевого каталога. У /opt/claude-oauth это 0,5–0,8 ГБ (node_modules SDK), а выпуск меняет 1–2 файла;
+# за 24.09–03.10 /var/backups/montazh вырос со 122 МБ до 10,4 ГБ и почти 1:1 уехал в ночную копию.
+# Стало: страховка = то, что монтаж ИЗМЕНИТ, и ничего больше:
+#   fajly/…               — пути состава, которые УЖЕ есть в $B (монтаж их перезапишет), с правами и владельцем;
+#   NOVYE.txt             — пути состава, которых в $B НЕ было (откат их удалит);
+#   NOVYE-KATALOGI.txt    — каталоги, которые монтаж создаст под новые пути (откат снимет их, если пусты), глубже — выше;
+#   STRAHOVKA.txt         — шапка: форма, бой, метка, пункт, числа и команда отката одной строкой.
+# ОТКАТ: tar -xzpf <страховка> -C <бой> --strip-components=1 fajly/ ; затем rm каждого пути из NOVYE.txt ; затем
+#   rmdir --ignore-fail-on-non-empty каждого из NOVYE-KATALOGI.txt (команда целиком печатается и лежит в STRAHOVKA.txt).
+# ⚠️ ГРАНИЦА: страхуется только то, что трогает монтаж (состав). Файлы $B вне состава монтаж не трогает — и страховка их
+#   не берёт; правки боя мимо монтажа ею не откатываются. Старые страховки (без «.po-sostavu») — полный снимок каталога:
+#   откат по ним прежний (tar -xzpf <страховка> -C <родитель боя>).
+# Имя: <боевой каталог, / → %>.<UTC>.do-<метка>.po-sostavu.tgz. Резерв имени атомарный (ln из частичного файла):
+# такое имя уже есть — отказ, чужая точка возврата не затирается, монтаж не начат.
+[ -d "$B" ] || { echo "🔴 боевого каталога $B нет — монтаж отменён"; exit 1; }
+KAT="$MONTAZH/$PUNKT"
+mkdir -p "$KAT" || { echo "🔴 нет каталога страховок $KAT — монтаж отменён"; exit 1; }
+STR="$KAT/$(printf '%s' "$B" | sed 's|^/||; s|/|%|g').$(date -u +%Y%m%dT%H%M%SZ).do-$M.po-sostavu.tgz"
+mkdir "$S/fajly" && : > "$S/NOVYE.txt" && : > "$S/zamena.lst" && : > "$S/kat.lst" || { echo "🔴 нет рабочего каталога страховки — монтаж отменён"; exit 1; }
+ZAM=0; NOV=0
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  if [ -e "$B/$f" ] || [ -L "$B/$f" ]; then printf '%s\n' "$f" >> "$S/zamena.lst"; ZAM=$((ZAM+1))
+  else
+    printf '%s\n' "$f" >> "$S/NOVYE.txt"; NOV=$((NOV+1))
+    d=$(dirname "$f"); while [ "$d" != . ] && [ ! -e "$B/$d" ]; do printf '%s\n' "$d" >> "$S/kat.lst"; d=$(dirname "$d"); done
+  fi
+done < "$SOSTAV"
+LC_ALL=C sort -u -r "$S/kat.lst" > "$S/NOVYE-KATALOGI.txt"
+if [ "$ZAM" -gt 0 ]; then
+  tar -C "$B" -cf - --verbatim-files-from -T "$S/zamena.lst" | tar -C "$S/fajly" -xpf - \
+    || { echo "🔴 заменяемые файлы не сняты — монтаж отменён"; exit 1; }
+fi
+OTKAT="tar -xzpf '$STR' -C '$B' --strip-components=1 fajly/ && tar -xzOf '$STR' NOVYE.txt | while IFS= read -r f; do [ -n \"\$f\" ] && rm -f -- '$B'/\"\$f\"; done && tar -xzOf '$STR' NOVYE-KATALOGI.txt | while IFS= read -r d; do [ -n \"\$d\" ] && rmdir --ignore-fail-on-non-empty -- '$B'/\"\$d\"; done"
+{ echo "форма: страховка ПО СОСТАВУ (B-N-1464) — только то, что монтаж изменит"
+  echo "бой: $B · метка: $M · пакет: $P · пункт: $PUNKT · снята: $(date -u +%FT%TZ)"
+  echo "заменяемых (fajly/): $ZAM · новых (NOVYE.txt): $NOV · новых каталогов: $(grep -c . "$S/NOVYE-KATALOGI.txt")"
+  echo "откат: $OTKAT"; } > "$S/STRAHOVKA.txt"
+CHAST=$(mktemp "$KAT/.chast-XXXXXX") || { echo "🔴 не создан частичный файл в $KAT — монтаж отменён"; exit 1; }
+tar -czf "$CHAST" -C "$S" STRAHOVKA.txt NOVYE.txt NOVYE-KATALOGI.txt fajly || { rm -f "$CHAST"; echo "🔴 страховка не снята — монтаж отменён"; exit 1; }
+# Сверка ВТОРЫМ способом: в архиве ровно ZAM заменяемых путей (не каталогов) и NOV строк новых.
+VZ=$(tar -tzf "$CHAST" 2>/dev/null | grep -c '^fajly/.*[^/]$'); VN=$(tar -xzOf "$CHAST" NOVYE.txt 2>/dev/null | grep -c .)
+[ "$VZ" = "$ZAM" ] && [ "$VN" = "$NOV" ] || { rm -f "$CHAST"; echo "🔴 страховка не сошлась (в архиве заменяемых $VZ из $ZAM, новых $VN из $NOV) — монтаж отменён"; exit 1; }
+ln "$CHAST" "$STR" 2>/dev/null || { rm -f "$CHAST"; echo "🔴 страховка $STR уже есть — не затираю, монтаж отменён"; exit 1; }
+rm -f "$CHAST"
+echo "страховка: $STR · sha256[:16] $(sha256sum "$STR" | cut -c1-16) · $(stat -c %s "$STR") Б · по составу: заменяемых $ZAM, новых $NOV"
+echo "откат: $OTKAT"
+# B-N-1746: подготовить ВСЕ файлы, затем .new рядом → mv (новый inode).
+# B-N-1746 r2 (условие ворот): UID/GID прежние; режим ВСЕХ файлов — из реального тарбола.
+# Сбой подготовки не меняет файлы, сбой mv возвращает уже переложенные из страховки.
+PUTI=(); declare -A PRAVA VLAD
+while IFS=$'\t' read -r m f; do [ -n "$f" ] && PRAVA[$f]=$m; done < "$REZHIMY"
+ubrat_vrem() { for t in "${VREM[@]}"; do [ -n "$t" ] && rm -f -- "$t"; done; }
+ubrat_novye_katalogi() {
+  while IFS= read -r d; do [ -n "$d" ] && rmdir --ignore-fail-on-non-empty -- "$B/$d" 2>/dev/null; done < "$S/NOVYE-KATALOGI.txt"
+}
+otkaz_podgotovki() { ubrat_vrem; ubrat_novye_katalogi; echo "🔴 подготовка $1 отказала — файлы не заменены"; exit 1; }
+# B-N-2043 Ш2: окно и baseline до первого mkdir/.new внутри копии.
+OKNO_ROWS="$T/.okno-rows"
+: > "$OKNO_ROWS"
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  if [ -e "$B/$f" ]; then
+    VLAD[$f]=$(stat -Lc '%u:%g' -- "$B/$f") || exit 2
+  else
+    VLAD[$f]=$(stat -c '%u:%g' -- "$T/$f") || exit 2
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\n' "$B/$f" "$(sha256sum "$T/$f" | cut -d' ' -f1)" "${VLAD[$f]%:*}" "${VLAD[$f]#*:}" "${PRAVA[$f]}" >> "$OKNO_ROWS"
+done < "$SOSTAV"
+OKNO_RELEASE="$T/.okno-release.json"
+python3 - "$R" "$C" "$P" "$B/package.json" > "$OKNO_RELEASE" <<'PY_RELEASE' || { echo 'ОТКАЗ: данные выпуска не подготовлены'; exit 2; }
+import json,sys
+print(json.dumps(dict(zip(('repo','commit','subdir','manifest'),sys.argv[1:]))))
+PY_RELEASE
+OKNO_CMD=("${MONTAZH_OKNO_BIN:-/usr/local/sbin/montazh-okno}" podgotovit --task "$PUNKT" --actor "${SMF_RUKA:-root}" --rows "$OKNO_ROWS" --registry "$REESTR_PL" --release "$OKNO_RELEASE")
+[ -z "$OKNO_ID" ] || OKNO_CMD+=(--id "$OKNO_ID")
+[ -z "$OKNO_PLAN" ] || OKNO_CMD+=(--plan "$OKNO_PLAN")
+[ -z "$OKNO_COPIES" ] || OKNO_CMD+=(--copies "$OKNO_COPIES")
+if ! OKNO_ID=$("${OKNO_CMD[@]}"); then echo 'ОТКАЗ: окно не опубликовано, файлы не заменены' >&2; exit 2; fi
+OKNO_OPUBLIKOVANO=1
+echo "ОКНО МОНТАЖА: $OKNO_ID; закрыть отдельно: montazh-okno zakryt $OKNO_ID"
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  d=$(dirname -- "$B/$f")
+  mkdir -p -- "$d" || otkaz_podgotovki "$f (каталог)"
+  t=$(mktemp -- "$d/.${f##*/}.new-XXXXXX") || otkaz_podgotovki "$f (временное имя)"
+  VREM+=("$t"); PUTI+=("$f")
+  cp -p -- "$T/$f" "$t" || otkaz_podgotovki "$f (cp)"
+  if [ -e "$B/$f" ] || [ -L "$B/$f" ]; then
+    bylo=$(stat -Lc %a -- "$B/$f") || otkaz_podgotovki "$f (права)"
+    VLAD[$f]=$(stat -Lc '%u:%g' -- "$B/$f") || otkaz_podgotovki "$f (владелец)"
+    chown --reference="$B/$f" -- "$t" || otkaz_podgotovki "$f (владелец)"
+    [ "$bylo" = "${PRAVA[$f]}" ] || echo "права $f: $bylo → ${PRAVA[$f]}"
+  else
+    VLAD[$f]=$(stat -c '%u:%g' -- "$T/$f") || otkaz_podgotovki "$f (владелец нового)"
+  fi
+  chmod "${PRAVA[$f]}" -- "$t" || otkaz_podgotovki "$f (режим тарбола)"
+  cmp -s -- "$T/$f" "$t" || otkaz_podgotovki "$f (байты)"
+done < "$SOSTAV"
+
+N=0
+for ((i = 0; i < ${#PUTI[@]}; i++)); do
+  f=${PUTI[$i]}
+  if ! mv -fT -- "${VREM[$i]}" "$B/$f"; then
+    echo "🔴 mv $f отказал — откатываю переложенные ($N)"
+    OSHIBOK=0
+    for ((j = 0; j < N; j++)); do
+      q=${PUTI[$j]}
+      if [ -e "$S/fajly/$q" ] || [ -L "$S/fajly/$q" ]; then
+        t=$(mktemp -- "$(dirname -- "$B/$q")/.${q##*/}.new-XXXXXX") || { OSHIBOK=$((OSHIBOK+1)); continue; }
+        VREM+=("$t")
+        cp -p --no-dereference --remove-destination -- "$S/fajly/$q" "$t" && mv -fT -- "$t" "$B/$q" || OSHIBOK=$((OSHIBOK+1))
+      else
+        rm -f -- "$B/$q" || OSHIBOK=$((OSHIBOK+1))
+      fi
+    done
+    ubrat_vrem; ubrat_novye_katalogi
+    [ "$OSHIBOK" = 0 ] && echo "возврат переложенных завершён" || echo "🔴 возврат неполон: $OSHIBOK — страховка $STR; откат: $OTKAT"
+    exit 1
+  fi
+  VREM[$i]=""; N=$((N+1))
+done
+echo "положено: $N из $SOS"
+RZ=0; while IFS= read -r f; do [ -n "$f" ] || continue; cmp -s "$T/$f" "$B/$f" || { echo "   🔴 $f"; RZ=$((RZ+1)); }; done < "$SOSTAV"
+echo "сверка с меткой: расхождений $RZ из $SOS"
+# B-N-1612/1746 r2: режим каждого пути сверяется с реальным тарболом.
+RR=0; while IFS=$'\t' read -r m f; do [ -n "$f" ] || continue; a=$(stat -c %a -- "$B/$f" 2>/dev/null); [ "$a" = "$m" ] || { echo "   🔴 права $f: бой ${a:-нет} против ожидаемых $m"; RR=$((RR+1)); }; done < "$REZHIMY"
+echo "сверка прав с тарболом: расхождений $RR из $(grep -c . "$REZHIMY")"
+RV=0; while IFS= read -r f; do [ -n "$f" ] || continue; a=$(stat -c '%u:%g' -- "$B/$f" 2>/dev/null); [ "$a" = "${VLAD[$f]}" ] || { echo "   🔴 владелец $f: бой ${a:-нет} против ${VLAD[$f]}"; RV=$((RV+1)); }; done < "$SOSTAV"
+echo "сверка владельцев: расхождений $RV из $SOS"
+[ "$N" = "$SOS" ] && [ "$RZ" = 0 ] && [ "$RR" = 0 ] && [ "$RV" = 0 ] && echo "✅ СМОНТИРОВАНО" || { echo "🔴 МОНТАЖ НЕПОЛОН"; exit 1; }
+
+uchet_git
+exit $KOD_GIT

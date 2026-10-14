@@ -1,22 +1,20 @@
-/**
- * Стенд ОТБРОШЕННОГО НАЧАЛА ТРАНСКРИПТА (долг 87) — предмет: обрезка по predelZnakov.
- *
- * 🔴 ЧЕМ ЭТА ПОТЕРЯ ОТЛИЧАЕТСЯ ОТ ДВУХ ПРЕЖНИХ. При отказе фильтра текст отклонён, при
- * отказе модели текста нет вовсе. Здесь текст ЕСТЬ и он законен — он просто НЕ ВЛЕЗ:
- * slice(-predelZnakov) берёт хвост, начало уходит совсем. Замер по журналу за неделю
- * (06.09.2026): обрезка сработала 3 раза, наибольшая потеря 412897 → 200000, то есть 52%.
- * Повтор по срезу не даётся, событие компакта одноразово, журнал ротируется — значит
- * отброшенное исчезало насовсем.
- *
- * ЧЕГО НЕ ЛОВИТ: правильность выбора «хвост против начала». Это гипотеза долга 87, и
- * проверяется она двумя платными заходами по одному срезу, а не стендом. Здесь только то,
- * что отброшенное не пропадает без следа — что бы мы ни выбрали.
- */
+// RU: Проверяем сохранение отброшенного начала транскрипта: predelOkon ограничивает число последних окон по razmerOkna, а не число символов predelZnakov. Допустимый текст вне хвоста не должен исчезать без следа. Предпочтение хвоста началу и качество извлечения не проверяются; для них нужен сравнительный разбор одного среза.
+// EN: Test preservation of the discarded transcript prefix: predelOkon limits the number of final windows by razmerOkna, not the predelZnakov character count. Valid text outside the tail must not disappear without a trace. Tail-versus-prefix preference and extraction quality are untested; they require comparative processing of one slice.
 import { mkdtempSync, writeFileSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { zstdCompressSync } from 'node:zlib';
+// RU: Каждый mkdtemp создаём через vremennyj(): уборка выполняется при обычном выходе, исключении, process.exit и SIGTERM/SIGINT, включая timeout 120. SIGKILL не перехватывается; временное дочернего процесса убирает сам процесс.
+// EN: Create every mkdtemp through vremennyj(): cleanup runs on normal exit, exceptions, process.exit, and SIGTERM/SIGINT, including timeout 120. SIGKILL cannot be intercepted; a child process cleans its own temporary files.
+import { mkdtempSync as mkdtempSync_, rmSync as rmSync_ } from 'node:fs'
+// RU: Без метода маски входа тело дистилляции отказывает. Здесь маска-пустышка намеренно пропускает текст, чтобы изолировать другой предмет; маску проверяет stend-maski-vhoda-sekretarya.
+// EN: The distillation body rejects without the input-mask method. Here an identity fake deliberately passes text through to isolate another subject; stend-maski-vhoda-sekretarya tests masking.
+const MASKA_PUSTYSHKA_STENDA = (t) => ({ tekst: t, zameneno: 0, klassy: [], predelDostignut: false });
+const VREMENNYE = []
+const vremennyj = (...a) => { const k = mkdtempSync_(...a); VREMENNYE.push(k); return k }
+process.on('exit', () => { for (const k of VREMENNYE) rmSync_(k, { recursive: true, force: true }) })
+process.on('SIGTERM', () => process.exit(143)); process.on('SIGINT', () => process.exit(130))
 
 let distillirovat, sozdatOtbroshennoe;
 try {
@@ -28,20 +26,22 @@ try {
 }
 
 let ok = 0, bed = 0;
+const sud = (v) => { if (v !== undefined && v !== true) throw new Error('тело пробы ВЕРНУЛО «' + String(v).slice(0, 60) + '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы. Проверка ПО УСТРОЙСТВУ, а не по перечню значений (06.09.2026)'); };
 const proba = (imya, f) => {
   try {
-    const v = f();
-    if (v && typeof v.then === 'function') throw new Error('тело ОЖИДАЮЩЕЕ, а прогонщик синхронный');
-    if (typeof v === 'string') throw new Error(v);
+    // RU: sud() принимает только undefined или true; дополнительные проверки остальных значений ниже были бы недостижимы.
+    // EN: sud() accepts only undefined or true; additional checks of other values below would be unreachable.
+    sud(f());
     ok++; console.log('  ✅ ' + imya);
   } catch (e) { bed++; console.log('  ❌ ' + imya + ' — ' + String(e.message).slice(0, 180)); }
 };
 
-const kat = mkdtempSync(join(tmpdir(), 'stend-otbrosh-'));
+const kat = vremennyj(join(tmpdir(), 'stend-otbrosh-'));
 const otklonennye = join(kat, 'otklonennye');
 const zhurnal = join(kat, 's.jsonl.zstd');
 
-// Метки-опознаватели: НАЧАЛО и КОНЕЦ должны попасть в разные половины.
+// RU: Метки НАЧАЛО и КОНЕЦ должны попасть в разные половины.
+// EN: НАЧАЛО and КОНЕЦ markers must land in different halves.
 const METKA_NACHALA = 'МЕТКА-НАЧАЛА-СРЕЗА';
 const METKA_KONCA = 'МЕТКА-КОНЦА-СРЕЗА';
 const nabivka = 'слово '.repeat(400);
@@ -59,26 +59,27 @@ const adres = `http://127.0.0.1:${server.address().port}/v1/messages`;
 const klyuch = join(kat, 'k'); writeFileSync(klyuch, 'proba\n', { mode: 0o600 });
 
 const nastrojka = (predel) => ({ klyuch: { fajlKlyucha: klyuch }, model: 'm', adres,
-  maxTokenovTem: 100, maxTokenovStati: 100, predelTem: 5, minTokenovSreza: 1, predelZnakov: predel });
+  maxTokenovTem: 100, maxTokenovStati: 100, predelTem: 5, minTokenovSreza: 1, razmerOkna: 1000, predelOkon: predel });
 
 const kriki = [];
-await distillirovat({
+await distillirovat({ maska: MASKA_PUSTYSHKA_STENDA,
   putZhurnala: zhurnal,
   dannye: { shadowedSeqs: [10, 11], shadowedTokenCount: 5000 },
   seansId: 'proba-otbrosh',
-  nastrojka: nastrojka(1000),
+  nastrojka: nastrojka(1),
   krik: (s) => kriki.push(s),
   zapisat: () => {},
   otbroshennoe: sozdatOtbroshennoe({ putOtklonennyh: otklonennye }, (s) => kriki.push(s)),
 });
 
-// Второй заход — БЕЗ обработчика, чтобы проверить, что молчания не будет.
+// RU: Повторяем без обработчика сохранения: отсутствие обработчика должно быть названо.
+// EN: Repeat without the saving handler: its absence must be reported.
 const kriki2 = [];
-await distillirovat({
+await distillirovat({ maska: MASKA_PUSTYSHKA_STENDA,
   putZhurnala: zhurnal,
   dannye: { shadowedSeqs: [10, 11], shadowedTokenCount: 5000 },
   seansId: 'proba-otbrosh-bez',
-  nastrojka: nastrojka(1000),
+  nastrojka: nastrojka(1),
   krik: (s) => kriki2.push(s),
   zapisat: () => {},
 });
@@ -104,12 +105,12 @@ proba('шапка называет срез и оба числа — иначе 
   if (!f) return 'файла нет';
   const t = readFileSync(join(otklonennye, f), 'utf8');
   if (!/# срез: proba-otbrosh#10-11/.test(t)) return 'срез не назван или не тот';
-  if (!/# было знаков: \d+, взято хвостом: 1000/.test(t)) return 'чисел «было/взято» в шапке нет';
+  if (!/# было знаков: \d+, взято хвостом: \d+/.test(t)) return 'чисел «было/взято» в шапке нет';
   if (!/в память НЕ попало/.test(t)) return 'не сказано, что знание отсюда в память не попало';
 });
 
 proba('крик называет ДОЛЮ отброшенного, а не только факт обрезки', () => {
-  const s = kriki.find((x) => /транскрипт обрезан/.test(x)) ?? '';
+  const s = kriki.find((x) => /ОХВАТ НЕ ПОЛНЫЙ/.test(x)) ?? '';
   if (!/отброшено с НАЧАЛА \d+ \(\d+%\)/.test(s)) return 'доли в крике нет: ' + s.slice(0, 160);
 });
 

@@ -1,0 +1,37 @@
+{
+  "name": "dsh-pamyat-obsluzhivanie",
+  "version": "3.1.4",
+  "description": "Ночное обслуживание памяти агентов: счёт, перенос уроков, судья-модель только с предложениями, сухая чистка, heartbeat · Nightly agent-memory maintenance: count, lesson transfer, proposal-only judge model, dry cleanup, heartbeat",
+  "keywords": [
+    "dsh",
+    "agent-memory",
+    "память-агента",
+    "maintenance",
+    "обслуживание",
+    "omega",
+    "systemd",
+    "heartbeat"
+  ],
+  "type": "module",
+  "bin": {
+    "dsh-pamyat-obsluzhivanie": "src/runner.py"
+  },
+  "files": [
+    "src",
+    "test",
+    "systemd",
+    "docs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.en.md"
+  ],
+  "scripts": {
+    "test": "node test/stend-obsluzhivaniya.mjs"
+  },
+  "license": "MIT",
+  "author": "Aleksandr Argelander",
+  "engines": {
+    "node": ">=22"
+  }
+}

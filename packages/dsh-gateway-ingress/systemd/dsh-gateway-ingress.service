@@ -1,0 +1,16 @@
+[Unit]
+Description=Restrict local gateway callers from agent registry
+After=nftables.service ufw.service
+Before=multi-user.target
+[Service]
+Type=oneshot
+User=root
+RuntimeDirectory=dsh-gateway-ingress
+RuntimeDirectoryMode=0700
+ExecStart=/usr/local/libexec/dsh-gateway-ingress/boot.sh
+# B-N-1850: перерисовать правила БЕЗ каскада на шлюзы — `systemctl reload dsh-gateway-ingress`.
+# restart/stop этой службы переносится на все шлюзы (Requires= в их 97-ingress-network.conf), reload — нет.
+ExecReload=/usr/local/libexec/dsh-gateway-ingress/boot.sh
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target

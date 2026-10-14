@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""sadik-komandy-priyomnik — /switch-a Claude и /switch-b Codex, B-N-1438; /switch-1 и /switch-2 — то же без проверок.
+Только private message от owner; edited_message/channel_post/группы игнорируются.
+/switch без действия даёт подсказку. Новые команды без аргументов, shell не используется.
+Offset сохраняется до исполнения. Новые пути: точные sudo systemctl start --wait
+sadik-switch@a/b.service; root-исполнитель пишет результат в /var/lib/sadik-switch.
+Токен только из файла, не в argv. SADIK_* подменяются только с SADIK_STEND=1.
+Числовой интерфейс ispolnit сохранён для прежнего стенда, из Telegram не вызывается.
+"""
+import json, os, subprocess, sys, time, urllib.parse, urllib.request, urllib.error
+
+# B-N-1417 (по рецепту B-N-1394): подмены SADIK_* — ТОЛЬКО при явном ключе SADIK_STEND=1, тогда первой строкой
+# «ПОДМЕНЕНО: <имена>»; без ключа SADIK_* игнорируются (строка «ИГНОРИРУЮ» в stderr), берутся боевые значения;
+# иное значение ключа — отказ кодом 2 до любых действий. Юнит sadik-komandy SADIK_* не подаёт (Environment пуст).
+BOJ = {
+    "SADIK_BOT_TOKEN_FILE": "/etc/dsh-alert.token",
+    "SADIK_OWNER_FILE": "/etc/vladelec/telegram-id",
+    "SADIK_OFFSET_FILE": "/var/lib/sadik-komandy/offset",
+    "SADIK_UNIT_PREFIX": "pereklyuchatel-podpiski@",
+    "SADIK_ITOG_FILE": "/var/lib/pereklyuchatel-podpiski/last-itog.txt",
+    "SADIK_SYSTEMCTL": "/usr/bin/systemctl",
+    "SADIK_TG_API": "https://api.telegram.org",
+    "SADIK_SUDO": "sudo",
+    "SADIK_SWITCH_UNIT_PREFIX": "sadik-switch@",
+    "SADIK_SWITCH_ITOG_DIR": "/var/lib/sadik-switch",
+}
+_klyuch = os.environ.get("SADIK_STEND")
+if _klyuch not in (None, "1"):
+    sys.stderr.write(f"ОТКАЗ: SADIK_STEND={_klyuch!r} — допустимо только 1 (подмены для стенда)\n")
+    sys.exit(2)
+_podano = sorted(k for k in BOJ if k in os.environ)
+if _klyuch == "1":
+    print("ПОДМЕНЕНО: " + (" ".join(_podano) or "—"), flush=True)
+    sreda = {k: os.environ.get(k, v) for k, v in BOJ.items()}
+else:
+    if _podano:
+        sys.stderr.write("ИГНОРИРУЮ (нет SADIK_STEND=1): " + " ".join(_podano) + "\n")
+    sreda = dict(BOJ)
+
+BOT_TOKEN_FILE = sreda["SADIK_BOT_TOKEN_FILE"]
+OWNER_FILE = sreda["SADIK_OWNER_FILE"]
+OWNER_READER = "/usr/local/bin/vladelec-tg-id"
+OFFSET_FILE = sreda["SADIK_OFFSET_FILE"]
+UNIT_PREFIX = sreda["SADIK_UNIT_PREFIX"]
+ITOG_FILE = sreda["SADIK_ITOG_FILE"]
+SYSTEMCTL = sreda["SADIK_SYSTEMCTL"]
+API = sreda["SADIK_TG_API"]
+SUDO = sreda["SADIK_SUDO"]
+SWITCH_UNIT_PREFIX = sreda["SADIK_SWITCH_UNIT_PREFIX"]
+SWITCH_ITOG_DIR = sreda["SADIK_SWITCH_ITOG_DIR"]
+
+
+def _read(path, default=""):
+    try:
+        return open(path, encoding="utf-8").read().strip()
+    except OSError:
+        return default
+
+
+def owner_id():
+    env = dict(os.environ)
+    if _klyuch == "1" and "SADIK_OWNER_FILE" in os.environ and "VLADELEC_TG_ID_FILE" not in env:
+        env["VLADELEC_TG_ID_FILE"] = OWNER_FILE
+    try:
+        result = subprocess.run([OWNER_READER], capture_output=True, text=True, timeout=3, env=env)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError("владелец не установлен: " + str(error)) from error
+    value = result.stdout.rstrip("\n")
+    if result.returncode != 0 or not value.isascii() or not value.isdigit() or not 5 <= len(value) <= 15 or int(value) <= 0:
+        raise ValueError("владелец не установлен: " + (result.stderr.strip() or "неверный ответ читателя"))
+    return int(value)
+
+
+def token():
+    t = _read(BOT_TOKEN_FILE)
+    if not t:
+        raise SystemExit("нет токена бота: " + BOT_TOKEN_FILE)
+    return t
+
+
+def api(method, params, tok, timeout=70):
+    data = urllib.parse.urlencode(params).encode()
+    req = urllib.request.Request(f"{API}/bot{tok}/{method}", data=data)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
+
+
+def load_offset():
+    v = _read(OFFSET_FILE, "0")
+    return int(v) if v.lstrip("-").isdigit() else 0
+
+
+def save_offset(n):
+    os.makedirs(os.path.dirname(OFFSET_FILE), exist_ok=True)
+    tmp = OFFSET_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(str(n))
+    os.replace(tmp, OFFSET_FILE)
+
+
+def send(tok, chat, text):
+    try:
+        api("sendMessage", {"chat_id": chat, "text": text}, tok, timeout=20)
+    except Exception:
+        pass
+
+
+# Слово владельца 03.10 20:30 МСК (наряд Забавы 17:30Z): /switch-1 — подписка Claude-агентов sadik ТУДА-ОБРАТНО
+# (активная → другая) без вопросов, даже если цель ещё не активна = переключатель без цели + force (снят заслон лимита).
+# Заслон «занятые агенты» (ход не кончился за 600 с — агент остаётся на прежней) и отказ при СМЕШАННОМ состоянии
+# остаются — их решает переключатель, не приёмник. Незнакомый текст владельца — подсказка, не молчание
+# (20:08–20:15 МСК три «/switch-1» были выброшены без следа).
+# Слово владельца 03.10 20:55 МСК: пара для Codex — /switch-2 без проверок (toggle-force), /switch-b с проверкой живости цели.
+# B-N-1499 (слово владельца 03.10 21:10 МСК, решение Забавы 18:15Z): /sss и /sss_on — выключатель чата сайта ↔ Варвара,
+# независимый от процесса Варвары (тот же файл-состояние, что /sss в её чате). LOW Вениамина 18:06Z: «без проверки живости».
+KOMANDY = {"/switch-1": "1", "/switch-a": "a", "/switch-2": "2", "/switch-b": "b", "/sss": "sss", "/sss_on": "sss-on"}
+PODSKAZKA = ("Команды без аргументов (переключения — туда-обратно):\n"
+             "/switch-1 — Claude по кругу 1→2→3→1 без проверки живости\n"
+             "/switch-a — Claude по кругу 1→2→3→1, только если следующая подписка живая (иначе отказ)\n"
+             "/switch-2 — Codex 3↔4 без проверки живости\n"
+             "/switch-b — Codex 3↔4, только если целевая подписка живая (иначе отказ)\n"
+             "/sss — закрыть чат сайта (Варвара перестаёт отвечать посетителям)\n"
+             "/sss_on — открыть чат сайта")
+
+
+def razobrat(text):
+    """Шесть команд без аргументов; /switch, команда с аргументом и любой другой текст — подсказка; пусто — None."""
+    parts = text.strip().split()
+    if not parts:
+        return None
+    command = parts[0]
+    if command.endswith("@arg_dsh_alert_bot"):
+        command = command.removesuffix("@arg_dsh_alert_bot")
+    if command not in KOMANDY:
+        return "usage"
+    return [KOMANDY[command]] if len(parts) == 1 else "usage"
+
+
+def svezhij_itog(t0, path=None):
+    """Итог из ITOG_FILE, ТОЛЬКО если метка прогона (RUN_ID='epoch.pid') свежее момента вызова t0 (новые команды — дробные секунды).
+    Иначе None: в файле — итог прошлого прогона (усл.2 Вениамина v4)."""
+    try:
+        raw = open(path or ITOG_FILE, encoding="utf-8").read().strip()
+    except OSError:
+        return None
+    run_id, _, text = raw.partition("\t")
+    try:
+        ts = float(run_id.rsplit(".", 1)[0])
+    except ValueError:
+        return None
+    if not (ts >= t0 and ts <= time.time()):
+        return None
+    return text.strip() or None
+
+
+def ispolnit(argv):
+    # argv (фикс-список) → имя ЭКЗЕМПЛЯРА единицы: ["2"]→"2", ["2","force"]→"2-force". Ничего в оболочку.
+    if len(argv) == 1 and argv[0] in KOMANDY.values():
+        unit = f"{SWITCH_UNIT_PREFIX}{argv[0]}.service"
+        result_path = os.path.join(SWITCH_ITOG_DIR, f"switch-{argv[0]}.txt")
+    elif argv in (["1", "force"], ["2", "force"]):
+        # Прежний внутренний интерфейс стенда; Telegram сюда больше не маршрутизируется.
+        inst = argv[0] + ("-force" if len(argv) == 2 else "")
+        unit = f"{UNIT_PREFIX}{inst}.service"
+        result_path = ITOG_FILE
+    else:
+        return "ОТКАЗ: неизвестная команда переключения"
+    t0 = time.time() if len(argv) == 1 else int(time.time())
+    # sudo systemctl start --wait: код = результат oneshot; текст итога — из файла ТОЛЬКО если он свежий.
+    p = subprocess.run([SUDO, "-n", SYSTEMCTL, "start", "--wait", unit],
+                       capture_output=True, text=True, timeout=830)
+    itog = svezhij_itog(t0, result_path)
+    if itog:
+        return itog[:3500]   # свежий итог (успех ИЛИ отказ с подсказкой force) — отдаём как есть
+    # итог не свежий/нет — НЕ показываем прошлый; честно говорим смотреть журнал
+    err = (p.stderr or "").strip().replace("\n", " ")[:300]
+    return (f"итог не получен (код {p.returncode}) — см. journalctl -u {unit}"
+            + (f": {err}" if err else ""))
+
+
+def main():
+    try:
+        owner_id()
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(2)
+    tok = token()
+    offset = load_offset()
+    while True:
+        try:
+            r = api("getUpdates", {"offset": offset, "timeout": 60,
+                                   "allowed_updates": json.dumps(["message"])}, tok)
+        except Exception as e:
+            time.sleep(5)
+            continue
+        for u in r.get("result", []):
+            offset = max(offset, u.get("update_id", 0) + 1)
+            save_offset(offset)  # (б) двигаем offset ДО исполнения — старую команду по рестарту не повторим
+            # (а) только message (не edited_message/channel_post), private, from владельца
+            m = u.get("message")
+            if not m:
+                continue
+            if m.get("chat", {}).get("type") != "private":
+                continue
+            try:
+                owner = owner_id()
+            except ValueError as error:
+                print(str(error), file=sys.stderr)
+                continue
+            if m.get("from", {}).get("id") != owner:
+                continue
+            text = m.get("text", "")
+            argv = razobrat(text)
+            if argv is None:
+                continue
+            chat = m["chat"]["id"]
+            if argv == "usage":
+                print(f"подсказка: update_id={u.get('update_id')} текст={text[:40]!r}", flush=True)
+                send(tok, chat, PODSKAZKA)
+                continue
+            print(f"switch accepted: family={argv[0]} update_id={u.get('update_id')}", flush=True)
+            if argv[0] not in ("sss", "sss-on"):   # выключатель сайта мгновенный — без предварительного сообщения
+                send(tok, chat,
+                     "Переключаю Claude. Если агенты заняты, жду конца их хода — до 10 минут на весь запуск. "
+                     "Кто не освободится, останется на прежней подписке; имена сообщу в итоге."
+                     if argv == ["a"] else
+                     "Переключаю Claude туда-обратно без заслона лимита. Если агенты заняты, жду конца их хода — до 10 минут. "
+                     "Кто не освободится, останется на прежней подписке; имена сообщу в итоге."
+                     if argv == ["1"] else
+                     "Переключаю Codex туда-обратно без проверки живости…" if argv == ["2"] else "переключаю…")
+            try:
+                result = ispolnit(argv)
+            except (OSError, subprocess.SubprocessError) as e:
+                result = f"ОТКАЗ: итог переключения неизвестен ({type(e).__name__}); проверь журнал sadik-switch"
+            print(f"switch result: family={argv[0]} update_id={u.get('update_id')}: {result}", flush=True)
+            send(tok, chat, result)
+
+
+if __name__ == "__main__":
+    main()

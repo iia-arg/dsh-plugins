@@ -1,0 +1,24 @@
+[Unit]
+Description=Обновитель токена Codex подписки: штатный refresh на полном носителе, производный для шлюзов (B-N-800)
+Documentation=file:///usr/local/sbin/codex-obnovitel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# root: пишет полный носитель (root 0600) и производный (root:claudeoauth 0640). Шлюзы писать не могут по построению.
+User=root
+# Пути подписки 3 — явно (codex-podpiska-4: умолчаний в программе больше нет); значения = прежние умолчания.
+Environment=CODEX_OBN_POLNYJ=/etc/claude-oauth/codex-podpiska-3/polnyj/auth.json
+Environment=CODEX_OBN_PROIZV=/etc/claude-oauth/codex-podpiska-3/auth.json
+Environment=CODEX_OBN_DOM=/var/lib/codex-obnovitel/podpiska-3
+Environment=CODEX_OBN_ZAMOK=/run/codex-obnovitel.lock
+Environment=CODEX_OBN_SLED=/var/lib/codex-obnovitel/posledniy-progon.json
+ExecStart=/usr/local/sbin/codex-obnovitel
+# 10 — «не требовалось», 4 — «уже идёт другой прогон»: это не сбой.
+SuccessExitStatus=10 4
+# B-N-807: выше суммы ожиданий программы (ответ 240 + выход 60 + TERM 10 + запуск); на пределе systemd шлёт TERM всей группе, KILL через TimeoutStopSec
+TimeoutStartSec=360
+StateDirectory=codex-obnovitel
+StandardOutput=journal
+StandardError=journal

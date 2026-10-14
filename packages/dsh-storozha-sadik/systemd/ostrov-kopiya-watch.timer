@@ -1,0 +1,10 @@
+[Unit]
+Description=Такт сторожа копии API Острова (раз в час)
+
+[Timer]
+OnCalendar=*:23
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

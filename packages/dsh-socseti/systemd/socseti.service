@@ -1,0 +1,41 @@
+[Unit]
+Description=Socseti stage 2 - human-approved Telegram
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=notify
+NotifyAccess=all
+TimeoutStartSec=180
+User=socseti
+Group=socseti
+WorkingDirectory=/opt/socseti
+ExecStart=/usr/bin/flock --nonblock /var/lib/socseti/daemon.lock /usr/local/bin/node /opt/socseti/src/main.mjs /etc/socseti/config.json
+StateDirectory=socseti
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+TemporaryFileSystem=/opt:ro
+BindReadOnlyPaths=/opt/socseti /opt/nodejs
+ReadWritePaths=/var/lib/socseti
+MemoryMax=256M
+TasksMax=64
+LimitNOFILE=128
+
+[Install]
+WantedBy=multi-user.target

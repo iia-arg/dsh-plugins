@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# svesti-dostup-watch — сторож доступа шлюзов к токенам подписок (B-N-1621 k2, Искра; читатель правила 1в ворот Вениамина).
+#
+# ЗАЧЕМ. После перехода B-N-1621 шлюз читает свою подписку по ACL. Любой chmod/chgrp/install/cp файла токена обнуляет
+#   маску или сносит ACL — шлюз молча теряет токен (или снова видит чужие). Правило «после такой правки — svesti --svesti»
+#   без сторожа — текст без читателя. Этот сторож раз в час зовёт `svesti-dostup-podpisok --proverit` (статика + ядро:
+#   своё 1 из 1, чужие 0 из N, env root 0600) и отдаёт красное в agent-alert.
+# 🔴 ВКЛЮЧАТЬ ТОЛЬКО ПОСЛЕ ТАКТА 2 перехода: до него --proverit красный ПО ПОСТРОЕНИЮ (группа 986 читает всё) — сторож
+#   будет тревожить раз в сутки без вины предмета. Таймер ставится выключенным; включение — шаг после «ПЕРЕШЛО».
+# ЧЕГО НЕ ЛОВИТ: правку, сделанную и исправленную между двумя прогонами (окно — час); рабочесть самого токена (срок,
+#   отзыв) — это codex-auth-watch и шлюз; шлюзы, которых помощник не видит в своём составе (гость по LoadCredential).
+# УСЛОВИЕ ОСТАНОВКИ ТРЕВОГ: одинаковая тревога (красное — сумма строк 🔴; слепота — код помощника, БЕЗ хвоста вывода:
+#   в хвосте бывают pid/время, и он сбрасывал бы счёт — замечание Вениамина 07:51Z, k3) — не чаще раза
+#   в 24 ч; новая тревога или зелёное между ними сбрасывают счёт. Зелёное — молчит. Состояние пишется ТОЛЬКО после
+#   доставки (r2, ворота Вениамина 07:34Z): недоставленная тревога повторяется следующим прогоном, а не глохнет на сутки.
+#   Исключение — нет каталога состояния: подавлять нечем, тревога идёт каждый прогон (так и сказано в ней).
+# КОДЫ: 0 зелёное · 1 красное (тревога ушла или подавлена повтором — сказано в журнале) ·
+#   2 помощник отказал/слеп (тревога «сторож слеп» ушла или подавлена) · 3 тревога НЕ доставлена.
+# ПОДМЕНЫ — только стенду и только при SDW_STEND=1: SDW_SVESTI, SDW_ALERT, SDW_SOSTOYANIE, SDW_POVTOR_S. Подмена без
+#   ключа или ключ иной — ОТКАЗ, код 2, ничего не позвано (боевой помощник и боевой канал тревог стенду не нужны).
+set -uo pipefail
+SVESTI=/usr/local/sbin/svesti-dostup-podpisok
+ALERT=/usr/local/bin/agent-alert
+SOSTOYANIE=/var/lib/svesti-dostup-watch
+POVTOR_S=86400
+zadany=$(env | grep -oE '^SDW_(SVESTI|ALERT|SOSTOYANIE|POVTOR_S)=' | tr -d '=' | tr '\n' ' ')
+case "${SDW_STEND:-}" in
+  1) for v in SVESTI ALERT SOSTOYANIE POVTOR_S; do p="SDW_$v"; [ -z "${!p:-}" ] || printf -v "$v" '%s' "${!p}"; done ;;
+  "") [ -z "$zadany" ] || { echo "ОТКАЗ: подмены ($zadany) без SDW_STEND=1 — ничего не позвано" >&2; exit 2; } ;;
+  *) echo "ОТКАЗ: SDW_STEND=«$SDW_STEND» — допустимо только 1 или пусто; ничего не позвано" >&2; exit 2 ;;
+esac
+uzel=$(uname -n)
+trevoga(){   # $1 — код выхода, $2 — ключ повтора (пусто — без подавления и без записи), $3 — текст
+  if [ -n "$2" ] && [ -f "$SOSTOYANIE/poslednee" ] && [ "$(cut -d' ' -f1 "$SOSTOYANIE/poslednee")" = "$2" ]; then
+    vozrast=$(( $(date +%s) - $(stat -c %Y "$SOSTOYANIE/poslednee") ))
+    if [ "$vozrast" -lt "$POVTOR_S" ]; then echo "тревога та же ($2), прошло ${vozrast}с < ${POVTOR_S}с — подавлена (не новость)"; exit "$1"; fi
+  fi
+  if "$ALERT" --plain "доступ к токенам ($uzel): $3" >/dev/null 2>&1; then
+    [ -z "$2" ] || echo "$2 $(date -u +%FT%TZ)" > "$SOSTOYANIE/poslednee"   # ТОЛЬКО после доставки
+    echo "тревога ушла"; exit "$1"
+  fi
+  echo "🔴 ТРЕВОГА НЕ ДОСТАВЛЕНА (канал $ALERT) — состояние не тронуто, следующий прогон повторит" >&2; exit 3
+}
+install -d -m 0700 "$SOSTOYANIE" || { echo "🔴 каталог состояния $SOSTOYANIE не заведён" >&2; trevoga 2 "" "сторож без состояния ($SOSTOYANIE) — подавлять нечем, тревога каждый прогон"; }
+vyvod=$("$SVESTI" --proverit 2>&1); kod=$?
+case "$kod" in
+  0) rm -f "$SOSTOYANIE/poslednee"; echo "зелёное: $SVESTI --proverit код 0"; exit 0 ;;
+  1) ;;
+  *) echo "$vyvod" | tail -20 >&2; hvost=$(echo "$vyvod" | tail -3 | tr '\n' ' ' | cut -c1-300)
+     trevoga 2 "slep:$kod" "СТОРОЖ СЛЕП: $SVESTI --proverit код $kod — $hvost" ;;
+esac
+# красное: расхождения — строки помощника с 🔴 (пути и учётки, значений токенов в них нет — помощник их не читает)
+rash=$(echo "$vyvod" | grep -F '🔴')
+itog=$(echo "$vyvod" | grep -m1 '^РАСХОЖДЕНИЙ' | cut -d' ' -f1-2)
+[ -n "$rash" ] || trevoga 2 "slep:format" "СТОРОЖ СЛЕП: $SVESTI --proverit код 1, но ни одной строки 🔴 — формат вывода разошёлся со сторожем"
+summa=$(printf '%s' "$rash" | sha256sum | cut -c1-16)
+echo "$vyvod" | tail -40
+trevoga 1 "krasnoe:$summa" "${itog:-РАСХОЖДЕНИЙ ?} (строк 🔴: $(echo "$rash" | grep -c .); svesti-dostup-podpisok --proverit). Лечение: sudo svesti-dostup-podpisok --svesti, затем --proverit. $(echo "$rash" | head -5 | tr '\n' ' ' | cut -c1-600)"

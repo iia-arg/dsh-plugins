@@ -1,0 +1,62 @@
+# Журнал изменений · Changelog
+
+## 3.1.1 — 2026-10-13 · A-N-1948 №21
+
+Переход 2.0.4 →3.1.1 намеренный: правило владельца10.10.2026 — каждому готовому модулю номер3.1.1. Пакет остаётся набором19 самостоятельных приборов; служба или фоновый сторож не добавляются.
+
+The 2.0.4 →3.1.1 jump is intentional under the owner’s 2026-10-10 rule assigning3.1.1 to each completed module. The package retains19 standalone tools and adds no background service or watcher.
+
+- Обрезка различает пустые исключения, отсутствие учёта, текст console.log и неполный обход. Реестр agent-registry указан зависимостью; стенд навыков получает свой реестр, недоступный источник не удаляет ссылки.
+- The truncation sweep distinguishes empty exclusions, missing ledger, console.log source text and incomplete scope. agent-registry is documented as a dependency; the skill stand supplies a private registry and unavailable sources preserve links.
+- Удаление и гашение проверяют действие и последующее наблюдение, неизвестные предметы/отказ читателя не превращаются в успех. Укладка проверяет расширение отдельно от шебанга, Python из bytes без pycache; коды неподложенной/положенной цели разделены. Прежний MD5-env сохранён для совместимости, несовпадение —5 до записи.
+- Removal and stopping verify actions and observations, preserving blindness for unknown subjects or reader failure. Placement separates extensions from shebangs and compiles Python bytes without pycache; pre- and post-placement codes differ. Legacy MD5 env remains compatible; mismatch returns5 before writing.
+- Подъёмы: ближайшая точная sudo-команда в пределах60с, UTC, start/restart и экранированные имена, граница имени службы вместо подстроки. История правок использует полный путь и реальное покрытие журнала. Файловые обходы и разрешение имён различают находку и слепоту; dump берёт NODE/PATH.
+- Starts use the nearest exact sudo command within60 seconds, UTC, start/restart and escaped names. Edit history uses full paths and actual journal coverage. File sweeps and resolution distinguish findings from blindness; dumps use NODE/PATH.
+- progon описывает -g и учёт, отказывает неверному числу до запуска; документы называют TCP, ограничения и переменные. История профиля предупреждает о секретах в git add -A. Добавлен постоянный синтетический runtime-стенд, живые тревоги/службы не используются.
+- progon documents -g and accounting and rejects invalid counts before execution; docs name TCP, limits and variables. Profile history warns about secrets in git add -A. A permanent synthetic runtime stand is added; no live alerts or services are used.
+
+- Коды изменились (совместимость вызывающих): `polozhit` — устаревшая сумма `POLOZHIT_SUMMA_PRI_SYOME` 4 → 5 (как `--esli-summa`: не положено), «положено, inode не снят» 5 → 7; `pogasit --unit` несуществующего юнита 0 → 2 (слепота, прежде «не активен — гасить нечего»). Стенд `stend-audit-runtime.py` (Заря, ворота Вениамина): «реестра нет» — PATH пробы без /usr/local с проверкой, что `agent-registry` в нём не виден; `--esli-summa` при чужой правке между съёмом и укладкой → 5, цель не тронута; `pogasit` при переходном состоянии после stop → 3.
+- Exit codes changed (caller compatibility): `polozhit` — stale `POLOZHIT_SUMMA_PRI_SYOME` 4 → 5 (like `--esli-summa`: not placed), "placed, inode unavailable" 5 → 7; `pogasit --unit` for a missing unit 0 → 2 (blindness; previously "not active, nothing to stop"). `stend-audit-runtime.py`: "no registry" uses a PATH without /usr/local and checks that `agent-registry` is not visible; `--esli-summa` with a foreign edit between taking and placing → 5, target untouched; `pogasit` with a transitional state after stop → 3.
+
+## 2.0.4 — 2026-10-07 · окно стенда контракта кодов — от последнего подъёма службы · kontrakt stand window from the service's last start
+
+A-N-1729 (Заря; находка Искры в A-N-1728, пункт Вениамина; ворота Вениамина 05:02Z).
+- `stend-kontrakt-kodov.sh`: окно проб — от последнего подъёма службы `STEND_SLUZHBA` (`ActiveEnterTimestamp` − 2 мин), а не неподвижные `-30d`. Прежде служба, которая поднимается только при загрузке ОС, через 30 суток без перезагрузки выпадала из окна: прибор отвечал «подъёмов НЕ БЫЛО» кодом 0, пробы 1–2 давали ложное расхождение, проба 3 — слепоту; у службы с большим журналом `-30d` упиралось в предел обходчика (`iskra.service` 07.10 — код 124 при 185 с). Нет подъёма или строки `Started` в окне — СЛЕПОТА стенда с причиной (код 2), поведенческие пробы не идут. Замер 07.10 против боевого `kto-podnimal`: `systemd-resolved` и `iskra.service` — 6 из 6 за 2 с.
+- `docs/GUARDS.md`, `docs/TROUBLESHOOTING.md`: окно описано от последнего подъёма, слепота — с причиной.
+- `stend-kontrakt-kodov.sh`: the probe window starts at the last start of `STEND_SLUZHBA` (`ActiveEnterTimestamp` − 2 min) instead of a fixed `-30d`; no start or no `Started` line in the window is stand BLINDNESS with a cause (code 2). `docs/GUARDS.md`, `docs/TROUBLESHOOTING.md` updated.
+
+## 2.0.3 — перенумерация (A-N-1562): прежний 1.0.3, код не менялся · renumbering, code unchanged
+
+## 1.0.3 — 2026-10-04 (кандидат исполнителя; внешняя приёмка впереди) · « #» в значении настройки — отказ · " #" in a settings value is a refusal
+
+- Разборщик файла настройки (bash `konf`, Python `_konf`, Node `konf`, все 13 копий): комментарий — только строка, начинающаяся с `#`. Значение, в котором есть « #» (пробел или таб перед `#`), — громкий отказ с названием ключа и файла, код `2`. Прежде «KEY=знач # пояснение» отдавал «знач # пояснение». `#` без пробела — часть значения, как прежде.
+- Settings file parser (bash `konf`, Python `_konf`, Node `konf`, all 13 copies): a comment is only a line starting with `#`. A value containing " #" (a space or tab before `#`) is a loud refusal naming the key and the file, code `2`. Before, "KEY=val # note" returned "val # note". `#` without a space is part of the value, as before.
+- bash: `konf` возвращает `2` с текстом в stderr, все 17 мест вызова выходят (`|| exit 2`); в `kto-podnimal` ключ `KTO_OTKUDA` читается один раз на верхнем уровне (внутри `$(otkuda_iz_konf …)` отказ не остановил бы прибор), в `ubrat` — `UBRAT_KUDA` перед подсказкой, в `refresh-skill-links` — `SKILL_LINKS_SOURCES` перед `read`.
+- bash: `konf` returns `2` with the text on stderr, all 17 call sites exit (`|| exit 2`); in `kto-podnimal` the `KTO_OTKUDA` key is read once at top level (inside `$(otkuda_iz_konf …)` a refusal would not stop the tool), in `ubrat` — `UBRAT_KUDA` before the hint, in `refresh-skill-links` — `SKILL_LINKS_SOURCES` before `read`.
+- `stend-nastrojki.sh`, раздел Г: отказ у разборщика каждого языка, «#» без пробела, 13 модулей целиком (14 проб, у `kto-podnimal` два ключа). 39 проб вместо 20.
+- `stend-nastrojki.sh`, section D: refusal in each language's parser, "#" without a space, 13 whole modules (14 probes, two keys for `kto-podnimal`). 39 probes instead of 20.
+
+## 1.0.2 — 2026-10-04 (кандидат исполнителя; внешняя приёмка впереди) · рука kto-podnimal, проба устройства kontrakt · kto-podnimal hand, kontrakt structure probe
+
+- `kto-podnimal`: рука берётся как имя учётки из записи `sudo` — всё до пробела или двоеточия. Было `[a-z]+`: учётка с цифрой, дефисом или подчёркиванием не совпадала, `sed` отдавал строку журнала целиком, и она печаталась как «рука».
+- `kto-podnimal`: the hand is the account name from the `sudo` record — everything up to a space or colon. It was `[a-z]+`: an account with a digit, hyphen or underscore did not match, `sed` returned the whole journal line, and it was printed as the "hand".
+- `stend-kto-podnimal-bajty.sh`: проба 6 — учётка `agent-2_x` названа именем (подставной журнал берёт руку из `STEND_RUKA`, умолчание `agenta`). 7 проб вместо 6.
+- `stend-kto-podnimal-bajty.sh`: probe 6 — the `agent-2_x` account is named by its name (the stand-in journal takes the hand from `STEND_RUKA`, default `agenta`). 7 probes instead of 6.
+- `stend-kontrakt-kodov.sh`: проба «ветка exit 1 существует» ищет `exit 1` только в строках кода (до первого `#`); прежде она зеленела на одном комментарии.
+- `stend-kontrakt-kodov.sh`: the "exit 1 branch exists" probe looks for `exit 1` only in code lines (before the first `#`); before, it went green on a single comment.
+
+## 1.0.1 — 2026-10-04 (кандидат исполнителя; внешняя приёмка впереди) · комментарии на двух языках · bilingual comments
+
+- Комментарии всех 19 приборов `bin/` и 4 стендов дополнены английским: строки `EN:` стоят сразу за русским блоком, русский текст не тронут (якоря стендов целы); русский docstring Python — код, английский комментарием после него. Код по токенам равен 1.0.0 в 23 файлах из 23. Не переведены 8 строк комментариев Python внутри строки `python3 -c '…'` в `kto-podnimal`: для bash это строковый литерал.
+- Comments of all 19 `bin/` tools and 4 stands are extended with English: `EN:` lines follow each Russian block right away, the Russian text is untouched (stand anchors intact); a Russian Python docstring is code, the English follows it as a comment. The code is token-equal to 1.0.0 in 23 files of 23. Not translated: 8 Python comment lines inside a `python3 -c '…'` string in `kto-podnimal` — for bash it is a string literal.
+
+## 1.0.0 — 2026-10-04 (кандидат исполнителя; внешняя приёмка впереди) · первый выпуск · first release
+
+- Пакет собран из девятнадцати приборов оболочки, код — боевой с машины: progon, pogasit, proba-v-katalog, ubrat, polozhit, dvojniki, kto-podnimal, kto-pravil-fajl, obeimi-rukami, obyortka-krasneet, istoriya-profilya, sekrety-po-znacheniyu, priznak-vzyatiya.mjs, proba-obrezki.sh, pokrytie-ozhidaniem-prob.mjs, iskat-miny-oblasti.mjs, dsh-dump-kopiya, agent-wake-cost, refresh-skill-links.
+- The package is built from nineteen shell tools, code taken live from the machine: progon, pogasit, proba-v-katalog, ubrat, polozhit, dvojniki, kto-podnimal, kto-pravil-fajl, obeimi-rukami, obyortka-krasneet, istoriya-profilya, sekrety-po-znacheniyu, priznak-vzyatiya.mjs, proba-obrezki.sh, pokrytie-ozhidaniem-prob.mjs, iskat-miny-oblasti.mjs, dsh-dump-kopiya, agent-wake-cost, refresh-skill-links.
+- Частные значения вынесены в файл настройки `/etc/dsh-pribory/dsh-pribory.conf` (22 ключа, путь меняет `DSH_PRIBORY_CONF`); нет значения — СЛЕПОТА или ОТКАЗ, код 2. Имя узла в почте коммита `istoriya-profilya` — `uname -n`. Разряд «откуда» в `kto-podnimal` для своих юнитов — ключ `KTO_OTKUDA`. Номера задач и имена убраны из комментариев.
+- Private values moved into the settings file `/etc/dsh-pribory/dsh-pribory.conf` (22 keys, `DSH_PRIBORY_CONF` changes the path); no value — BLINDNESS or REFUSAL, code 2. The node name in the `istoriya-profilya` commit e-mail is `uname -n`. The "from where" class in `kto-podnimal` for own units is the `KTO_OTKUDA` key. Task ids and names removed from comments.
+- Стенды: `stend-kto-podnimal-bajty.sh`, `stend-kontrakt-kodov.sh`, `stend-skill-links.sh` (переносимые редакции) и новый `stend-nastrojki.sh`.
+- Stands: `stend-kto-podnimal-bajty.sh`, `stend-kontrakt-kodov.sh`, `stend-skill-links.sh` (portable editions) and a new `stend-nastrojki.sh`.
+- Документация по стандарту: `README.md` и `docs/` (`ARCHITECTURE`, `BIN`, `SETTINGS`, `GUARDS`, `TROUBLESHOOTING`) на двух языках.
+- Documentation to the standard: `README.md` and `docs/` (`ARCHITECTURE`, `BIN`, `SETTINGS`, `GUARDS`, `TROUBLESHOOTING`) in two languages.

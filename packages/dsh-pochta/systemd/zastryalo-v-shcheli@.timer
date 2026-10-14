@@ -1,0 +1,11 @@
+# /etc/systemd/system/zastryalo-v-shcheli@.timer — НОВЫЙ файл (B-N-749). Такт тот же, что у общего:
+# 5 мин, равен порогу застревания (обоснование — в zastryalo-v-shcheli.timer).
+[Unit]
+Description=Сторож застрявшего письма агента %i — каждые 5 минут
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+
+[Install]
+WantedBy=timers.target

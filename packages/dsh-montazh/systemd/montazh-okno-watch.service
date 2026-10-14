@@ -1,0 +1,13 @@
+[Unit]
+Description=Просроченные или отказавшие окна монтажа (B-N-2025)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+User=root
+StateDirectory=montazh-okna
+StateDirectoryMode=0755
+ExecStart=/usr/local/sbin/montazh-okno watch
+TimeoutStartSec=120s
+StandardOutput=journal
+StandardError=journal

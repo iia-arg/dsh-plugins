@@ -1,0 +1,16 @@
+# RU: Суточный отчёт о брошенных хвостах /var/tmp. Код 1 = хвосты найдены и тревога ушла — не отказ юнита.
+# EN: Daily report on abandoned /var/tmp leftovers. Exit 1 = leftovers found and alert delivered — not a unit failure.
+# RU: Настройка HVT_PERECHEN (перечень долгожителей) — через drop-in <юнит>.d/*.conf (Environment=).
+# EN: Setting HVT_PERECHEN (long-lived list) — via a drop-in <unit>.d/*.conf (Environment=).
+[Unit]
+Description=Сторож брошенных хвостов /var/tmp — отчёт, не удаление · /var/tmp leftovers watchdog — report, no deletion
+Documentation=file:///usr/local/sbin/hvosty-vartmp-watch
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hvosty-vartmp-watch
+SyslogIdentifier=hvosty-vartmp-watch
+SuccessExitStatus=1
+TimeoutStartSec=10min
+Nice=10
+IOSchedulingClass=idle

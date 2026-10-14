@@ -1,0 +1,433 @@
+#!/usr/bin/env python3
+"""vorota-obezlichivaniya — ворота СЕКРЕТОВ перед публикацией (A-N-1507; упрощено по слову владельца 09.10.2026 18:33 МСК:
+«ограничимся проверкой на секреты; имена машины, пакетов и агентов — не важные для меня параметры»).
+
+Ищет в публикуемом два класса и ничего больше:
+  SEKRET — ТОЧНОЕ вхождение настоящего секрета машины (и его base64): значения читаются из источников ниже,
+           живут только в памяти процесса, в вывод идёт файл:строка и ИМЯ источника, никогда значение;
+  TOKEN  — строка с известным префиксом токена (sk-ant-, ghp_, github_pat_, npm_, xox?-, AKIA, бот Telegram, PEM-ключ).
+Имена агентов, людей и машин, пути, IP, домены, chat_id, номера пунктов — НЕ проверяются (сняты 09.10.2026).
+
+    vorota-obezlichivaniya <каталог | архив.tgz> [--svodka]   проверить предмет
+    vorota-obezlichivaniya --kontrol                          проверить САМ прибор (подставной источник, порча и возврат,
+                                                              утечка в полном выводе, настоящие источники)
+    (--kontrol-shag и переменная VOROTA_PODSTAVNOJ_ISTOCHNIK — только внутренний шаг --kontrol; иначе ОТКАЗ, код 2)
+
+Запуск — только от root: источники секретов 600/640 root. Не root → СЛЕПОТА (код 2).
+Предмет — КАТАЛОГ или архив .tgz. Одиночный файл → СЛЕПОТА (код 2): положите его в каталог.
+Коды: 0 — чисто; 1 — находки (ОТКАЗ публикации); 2 — слепота/неверный вызов (проверять нечего или нечем — НЕ «чисто»).
+
+Источники (ISTOCHNIKI ниже; замер 09.10.2026 под root): файлы-значения /etc/claude-oauth/token*, /etc/dsh-klyuchi/*,
+/etc/dsh-telegram/*.token, /etc/opisatel-kartinok/*.key, /etc/varvara/*.key, /etc/dsh-gateway/ingress/*.key,
+/etc/omega/gost-klyuchi.txt, /etc/fal-klyuchi/*, /etc/sajt-chat/{api.token,shlyuz.secret}, /etc/socseti/{*.token,*.key};
+env-файлы /etc/omega/*.env, /etc/omega/gost/*.env, /etc/socseti/*.env (значения ключей *KEY*/*TOKEN*/*SECRET*/*PASS*/*KLYUCH*);
+JSON /etc/claude-oauth/codex-podpiska-*/**/auth.json (поля *_token); хранилище pass /etc/agent-secrets (расшифровка
+рукой iskra, `pass show`; записи-сведения — адреса, логины, почты, ссылки, *-id, версии — отсеяны по имени, PASS_NE_SEKRET).
+Источник, не прочитанный или давший 0 значений, — СЛЕПОТА (код 2): ворота не говорят «чисто» с дырой в словаре.
+
+Область: все обычные файлы предмета, кроме node_modules/ и .git/; двоичные (NUL в первых 8 КБ) пропускаются и СЧИТАЮТСЯ
+отдельно — они вне проверки. Знаменатель печатается всегда: файлов просмотрено / двоичных пропущено.
+
+Порог длины значения — MIN_DLINA = 12 знаков: короче не ищется (иначе «true», «1», короткие ПИН дали бы находки по всему
+дереву); число таких значений печатается в ИТОГО («короче 12 знаков: N»). На 09.10.2026 это 32 значения, в pass — пароли до 11.
+base64 ловится целиком (std и urlsafe, с «=» и без) и ВНУТРИ большего base64 — три сдвига по началу тройки байтов.
+Значение не печатается нигде: не в argv и окружении дочерних процессов, не в stdout/stderr (находка — файл:строка и имя
+источника), не в тексте исключений (внутренняя ошибка — только имя типа), не в файлах вне /dev/shm (только --kontrol,
+каталог 700, файлы 600, удаление в finally и по SIGTERM/SIGINT/SIGHUP). Дамп ядра выключен.
+
+Чего НЕ ловит (граница): секреты в двоичных файлах и картинках; значения короче 12 знаков; секрет, разорванный переносом
+строки или экранированием, зашифрованный или в иной кодировке (hex, url-escape, gzip, base32); часть секрета без целого;
+секреты, которых нет ни в источниках, ни среди префиксов TOKEN (чужие ключи без префикса); значения записей pass,
+отсеянных по имени как сведения (PASS_NE_SEKRET); секрет, сменённый после прогона; убийство SIGKILL посреди --kontrol
+(тогда каталог /dev/shm/vorota-ob-k-* остаётся — 700 root, удалить рукой).
+"""
+import base64, glob, json, os, pwd, re, resource, shutil, signal, subprocess, sys, tarfile, tempfile
+
+MIN_DLINA = 12
+PROPUSK_KAT = {"node_modules", ".git"}
+
+TOKEN = [
+    ("sk-ant-…", re.compile(rb"sk-ant-[\w-]{10,}")), ("sk-…", re.compile(rb"(?<![\w-])sk-[A-Za-z0-9_-]{20,}")),
+    ("gh?_…", re.compile(rb"gh[pousr]_[A-Za-z0-9]{20,}")), ("github_pat_…", re.compile(rb"github_pat_\w{20,}")),
+    ("npm_…", re.compile(rb"(?<![\w-])npm_[A-Za-z0-9]{20,}")), ("xox?-…", re.compile(rb"xox[abpr]-[\w-]{10,}")),
+    ("AKIA…", re.compile(rb"AKIA[0-9A-Z]{16}")), ("бот Telegram", re.compile(rb"(?<!\d)\d{8,10}:AA[\w-]{30,}")),
+    ("PEM PRIVATE KEY", re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+]
+# Явный допуск строки для класса TOKEN: «vorota-ob:dopusk=TOKEN» на той же строке (образец в стенде фильтра).
+# На SEKRET допуска нет: настоящий секрет в публикуемом — всегда отказ.
+DOPUSK = re.compile(rb"vorota-ob:dopusk=TOKEN")
+
+KLYUCH_SEKRETA = re.compile(r"(?i)key|token|secret|pass|klyuch|private|psk|preshared|credential")
+ISTOCHNIKI = [
+    ("fajl", "/etc/claude-oauth/token*"), ("fajl", "/etc/dsh-klyuchi/*"), ("fajl", "/etc/dsh-telegram/*.token"),
+    ("fajl", "/etc/opisatel-kartinok/*.key"), ("fajl", "/etc/varvara/*.key"), ("fajl", "/etc/dsh-gateway/ingress/*.key"),
+    ("fajl", "/etc/omega/gost-klyuchi.txt"), ("fajl", "/etc/fal-klyuchi/*"), ("fajl", "/etc/sajt-chat/api.token"),
+    ("fajl", "/etc/sajt-chat/shlyuz.secret"), ("fajl", "/etc/socseti/*.token"), ("fajl", "/etc/socseti/*.key"),
+    ("env", "/etc/omega/*.env"), ("env", "/etc/omega/gost/*.env"), ("env", "/etc/socseti/*.env"),
+    ("json", "/etc/claude-oauth/codex-podpiska-*/**/auth.json"),
+]
+PASS_DIR, PASS_RUKA = "/etc/agent-secrets", "iskra"
+# Записи pass, которые по имени — СВЕДЕНИЯ, а не секрет (адрес, логин, почта, ссылка, номер, версия): не грузятся.
+# При сомнении запись НЕ отсеивается (server-keys, meta, wifi-networks, vpn-policy — грузятся): лишняя находка дешевле пропуска.
+PASS_NE_SEKRET = re.compile(r"(?i)(^|[/-])(ips?|username|user|login|admin-login|email|account-email|firstname|lastname|"
+                            r"url|endpoint|public|info|server-info|domain|server-external|server-internal|server|"
+                            r"chat-id|project-id|client-id|host|port|ssh-port|name|phone|address|region|arch|serial|"
+                            r"hw-id|wan-mac|mac|wifi-ssid|ssid|os-version|os-full-version|"
+                            r"account-id|app-id|group-id|cloud-id|folder-id|instance-id|passport-id|redirect-uri|"
+                            r"internal-number|sms-report-id|screen-name|display-name|cloud-name|app-name|api-key-id|"
+                            r"key-public)$|(-ip|-email|-username|-url|-login|-public|-id|-info)$|/numbers/|"
+                            r"CHITAT-PERVYM")
+
+
+# Не значение секрета целиком: ссылка (token_uri и т.п.). Секрет ВНУТРИ ссылки (вебхук …/rest/1/<токен>/) берёт chasti().
+NE_ZNACHENIE = re.compile(r"^[A-Za-z][\w+.-]*://")
+
+
+def chasti(s):
+    """Части через «:» (key_id:secret, бот:токен) от MIN_DLINA; слова из одних букв (имя заголовка) — не часть-секрет.
+    Ссылка «по двоеточию» не режется («https» + «//хост/путь» — не секреты): из неё берутся сегменты пути/запроса
+    от MIN_DLINA с цифрой и без точки (токен вебхука), хост и слова — нет."""
+    if NE_ZNACHENIE.match(s):
+        return {p for p in re.split(r"[/?&=#]", s) if len(p) >= MIN_DLINA and re.search(r"\d", p) and "." not in p}
+    return {p for p in s.split(":") if len(p) >= MIN_DLINA and not re.fullmatch(r"[A-Za-z]+", p)}
+
+
+def iz_teksta(tekst, tolko_klyuchi=False):
+    """Значения из текста секрета. Однострочный текст — значение целиком и его части через «:» (key_id:secret, бот:токен).
+    Многострочный (запись pass, конфиг, PEM, env) — первая строка без пробелов целиком (обычай pass: секрет первой строкой), и ещё:
+    v из «k = v» / «k: v» / «K=V», если k похож на секрет (KLYUCH_SEKRETA);
+    тело PEM-ключа построчно; голая строка base64/hex от 32 знаков. Адреса, порты, логины многострочных конфигов НЕ берутся.
+    tolko_klyuchi — env-файл: только «K=V» с секретным K, даже если строка одна."""
+    stroki = [s.strip() for s in tekst.splitlines() if s.strip()]
+    if len(stroki) == 1 and not tolko_klyuchi:
+        s = stroki[0].strip('"').strip("'")
+        return {x for x in {s} | chasti(s) if not NE_ZNACHENIE.search(x)}
+    out, pem = set(), False
+    if not tolko_klyuchi and stroki and not re.search(r"\s", stroki[0]) and not stroki[0].startswith("-----"):
+        out.add(stroki[0]); out.update(chasti(stroki[0]))   # обычай pass: секрет — первая строка
+    for s in stroki:
+        if s.startswith("-----BEGIN"):
+            pem = True; continue
+        if s.startswith("-----END"):
+            pem = False; continue
+        if pem:
+            if not s.startswith("b3BlbnNzaC1rZXktdjEAAAAA"):   # «openssh-key-v1…» — общий заголовок формата, не секрет
+                out.add(s)
+            continue
+        m = re.match(r'^"?([\w.-]+)"?\s*[=:]\s*(.+)$', s)
+        if m and KLYUCH_SEKRETA.search(m.group(1)):
+            out.add(m.group(2).strip().rstrip(",").strip('"').strip("'"))
+        elif not tolko_klyuchi and re.fullmatch(r"[A-Za-z0-9+/_=-]{32,}", s):
+            out.add(s)
+    return {x for x in out if not NE_ZNACHENIE.search(x)}
+
+
+def iz_json(o, klyuch=""):
+    if isinstance(o, dict):
+        return set().union(*[iz_json(v, k) for k, v in o.items()]) if o else set()
+    if isinstance(o, list):
+        return set().union(*[iz_json(v, klyuch) for v in o]) if o else set()
+    if isinstance(o, str) and KLYUCH_SEKRETA.search(klyuch):
+        return iz_teksta(o)
+    return set()
+
+
+def varianty_b64(b):
+    """base64 значения: целиком (std и urlsafe, с «=» и без) и ТРИ сдвига — секрет внутри большего base64 начинается с
+    байта 0, 1 или 2 своей тройки; у каждого сдвига берётся часть кодировки, зависящая только от байтов секрета."""
+    out = set()
+    for enc in (base64.b64encode, base64.urlsafe_b64encode):
+        out |= {enc(b), enc(b).rstrip(b"=")}
+        for k in (0, 1, 2):
+            x = b"\0" * k + b
+            chast = enc(x[:len(x) - len(x) % 3])[(k * 4 + 2) // 3:]
+            if len(chast) >= MIN_DLINA:
+                out.add(chast)
+    return out
+
+
+def zagruzit(podstava_istochnik=None):
+    """→ (словарь значение(bytes) → имя источника, отчёт [(источник, взято, короче), …], беда или None).
+    podstava_istochnik — ТОЛЬКО режим --kontrol-shag: единственный источник-файл вместо настоящих, pass не читается."""
+    znach, otchet = {}, []
+
+    def dobavit(imya, vals):
+        vzyato = korotko = 0          # vzyato — значений нужной длины, ВКЛЮЧАЯ уже взятые из другого источника (тот же токен в двух файлах)
+        for v in vals:
+            if len(v) < MIN_DLINA:
+                korotko += 1; continue
+            b = v.encode("utf-8")
+            vzyato += 1
+            znach.setdefault(b, imya)
+            for b64 in varianty_b64(b):
+                znach.setdefault(b64, imya + " (base64)")
+        otchet.append((imya, vzyato, korotko))
+        return vzyato
+
+    for vid, maska in ([("fajl", podstava_istochnik)] if podstava_istochnik else ISTOCHNIKI):
+        fajly = sorted(glob.glob(maska, recursive=True))
+        if not fajly:
+            return znach, otchet, f"источник {maska}: файлов нет"
+        for f in fajly:
+            try:
+                t = open(f, encoding="utf-8", errors="replace").read()
+                vals = (iz_teksta(t, tolko_klyuchi=True) if vid == "env" else iz_json(json.loads(t)) if vid == "json"
+                        else iz_teksta(t))
+            except (OSError, ValueError) as e:
+                return znach, otchet, f"источник {f} не прочитан: {type(e).__name__}"
+            if not dobavit(f, vals):
+                return znach, otchet, f"источник {f}: 0 значений длиной ≥ {MIN_DLINA}"
+    if podstava_istochnik:
+        return znach, otchet, None
+    zapisi = sorted(os.path.relpath(p, PASS_DIR)[:-4] for p in glob.glob(PASS_DIR + "/**/*.gpg", recursive=True))
+    if not zapisi:
+        return znach, otchet, f"хранилище {PASS_DIR}: записей нет"
+    ruka = pwd.getpwnam(PASS_RUKA)
+    vyzov = ["/usr/bin/pass", "show"] if os.geteuid() == ruka.pw_uid else ["/usr/sbin/runuser", "-u", PASS_RUKA, "--", "/usr/bin/pass", "show"]
+    sreda = {"PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin", "HOME": ruka.pw_dir, "PASSWORD_STORE_DIR": PASS_DIR, "LANG": "C.UTF-8"}
+    otseyano = 0
+    for z in zapisi:
+        if PASS_NE_SEKRET.search(z):
+            otseyano += 1; continue
+        try:
+            r = subprocess.run(vyzov + [z], capture_output=True, env=sreda, timeout=60)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return znach, otchet, f"pass {z}: не запущен ({type(e).__name__})"
+        if r.returncode != 0:
+            return znach, otchet, f"pass {z}: не расшифрован (код {r.returncode})"
+        t = r.stdout.decode("utf-8", "replace")
+        try:
+            o = json.loads(t)
+            vals = iz_json(o) if isinstance(o, (dict, list)) else iz_teksta(t)
+        except ValueError:
+            vals = iz_teksta(t)
+        dobavit("pass:" + z, vals)      # 0 у отдельной записи pass не слепота: короткие ПИН/номера отсекает MIN_DLINA
+    otchet.append((f"pass: отсеяно по имени как сведения", otseyano, 0))
+    return znach, otchet, None
+
+
+def dvoichnyj(put):
+    try:
+        with open(put, "rb") as f:
+            return b"\0" in f.read(8192)
+    except OSError:
+        return None
+
+
+def obojti(koren, znach):
+    """→ (находки[(класс, отн.путь, строка, что)], просмотрено, двоичных, нечитаемых, допусков)"""
+    nahodki, smotr, dvoich, nechit, dopusk = [], 0, 0, [], 0
+    for papka, katalogi, fajly in os.walk(koren):
+        katalogi[:] = sorted(k for k in katalogi if k not in PROPUSK_KAT)
+        for imya in sorted(fajly):
+            put = os.path.join(papka, imya)
+            if os.path.islink(put) or not os.path.isfile(put):
+                continue
+            otn = os.path.relpath(put, koren)
+            d = dvoichnyj(put)
+            if d is None:
+                nechit.append(otn); continue
+            if d:
+                dvoich += 1; continue
+            smotr += 1
+            try:
+                dannye = open(put, "rb").read()
+            except OSError:
+                nechit.append(otn); continue
+            for v, ist in znach.items():
+                i = dannye.find(v)
+                while i >= 0:
+                    nahodki.append(("SEKRET", otn, dannye.count(b"\n", 0, i) + 1, ist))
+                    i = dannye.find(v, i + 1)
+                if v in otn.encode("utf-8", "replace"):
+                    nahodki.append(("SEKRET", otn, 0, ist + " [имя файла]"))
+            for n, stroka in enumerate(dannye.split(b"\n"), 1):
+                for imya_t, sh in TOKEN:
+                    if sh.search(stroka):
+                        if DOPUSK.search(stroka):
+                            dopusk += 1
+                        else:
+                            nahodki.append(("TOKEN", otn, n, imya_t))
+                        break
+    return sorted(set(nahodki)), smotr, dvoich, nechit, dopusk
+
+
+def proverit(predmet, svodka=False, podstava_istochnik=None):
+    if podstava_istochnik:
+        print(f"⚠️ ПОДМЕНА ИСТОЧНИКОВ (режим контроля): единственный источник {podstava_istochnik} — это НЕ проверка на секреты машины")
+    elif os.geteuid() != 0:
+        print("🔴 СЛЕПОТА: ворота секретов — только от root (источники 600/640 root). Это НЕ «чисто»."); return 2
+    znach, otchet, beda = zagruzit(podstava_istochnik)
+    if beda:
+        print(f"🔴 СЛЕПОТА: {beda}. Словарь секретов неполон — это НЕ «чисто»."); return 2
+    tmp = None
+    if os.path.isfile(predmet) and predmet.endswith((".tgz", ".tar.gz")):
+        tmp = tempfile.mkdtemp(prefix="vorota-ob-")
+        with tarfile.open(predmet) as t:
+            t.extractall(tmp, filter="data")
+        koren = tmp
+    elif os.path.isdir(predmet):
+        koren = predmet
+    else:
+        print(f"🔴 СЛЕПОТА: предмета нет или это не каталог/.tgz: {predmet}"); return 2
+    try:
+        nahodki, smotr, dvoich, nechit, dopusk = obojti(koren, znach)
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+    istochnikov = sum(1 for x in otchet if not x[0].startswith("pass: отсеяно"))
+    korotkih = sum(x[2] for x in otchet)
+    if smotr == 0:
+        print(f"🔴 СЛЕПОТА: ни одного текстового файла в {predmet} (двоичных {dvoich}, нечитаемых {len(nechit)}). Это НЕ «чисто»."); return 2
+    if not svodka:
+        for k, otn, n, chto in nahodki:
+            print(f"{k}\t{otn}:{n}\t{chto}")
+    po = {k: sum(1 for x in nahodki if x[0] == k) for k in ("SEKRET", "TOKEN")}
+    print(f"ИТОГО {predmet}: находок {len(nahodki)} · SEKRET {po['SEKRET']} · TOKEN {po['TOKEN']}"
+          f" · файлов просмотрено {smotr}, двоичных пропущено {dvoich}, нечитаемых {len(nechit)}"
+          f" · источников {istochnikov} · значений {sum(1 for v in znach.values() if not v.endswith('(base64)'))}"
+          f" · не прочитано 0 (непрочитанный источник — СЛЕПОТА выше) · короче {MIN_DLINA} знаков: {korotkih} (не ищутся)"
+          f" · допусков TOKEN по пометке {dopusk}")
+    if nechit:
+        print("🔴 НЕЧИТАЕМЫЕ (вне проверки): " + ", ".join(nechit[:10])); return 2
+    return 1 if nahodki else 0
+
+
+CHISTOE = ("Имена, машины, пути, IP, домены, chat_id, пункты — больше НЕ находка (слово владельца 09.10.2026):\n"
+           "ответ Забаве записан, у Искры две нити, Михалыч поднял, Варвара, Mark, Aurora, ssh sadik, aclaude, vps-ru\n"
+           "/opt/iskra/workspace, /home/claude/x, /etc/agent-registry/plugins.yaml, адрес 192.168.99.3:4210, 10.240.0.1\n"
+           "https://chat.ostrov.center/x, почта iia@ostrov.center, чат -1009876543210, chat_id: 123456789, B-N-1499, A-N-1507\n"
+           "почти-токены: sk-short, ghp_short, npm_x, версия 1.5.66, sha256 9c01ab77cc271ebe\n"
+           "образец sk-ant-api03-OBRAZEC-STENDA-0000 // vorota-ob:dopusk=TOKEN\n")
+TOKEN_OBRAZCY = ["sk-ant-api03-AAAAAAAAAAAAAAAAAAAA", "ghp_" + "A" * 30, "1234567890:AA" + "b" * 33,   # vorota-ob:dopusk=TOKEN
+                 "-----BEGIN OPENSSH PRIVATE KEY-----"]   # vorota-ob:dopusk=TOKEN
+
+
+def kontrol():
+    """Признаки Вениамина (A-N-1507 Б.1, Б.6): подставной секрет — через ПОДСТАВНОЙ источник (файл в /dev/shm 600), не настоящий;
+    шаги идут ОТДЕЛЬНЫМ процессом (--kontrol-shag), и подставное значение ищется по ПОЛНОМУ выводу (stdout+stderr) — 0.
+    Порча вносится в один файл с суммой до/после, возврат — та же сумма и код 0. Затем — настоящие источники (только root)."""
+    plohie = 0
+    tmp = tempfile.mkdtemp(prefix="vorota-ob-k-", dir="/dev/shm")
+    os.chmod(tmp, 0o700)
+
+    def zapis(otn, tekst):
+        p = os.path.join(tmp, otn)
+        os.makedirs(os.path.dirname(p), mode=0o700, exist_ok=True)
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(tekst if isinstance(tekst, bytes) else tekst.encode("utf-8"))
+        return p
+
+    def summa(p):
+        import hashlib
+        return hashlib.sha256(open(p, "rb").read()).hexdigest()[:16]
+
+    def shag(nazvanie, zhdem_kod, zhdem_stroki, istochnik, vyvody):
+        r = subprocess.run([sys.executable, os.path.abspath(__file__), "--kontrol-shag", os.path.join(tmp, "predmet")],
+                           capture_output=True, env={"PATH": "/usr/bin:/bin", "VOROTA_PODSTAVNOJ_ISTOCHNIK": istochnik}, timeout=120)
+        v = r.stdout.decode("utf-8", "replace") + r.stderr.decode("utf-8", "replace")
+        vyvody.append(v)
+        nahod = sorted(l for l in v.splitlines() if l.startswith(("SEKRET\t", "TOKEN\t")))
+        ok = r.returncode == zhdem_kod and nahod == sorted(zhdem_stroki)
+        print(f"  {'ok  ' if ok else 'FAIL'} {nazvanie}: код {r.returncode} (ждали {zhdem_kod}), находок {len(nahod)} (ждали {len(zhdem_stroki)})"
+              + ("" if ok else f" · пришло {nahod} · ждали {sorted(zhdem_stroki)}"))
+        return not ok
+
+    try:
+        podstava = os.urandom(24).hex()                     # 48 знаков; только память и /dev/shm 600
+        ist = zapis("istochnik/podstava.key", podstava + "\n")
+        b = podstava.encode()
+        vyvody = []
+        readme = zapis("predmet/README.md", CHISTOE)
+        zapis("predmet/tokeny.txt", "нейтральная строка\n" + "\n".join(TOKEN_OBRAZCY) + "\n")
+        tok = [f"TOKEN\ttokeny.txt:{i + 2}\t{imya}" for i, imya in enumerate(("sk-ant-…", "gh?_…", "бот Telegram", "PEM PRIVATE KEY"))]
+        s0 = summa(readme)
+        plohie += shag("чисто: имена агентов и людей, /opt/<агент>, машины, IP, домены, chat_id, пункты — НЕ ловит; 4 образца TOKEN — ловит",
+                       1, tok, ist, vyvody)
+        isk = CHISTOE.split("\n")
+        isk.insert(2, "ключ: " + podstava)                                                   # строка 3
+        isk.insert(4, "blob " + base64.b64encode(os.urandom(7) + b + os.urandom(5)).decode())  # строка 5: сдвиг 1 в длинном base64
+        isk.insert(6, "blob " + base64.urlsafe_b64encode(os.urandom(8) + b).decode())          # строка 7: сдвиг 2, urlsafe
+        zapis("predmet/README.md", "\n".join(isk))
+        s1 = summa(readme)
+        print(f"  {'ok  ' if s1 != s0 else 'FAIL'} порча внесена: сумма README.md {s0} → {s1}")
+        plohie += s1 == s0
+        plohie += shag("порча: известный секрет (стр. 3), внутри base64 со сдвигом 1 (стр. 5) и 2 (стр. 7) — ловит с ИМЕНЕМ источника",
+                       1, tok + [f"SEKRET\tREADME.md:3\t{ist}", f"SEKRET\tREADME.md:5\t{ist} (base64)",
+                                 f"SEKRET\tREADME.md:7\t{ist} (base64)"], ist, vyvody)
+        zapis("predmet/README.md", CHISTOE)
+        os.remove(os.path.join(tmp, "predmet", "tokeny.txt"))
+        s2 = summa(readme)
+        print(f"  {'ok  ' if s2 == s0 else 'FAIL'} порча снята: сумма README.md {s2} (= до порчи {s0})")
+        plohie += s2 != s0
+        plohie += shag("возврат: тот же предмет без порчи и без образцов TOKEN", 0, [], ist, vyvody)
+        vse = "\n".join(vyvody)
+        utechki = [x for x in [b] + sorted(varianty_b64(b)) if x.decode() in vse]
+        print(f"  {'ok  ' if not utechki else 'FAIL'} значение подставы и его base64 в полном выводе шагов (stdout+stderr, {len(vse)} знаков): "
+              f"{len(utechki)} вхождений")
+        plohie += bool(utechki)
+        r = subprocess.run([sys.executable, os.path.abspath(__file__), os.path.join(tmp, "predmet")], capture_output=True,
+                           env={"PATH": "/usr/bin:/bin", "VOROTA_PODSTAVNOJ_ISTOCHNIK": ist}, timeout=120)
+        ok = r.returncode == 2 and "ОТКАЗ" in r.stdout.decode("utf-8", "replace")
+        print(f"  {'ok  ' if ok else 'FAIL'} подменный источник вне --kontrol-shag — отказ, код {r.returncode} (ждали 2)")
+        plohie += not ok
+        if os.geteuid() != 0:
+            print("  СЛЕПОТА источники: не root — настоящие источники не читаются, эта часть контроля не исполнена")
+            return 2
+        znach_r, otchet, beda = zagruzit()
+        for imya, vzyato, korotko in otchet:
+            print(f"    источник {imya}: взято {vzyato}" + (f", короче {MIN_DLINA} — {korotko}" if korotko else ""))
+        ok = beda is None and len(znach_r) > 0
+        print(f"  {'ok  ' if ok else 'FAIL'} настоящие источники: {len(otchet) - 1} прочитано, значений "
+              f"{sum(1 for v in znach_r.values() if not v.endswith('(base64)'))}" + (f" · БЕДА: {beda}" if beda else ""))
+        plohie += not ok
+        if ok:
+            # настоящее значение (первое из pass и первое из файлов) — в /dev/shm 600, ловится с ИМЕНЕМ своего источника
+            for kakoe in ("pass:", "/etc/"):
+                v, imya_i = next((v, i) for v, i in znach_r.items() if i.startswith(kakoe) and not i.endswith("(base64)"))
+                zapis("nastoyashchee/x.txt", b"nejtralno\n" + v + b"\n")
+                n3, _, _, _, _ = obojti(os.path.join(tmp, "nastoyashchee"), znach_r)
+                ok3 = ("SEKRET", "x.txt", 2, imya_i) in n3
+                print(f"  {'ok  ' if ok3 else 'FAIL'} настоящее значение из «{imya_i}» ловится с именем источника")
+                plohie += not ok3
+                os.remove(os.path.join(tmp, "nastoyashchee", "x.txt"))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"КОНТРОЛЬ: {'ГОДЕН' if plohie == 0 else f'НЕГОДЕН — {plohie} провалов'}")
+    return 0 if plohie == 0 else 1
+
+
+def _signal(nomer, _):
+    raise SystemExit(2)          # SIGTERM/SIGINT/SIGHUP → finally убирает /dev/shm и временный каталог архива
+
+
+def glavnaya(a):
+    if a == ["--kontrol"]:
+        return kontrol()
+    podstava = os.environ.get("VOROTA_PODSTAVNOJ_ISTOCHNIK")
+    if a[:1] == ["--kontrol-shag"]:
+        if len(a) != 2 or not podstava or not podstava.startswith("/dev/shm/"):
+            print("🔴 ОТКАЗ: --kontrol-shag только из --kontrol (подставной источник в /dev/shm)"); return 2
+        return proverit(a[1], False, podstava)
+    if podstava:
+        print("🔴 ОТКАЗ: VOROTA_PODSTAVNOJ_ISTOCHNIK действует только в --kontrol-shag — подмена источников в проверке недопустима"); return 2
+    svodka = "--svodka" in a
+    a = [x for x in a if x != "--svodka"]
+    if len(a) != 1 or a[0].startswith("-"):
+        print("🔴 ОТКАЗ: vorota-obezlichivaniya <каталог|архив.tgz> [--svodka]  |  --kontrol"); return 2
+    return proverit(a[0], svodka)
+
+
+if __name__ == "__main__":
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))      # секреты в памяти не уходят в дамп ядра
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, _signal)
+    try:
+        kod = glavnaya(sys.argv[1:])
+    except SystemExit:
+        raise
+    except BaseException as e:                            # текст исключения и трассировку не печатаем: в них может быть секрет
+        print(f"🔴 СЛЕПОТА: внутренняя ошибка {type(e).__name__} — текст не печатается (может содержать значение). Это НЕ «чисто».")
+        kod = 2
+    sys.exit(kod)

@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+# Сторож размера копии sadik и места под неё (24.09.2026, по образцу razmer-kopii-watch Михалыча на aclaude).
+#
+# ЗАЧЕМ: архив вырос 4,6 → 24 ГБ за двое суток, заметили руками; полка /backups при хранении 15 съедает корень
+# за считанные ночи. Копия и приёмка отвечают «сделано/открывается», про размер и место не говорит никто.
+#
+# ЧТО МЕРИТ (раз в сутки, после сборки и приёмки):
+#  1) СТУПЕНЬКА: архив последней УДАЧНОЙ копии (last.json) против предыдущего своего архива на полке по имени.
+#     |изменение| > 5% → тревога с числами. Самый новый файл полки не берётся: он может быть недовыгруженной копией.
+#  2) МЕСТО: хватит ли корня на установившуюся полку. Нужно = размер × (BACKUP_RETAIN_LOCAL+1) + запас,
+#     запас = запас ПРИЁМКИ сверх скачанного архива — той же формулой и по тому же устройству, что proverka-svezhesti-kopii.sh
+#     (B-N-1470): распаковка (поток S/20, не меньше 1 ГБ; прежняя — 1,5·S) + 5 % объёма ФС. Пик — приёмка 06:16Z: полка
+#     уже после ротации (хранение штук), плюс скачанный архив, плюс распаковка и запас; сборка 03:0xZ (полка + новый) ниже.
+#     Было до 03.10: «размер + 2 ГиБ» — до C2 занижало нужное (прежняя приёмка 1,5·S + 5 %), после C2 завышает на ~0,95·S−10 ГБ.
+#     ЧЕГО НЕ ЛОВИТ (Вениамин, B-N-1470): метка PYPOTOK осталась, а потоковая приёмка стала требовать БОЛЬШЕ S/20 — тогда сторож
+#     занижает нужное. Сцепку с числами приёмки (S/20, 1 ГБ, 5 %) сверяет stend-razmer-kopii-watch.sh — ночной обход.
+#     Есть = свободно на корне + то, что уже занимает своя полка. Не хватает → тревога с прогнозом «ночь N не соберётся».
+#  3) ЗНАМЕНАТЕЛЬ: строка «чисто» называет оба архива, их размеры, нужное и имеющееся.
+# ПРОГНОЗ — ОЦЕНКА ПРИ НЫНЕШНЕМ РАЗМЕРЕ: растёт архив — место кончится РАНЬШЕ названной ночи.
+# ЧЕГО НЕ ЛОВИТ: рост внутри 5% за ночь, копящийся неделями (ступенька его не видит — видит только место);
+# «что выросло» не называет (du охвата стоил бы минут; честный путь — снимок du в самой копии, отдельным пунктом);
+# чужие файлы на корне считаются только через «свободно».
+# 🔴 B-N-1169 (29.09.2026, Михалыч; слово владельца 12:41 МСК): ступенька краснеет по копии БЕЗ РАБОЧИХ ЗОН —
+#   /var/backups/montazh*, /opt/coders/*/workspace, /opt/*/workspace. Их рост — стенды и остатки монтажей
+#   (28.09: +2,9 ГиБ несжатого, почти всё там), и ступенька по всей копии краснела бы «про стенды», а не про беду.
+#   Строк ДВЕ: вся копия (сжатый архив, как раньше — по нему же считается место) и без рабочих (НЕсжатая сумма
+#   членов по tar -tzv обоих архивов; сжатого «без» не бывает — архив один). Тревога — только по второй.
+#   Листинг архива ~1 мин на 17 ГБ; итог кэшируется по имени+размеру архива в KESH, за ночь листается один новый.
+#   Листинг не удался → вторая строка «НЕ мерено», и ступенька краснеет по ВСЕЙ копии, как до правки (не слепнем молча).
+#   ЧЕГО НЕ ЛОВИТ: рост ВНУТРИ рабочих зон (его убирает montazh-srok по сроку 14 суток, а workspace — правило кодерам);
+#   зона /opt/*/workspace включает и /opt/iskra/workspace (dorabotki) — её рост ступенька больше не видит.
+# 🔴 B-N-1470 (03.10.2026, решение Забавы по варианту Вениамина): журналы сессий Claude (opt/*/.claude/projects,
+#   opt/coders/*/.claude/projects) — ТРЕТЬЯ строка, как рабочие зоны: они растут сами каждые сутки (02→03.10 +59 МБ
+#   при пороге 70 МБ от 1,4 ГБ), и ступенька краснела 6 ночей из 6. Тревога — только по «без рабочих зон и журналов».
+#   Абсолютного пола нет нарочно: он спрятал бы настоящий рост прочего на ту же величину.
+#   ЧЕГО НЕ ЛОВИТ: рост самих журналов (виден строкой, не тревогой) и журналы вне .claude/projects (.dsh/sessions — внутри).
+#   Кэш прежней формы (без «zhur») не годится — архив листается заново один раз.
+# Коды: 0 чисто · 1 тревога сказана · 2 слепота (мерить нечем) — слепота тоже уходит человеку.
+# ПОДМЕНЫ окружением — только для проб; о каждой пишется в stderr.
+import json, os, re, shutil, subprocess, sys
+from pathlib import Path
+
+def env(k, d):
+    v = os.environ.get(k)
+    if v is not None:
+        print(f"⚠️ ПОДМЕНА {k}={v}", file=sys.stderr)
+        return v
+    return d
+
+STATE = Path(env("RKW_STATE", "/var/lib/sadik-backup/last.json"))
+POLKA = Path(env("RKW_POLKA", "/backups"))
+KOPIYA = Path(env("RKW_SKRIPT_KOPII", "/usr/local/sbin/sadik-backup.py"))
+PRIYOMKA = Path(env("RKW_PRIYOMKA", "/usr/local/sbin/proverka-kopii.sh"))  # B-N-1470: как PRIYOMKA_BIN у proverka-svezhesti-kopii.sh
+ALERT = env("AGENT_ALERT_BIN", "/usr/local/bin/agent-alert")
+PRISTAVKA = "own-chain-"
+POROG = 0.05
+GB = 1e9
+KESH = Path(env("RKW_KESH", "/var/lib/razmer-kopii-watch"))
+RABOCHIE = re.compile(r"^(var/backups/montazh(-s-klyuchom)?/|opt/coders/[^/]+/workspace/|opt/[^/]+/workspace/)")
+ZHURNALY = re.compile(r"^opt/(coders/)?[^/]+/\.claude/projects/")  # B-N-1470
+
+def summy(arh):
+    """(вся, без рабочих и журналов, журналы) — несжатые суммы членов архива по tar -tzv; кэш по имени и размеру. Отказ → None."""
+    k = KESH / (arh.name + ".json"); razm = arh.stat().st_size
+    try:
+        d = json.loads(k.read_text()); 
+        if d.get("size") == razm and "zhur" in d: return d["vsya"], d["bez"], d["zhur"]
+    except Exception: pass
+    vsya = bez = zhur = 0
+    try:
+        pr = subprocess.Popen(["tar", "-tzvf", str(arh)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, errors="replace")
+        for l in pr.stdout:
+            f = l.split(None, 5)
+            if len(f) < 6: continue
+            r = int(f[2]); vsya += r
+            put = f[5].rstrip("\n").lstrip("/")
+            if RABOCHIE.match(put): continue
+            if ZHURNALY.match(put): zhur += r
+            else: bez += r
+        if pr.wait() != 0: return None
+    except Exception: return None
+    try:
+        KESH.mkdir(parents=True, exist_ok=True); k.write_text(json.dumps({"size": razm, "vsya": vsya, "bez": bez, "zhur": zhur}))
+    except Exception: pass
+    return vsya, bez, zhur
+
+def skazat(tekst, kod):
+    print(tekst)
+    try:
+        r = subprocess.run([ALERT, "--plain", "--", tekst], capture_output=True, text=True, timeout=150)
+        if r.returncode != 0:
+            print(f"🔴 тревога НЕ доставлена: {(r.stdout + r.stderr).strip()[:200] or 'причина не названа'}")
+    except Exception as e:
+        print(f"🔴 тревога НЕ доставлена: {e}")
+    sys.exit(kod)
+
+def slepota(pochemu):
+    skazat(f"🔴 Сторож размера копии sadik — СЛЕПОТА: {pochemu}. Это «мерить нечем», не «чисто».", 2)
+
+# Хранение на полке — из окружения юнита копии, иначе умолчание из САМОГО скрипта копии (не своя копия числа).
+retain = None
+try:
+    envs = subprocess.run(["systemctl", "show", "sadik-backup.service", "-p", "Environment", "--value"],
+                          capture_output=True, text=True, timeout=10).stdout
+    m = re.search(r"(?:^|\s)BACKUP_RETAIN_LOCAL=(\d+)", envs)
+    if m: retain, istochnik = int(m.group(1)), "окружение юнита"
+    else:
+        m = re.search(r'BACKUP_RETAIN_LOCAL",\s*"(\d+)"', KOPIYA.read_text(encoding="utf-8"))
+        if m: retain, istochnik = int(m.group(1)), f"умолчание {KOPIYA.name}"
+except Exception as e:
+    slepota(f"хранение на полке не прочитано ({e})")
+if retain is None:
+    slepota(f"хранение на полке (BACKUP_RETAIN_LOCAL) не найдено ни в юните, ни в {KOPIYA}")
+
+try:
+    st = json.loads(STATE.read_text(encoding="utf-8"))
+    imya, razmer = st["name"], int(st["size_bytes"])
+except Exception as e:
+    slepota(f"отметка последней копии {STATE} не читается ({e})")
+
+try:
+    svoi = sorted((f for f in POLKA.iterdir() if f.name.startswith(PRISTAVKA) and f.name.endswith(".tar.gz")
+                   and f.is_file() and not f.is_symlink()), key=lambda f: f.name)
+except Exception as e:
+    slepota(f"полка {POLKA} не читается ({e})")
+zanyato_polkoj = sum(f.stat().st_size for f in svoi)
+prezhnie = [f for f in svoi if f.name < imya]
+svobodno = int(env("RKW_DF_AVAIL", str(shutil.disk_usage(POLKA).free)))
+
+bedy = []
+# 1) ступенька
+if not prezhnie:
+    stupen = f"ступенька НЕ мерена: на полке нет архива раньше {imya}"
+    bedy.append(stupen)
+else:
+    pr = prezhnie[-1]; pr_razmer = pr.stat().st_size
+    d = (razmer - pr_razmer) / pr_razmer if pr_razmer else float("inf")
+    stupen = f"вся копия (сжато): {imya} {razmer/GB:.1f} ГБ против {pr.name} {pr_razmer/GB:.1f} ГБ ({d*100:+.0f}%)"
+    sn, sp = summy(POLKA / imya) if (POLKA / imya).is_file() else None, summy(pr)
+    if sn and sp and sp[1]:
+        db = (sn[1] - sp[1]) / sp[1]
+        stupen2 = (f"без рабочих зон и журналов (несжато): {sn[1]/GB:.2f} ГБ против {sp[1]/GB:.2f} ГБ ({db*100:+.1f}%, порог ±{POROG*100:.0f}%); "
+                   f"журналы сессий {sn[2]/GB:.2f} ГБ против {sp[2]/GB:.2f}; "
+                   f"рабочие зоны {(sn[0]-sn[1]-sn[2])/GB:.1f} ГБ против {(sp[0]-sp[1]-sp[2])/GB:.1f}")
+        if abs(db) > POROG:
+            bedy.append(("ВЫРОСЛА" if db > 0 else "УМЕНЬШИЛАСЬ") + " копия без рабочих зон и журналов: " + stupen2 + " · " + stupen)
+    else:
+        stupen2 = "без рабочих зон: НЕ мерено (листинг архива не удался) — ступенька по всей копии"
+        if abs(d) > POROG:
+            bedy.append(("ВЫРОС" if d > 0 else "УМЕНЬШИЛСЯ") + " архив: " + stupen + f" (порог ±{POROG*100:.0f}%) · " + stupen2)
+    stupen = stupen + "; " + stupen2
+
+# 2) место
+# B-N-1470: запас — как у приёмки (proverka-svezhesti-kopii.sh 2б), формула по УСТРОЙСТВУ приёмки, а не своё число.
+try:
+    potok = "<<'PYPOTOK'" in PRIYOMKA.read_text(encoding="utf-8", errors="replace")
+except Exception as e:
+    slepota(f"устройство приёмки {PRIYOMKA} не прочитано ({e}) — запас места не вычислить")
+raspak = max(razmer // 20, 10**9) if potok else razmer * 3 // 2
+zapas = raspak + shutil.disk_usage(POLKA).total // 20
+nuzhno = razmer * (retain + 1) + zapas
+est = svobodno + zanyato_polkoj
+mesto = (f"нужно {nuzhno/GB:.0f} ГБ = {razmer/GB:.1f} × ({retain}+1, хранение — {istochnik}) + запас приёмки {zapas/GB:.1f} "
+         f"({'поток S/20' if potok else 'распаковка 1,5·S'} {raspak/GB:.1f} + 5 % ФС); "
+         f"есть {est/GB:.0f} ГБ = свободно {svobodno/GB:.0f} + полка {zanyato_polkoj/GB:.0f} ({len(svoi)} архивов)")
+if nuzhno > est:
+    # Прогноз — проход по ночам с НАСТОЯЩИМИ размерами полки (как делает копия): сборка требует «архив» свободного;
+    # архив ложится на полку, ротация (после удачной выгрузки) убирает самые старые сверх хранения; затем приёмка
+    # требует «архив + запас приёмки» (B-N-1470). Архив каждой будущей ночи — нынешнего размера. Предел — 60 ночей.
+    s, polka, noch = svobodno, [f.stat().st_size for f in svoi], None
+    for n in range(1, 61):
+        if s < razmer: noch = n; break
+        s -= razmer; polka.append(razmer)
+        while len(polka) > retain: s += polka.pop(0)
+        if s < razmer + zapas: noch = n; break
+    prognoz = (f"при нынешнем размере НЕ соберётся ночь №{noch} от сегодняшней (свободно сейчас {svobodno/GB:.0f} ГБ, "
+               f"на ночь нужно {(razmer+zapas)/GB:.0f})" if noch else
+               "за 60 ночей при нынешнем размере место не кончится, но установившейся полке его мало")
+    bedy.append("МЕСТА НЕ ХВАТИТ: " + mesto + ". " + prognoz + ". При росте архива — раньше.")
+
+if bedy:
+    skazat("🔴 Копия sadik: размер/место\n" + "\n".join("• " + b for b in bedy), 1)
+print(f"чисто: {stupen}; место: {mesto}")
+sys.exit(0)

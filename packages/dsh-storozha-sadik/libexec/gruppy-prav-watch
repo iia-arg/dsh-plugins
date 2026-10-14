@@ -1,0 +1,101 @@
+#!/usr/bin/python3 -ISB
+# -*- coding: utf-8 -*-
+"""gruppy-prav-watch — члены групп-шлюзов прав = объявленным (B-N-1913, Аврора, 09.10.2026; повод B-N-1908: nobody двое
+суток сидел в limity-vhod вне sysusers — его туда вернул стенд от root, и никто этого не видел).
+
+ЗОВЁТ: ступень sadik-watch (каждые 10 мин, root) → gruppa gruppy-prav (тревога по СМЕНЕ состава, «снова в порядке», без
+повторов). Сам наружу не пишет и ничего не меняет — только читает.
+ЭТАЛОН — конфиг /etc/agent-registry/gruppy-prav.conf, строка на группу:
+  <группа> sysusers            — члены = строки «m <учётка> <группа>» в /etc/sysusers.d и /usr/lib/sysusers.d;
+  <группа> spisok a b c        — явный список (у группы нет объявления в sysusers; «m» туда НЕ дописываем: systemd-sysusers
+                                 при загрузке СОЗДАЁТ недостающую учётку — удалённый агент воскрес бы системным);
+  <группа> spisok -            — членов быть не должно.
+ЧТО СВЕРЯЕТ: дополнительные члены (/etc/group) И члены по основной группе (/etc/passwd, gid группы), кроме одноимённой
+учётки-хозяина. Лишний → «ЛИШНИЙ <учётка> в <группа>»; объявленный, но не член → «НЕДОСТАЁТ …» (тоже находка: шлюз прав
+сломан для штатного писателя).
+КОДЫ: 0 — всё сходится · 1 — находки (перечень строками) · 2 — слепота (конфиг/файл не прочитан, группы нет, у группы
+«sysusers», а объявления нет) — слепота НЕ «чисто».
+ПОСЛЕДНЯЯ СТРОКА: «СОСТАВ: <ключи через пробел>» — ключ для gruppa (имена без времени, сортировано); пусто — чисто.
+⚠️ ЧЕГО НЕ ЛОВИТ: членство через NSS вне /etc/group и /etc/passwd (LDAP/sssd — на sadik нет); права, выданные мимо групп
+(ACL u:<учётка>, владение файлом); группы вне конфига; момент между прогонами (вход и выход за 10 мин не виден);
+верность самого эталона — список spisok пишет человек.
+Подмена путей (для проб): GRUPPY_PRAV_CONF, GRUPPY_PRAV_GROUP, GRUPPY_PRAV_PASSWD, GRUPPY_PRAV_SYSUSERS (каталоги через «:»)."""
+import os, sys
+
+CONF = os.environ.get('GRUPPY_PRAV_CONF', '/etc/agent-registry/gruppy-prav.conf')
+GROUP = os.environ.get('GRUPPY_PRAV_GROUP', '/etc/group')
+PASSWD = os.environ.get('GRUPPY_PRAV_PASSWD', '/etc/passwd')
+# A-N-1948 №5 (№22): все четыре каталога, которые читает systemd-sysusers (sysusers.d(5)); прежде два — объявление в /run или
+# /usr/local/lib давало «СЛЕПОТА: объявления нет» при живом членстве.
+SYSUSERS = os.environ.get('GRUPPY_PRAV_SYSUSERS', '/etc/sysusers.d:/run/sysusers.d:/usr/local/lib/sysusers.d:/usr/lib/sysusers.d').split(':')
+
+def slepota(prichina):
+    print(f'СЛЕПОТА: {prichina}'); print('СОСТАВ: slepota'); sys.exit(2)
+
+def chitat(put):
+    try:
+        with open(put, encoding='utf-8') as f: return f.read().splitlines()
+    except OSError as e: slepota(f'{put} не прочитан ({type(e).__name__})')
+
+def sysusers_chleny(gruppa):
+    """→ (объявлена ли группа хоть одной строкой g/m, множество членов по строкам m)."""
+    est, chleny = False, set()
+    for d in SYSUSERS:
+        if not os.path.isdir(d): continue
+        for imya in sorted(os.listdir(d)):
+            if not imya.endswith('.conf'): continue
+            for s in chitat(os.path.join(d, imya)):
+                p = s.split()
+                if len(p) >= 3 and p[0] == 'm' and p[2] == gruppa: est = True; chleny.add(p[1])
+                elif len(p) >= 2 and p[0] == 'g' and p[1] == gruppa: est = True
+    return est, chleny
+
+etalon, stroka = {}, {}
+for n, s in enumerate(chitat(CONF), 1):
+    s = s.split('#', 1)[0].strip()
+    if not s: continue
+    p = s.split()
+    # A-N-1948 №5 (№21б): повтор группы — слепота с номерами строк, а не молчаливая победа последней строки.
+    if p[0] in stroka: slepota(f'{CONF}:{n}: группа {p[0]} уже задана строкой {stroka[p[0]]} — какой эталон верен, не решаю')
+    stroka[p[0]] = n
+    if len(p) == 2 and p[1] == 'sysusers': etalon[p[0]] = ('sysusers', None)
+    elif len(p) >= 3 and p[1] == 'spisok': etalon[p[0]] = ('spisok', set() if p[2:] == ['-'] else set(p[2:]))
+    else: slepota(f'{CONF}:{n}: строка не по форме «<группа> sysusers | <группа> spisok <учётки…|->»')
+if not etalon: slepota(f'{CONF}: ни одной группы — сверять нечего')
+
+gruppy = {}
+for s in chitat(GROUP):
+    p = s.split(':')
+    if len(p) == 4: gruppy[p[0]] = (p[2], {x for x in p[3].split(',') if x})
+osnovnaya = {}
+for s in chitat(PASSWD):
+    p = s.split(':')
+    if len(p) >= 4: osnovnaya.setdefault(p[3], set()).add(p[0])
+
+nahodki, klyuchi, slepye = [], [], []
+for g in sorted(etalon):
+    vid, spisok = etalon[g]
+    if g not in gruppy: slepye.append(f'группы {g} нет в {GROUP}'); continue
+    gid, dop = gruppy[g]
+    # A-N-1948 №5 (№21а): одноимённая учётка-хозяин исключается и из дополнительных членов (claudeoauth:x:986:claudeoauth),
+    #   а не только из основной группы — прежде давала «ЛИШНИЙ claudeoauth в claudeoauth».
+    zhivye = (dop - {g}) | {u for u in osnovnaya.get(gid, set()) if u != g}
+    if vid == 'sysusers':
+        est, spisok = sysusers_chleny(g)
+        if not est: slepye.append(f'{g}: в конфиге «sysusers», а в {":".join(SYSUSERS)} объявления нет'); continue
+        istochnik = 'sysusers'
+    else:
+        istochnik = CONF
+    for u in sorted(zhivye - spisok):
+        put = 'основная группа' if u not in dop else 'член группы'
+        nahodki.append(f'ЛИШНИЙ {u} в {g} ({put}; нет в {istochnik})'); klyuchi.append(f'{g}:+{u}')
+    for u in sorted(spisok - zhivye):
+        nahodki.append(f'НЕДОСТАЁТ {u} в {g} (объявлен в {istochnik}, не член)'); klyuchi.append(f'{g}:-{u}')
+    if not (zhivye ^ spisok): print(f'ok {g}: членов {len(zhivye)} = {istochnik}')
+
+for s in nahodki: print(s)
+if slepye:
+    for s in slepye: print(f'СЛЕПОТА: {s}')
+    print('СОСТАВ: ' + ' '.join(sorted(klyuchi + ['slepota']))); sys.exit(2)
+print('СОСТАВ: ' + ' '.join(sorted(klyuchi)))
+sys.exit(1 if nahodki else 0)

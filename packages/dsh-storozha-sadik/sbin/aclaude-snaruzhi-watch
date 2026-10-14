@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+# aclaude-snaruzhi-watch — ВНЕШНИЙ прибор «aclaude лежит / вебхук-сервер инстанса не отвечает» (C-H-088, 01.10.2026).
+#
+# ЗАЧЕМ. 28.09 на aclaude кончился диск: 9 инстансов ClaudeClaw ~2 ч в цикле перезапусков, а канал тревог aclaude
+# умер вместе с машиной (gpg не создал блокировку → нет токена) — владельцу не ушло НИЧЕГО (разбор Авроры C-N-1313).
+# Все сторожа aclaude живут на aclaude и кричат его каналом. Этот прибор живёт на sadik и спрашивает aclaude снаружи.
+#
+# ДВА ШАГА (замысел C-H-088, решения Забавы 04:48Z):
+#   sh1 (раз в 60 с) — TCP-рукопожатие с sshd aclaude по ОБОИМ путям, без входа. Молчит один путь — только строка
+#       журнала; молчат оба SH1_PROMAHOV раз подряд — тревога «aclaude недоступен».
+#   sh2 (раз в 2 мин) — один вход по ssh с forced command proba-snaruzhi (договор вывода v1 = формат proba-snaruzhi Михалыча, DOGOVOR в кандидате
+#       C-H-088; скрипт на aclaude пишет Михалыч). Красное: юнит инстанса не active / его процесс моложе VOZRAST_MIN_S
+#       (цикл перезапусков) / вебхук-сервер порта из KARTA не ответил 200 / / заполнен ≥ DISK_KRIT% / внутренний сторож
+#       aclaude не запускался дольше SVEZHEST_MIN мин. Тревога после SH2_KRASNYH красных подряд. Проба не дала вывода по
+#       договору — отдельная тревога «проба не исполнилась». При красном sh1 шаг sh2 не гоняется (одна тревога, не десять).
+#   Отбой — одно «снято» после ZELENYH_OTBOJ зелёных подряд. Пока красно — повтор не чаще POVTOR_S.
+#
+# КАНАЛ. Адресат определяется ПРЕДМЕТОМ (правило шапки sadik-alert на aclaude): предмет aclaude ⇒ @idomik_bot, то есть
+# claudeclaw-alert НА SADIK (токен на диске sadik — переживает диск aclaude). У него нет повтора — повтор здесь: 3 попытки.
+# Не отправил — запасной agent-alert (@arg_dsh_alert_bot, бот предмета sadik) с текстом «канал @idomik_bot с sadik
+# не отправил» — подмена канала названа в тексте. Оба отказали — код 3, тревога НЕ помечается отправленной и уйдёт
+# следующим прогоном; Result службы ≠ success читает проверка живости реестра.
+#
+# ЧЕГО НЕ ЛОВИТ: инстанс жив и вебхук-сервер отвечает 200, а раннер завис на модели (класс claudeclaw-stuck-watch —
+# здесь только «запускался ли он»); отвалился Telegram у бота (/health о Telegram не знает); кончилась подписка/лимит
+# Claude; рост диска ниже DISK_KRIT (внутренний mesto-aclaude-watch 85/92%); лежит сам sadik (зеркало — sadik-alert на
+# aclaude); вход по ssh отказан при живой машине — скажет «проба не исполнилась», причину — только текстом ssh.
+# «Вебхук-сервер отвечает» ≠ «агент жив»: текст тревог говорит первое.
+#
+# ГРАНИЦА: только читает aclaude. Состояние — SOST на sadik. Неизвестный довод (в т.ч. --dry-run, -n) — отказ, код 2.
+# Коды: 0 — прогон состоялся (красное aclaude — не ошибка прибора); 2 — довод или подмена ssh в боевом окружении; 3 — тревога не доставлена ни одним
+# каналом; 4 — конфигурация непригодна (нет учётки/ключа) — sh2 не идёт.
+set -uo pipefail
+
+REZHIM="${1:-}"
+case "$REZHIM" in
+  sh1|sh2) [ $# -eq 1 ] || { echo "aclaude-snaruzhi-watch: лишние доводы — отказ" >&2; exit 2; } ;;
+  *) echo "использование: aclaude-snaruzhi-watch sh1|sh2   (иное, в т.ч. --dry-run, — отказ)" >&2; exit 2 ;;
+esac
+
+# --- значения по умолчанию; файл конфигурации переопределяет ---
+PUTI="10.240.49.1:38888 192.168.99.4:38888"          # LAN и awg9; оба — sshd aclaude
+POLZOVATEL=""                                         # учётка proba-snaruzhi на aclaude (Михалыч) — пусто ⇒ sh2 код 4
+KLYUCH=/etc/aclaude-snaruzhi/id_ed25519
+ZNAKOMYE=/etc/aclaude-snaruzhi/known_hosts
+KARTA="claudeclaw:3100 coder:3101 ostrov:3102 lyudmila:3103 server:3104 upiter:3105 zinaida:3106 yuna:3107 nika:3108 veniamin:3109"
+STOROZHA="mesto-aclaude-watch.timer claudeclaw-stuck-watch.timer"
+SVEZHEST_MIN=15; VOZRAST_MIN_S=120; DISK_KRIT=97
+SH1_PROMAHOV=3; SH2_KRASNYH=2; ZELENYH_OTBOJ=2; POVTOR_S=3600
+TCP_TAJMAUT=5; SSH_TAJMAUT=20
+SOST=/var/lib/aclaude-snaruzhi
+ALERT_IDOMIK=/usr/local/bin/claudeclaw-alert
+ALERT_ZAPAS=/usr/local/bin/agent-alert
+POPYTOK=3; PAUZY="5 15"
+SSH_KOMANDA=""                                        # только для стенда: «<команда> <хост> <порт>» вместо ssh
+ZHURNAL="logger -t aclaude-snaruzhi"
+KONF="${SNARUZHI_KONF:-/etc/aclaude-snaruzhi/conf}"
+BOJ="$KONF|$SOST|$ALERT_IDOMIK|$ALERT_ZAPAS"           # боевые значения ДО чтения конфигурации
+# shellcheck disable=SC1090
+[ -r "$KONF" ] && . "$KONF"
+
+# 🔴 ПОДМЕНА ssh (SSH_KOMANDA) — ТОЛЬКО ДЛЯ СТЕНДА (замечание Вениамина к C-H-088, класс KRIK_PROBA в Environment):
+# подставной ssh в боевом окружении делает сторожа ВЕЧНО ЗЕЛЁНЫМ на заглушке. Поэтому подмена принимается, только если
+# увёрнуто ВСЁ боевое: файл конфигурации не /etc/aclaude-snaruzhi/conf, оба канала и каталог состояния — не боевые, и
+# процесс не в cgroup боевого юнита aclaude-snaruzhi-sh*. Иначе — отказ, код 2, ничего не спрошено и не отправлено.
+# ЧЕГО НЕ ЛОВИТ: полный подставной набор (конфигурация+каналы+состояние), поданный через SNARUZHI_KONF ВНЕ боевого юнита —
+# это и есть стенд; и юнит под другим именем.
+if [ -n "$SSH_KOMANDA" ]; then
+  IFS='|' read -r b_konf b_sost b_idomik b_zapas <<< "$BOJ"
+  boevoe=""
+  [ "$KONF" = /etc/aclaude-snaruzhi/conf ] && boevoe+=" конфигурация"
+  [ "$SOST" = "$b_sost" ] && boevoe+=" состояние"
+  [ "$ALERT_IDOMIK" = "$b_idomik" ] && boevoe+=" канал-idomik"
+  [ "$ALERT_ZAPAS" = "$b_zapas" ] && boevoe+=" канал-запасной"
+  grep -q 'aclaude-snaruzhi-sh' /proc/self/cgroup 2>/dev/null && boevoe+=" юнит"
+  if [ -n "$boevoe" ]; then
+    echo "aclaude-snaruzhi-watch: SSH_KOMANDA (подмена стенда) при боевом:$boevoe — отказ, код 2" >&2
+    $ZHURNAL "$REZHIM: 🔴 отказ: SSH_KOMANDA при боевом:$boevoe — подмена только для стенда" 2>/dev/null || true
+    exit 2
+  fi
+fi
+
+mkdir -p -m 700 "$SOST" || { echo "нет каталога состояния $SOST" >&2; exit 4; }
+zhurnal() { $ZHURNAL "$REZHIM: $*" 2>/dev/null || true; }
+seychas() { date +%s; }
+chitat() { cat "$SOST/$1" 2>/dev/null || echo 0; }
+pisat() { printf '%s\n' "$2" > "$SOST/$1"; }
+html() { local s=${1//&/&amp;}; s=${s//</&lt;}; printf '%s' "${s//>/&gt;}"; }
+
+# --- канал: @idomik_bot (3 попытки) → запасной agent-alert с названной подменой ---
+kanal() {
+  local tekst="$1" i=1 p
+  local -a pauzy; read -ra pauzy <<< "$PAUZY"
+  while [ "$i" -le "$POPYTOK" ]; do
+    if "$ALERT_IDOMIK" "$(html "$tekst")" >/dev/null 2>&1; then zhurnal "тревога ушла в @idomik_bot (попытка $i)"; return 0; fi
+    p="${pauzy[$((i-1))]:-}"; [ "$i" -lt "$POPYTOK" ] && [ -n "$p" ] && sleep "$p"
+    i=$((i+1))
+  done
+  zhurnal "🔴 @idomik_bot с sadik не отправил за $POPYTOK попыток — запасной agent-alert"
+  if "$ALERT_ZAPAS" --plain -- "⚠️ канал @idomik_bot с sadik не отправил; тревога про aclaude: $tekst" >/dev/null 2>&1; then
+    zhurnal "тревога ушла запасным agent-alert (подмена канала названа в тексте)"; return 0
+  fi
+  zhurnal "🔴 тревога НЕ ушла ни одним каналом — повтор следующим прогоном"; return 1
+}
+
+# --- общий учёт эпизода: podryad (красных подряд), trevoga (время отправки), zelenyh (зелёных подряд при тревоге) ---
+NEDOSTAVKA=0
+epizod() {  # $1 шаг, $2 плохо(1/0), $3 порог, $4 текст тревоги, $5 текст отбоя
+  local sh=$1 plokho=$2 porog=$3 t n
+  if [ "$plokho" = 1 ]; then
+    n=$(( $(chitat "$sh.podryad") + 1 )); pisat "$sh.podryad" "$n"; pisat "$sh.zelenyh" 0
+    [ "$n" -ge "$porog" ] || { zhurnal "красно $n из $porog до тревоги: $4"; return; }
+    if [ -f "$SOST/$sh.trevoga" ]; then
+      t=$(chitat "$sh.trevoga")
+      [ $(( $(seychas) - t )) -ge "$POVTOR_S" ] || { zhurnal "красно (тревога уже отправлена): $4"; return; }
+      kanal "🔴 [снаружи, с sadik] ВСЁ ЕЩЁ: $4" && pisat "$sh.trevoga" "$(seychas)" || NEDOSTAVKA=1
+    else
+      kanal "🔴 [снаружи, с sadik] $4" && pisat "$sh.trevoga" "$(seychas)" || NEDOSTAVKA=1
+    fi
+  else
+    pisat "$sh.podryad" 0
+    [ -f "$SOST/$sh.trevoga" ] || return
+    n=$(( $(chitat "$sh.zelenyh") + 1 )); pisat "$sh.zelenyh" "$n"
+    [ "$n" -ge "$ZELENYH_OTBOJ" ] || { zhurnal "зелёно $n из $ZELENYH_OTBOJ до отбоя"; return; }
+    if kanal "✅ [снаружи, с sadik] снято: $5"; then rm -f "$SOST/$sh.trevoga"; pisat "$sh.zelenyh" 0; else NEDOSTAVKA=1; fi
+  fi
+}
+
+# ================= sh1: рукопожатие с sshd по обоим путям =================
+if [ "$REZHIM" = sh1 ]; then
+  zhivyh=0; svodka=""
+  for put in $PUTI; do
+    if timeout "$TCP_TAJMAUT" bash -c "exec 3<>/dev/tcp/${put%:*}/${put##*:}" 2>/dev/null; then
+      zhivyh=$((zhivyh+1)); svodka+=" $put ok"
+    else
+      svodka+=" $put НЕТ"
+    fi
+  done
+  zhurnal "sshd:$svodka"
+  plokho=0; [ "$zhivyh" -eq 0 ] && plokho=1
+  epizod sh1 "$plokho" "$SH1_PROMAHOV" \
+    "aclaude НЕДОСТУПЕН: sshd не отвечает ни по одному пути ($PUTI) — $SH1_PROMAHOV раз подряд" \
+    "aclaude снова отвечает по сети ($svodka )"
+  [ "$NEDOSTAVKA" = 1 ] && exit 3; exit 0
+fi
+
+# ================= sh2: проба по договору v1 =================
+if [ "$(chitat sh1.podryad)" -ge 1 ]; then zhurnal "пропущен: sh1 красный ($(chitat sh1.podryad) подряд)"; exit 0; fi
+if [ -z "$SSH_KOMANDA" ] && { [ -z "$POLZOVATEL" ] || [ ! -r "$KLYUCH" ]; }; then
+  zhurnal "🔴 конфигурация непригодна: POLZOVATEL='${POLZOVATEL}' ключ $KLYUCH — sh2 не идёт"; exit 4
+fi
+
+# Целый вывод по договору v1 (формат proba-snaruzhi Михалыча): первая строка «proba-snaruzhi v1 …», последняя
+# «konec strok=N», и N равно числу строк до неё. Иначе вывод оборван или чужой — это «не исполнилась», НЕ «зелено».
+celyj() {
+  local pervaya poslednyaya n vsego
+  pervaya=$(printf '%s\n' "$1" | head -1); poslednyaya=$(printf '%s\n' "$1" | tail -1)
+  case "$pervaya" in "proba-snaruzhi v1 "*) ;; *) return 1 ;; esac
+  case "$poslednyaya" in "konec strok="*) n=${poslednyaya#konec strok=} ;; *) return 1 ;; esac
+  vsego=$(printf '%s\n' "$1" | wc -l)
+  [ "$n" = "$((vsego - 1))" ]
+}
+# Значение поля «klyuch=…» из строки вывода (поля через пробел).
+pole() { printf '%s\n' "$1" | tr ' ' '\n' | awk -F= -v k="$2" '$1==k {sub(/^[^=]*=/,""); print; exit}'; }
+
+vyvod=""; prichina=""
+for put in $PUTI; do
+  h=${put%:*}; p=${put##*:}
+  if [ -n "$SSH_KOMANDA" ]; then
+    out=$(timeout "$SSH_TAJMAUT" $SSH_KOMANDA "$h" "$p" 2>&1); rc=$?
+  else
+    out=$(timeout "$SSH_TAJMAUT" ssh -p "$p" -i "$KLYUCH" -o BatchMode=yes -o ConnectTimeout=10 \
+      -o UserKnownHostsFile="$ZNAKOMYE" -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+      "$POLZOVATEL@$h" proba-snaruzhi 2>&1); rc=$?
+  fi
+  if celyj "$out"; then vyvod="$out"; break; fi
+  prichina+=" $put: код $rc, «$(printf '%s' "$out" | head -1 | cut -c1-120)»;"
+done
+
+if [ -z "$vyvod" ]; then
+  epizod sh2 1 "$SH2_KRASNYH" \
+    "проба aclaude НЕ ИСПОЛНИЛАСЬ (нет целого вывода по договору v1):$prichina — состояние вебхук-серверов неизвестно" \
+    "проба aclaude снова исполняется, всё проверенное в порядке"
+  [ "$NEDOSTAVKA" = 1 ] && exit 3; exit 0
+fi
+
+krasnoe=()
+for para in $KARTA; do
+  inst=${para%:*}; port=${para##*:}; u="claudeclaw-$inst.service"
+  str=$(printf '%s\n' "$vyvod" | awk -v u="$u" '$1=="unit" && $2==u {print; exit}')
+  if [ -z "$str" ]; then krasnoe+=("$inst: юнита $u нет в пробе")
+  else
+    sost=$(pole "$str" state); voz=$(pole "$str" vozrast_s); osh=$(pole "$str" oshibka)
+    if [ "$sost" = "?" ] || [ -z "$sost" ]; then krasnoe+=("$inst: состояние юнита не снято (${osh:-причина не названа})")
+    elif [ "$sost" != active ]; then krasnoe+=("$inst: юнит $sost")
+    elif ! [ "$voz" -ge 0 ] 2>/dev/null; then krasnoe+=("$inst: возраст процесса не снят (${osh:-$voz})")
+    elif [ "$voz" -lt "$VOZRAST_MIN_S" ]; then krasnoe+=("$inst: процесс моложе ${VOZRAST_MIN_S} с (${voz} с) — перезапуск")
+    fi
+  fi
+  str=$(printf '%s\n' "$vyvod" | awk -v p="$port" '$1=="health" && $2==p {print; exit}')
+  kod=$(pole "$str" kod); imya=$(printf '%s\n' "$str" | awk '{print $3}')
+  if [ -z "$str" ]; then krasnoe+=("$inst: вебхук-сервер :$port — строки нет в пробе (карты sadik и aclaude разошлись?)")
+  else
+    [ "$imya" = "$inst" ] || krasnoe+=("карта разошлась: у sadik :$port — $inst, у aclaude — ${imya:-?}")
+    [ "$kod" = 200 ] || krasnoe+=("$inst: вебхук-сервер :$port не отвечает (код ${kod:-?})")
+  fi
+done
+str=$(printf '%s\n' "$vyvod" | awk '$1=="disk" && $2=="/" {print; exit}'); pct=$(pole "$str" zanyato_pct)
+if [ -z "$str" ]; then krasnoe+=("в пробе нет строки disk /")
+elif ! [ "$pct" -ge 0 ] 2>/dev/null; then krasnoe+=("заполнение диска / не снято (${pct:-пусто})")
+elif [ "$pct" -ge "$DISK_KRIT" ]; then krasnoe+=("диск / заполнен ${pct}%, порог ${DISK_KRIT}%")
+fi
+for s in $STOROZHA; do
+  str=$(printf '%s\n' "$vyvod" | awk -v s="$s" '$1=="storozh" && $2==s {print; exit}')
+  voz=$(pole "$str" proshlo_s); osh=$(pole "$str" oshibka)
+  if [ -z "$str" ]; then krasnoe+=("сторож $s: нет строки в пробе")
+  elif ! [ "$voz" -ge 0 ] 2>/dev/null; then krasnoe+=("сторож aclaude $s: время запуска не снято (${osh:-$voz})")
+  elif [ "$voz" -gt $(( SVEZHEST_MIN * 60 )) ]; then krasnoe+=("сторож aclaude $s не запускался $(( voz / 60 )) мин, порог $SVEZHEST_MIN мин")
+  fi
+done
+
+if [ "${#krasnoe[@]}" -gt 0 ]; then
+  spisok=$(printf '%s; ' "${krasnoe[@]}")
+  epizod sh2 1 "$SH2_KRASNYH" "aclaude, красно ${#krasnoe[@]}: ${spisok%; }" "aclaude: вебхук-серверы $(echo $KARTA | wc -w) из $(echo $KARTA | wc -w) отвечают, диск и сторожа в порядке"
+else
+  zhurnal "зелено: вебхук-серверы $(echo $KARTA | wc -w), диск ${pct}%, сторожа свежие"
+  epizod sh2 0 "$SH2_KRASNYH" "" "aclaude: вебхук-серверы $(echo $KARTA | wc -w) из $(echo $KARTA | wc -w) отвечают, диск и сторожа в порядке"
+fi
+[ "$NEDOSTAVKA" = 1 ] && exit 3; exit 0

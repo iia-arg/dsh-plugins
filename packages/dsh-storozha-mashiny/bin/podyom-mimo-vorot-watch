@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+# RU: podyom-mimo-vorot-watch — ПОДЪЁМ МИМО ВОРОТ: служба агента поднята не через podyom-uzla.
+# RU: Коды: 0 чисто · 3 НОВЫЙ обход (сказано человеку либо сказать не удалось — см. вывод) · 2 слепота.
+# EN: podyom-mimo-vorot-watch — START BYPASSING THE GATE: an agent service was started not via podyom-uzla.
+# EN: Exit: 0 clean · 3 NEW bypass (told a human, or failed to tell — see output) · 2 blindness.
+#
+# RU: 🔴 ЗАЧЕМ. Прибор kto-podnimal различает «через ворота / мимо», но его не звал никто: юнитов, таймеров, cron,
+# RU: healthcheck — 0, исполнений за окно журнала — 0. Голый systemctl restart рукой, авторестарт по падению,
+# RU: подъём после загрузки — всё проходило мимо снимка базы и прибора состава, и об этом не узнавал никто.
+# EN: 🔴 WHY. The probe kto-podnimal tells "via the gate / bypassing it", but nobody called it: units, timers, cron,
+# EN: healthchecks — 0, runs within the journal window — 0. A bare manual systemctl restart, an auto-restart after
+# EN: a crash, a start after boot — all of it bypassed the base snapshot and the composition probe, and nobody knew.
+#
+# RU: КТО ЗОВЁТ: СВОЙ таймер podyom-mimo-vorot-watch.timer, каждые 15 мин. Прежде зовущим был healthcheck реестра —
+# RU: и любой ручной `agent-plugins list --health` будил владельца и ставил отметку раньше ночи (так однажды ушла
+# RU: ложная тревога), а повтор сторожа реестра через 5 с видел уже «чисто».
+# RU: Теперь healthcheck ТОЛЬКО ЧИТАЕТ итог $ITOG (код, доставлено, checked_at) — чтение без записи повторять безопасно.
+# RU: ГОЛОС — свой, agent-alert. Повтор не кричит: сказанное помнится в $SOST.
+# RU: Отметка — только после доставки: не доставлено — скажем в следующий прогон.
+# EN: WHO CALLS: its OWN timer podyom-mimo-vorot-watch.timer, every 15 min. The caller used to be the registry
+# EN: healthcheck — and any manual `agent-plugins list --health` woke the owner and set the mark early (that is how
+# EN: a false alert once went out), while the registry watchdog's retry 5 s later already saw "clean".
+# EN: Now the healthcheck ONLY READS the result $ITOG (code, delivered, checked_at) — read-only, safe to repeat.
+# EN: Its VOICE is its own, agent-alert. A repeat does not shout: what was said is remembered in $SOST.
+# EN: The mark is set only after delivery: not delivered — we say it on the next run.
+#
+# RU: ОБЛАСТЬ берётся ВЫЗОВОМ `podyom-uzla --oblast` — та же область, что у ворот, из реестра агентов по одному
+# RU: правилу, без своей копии. Прежде здесь был свой список, и служба, заведённая в реестр позже, в нём
+# RU: отсутствовала: её голый restart сторож не видел.
+# RU: Ворота не ответили или область пуста ⇒ СЛЕПОТА с тревогой (код 2), а НЕ откат на список: тихий откат — та же беда.
+# RU: PMV_SLUZHBY (стенд) по-прежнему перекрывает вызов.
+# RU: Службы, которые правило ворот отсекает само (агенты-исполнители, поднимаемые `systemctl restart` рукой по
+# RU: своему порядку), ВНЕ области: podyom-uzla вне их области, и прибор назвал бы «мимо» каждый их подъём
+# RU: (замер: 23 из 23 у каждого за сутки).
+# EN: SCOPE is obtained by CALLING `podyom-uzla --oblast` — the same scope as the gate's, from the agent registry by
+# EN: one rule, without a private copy. There used to be a private list here, and a service registered later was
+# EN: missing from it: the watchdog did not see its bare restart.
+# EN: Gate did not answer or the scope is empty ⇒ BLINDNESS with an alert (code 2), NOT a fallback to a list:
+# EN: a silent fallback is the same trouble. PMV_SLUZHBY (test stand) still overrides the call.
+# EN: Services the gate rule excludes by itself (worker agents restarted by a manual `systemctl restart` under
+# EN: their own procedure) are OUTSIDE the scope: podyom-uzla does not cover them, and the probe would call every
+# EN: start of theirs a bypass (measured: 23 of 23 per day each).
+#
+# RU: Начальная загрузка — первый успешный старт службы в boot_id, до первого multi-user.target, и не позднее 60 с
+# RU: monotonic от начала boot. Замер: службы 9,62–9,66 с, цель 48,70 с.
+# RU: Не «всё в первые 60 с»: повторный старт (включая авторестарт) и старт после цели остаются под воротами.
+# RU: Граница: первый ручной запуск ДО цели внутри этих 60 с от загрузочного не отличим; позднюю/затянутую
+# RU: загрузку не исключаем. Без подтверждающего журнала исключения нет. Окно прибора 24 ч, такт 15 мин.
+# EN: Initial boot = the first successful start of the service within a boot_id, before the first multi-user.target,
+# EN: and no later than 60 s monotonic from boot start. Measured: services 9.62–9.66 s, target 48.70 s.
+# EN: Not "everything in the first 60 s": a repeated start (incl. auto-restart) and a start after the target stay
+# EN: under the gate. Boundary: a first manual start BEFORE the target within those 60 s is indistinguishable from
+# EN: boot; a late/slow boot is not exempted. No confirming journal — no exemption. Probe window 24 h, tick 15 min.
+#
+# RU: НАСТРОЙКИ (окружение): PMV_PODYOM, PMV_PRIBOR, PMV_ALERT — пути к воротам, прибору и каналу тревоги;
+# RU: PMV_SOST, PMV_ITOG — файлы состояния и итога; PMV_OKNO — окно прибора; PMV_SLUZHBY — список служб (стенд);
+# RU: PMV_MASHINA — имя машины в тексте тревоги (умолчание `hostname -s`).
+# EN: SETTINGS (environment): PMV_PODYOM, PMV_PRIBOR, PMV_ALERT — paths of the gate, the probe and the alert channel;
+# EN: PMV_SOST, PMV_ITOG — state and result files; PMV_OKNO — probe window; PMV_SLUZHBY — service list (test stand);
+# EN: PMV_MASHINA — machine name in the alert text (default `hostname -s`).
+set -u
+PODYOM="${PMV_PODYOM:-/usr/local/bin/podyom-uzla}"
+slepota_oblasti=""
+if [ -n "${PMV_SLUZHBY:-}" ]; then
+  SLUZHBY="$PMV_SLUZHBY"
+else
+  oblast_out=$("$PODYOM" --oblast 2>/dev/null); oblast_k=$?
+  SLUZHBY=$(printf '%s\n' $oblast_out | sed -n 's/^\([a-z][a-z0-9-]*\)\.service$/\1/p' | paste -sd' ')
+  [ "$oblast_k" -eq 0 ] && [ -n "$SLUZHBY" ] \
+    || { slepota_oblasti="область не получена: $PODYOM --oblast код $oblast_k, служб ${SLUZHBY:-0} (реестр не ответил?)"; SLUZHBY=""; }
+fi
+OKNO="${PMV_OKNO:-24 hours ago}"
+PRIBOR="${PMV_PRIBOR:-/usr/local/bin/kto-podnimal}"
+SOST="${PMV_SOST:-/var/lib/podyom-mimo-vorot-watch/soobshcheno.txt}"
+ALERT="${PMV_ALERT:-/usr/local/bin/agent-alert}"
+ITOG="${PMV_ITOG:-/var/lib/podyom-mimo-vorot-watch/last.json}"
+MASHINA="${PMV_MASHINA:-$(hostname -s)}"
+# RU: Итог прогона — для healthcheck: при ЛЮБОМ выходе, в т.ч. ранней слепоте. dostavleno: da — всё, что надо было
+# RU: сказать, сказано; net — сказать было что, но канал не подтвердил; nechego — говорить было нечего.
+# EN: Run result — for the healthcheck: on ANY exit, incl. early blindness. dostavleno: da — everything that had to
+# EN: be said was said; net — there was something to say but the channel did not confirm; nechego — nothing to say.
+DOST=nechego; ITOG_TEXT=""
+zapisat_itog() {
+  local k=$?
+  mkdir -p "$(dirname "$ITOG")" 2>/dev/null
+  K="$k" D="$DOST" TX="$ITOG_TEXT" F="$ITOG" python3 - <<'PY' 2>/dev/null || echo "⚠️ итог $ITOG не записан — healthcheck назовёт сторожа молчащим"
+import json, os, tempfile, datetime
+f = os.environ["F"]; d = os.path.dirname(f)
+fd, tmp = tempfile.mkstemp(dir=d, prefix=".last-")
+with os.fdopen(fd, "w") as h:
+    json.dump({"code": int(os.environ["K"]), "dostavleno": os.environ["D"], "text": os.environ["TX"][-600:],
+               "checked_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}, h, ensure_ascii=False)
+os.chmod(tmp, 0o644); os.replace(tmp, f)
+PY
+  return "$k"
+}
+trap zapisat_itog EXIT
+
+[ -x "$PRIBOR" ] || { ITOG_TEXT="СЛЕПОТА: прибора нет по пути $PRIBOR"; echo "$ITOG_TEXT либо он не исполняем"; exit 2; }
+mkdir -p "$(dirname "$SOST")" 2>/dev/null; touch "$SOST" 2>/dev/null \
+  || { ITOG_TEXT="СЛЕПОТА: состояние $SOST не заводится"; echo "$ITOG_TEXT — сказанное не запомнить, повторы неизбежны"; exit 2; }
+# RU: старше трёх суток — забыть: окно сутки, повторить их уже нельзя
+# EN: older than three days — forget: the window is one day, they cannot repeat any more
+porog=$(date -u -d '3 days ago' +%F)
+awk -F'|' -v p="$porog" 'substr($2,1,10) >= p' "$SOST" > "$SOST.tmp" 2>/dev/null && mv -f "$SOST.tmp" "$SOST"
+
+novye=(); slepye=(); zagruzka=()
+[ -z "$slepota_oblasti" ] || slepye+=("$slepota_oblasti")
+# RU: Читаем структурированные события PID1 всех сохранённых boot, без --since: край окна не должен
+# RU: превратить второй старт в «первый». Один вызов с пределом 15 с; нет метаданных — слепота, не молчание.
+# EN: Read structured PID1 events of all stored boots, without --since: the window edge must not turn
+# EN: a second start into the "first". One call with a 15 s limit; no metadata — blindness, not silence.
+boot_keys=$(python3 - "$SLUZHBY" <<'PY_BOOT'
+import collections, json, re, subprocess, sys
+units={s+'.service' for s in sys.argv[1].split()}
+message='39f53479d3a045ac8e11786248231fbf'
+try:
+    p=subprocess.run(['journalctl','--no-pager','-q','-o','json','_PID=1',
+        'MESSAGE_ID='+message,'JOB_TYPE=start','JOB_RESULT=done',
+        *['UNIT='+s for s in sorted(units|{'multi-user.target'})]],
+        capture_output=True,text=True,timeout=15,check=True)
+    if not p.stdout.strip() or len(p.stdout)>8*1024*1024: raise ValueError('journal_size')
+    starts=collections.defaultdict(list); boundaries={}; seconds=collections.Counter()
+    for line in p.stdout.splitlines():
+        r=json.loads(line)
+        if r.get('_PID')!='1' or r.get('MESSAGE_ID')!=message or r.get('JOB_TYPE')!='start' or r.get('JOB_RESULT')!='done':
+            raise ValueError('journal_identity')
+        boot=r['_BOOT_ID'];unit=r['UNIT'];mono=int(r['__MONOTONIC_TIMESTAMP']);real=int(r.get('_SOURCE_REALTIME_TIMESTAMP',r['__REALTIME_TIMESTAMP']))
+        if not re.fullmatch('[0-9a-f]{32}',boot) or mono<0 or real<=0: raise ValueError('journal_time')
+        if unit=='multi-user.target': boundaries[boot]=min(boundaries.get(boot,mono),mono)
+        elif unit in units:
+            starts[boot,unit].append((mono,real)); seconds[unit,real//1000000]+=1
+    # RU: short-iso в kto-podnimal берёт source realtime, когда systemd его даёт.
+    # EN: short-iso in kto-podnimal uses source realtime when supplied by systemd.
+    for (boot,unit),events in sorted(starts.items()):
+        mono,real=min(events)
+        # RU: Ключ с точностью до секунды (как у прибора): неоднозначные старты в одну секунду НЕ исключаются.
+        # EN: Second-granularity legacy key: ambiguous same-second starts must NOT be exempted.
+        if mono<=60000000 and mono<boundaries.get(boot,-1) and seconds[unit,real//1000000]==1:
+            print(unit+'|'+str(real//1000000))
+except Exception as error:
+    print('boot_journal_'+type(error).__name__,file=sys.stderr);sys.exit(2)
+PY_BOOT
+); boot_k=$?
+if [ "$boot_k" -ne 0 ]; then slepye+=("загрузка: метаданные journalctl не проверены (код $boot_k)"); boot_keys=""; fi
+for s in $SLUZHBY; do
+  out=$("$PRIBOR" "$s.service" "$OKNO" 2>&1); k=$?
+  case "$k" in
+    0) echo "  $s.service: через ворота (или подъёмов не было)" ;;
+    1) n=0
+       while IFS= read -r kogda; do
+         [ -n "$kogda" ] || continue; n=$((n+1))
+         epoch=$(date -u -d "$kogda" +%s 2>/dev/null) || { slepye+=("$s.service: негодное время подъёма"); continue; }
+         if grep -qxF -- "$s.service|$epoch" <<< "$boot_keys"; then
+           zagruzka+=("$s.service|$kogda")
+         else
+           grep -qxF -- "$s.service|$kogda" "$SOST" || novye+=("$s.service|$kogda")
+         fi
+       done < <(printf '%s\n' "$out" | sed -n 's/^🔴 ПОДЪЁМ МИМО ВОРОТ: \([^ ]*\) .*/\1/p')
+       [ "$n" -gt 0 ] || slepye+=("$s.service: прибор сказал 1, а строк «ПОДЪЁМ МИМО ВОРОТ» не разобрано")
+       echo "  $s.service: без квитанции ворот $n (прибор, окно «$OKNO»)" ;;
+    *) slepye+=("$s.service: код прибора $k — $(printf '%s\n' "$out" | grep -m1 -E 'СЛЕПОТА|ОТКАЗ' | cut -c1-120)") ;;
+  esac
+done
+boot_text=""
+if [ "${#zagruzka[@]}" -gt 0 ]; then
+  boot_count=$(printf '%s\n' "${zagruzka[@]}" | cut -d'|' -f1 | sort -u | wc -l)
+  boot_text="поднято загрузкой $boot_count служб (${#zagruzka[@]} стартов)"
+  echo "$boot_text: $(printf '%s\n' "${zagruzka[@]}" | paste -sd ';')"
+fi
+
+skazat() {  # RU: Текст без HTML-разметки: экранируем также поля службы/причины, не только подсказку. EN: Plain text without HTML: escape service/reason fields too, not only the hint.
+  local text="$1"
+  text="${text//&/\&amp;}"; text="${text//</\&lt;}"; text="${text//>/\&gt;}"
+  "$ALERT" "$text" >/dev/null 2>&1
+}
+kod=0
+if [ "${#novye[@]}" -gt 0 ]; then
+  spisok=$(printf '%s\n' "${novye[@]}" | sed 's/|/ /' | paste -sd ';' | sed 's/;/; /g')
+  if skazat "🔴 ${MASHINA}: подъём МИМО ВОРОТ (podyom-uzla не звали, снимка базы и прибора состава не было) — ${#novye[@]}: $spisok. Чья рука: kto-podnimal <служба> '<день>'. Без руки = авторестарт, root напрямую либо неподтверждённая загрузка."; then
+    printf '%s\n' "${novye[@]}" >> "$SOST" && echo "НОВЫХ обходов ${#novye[@]} — сказано человеку, запомнено: $spisok"
+    DOST=da; ITOG_TEXT="НОВЫХ обходов ${#novye[@]} — сказано человеку: $spisok"
+  else
+    echo "🔴 НОВЫХ обходов ${#novye[@]}, тревога НЕ доставлена — не запоминаю, скажу в следующий прогон: $spisok"
+    DOST=net; ITOG_TEXT="НОВЫХ обходов ${#novye[@]}, тревога НЕ доставлена: $spisok"
+  fi
+  kod=3
+fi
+if [ "${#slepye[@]}" -gt 0 ]; then
+  printf 'СЛЕПОТА: %s\n' "${slepye[@]}"
+  klyuch="slepota|$(date -u +%F)"
+  if grep -qxF -- "$klyuch" "$SOST"; then [ "$DOST" = net ] || DOST=da   # RU: слепота сегодня уже сказана EN: blindness already reported today
+  elif skazat "⚠️ ${MASHINA}: сторож подъёма мимо ворот ОСЛЕП — ${slepye[*]}"; then printf '%s\n' "$klyuch" >> "$SOST"; [ "$DOST" = net ] || DOST=da
+  else DOST=net; fi
+  ITOG_TEXT="${ITOG_TEXT:+$ITOG_TEXT; }СЛЕПОТА: ${slepye[*]}"
+  [ "$kod" = 3 ] || kod=2
+fi
+[ "$kod" = 0 ] && { ITOG_TEXT="чисто: новых подъёмов мимо ворот нет (служб ${SLUZHBY// /, }; окно «$OKNO»)"; echo "$ITOG_TEXT"; }
+[ -z "$boot_text" ] || ITOG_TEXT="${ITOG_TEXT:+$ITOG_TEXT; }$boot_text"
+exit "$kod"

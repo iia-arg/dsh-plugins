@@ -14,6 +14,14 @@
 # — не проверяет БОЕВОЙ путь доставки: почтальон зовётся напрямую, с подставным
 #   отправщиком видимости, чтобы приёмка не написала владельцу ни разу. Что
 #   таймер жив — отдельная проверка healthcheck записи в реестре;
+# — 🔴 B-N-1868 (08.10.2026): не кладёт ни одного письма в БОЕВЫЕ ящики и не зовёт
+#   почтальона по боевому корню. Прежде пробы шли через a2a-send в /var/spool/a2a,
+#   а почтальон с заглушкой видимости разносил и ЧУЖИЕ ждущие письма — без
+#   уведомления владельца. Теперь письма и почтальон — в подставном корне
+#   (mktemp, ящики того же режима 1730 <учётка>:$GRUPPA); боевые ящики только
+#   читаются (stat, test -w). Цена: a2a-send здесь НЕ проверяется — письмо кладёт
+#   рука отправителя в формате курьера; что боевой почтальон разносит живые
+#   ящики, видно по его журналу и сторожу, не здесь;
 # — не изображает живой процесс агента: письма новичка шлются `sudo -u`, то
 #   есть рукой root от его имени. Что живой процесс агента получил группу,
 #   видно только после перезапуска его платформы;
@@ -31,7 +39,6 @@ KOREN="${A2A_KOREN:-/var/spool/a2a}"
 GRUPPA="${A2A_GRUPPA:-a2a-pochta}"
 REESTR="${A2A_REESTR_BIN:-/usr/local/bin/agent-registry}"
 POCHTALON="${A2A_POCHTALON_BIN:-/usr/local/sbin/a2a-pochtalon.py}"
-SEND="${A2A_SEND_BIN:-/usr/local/bin/a2a-send}"
 # Кем проверяем «чужое отказом» — существующий агент, отличный от новичка.
 SOSED_POLZ="${A2A_SOSED:-}"
 
@@ -46,6 +53,9 @@ if [ $# -ne 1 ] || [ -z "${1:-}" ]; then
   echo "a2a-proba-novichka <кличка-агента>   — приёмка агента в шине"; exit 2
 fi
 agent="$1"
+case "$agent" in
+  -*) echo "a2a-proba-novichka: неизвестный ключ «$agent» — проверка не начата" >&2; exit 2 ;;
+esac
 if [ "$(id -u)" -ne 0 ]; then
   echo "a2a-proba-novichka: нужен root — проверка ходит по чужим ящикам от чужих имён" >&2; exit 2
 fi
@@ -53,7 +63,33 @@ fi
 echo "приёмка агента «$agent» в почтовой шине"
 
 # --- 1. реестр и пользователь ---
-polz="$("$REESTR" pole "$agent" polzovatel --json 2>/dev/null | tr -d '"')"
+if ! command -v "$REESTR" >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+  sud slep "нужен исполнимый $REESTR и python3 — предмет реестра не получен"
+  exit 2
+fi
+polz_json="$("$REESTR" pole "$agent" polzovatel --json)"; kod_reestra=$?
+if [ "$kod_reestra" -ne 0 ]; then
+  if [ "$kod_reestra" -eq 3 ]; then
+    sud fail "реестр отказал по записи/полю (код 3) — дальше проверять нечего"
+    exit 1
+  fi
+  sud slep "реестр недоступен (код $kod_reestra) — предмет не получен"
+  exit 2
+fi
+polz="$(printf '%s' "$polz_json" | python3 -c '
+import json,re,sys
+try: v=json.load(sys.stdin)
+except ValueError: sys.exit(2)
+if not isinstance(v,str) or not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}\$?",v): sys.exit(3)
+print(v)' 2>/dev/null)"; kod_polz=$?
+if [ "$kod_polz" -eq 3 ]; then
+  sud fail "в реестре негодный polzovatel — намерение не годится"
+  exit 1
+fi
+if [ "$kod_polz" -ne 0 ]; then
+  sud slep "реестр отдал негодный polzovatel — предмет не получен"
+  exit 2
+fi
 if [ -z "$polz" ]; then
   sud fail "в реестре нет агента «$agent» или не задан polzovatel — дальше проверять нечего"
   echo "итог: сошлось $ok, расхождений $fail, слепота $slep"; exit 1
@@ -76,7 +112,14 @@ else sud fail "пользователь $polz НЕ в группе $GRUPPA — �
 
 # --- сосед для проб «чужое отказом» и «сквозная обратно» ---
 if [ -z "$SOSED_POLZ" ]; then
-  SOSED_POLZ="$(find "$KOREN" -maxdepth 1 -mindepth 1 -type d ! -name "$polz" -printf '%f\n' 2>/dev/null | head -1)"
+  # Сосед — учётка, а не имя ящика: ящики alfa/beta/gamma принадлежат общей
+  # учётке coders (замер 08.10 19:45Z), и прежний выбор «первый каталог» дал
+  # несуществующего пользователя beta. Берём ящик, чьё имя = владелец, владелец —
+  # не новичок и состоит в группе отправителей; порядок — по имени, не по диску.
+  for d in $(find "$KOREN" -maxdepth 1 -mindepth 1 -type d -printf '%f\n' 2>/dev/null | LC_ALL=C sort); do
+    [ "$d" != "$polz" ] && [ "$(stat -c '%U' "$KOREN/$d")" = "$d" ] \
+      && id -nG "$d" 2>/dev/null | tr ' ' '\n' | grep -qx "$GRUPPA" && { SOSED_POLZ="$d"; break; }
+  done
 fi
 if [ -z "$SOSED_POLZ" ]; then
   sud slep "в шине нет второго агента — пробы «чужое отказом» и «обратно» не выполнены"
@@ -85,7 +128,7 @@ else
 fi
 
 # --- заглушка видимости: приёмка не пишет человеку ни разу ---
-zaglushka="$(mktemp -d)"; trap 'rm -rf "$zaglushka"' EXIT
+zaglushka="$(mktemp -d)"; P="$(mktemp -d)"; trap 'rm -rf "$zaglushka" "$P"' EXIT
 cat > "$zaglushka/tell" <<'EOF'
 #!/bin/sh
 cat >/dev/null 2>&1
@@ -94,23 +137,49 @@ exit 0
 EOF
 chmod 0755 "$zaglushka/tell"; chmod 0755 "$zaglushka"
 
+# Подставной корень: ящики того же режима, что проверен у боевого в п.2.
+chmod 0755 "$P"
+for u in "$polz" ${SOSED_POLZ:+"$SOSED_POLZ"}; do
+  install -d -m 1730 -o "$u" -g "$GRUPPA" "$P/$u"
+done
+echo "  (подставной корень проб: $P)"
+
 metka="proba-priyomki-$$-$(date -u '+%H%M%S')"
+
+# Письмо кладёт рука отправителя прямо в подставной ящик, в формате курьера
+# (имя <время>-<учётка>-<8 hex>.txt, первая строка — конверт): иначе почтальон
+# отложит его как «не письмо». Печатает имя письма.
+polozhit() {
+  local imya id
+  imya="$(date -u '+%Y%m%dT%H%M%SZ')-$1-$(printf '%s' "$metka $1 $2 $3" | sha256sum | cut -c1-8).txt"
+  id="$(printf '%s' "$imya" | sha256sum | cut -c1-64)"
+  printf '[delivery-v1 id=%s reply=no]\n%s\n' "$id" "$3" | sudo -n -u "$1" sh -c \
+    'umask 077; t="$(mktemp "$1/.proba.XXXXXX")" && cat > "$t" && mv "$t" "$1/$2"' sh "$P/$2" "$imya" \
+    2>/dev/null || return 1
+  printf '%s\n' "$imya"
+}
+pochtalon() {
+  A2A_KOREN="$P" A2A_TELL_BIN="$zaglushka/tell" A2A_ALERT_BIN="$zaglushka/tell" python3 "$POCHTALON"
+}
 
 # --- 4. письмо новичку доходит ---
 if [ -n "$SOSED_POLZ" ]; then
-  if printf 'проба приёмки %s\n' "$metka" | sudo -n -u "$SOSED_POLZ" "$SEND" --bez-kopii "$agent" >/dev/null 2>&1; then
-    sud ok "сосед $SOSED_POLZ положил письмо новичку"
+  if imya4="$(polozhit "$SOSED_POLZ" "$polz" "проба приёмки $metka")"; then
+    sud ok "сосед $SOSED_POLZ положил письмо новичку (подставной ящик)"
   else
+    imya4=""
     sud slep "сосед $SOSED_POLZ не смог положить письмо (нет группы у его живой руки?) — проба доставки не выполнена"
   fi
-  A2A_TELL_BIN="$zaglushka/tell" python3 "$POCHTALON" >/dev/null 2>&1
-  nashli="$(find "$ya" -maxdepth 1 -type f -newermt '-2 min' -user "$polz" 2>/dev/null | wc -l)"
-  if [ "$nashli" -ge 1 ]; then sud ok "письмо доставлено и принадлежит $polz (свежих писем: $nashli)"
-  else sud fail "в ящике $ya нет свежего письма во владении $polz"; fi
+  # Засев для п.6: письмо новичка соседу, после почтальона оно станет чужим.
+  polozhit "$polz" "$SOSED_POLZ" "засев приёмки $metka" >/dev/null || true
+  pochtalon >/dev/null 2>&1
+  if [ -n "$imya4" ] && [ "$(stat -c '%U' "$P/$polz/$imya4" 2>/dev/null)" = "$polz" ]; then
+    sud ok "письмо доставлено и принадлежит $polz"
+  else sud fail "в подставном ящике $polz нет письма соседа во владении $polz"; fi
 fi
 
 # --- 5. новичок читает своё ---
-svezhee="$(find "$ya" -maxdepth 1 -type f -user "$polz" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
+svezhee="$(find "$P/$polz" -maxdepth 1 -type f -user "$polz" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
 if [ -n "$svezhee" ]; then
   if sudo -n -u "$polz" cat "$svezhee" >/dev/null 2>&1; then sud ok "новичок читает своё письмо живой рукой"
   else sud fail "новичок НЕ читает собственное письмо"; fi
@@ -133,7 +202,7 @@ if [ -n "$SOSED_POLZ" ]; then
       [ -z "$pervoe_prochtennoe" ] && pervoe_prochtennoe="$chuzhoe"
     fi
   done <<VSE
-$(find "$KOREN/$SOSED_POLZ" -maxdepth 1 -type f 2>/dev/null)
+$(find "$P/$SOSED_POLZ" -maxdepth 1 -type f ! -user "$polz" 2>/dev/null)
 VSE
   if [ "$vsego_chuzhih" -eq 0 ]; then
     sud slep "в ящике соседа нет писем — проба «чужое отказом» не выполнена (отсутствие письма это не отказ)"
@@ -153,21 +222,36 @@ fi
 
 # --- 8. сквозная обратно ---
 if [ -n "$SOSED_POLZ" ]; then
-  imya_soseda="$("$REESTR" kto "$SOSED_POLZ" 2>/dev/null)"; [ -z "$imya_soseda" ] && imya_soseda="$SOSED_POLZ"
-  if printf 'обратная проба приёмки %s\n' "$metka" | sudo -n -u "$polz" "$SEND" --bez-kopii "$imya_soseda" >/dev/null 2>&1; then
-    A2A_TELL_BIN="$zaglushka/tell" python3 "$POCHTALON" >/dev/null 2>&1
-    obratno="$(find "$KOREN/$SOSED_POLZ" -maxdepth 1 -type f -newermt '-2 min' -user "$SOSED_POLZ" 2>/dev/null | wc -l)"
-    if [ "$obratno" -ge 1 ]; then sud ok "обратно: письмо новичка дошло соседу и принадлежит ему"
+  if imya8="$(polozhit "$polz" "$SOSED_POLZ" "обратная проба приёмки $metka")"; then
+    pochtalon >/dev/null 2>&1
+    # Своё письмо — по имени: засев п.4 лежит там же и подтвердил бы чужой исход.
+    if [ "$(stat -c '%U' "$P/$SOSED_POLZ/$imya8" 2>/dev/null)" = "$SOSED_POLZ" ]; then
+      sud ok "обратно: письмо новичка дошло соседу и принадлежит ему"
     else sud fail "обратно: письмо новичка НЕ дошло соседу"; fi
   else
     sud fail "новичок не смог отправить письмо соседу"
   fi
 fi
 
-# --- 9. старое не сломано ---
-otkazy="$(A2A_TELL_BIN="$zaglushka/tell" python3 "$POCHTALON" 2>&1 | grep -c 'отказ\|🔴' || true)"
-if [ "$otkazy" -eq 0 ]; then sud ok "почтальон обслуживает все ящики без отказов"
-else sud fail "почтальон отчитался об отказах: $otkazy"; fi
+# --- 9. почтальон разносит без отказов ---
+# 🔴 B-N-1868: судим по коду возврата и по ЧИСЛУ в итоговой строке, а не по слову.
+# Прежде `grep -c 'отказ'` считал отказом саму строку «итог: …, отказов 0, …», а её
+# почтальон печатает только когда что-то перенёс — исход зависел от чужой почты.
+# Письмо кладём сами: без переноса итоговой строки нет, и «0» было бы немотой.
+if [ -n "$SOSED_POLZ" ]; then
+  if polozhit "$SOSED_POLZ" "$polz" "проба почтальона $metka" >/dev/null; then
+    vyvod9="$(pochtalon 2>&1)"; kod9=$?
+    otkazov9="$(printf '%s\n' "$vyvod9" | sed -n 's/^\[почтальон\] итог: перенесено [0-9]*, отказов \([0-9]*\),.*/\1/p' | tail -1)"
+    krasnyh9="$(printf '%s\n' "$vyvod9" | grep -c '🔴' || true)"
+    if [ -z "$otkazov9" ]; then
+      sud slep "почтальон не напечатал итог, хотя письмо лежало (код $kod9) — счёт отказов не снят"
+    elif [ "$kod9" -eq 0 ] && [ "$otkazov9" -eq 0 ] && [ "$krasnyh9" -eq 0 ]; then
+      sud ok "почтальон разнёс подставную почту без отказов (код 0, отказов 0)"
+    else sud fail "почтальон: код $kod9, отказов $otkazov9, строк 🔴 $krasnyh9"; fi
+  else sud slep "письмо для пробы почтальона положить не удалось"; fi
+else
+  sud slep "нет второго агента — проба почтальона не выполнена"
+fi
 
 # --- 10. видимость ---
 if [ -r "/etc/agent-tell/${polz}.conf" ]; then
@@ -177,11 +261,12 @@ else
 fi
 
 # 🔴 КАНАРЕЙКА: сколько проверок ДОЛЖНО было выполниться.
-# Число вычисляется ИЗ ПРЕДМЕТА, а не записано константой: шесть проверок идут
-# всегда, ещё пять — только когда в шине есть второй агент. Без канарейки
+# Число вычисляется ИЗ ПРЕДМЕТА, а не записано константой: с соседом — 11, без
+# него — 8 (1, 2, 3, строка слепоты «нет второго агента», 5, 7, 9, 10; до
+# B-N-1868 стояло 7, и приёмка без соседа всегда кончалась «8 из 7»). Без канарейки
 # вырезанный раздел проходит кодом 0: 29.08 порча это и показала — стенд выдал
 # 9 вместо 10 и промолчал.
-if [ -n "$SOSED_POLZ" ]; then zhdyom=11; else zhdyom=7; fi
+if [ -n "$SOSED_POLZ" ]; then zhdyom=11; else zhdyom=8; fi
 vsego=$((ok+fail+slep))
 echo "итог: сошлось $ok, расхождений $fail, слепота $slep (выполнено $vsego из $zhdyom)"
 if [ "$vsego" -ne "$zhdyom" ]; then

@@ -1,0 +1,33 @@
+{
+  "name": "dsh-vypusk-watch",
+  "version": "3.1.6",
+  "license": "MIT",
+  "author": "Aleksandr Argelander",
+  "engines": { "node": ">=18" },
+  "description": "Сторож окна выпуска: сверяет каждый установленный пакет с git-меткой его версии и поднимает одну тревогу, если бой разошёлся с выпуском · Release window watchdog: compares every installed package with the git tag of its version and raises one alarm if production diverged from the release",
+  "keywords": [
+    "release",
+    "watchdog",
+    "git-tag",
+    "deployment",
+    "integrity",
+    "выпуск",
+    "сторож"
+  ],
+  "files": [
+    "systemd/",
+    "src",
+    "test",
+    "docs",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "bash test/stend-kopij-vypuska.sh && python3 -B test/stend-svoej-metki.py"
+  },
+  "dsh": {
+    "prezhnie_imena": [
+      "vypusk-watch"
+    ]
+  }
+}

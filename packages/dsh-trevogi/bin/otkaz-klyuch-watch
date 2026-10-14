@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""Daily option-refusal reader. Durable attempt prevents replay of an uncertain delivery."""
+import argparse
+import fcntl
+import grp
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib' / 'dsh-trevogi'))
+try:
+    from nastrojki import load
+    LOAD_ERROR = None
+except ImportError as e:
+    LOAD_ERROR = str(e)
+
+TEG = 'otkaz-klyuch-watch'
+PRIZNAK = 'исход=отказ-ключ'
+
+
+def run_bounded(argv, timeout):
+    process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               start_new_session=True)
+    try:
+        out, err = process.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(argv, process.returncode, out, err)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        # A detached descendant may still hold the pipe; never drain without a deadline.
+        process.stdout.close()
+        process.stderr.close()
+        process.wait(timeout=5)
+        raise
+
+
+def zhurnal(text):
+    try:
+        run_bounded(['logger', '-t', TEG, '--', 'версия=3.1.1 ' + text], 5)
+    except (OSError, subprocess.SubprocessError):
+        pass  # stdout/stderr still carries the same result; journald availability is not guaranteed.
+
+
+def blind(text):
+    value = 'СЛЕПОТА: ' + text
+    print(value)
+    zhurnal(value)
+    return 2
+
+
+def write_atomic(file, text):
+    fd, tmp = tempfile.mkstemp(prefix='.' + file.name + '-', dir=file.parent)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp, file)
+        directory = os.open(file.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def channel(path, text):
+    try:
+        return run_bounded([path, '--', text], 120).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def records(cmd):
+    r = run_bounded(cmd, 30)
+    stderr = r.stderr.decode('utf-8', 'replace').strip()
+    if r.returncode != 0 or stderr:
+        raise ValueError(f'журнал agent-alert не прочитан полностью (код {r.returncode}: {stderr[:120]})')
+    rows = [json.loads(line) for line in r.stdout.decode('utf-8').splitlines() if line.strip()]
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get('__CURSOR'), str) or not row['__CURSOR']:
+            raise ValueError('неверная строка/курсор журнала agent-alert')
+    return rows
+
+
+def tekst(row):
+    message = row.get('MESSAGE', '')
+    return bytes(message).decode('utf-8', 'replace') if isinstance(message, list) else str(message)
+
+
+def example(row, limit):
+    stamp = time.strftime('%d.%m %H:%M:%SZ', time.gmtime(int(row.get('__REALTIME_TIMESTAMP', '0')) / 1e6))
+    actor = row.get('_SYSTEMD_UNIT') or row.get('_SYSTEMD_USER_UNIT') or row.get('_COMM', '?')
+    return f'{stamp} · {actor} · uid {row.get("_UID", "?")}: {tekst(row)[:limit]}'
+
+
+def read_window(args, settings):
+    cursor = Path(args.kursor)
+    pending = cursor.with_name(cursor.name + '.pending')
+    if pending.exists():
+        intent = json.loads(pending.read_text())
+        if not isinstance(intent, dict) or type(intent.get('sent')) is not bool or not isinstance(intent.get('after'), str) or not intent['after']:
+            return blind(f'неверное состояние отправки {pending}; требуется разбор оператором, повтора нет')
+        if not intent['sent']:
+            return blind(f'доставка неизвестна, {pending}; автоматического повтора нет, требуется разбор оператором')
+        if args.tolko_pechat:
+            return blind(f'тревога ушла, курсор не записан; {pending}, печать не меняет состояние')
+        try:
+            write_atomic(cursor, intent['after'] + '\n')
+            pending.unlink()
+        except OSError as e:
+            return blind(f'тревога ушла, курсор не записан: {cursor} ({type(e).__name__}); повтора нет')
+        print('тревога ранее ушла; курсор восстановлен, повторной отправки нет')
+        zhurnal('курсор восстановлен после отправки, повтора нет')
+        return 0
+    try:
+        current = cursor.read_text().strip() or None
+    except FileNotFoundError:
+        current = None
+    cmd = ['journalctl', '-t', 'agent-alert', '-o', 'json', '--no-pager', '-q']
+    if current is None:
+        cmd += ['-n', '1']
+    else:
+        cmd += ['--since', '@' + current[6:]] if current.startswith('since:') else ['--after-cursor', current]
+    try:
+        rows = records(cmd)
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        text = f'журнал agent-alert не прочитан: {e} — курсор прежний'
+        if not args.tolko_pechat and not channel(args.kanal, f'⚠️ {settings["OTKAZ_KLYUCH_HOST"]}: otkaz-klyuch-watch ослеп — {text}'):
+            text += ' · канал не подтвердил тревогу о слепоте'
+        return blind(text)
+    new = rows[-1]['__CURSOR'] if rows else current or f'since:{int(time.time())}'
+    rejected = [row for row in rows if PRIZNAK in tekst(row)] if current is not None else []
+    result = f'отказ-ключ за окно: {len(rejected)} (строк agent-alert в окне {len(rows)})'
+    if current is None:
+        result = 'начало отсчёта: курсора не было, окно начинается с текущего конца журнала agent-alert; ' + result
+    print(result)
+    for row in rejected:
+        print('  ' + example(row, 120))
+    if args.tolko_pechat:
+        return 0
+    if not rejected:
+        write_atomic(cursor, new + '\n')
+        zhurnal(result)
+        return 0
+    message = (f'⚠️ {settings["OTKAZ_KLYUCH_HOST"]}: agent-alert отказал «ключу» {len(rejected)} раз — '
+               'тревоги с этими текстами НЕ ушли (первый аргумент на «-»):\n' +
+               '\n'.join(example(row, 100) for row in rejected[:8]) +
+               ('\n…' if len(rejected) > 8 else '') + '\nразбор: зовущий должен подавать текст после «--»')
+    intent = {'before': current, 'after': new, 'sent': False}
+    write_atomic(pending, json.dumps(intent) + '\n')  # Must succeed BEFORE any channel side effect.
+    if not channel(args.kanal, message):
+        return blind(f'канал не подтвердил отправку; доставка неизвестна, курсор прежний; {pending}, автоматического повтора нет')
+    try:
+        intent['sent'] = True
+        write_atomic(pending, json.dumps(intent) + '\n')
+        write_atomic(cursor, new + '\n')
+        pending.unlink()
+    except OSError as e:
+        return blind(f'тревога ушла, курсор не записан: {cursor} ({type(e).__name__}); {pending}, повтора нет')
+    zhurnal(result + ' · тревога ушла')
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description='читатель отказов «ключ» у agent-alert', allow_abbrev=False)
+    parser.add_argument('--kursor', help='файл курсора (для стенда)')
+    parser.add_argument('--kanal', help='канал тревоги (для стенда)')
+    parser.add_argument('--tolko-pechat', action='store_true', help='не слать и не сохранять курсор')
+    try:
+        args = parser.parse_args()
+    except SystemExit as e:
+        return 0 if e.code == 0 else 2
+    if LOAD_ERROR:
+        return blind('библиотека настройки не загружена: ' + LOAD_ERROR)
+    try:
+        settings = load()
+        args.kursor = args.kursor if args.kursor is not None else settings['OTKAZ_KLYUCH_KURSOR']
+        args.kanal = args.kanal if args.kanal is not None else settings['OTKAZ_KLYUCH_KANAL']
+        if not Path(args.kursor).is_absolute() or not Path(args.kanal).is_absolute():
+            raise ValueError('нужен абсолютный путь / absolute path required')
+        privileged = os.geteuid() == 0 or any(grp.getgrgid(g).gr_name in ('adm', 'systemd-journal') for g in set(os.getgroups()) | {os.getegid()})
+        if not privileged:
+            return blind('нет подтверждённых прав на системный журнал: нужен root/adm/systemd-journal; окно не измерено')
+        if args.tolko_pechat:
+            return read_window(args, settings)
+        cursor = Path(args.kursor)
+        cursor.parent.mkdir(parents=True, exist_ok=True)
+        with cursor.with_name(cursor.name + '.lock').open('a') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return blind('другой читатель держит курсор; этот вызов не ждёт и не отправляет')
+            return read_window(args, settings)
+    except (OSError, ValueError, TypeError, KeyError, OverflowError, subprocess.SubprocessError) as e:
+        return blind(f'курсор/настройка/журнал: {type(e).__name__}: {e}')
+
+
+if __name__ == '__main__':
+    sys.exit(main())

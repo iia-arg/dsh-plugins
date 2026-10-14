@@ -1,6 +1,18 @@
 {
   "name": "dsh-pamyat-byudzhet",
-  "version": "0.1.0-alpha.9",
+  "version": "3.1.2",
+  "description": "Входящий бюджет памяти агента DSH: сколько знания поднять в разговор, с громким отказом и названными причинами · Incoming memory budget for a DSH agent: how much knowledge to raise into the conversation, with a loud refusal and named reasons",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "agent",
+    "memory",
+    "budget",
+    "context-window",
+    "память · memory",
+    "бюджет · budget"
+  ],
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -9,6 +21,7 @@
   "files": [
     "src",
     "test",
+    "docs",
     "README.md",
     "README.en.md",
     "CHANGELOG.md"
@@ -28,5 +41,10 @@
     "type": "git",
     "url": "git+https://github.com/iia-arg/dsh-plugins.git",
     "directory": "packages/dsh-pamyat-byudzhet"
+  },
+  "license": "MIT",
+  "author": "Aleksandr Argelander",
+  "engines": {
+    "node": ">=22"
   }
 }

@@ -1,50 +1,314 @@
 #!/usr/bin/env bash
-# transcribe-correct-wrap — Phase-1 POC врезка sage-95m корректора БЕЗ правки shared-цепочки.
-# Цепочка: существующий transcribe → sage_correct.py → исправленный текст.
-# FAIL-SAFE: RC цепочки сохраняется; при любой проблеме корректора отдаём сырой текст.
-# Включается ТОЛЬКО у нужного инстанса через WHISPER_TRANSCRIBER=этот-файл.
+# RU: transcribe-correct-wrap — врезка корректора русской расшифровки (модель sage-95m)
+#     ПЕРЕД выдачей текста, без правки остальной цепочки.
+# EN: transcribe-correct-wrap — inserts the Russian transcript corrector (the sage-95m
+#     model) BEFORE the text is returned, without editing the rest of the chain.
+#
+# RU: Цепочка: усиление тихой записи → внутренний распознаватель (SAGE_INNER_TRANSCRIBER,
+#     по умолчанию transcribe-local-shared из этого пакета: архив → ядро
+#     transcribe-whispercpp-core) → фильтр галлюцинаций → срез хвостовой галлюцинации →
+#     подстановка терминов → склейка строк → коррекция КУСКАМИ через клиент sage_client.py
+#     по unix-сокету к службе sage-warm → ещё раз подстановка терминов → текст.
+# EN: Chain: quiet-recording gain → inner transcriber (SAGE_INNER_TRANSCRIBER, default
+#     transcribe-local-shared from this package: archive → the transcribe-whispercpp-core
+#     core) → hallucination filter → trailing-hallucination cut → term substitution → line
+#     joining → correction in CHUNKS via the sage_client.py client over a unix socket to the
+#     sage-warm service → term substitution once more → text.
+# RU: Прежняя шапка называла клиента «sage_correct.py»; код зовёт sage_client.py (SAGE_CLIENT).
+# EN: The previous header named the client "sage_correct.py"; the code calls sage_client.py (SAGE_CLIENT).
+# RU: В ПАКЕТЕ НЕТ: клиента sage_client.py, сервера sage_warm_server.py, модели, файла
+#     фильтра галлюцинаций и файла пар подстановки (zameny.tsv). Без них обёртка отдаёт
+#     текст распознавателя без коррекции.
+# EN: NOT SHIPPED in this package: the sage_client.py client, the sage_warm_server.py server,
+#     the model, the hallucination-filter file and the substitution-pairs file (zameny.tsv).
+#     Without them the wrapper returns the transcriber's text uncorrected.
+#
+# RU: FAIL-SAFE: код возврата внутреннего распознавателя сохраняется; при любой проблеме
+#     корректора отдаём сырой текст.
+# EN: FAIL-SAFE: the inner transcriber's exit code is preserved; on any corrector problem
+#     the raw text is returned.
+# RU: Подключение: укажите этот файл как команду распознавания канала. Обёртка стоит
+#     СНАРУЖИ архива нарочно: корректор меняет ключевое слово архива («паблик» → «публик»),
+#     а архив внутри должен видеть СЫРОЙ текст. НЕ ставьте этот файл в REAL_TRANSCRIBER
+#     transcribe-local-shared: при умолчании SAGE_INNER_TRANSCRIBER получится бесконечная
+#     петля.
+# EN: Enabling: point your channel's transcription command at this file. The wrapper sits
+#     OUTSIDE the archive on purpose: the corrector changes the archive keyword ("паблик" →
+#     "публик"), while the archive inside must see the RAW text. Do NOT set this file as
+#     REAL_TRANSCRIBER of transcribe-local-shared: with the default SAGE_INNER_TRANSCRIBER
+#     that makes an endless loop.
+# RU: Словарь пар защитный: возвращает верно расслышанный термин, если корректор его
+#     испортил; неверно расслышанное он НЕ исправляет, если такой пары нет.
+# EN: The pairs dictionary is defensive: it restores a correctly heard term the corrector
+#     spoiled; it does NOT fix a misheard word unless such a pair exists.
+# RU: Вход: $1 = аудиофайл, $2 = язык (по умолчанию ru). Выход: текст в stdout.
+# EN: Input: $1 = audio file, $2 = language (default ru). Output: text on stdout.
 set -uo pipefail
-WAV="${1:-}"; LANG="${2:-ru}"
+# RU: Язык хранится в YAZ, а НЕ в LANG: LANG — ещё и переменная локали, и если вызывающий
+#     её экспортировал, значение "ru"/"auto" уходило в дочерние grep как недействительная
+#     локаль — регистронезависимое сравнение кириллицы переставало работать, и фильтр
+#     галлюцинаций молчал (проба: grep -qiE привет на «ПРИВЕТ» совпадает при
+#     LANG=ru_RU.UTF-8 и НЕ совпадает при LANG=ru).
+# EN: The language is kept in YAZ, NOT in LANG: LANG is also the locale variable, and if the
+#     caller exported it, the value "ru"/"auto" reached child grep processes as an invalid
+#     locale — case-insensitive Cyrillic matching stopped working and the hallucination
+#     filter stayed silent (probe: grep -qiE привет on "ПРИВЕТ" matches with
+#     LANG=ru_RU.UTF-8 and does NOT match with LANG=ru).
+WAV="${1:-}"; YAZ="${2:-ru}"   # НЕ LANG: LANG=auto ломал локаль, grep -i не сводил кириллицу, фильтр галлюцинаций молчал
 
-INNER="${SAGE_INNER_TRANSCRIBER:-/usr/local/bin/transcribe-denoise-wrap}"
+# RU: Внутренний распознаватель: зовётся как "<команда> <файл> <язык>", stdout — текст.
+#     Умолчание — transcribe-local-shared этого пакета.
+# EN: Inner transcriber: called as "<command> <file> <language>", stdout is the text.
+#     The default is this package's transcribe-local-shared.
+INNER="${SAGE_INNER_TRANSCRIBER:-/usr/local/bin/transcribe-local-shared}"
+# RU: Интерпретатор: системный python3 — клиент на одной stdlib, стартует быстро. Им же
+#     исполняются встроенные помощники подстановки и разрезки на куски ниже.
+# EN: Interpreter: the system python3 — the client is stdlib-only and starts fast. It also
+#     runs the embedded substitution and chunking helpers below.
 CLIENT_PY="${SAGE_CLIENT_PY:-/usr/bin/python3}"          # только stdlib — быстрый старт
 CLIENT="${SAGE_CLIENT:-${SAGE_HOME:-/opt/sage-corrector}/sage_client.py}"
-LOG="${SAGE_HOME:-/opt/sage-corrector}/corrector.log"
+# RU: Журнал: SAGE_LOG, иначе $SAGE_HOME/corrector.log. Пишется от имени ВЫЗЫВАЮЩЕГО, а
+#     вызывающих учёток может быть несколько — файл должен быть доступен на запись им всем.
+#     Если не открывается: подстановка терминов и срез хвоста выключаются (их помощник
+#     запускается с 2>>"$LOG" и не стартует; текст идёт без них), итог корректора в журнал
+#     не попадёт; сам корректор при этом работает (его stderr идёт во временный файл).
+#     Видно это только по строкам ошибки оболочки («No such file or directory» /
+#     «Permission denied») в stderr вызывающего: запись вида >> "$LOG" 2>/dev/null ошибку
+#     открытия НЕ глушит — перенаправления выполняются слева направо.
+# EN: Log: SAGE_LOG, else $SAGE_HOME/corrector.log. Written as the CALLING user, and there may
+#     be several calling accounts — the file must be writable by all of them. If it cannot be
+#     opened: term substitution and the tail cut are disabled (their helper is started with
+#     2>>"$LOG" and does not start; the text goes on without them), the corrector summary is
+#     not logged; the corrector itself still works (its stderr goes to a temporary file).
+#     The only sign is shell error lines ("No such file or directory" / "Permission denied")
+#     on the caller's stderr: a form like >> "$LOG" 2>/dev/null does NOT silence the open
+#     error — redirections are applied left to right.
+LOG="${SAGE_LOG:-${SAGE_HOME:-/opt/sage-corrector}/corrector.log}"   # дописывают все учётки агентов (группа вызывающих, без записи для прочих · caller group, no other-write)
+# RU: Сокет службы sage-warm; экспортируется, чтобы его увидел клиент. Должен совпадать с
+#     Environment=SAGE_SOCK в sage-warm.service.
+# EN: The sage-warm service socket; exported so the client sees it. Must match
+#     Environment=SAGE_SOCK in sage-warm.service.
 export SAGE_SOCK="${SAGE_SOCK:-/run/sage-corrector/sage.sock}"
 
 
-# 🔴 ФИЛЬТР ГАЛЛЮЦИНАЦИЙ (2026-08-04). Whisper на тишине выдаёт дежурные фразы
-# из обучающих субтитров — они грамматически безупречны, поэтому корректор их
-# НЕ ловит, и агент получает выдуманную «речь» вместо признания «пусто».
-# Опасность не в мусоре, а в том, что однажды галлюцинация совпадёт с
-# правдоподобной инструкцией и будет исполнена. Поэтому подменяем явным маркером.
+# RU: 🔴 ФИЛЬТР ГАЛЛЮЦИНАЦИЙ (2026-08-04). Whisper на тишине выдаёт дежурные фразы из
+#     обучающих субтитров — они грамматически безупречны, поэтому корректор их НЕ ловит,
+#     и агент получает выдуманную «речь» вместо признания «пусто». Опасность не в мусоре,
+#     а в том, что однажды галлюцинация совпадёт с правдоподобной инструкцией и будет
+#     исполнена. Поэтому подменяем явным маркером.
+# EN: 🔴 HALLUCINATION FILTER (2026-08-04). On silence Whisper emits stock phrases from its
+#     training subtitles — grammatically perfect, so the corrector does NOT catch them, and
+#     the agent receives invented "speech" instead of an honest "empty". The danger is not
+#     the junk itself but that one day a hallucination matches a plausible instruction and
+#     gets executed. So we replace it with an explicit marker.
+# RU: Файл: SAGE_HALLUC_FILTER, иначе $SAGE_HOME/hallucination-filter.txt; по одному
+#     расширенному регулярному выражению (grep -E) на строку, без учёта регистра; пустые
+#     строки и строки с # пропускаются. Нет файла — фильтр выключен (громко, см. ниже).
+#     Возврат 0 = «это галлюцинация». Тот же файл читает срез хвоста (podst hvost) — уже
+#     как регулярные выражения Python; выражение, которое Python не компилирует, там молча
+#     пропускается.
+# EN: File: SAGE_HALLUC_FILTER, else $SAGE_HOME/hallucination-filter.txt; one extended regular
+#     expression (grep -E) per line, case-insensitive; blank lines and lines starting with #
+#     are skipped. No file — filter off (loudly, see below). Return 0 = "this is a
+#     hallucination". The same file is read by the tail cut (podst hvost) — there as Python
+#     regular expressions; a pattern Python cannot compile is silently skipped there.
+# RU: Чего НЕ ловит: текст длиннее 120 символов целиком (для него — только срез хвоста);
+#     фразы, которых нет в файле; зацикливание длинной записи. Выражение, совпадающее с чем
+#     угодно (например «.»), заменит маркером ЛЮБУЮ короткую расшифровку — файл надо
+#     проверять так же строго, как код.
+# EN: What it does NOT catch: text longer than 120 characters as a whole (only the tail cut
+#     applies to it); phrases missing from the file; looping on a long recording. A pattern
+#     that matches anything (e.g. ".") replaces ANY short transcript with the marker — check
+#     the file as strictly as code.
 halluc_check() {
   local txt="$1" pat
-  local F="${SAGE_HOME:-/opt/sage-corrector}/hallucination-filter.txt"
-  [ -f "$F" ] || return 1
-  # длинную настоящую речь не трогаем: галлюцинации всегда короткие
+  local F="${SAGE_HALLUC_FILTER:-${SAGE_HOME:-/opt/sage-corrector}/hallucination-filter.txt}"
+  # RU: Нет файла — фильтр выключен, но ГРОМКО: строка в журнал системы (logger, тег
+  #     transcribe-correct-wrap) и в $LOG, на КАЖДЫЙ вызов. Голос при этом не ломается:
+  #     текст идёт дальше как был. Прежде пропажа файла не оставляла ни строки.
+  # EN: No file — the filter is off, but LOUDLY: a line to the system journal (logger, tag
+  #     transcribe-correct-wrap) and to $LOG, on EVERY call. Voice is not broken: the text
+  #     goes on as is. Previously a missing file left not a single line.
+  if [ ! -f "$F" ]; then
+    logger -t transcribe-correct-wrap "🔴 фильтр галлюцинаций НЕ НАЙДЕН: $F — фильтр ВЫКЛЮЧЕН, дежурные фразы Whisper пройдут как речь" 2>/dev/null
+    echo "$(date -Is) 🔴 фильтр галлюцинаций НЕ НАЙДЕН: $F — фильтр выключен" >> "$LOG" 2>/dev/null
+    return 1
+  fi
+  # RU: Длинную настоящую речь не трогаем: галлюцинации всегда короткие (порог 120 символов).
+  #     Хвостовую галлюцинацию у длинного текста срезает отдельный шаг ниже (podst hvost).
+  # EN: Long real speech is left alone: hallucinations are always short (threshold 120 characters).
+  #     A trailing hallucination on long text is cut by a separate step below (podst hvost).
   [ "${#txt}" -gt 120 ] && return 1
   while IFS= read -r pat; do
     case "$pat" in ''|'#'*) continue;; esac
-    printf '%s' "$txt" | grep -qiE "$pat" && return 0
+    printf '%s' "$txt" | grep -qiE -e "$pat" && return 0
   done < "$F"
   return 1
 }
 
+# RU: 🔴 ПОДСТАНОВКА ТЕРМИНОВ И СРЕЗ ХВОСТОВОЙ ГАЛЛЮЦИНАЦИИ (помощник PODST_PY, функция podst).
+#     Подстановка (режим zameny) — пары ДАННЫМИ в $ZAMENY (SAGE_ZAMENY, иначе
+#     $SAGE_HOME/zameny.tsv): строка «образец<TAB>замена»; образец — регулярное выражение
+#     Python, ищется целым словом без учёта регистра; в замене допустимы ссылки на группы
+#     (\1); если найденное начиналось с заглавной, а замена со строчной — первая буква
+#     поднимается. Пустые строки и строки с # пропускаются.
+#     Срез хвоста (режим hvost) — у длинного (>120 знаков) текста срезается ПОСЛЕДНЕЕ
+#     ПРЕДЛОЖЕНИЕ, если в нём фраза из фильтра галлюцинаций, кончающаяся не дальше 40 знаков
+#     от конца и начинающаяся не дальше 25 знаков от начала своего предложения; текст из
+#     одного предложения не режется. Фраза внутри речи («…делаем, продолжение следует.») и в
+#     середине текста не трогается.
+#     40 и 25 не выведены, а сняты с корпуса реальных голосовых: хвосты лежат в последних 40
+#     знаках, отступ фразы в своём предложении у настоящих хвостов не больше 18 («Субтитры
+#     создавал <ник>»), у живой речи — 52.
+# EN: 🔴 TERM SUBSTITUTION AND TRAILING-HALLUCINATION CUT (helper PODST_PY, function podst).
+#     Substitution (mode zameny) — pairs as DATA in $ZAMENY (SAGE_ZAMENY, else
+#     $SAGE_HOME/zameny.tsv): a line "pattern<TAB>replacement"; the pattern is a Python
+#     regular expression matched as a whole word, case-insensitively; the replacement may use
+#     group references (\1); if the match started with a capital and the replacement with a
+#     lower-case letter, the first letter is raised. Blank lines and lines with # are skipped.
+#     Tail cut (mode hvost) — on long (>120 characters) text the LAST SENTENCE is cut if it
+#     holds a phrase from the hallucination filter that ends no further than 40 characters
+#     from the end and starts no further than 25 characters from the start of its sentence;
+#     single-sentence text is never cut. A phrase inside speech ("…делаем, продолжение
+#     следует." — "…doing it, to be continued.") or mid-text is left alone.
+#     40 and 25 are not derived but taken from a corpus of real voice notes: tails sit in the
+#     last 40 characters, the phrase offset within its sentence is at most 18 for real tails
+#     ("Субтитры создавал <nick>"), 52 for live speech.
+# RU: FAIL-SAFE: нет файла, отказ python или пустой результат — текст уходит без изменений;
+#     битая строка замен пропускается одна (номер строки — в $LOG), остальные пары работают.
+#     ЧЕГО НЕ ЛОВИТ: ошибки распознавания вне списка пар; галлюцинацию, за которой ещё >40
+#     знаков речи.
+# EN: FAIL-SAFE: no file, a python failure or an empty result — the text goes on unchanged; a
+#     broken substitution line is skipped alone (its line number goes to $LOG), the other
+#     pairs still work.
+#     WHAT IT DOES NOT CATCH: recognition errors outside the pair list; a hallucination
+#     followed by more than 40 characters of speech.
+ZAMENY="${SAGE_ZAMENY:-${SAGE_HOME:-/opt/sage-corrector}/zameny.tsv}"
+PODST_PY='
+import re, sys
+rezhim, put = sys.argv[1], sys.argv[2]
+t = sys.stdin.read()
+stroki = [(n, l.rstrip("\n")) for n, l in enumerate(open(put, encoding="utf-8"), 1)]
+stroki = [(n, l) for n, l in stroki if l.strip() and not l.lstrip().startswith("#")]
+if rezhim == "zameny":
+    for n, l in stroki:  # битая строка пропускается одна, с номером в журнал; остальные пары работают
+        try:
+            a, b = l.split("\t")[:2]
+            def f(m, b=b):
+                s = m.expand(b)
+                return s[:1].upper() + s[1:] if m.group(0)[:1].isupper() and s[:1].islower() else s
+            t = re.sub(r"(?<!\w)(?:" + a + r")(?!\w)", f, t, flags=re.I)
+        except Exception as e:
+            sys.stderr.write("zameny: " + put + " строка " + str(n) + " пропущена: " + repr(e) + "\n")
+elif rezhim == "hvost":
+    s = t.rstrip()
+    if len(s) > 120:
+        nach = None
+        for _, p in stroki:
+            try:
+                rx = re.compile(p, re.I)
+            except re.error:
+                continue
+            for m in rx.finditer(s):
+                if len(s) - m.end() <= 40 and (nach is None or m.start() < nach):
+                    nach = m.start()
+        if nach is not None:
+            nachalo = max(s.rfind(c, 0, nach) for c in ".!?…\n") + 1
+            if nach - nachalo <= 25 and s[:nachalo].strip():
+                t = s[:nachalo].rstrip()
+sys.stdout.write(t)
+'
+# RU: Помощник коррекции кусками (KUSKI_PY). stdin — склеенный текст, argv — python и клиент
+#     корректора. stdout — исправленный текст (кусок, ушедший без коррекции, — сырым); stderr —
+#     по строке на такой кусок и последней строкой ИТОГ. Клиент сам отдаёт сырой текст при
+#     сбое и пишет об этом в stderr слово «passthrough» — по нему и считаем.
+# EN: Chunked-correction helper (KUSKI_PY). stdin — the joined text, argv — python and the
+#     corrector client. stdout — the corrected text (a chunk that went uncorrected — raw);
+#     stderr — one line per such chunk and a final ИТОГ (summary) line. The client itself
+#     passes raw text through on failure and writes the word "passthrough" to stderr — that
+#     is what we count.
+KUSKI_PY='
+import os, re, subprocess, sys, time
+predel = int(os.environ.get("SAGE_KUSOK", "600")); budzhet = float(os.environ.get("SAGE_BUDZHET", "45"))
+if predel < 1:
+    sys.stderr.write("SAGE_KUSOK должен быть целым >= 1\n"); sys.exit(2)
+py, klient = sys.argv[1], sys.argv[2]
+t = sys.stdin.read().strip()
+kuski, ost = [], t
+while len(ost) > predel:
+    okno = ost[:predel + 1]; cut = -1
+    for razd in (r"[.!?…]\s", r",\s", r"\s"):
+        m = [x.start() + 1 for x in re.finditer(razd, okno)]
+        if m and m[-1] >= predel // 3:
+            cut = m[-1]; break
+    if cut < 0:
+        cut = predel
+    kuski.append(ost[:cut].strip()); ost = ost[cut:].strip()
+if ost:
+    kuski.append(ost)
+start = time.monotonic(); out, syryh, prichiny = [], 0, []
+for i, k in enumerate(kuski):
+    if time.monotonic() - start > budzhet:
+        out.append(k); syryh += 1; prichiny.append(f"кусок {i+1}: бюджет {budzhet:.0f} с исчерпан"); continue
+    try:
+        r = subprocess.run([py, klient], input=k.encode(), capture_output=True, timeout=float(os.environ.get("SAGE_CLIENT_TIMEOUT", "20")) + 5)
+        c, err = r.stdout.decode("utf-8", "replace").strip(), r.stderr.decode("utf-8", "replace").strip()
+    except Exception as e:
+        c, err = "", "passthrough: " + type(e).__name__
+    if not c or "passthrough" in err:
+        out.append(k); syryh += 1; prichiny.append(f"кусок {i+1}: " + (err[:120] or "пустой ответ")); continue
+    if i < len(kuski) - 1 and not re.search(r"[.!?…]$", k) and c.endswith(".") and not c.endswith(".."):
+        c = c[:-1]
+    if i and k[:1].islower() and c[:1].isupper():
+        c = c[:1].lower() + c[1:]
+    out.append(c)
+for p in prichiny:
+    sys.stderr.write("корректор без коррекции: " + p + "\n")
+sys.stderr.write(f"ИТОГ корректора: кусков {len(kuski)} · без коррекции {syryh} · знаков {len(t)} · {time.monotonic() - start:.1f} с\n")
+sys.stdout.write(" ".join(out))
+'
+podst() {  # $1 режим (zameny|hvost), $2 файл данных, $3 текст → печатает текст (при любом отказе — исходный)
+  local out
+  [ -f "$2" ] || { printf '%s' "$3"; return; }
+  out="$(printf '%s' "$3" | "$CLIENT_PY" -c "$PODST_PY" "$1" "$2" 2>>"$LOG")" && [ -n "${out//[[:space:]]/}" ] \
+    && printf '%s' "$out" || printf '%s' "$3"
+}
 
-# 🔴 УСИЛЕНИЕ ТИХИХ ЗАПИСЕЙ (2026-08-04). Александр: «они тихие, и Whisper их не
-# воспринимает» — подтверждено: за день 4 галлюцинации + 1 полный отказ из 12
-# голосовых. Тихий вход = модель галлюцинирует дежурные фразы или молчит.
-# Меряем среднюю громкость; если ниже порога — нормализуем во ВРЕМЕННЫЙ файл и
-# отдаём цепочке его. Оригинал НЕ трогаем (его забирает архив голосовых).
-# FAIL-SAFE: любая ошибка ffmpeg → работаем с исходным файлом, как раньше.
+
+# RU: 🔴 УСИЛЕНИЕ ТИХИХ ЗАПИСЕЙ (2026-08-04). Слово владельца: «они тихие, и Whisper их не
+#     воспринимает» — подтверждено: за день 4 галлюцинации + 1 полный отказ из 12
+#     голосовых. Тихий вход = модель галлюцинирует дежурные фразы или молчит.
+# EN: 🔴 QUIET-RECORDING GAIN (2026-08-04). The owner's words: "they are quiet and Whisper
+#     does not pick them up" — confirmed: in one day 4 hallucinations + 1 total failure out
+#     of 12 voice notes. Quiet input = the model hallucinates stock phrases or stays silent.
+# RU: Меряем среднюю громкость (ffmpeg volumedetect); если ниже GAIN_THRESHOLD_DB —
+#     нормализуем (loudnorm I=-16, TP=-1.5, LRA=11, 16 кГц, моно) во ВРЕМЕННЫЙ файл и отдаём
+#     цепочке его. Оригинал НЕ трогаем.
+#     ⚠️ Архив голосовых в цепочке по умолчанию стоит ВНУТРИ (transcribe-local-shared) и
+#     получает путь ВРЕМЕННОГО файла: на тихой записи он ищет audio.* в каталоге временных
+#     файлов: при TMPDIR каталога сообщения берёт audio.ogg/opus, при общем
+#     TMPDIR без audio.* берёт нормализованный .wav.
+# EN: Measure mean loudness (ffmpeg volumedetect); if below GAIN_THRESHOLD_DB, normalise
+#     (loudnorm I=-16, TP=-1.5, LRA=11, 16 kHz, mono) into a TEMPORARY file and hand that to
+#     the chain. The original is NOT touched.
+#     ⚠️ In the default chain the voice archive sits INSIDE (transcribe-local-shared) and
+#     receives the TEMPORARY file's path: on a quiet recording it looks for audio.* in the
+#     temp directory: per-message TMPDIR yields audio.ogg/opus; shared TMPDIR
+#     without audio.* yields the normalised .wav.
+# RU: FAIL-SAFE: нет ffmpeg, нет файла, любая ошибка ffmpeg → работаем с исходным файлом.
+#     Чего НЕ ловит: громкую, но неразборчивую запись; нечисловой GAIN_THRESHOLD_DB
+#     пропускает усиление, не исполняясь как программа.
+# EN: FAIL-SAFE: no ffmpeg, no file, any ffmpeg error → work on the original file.
+#     What it does NOT catch: a loud but unintelligible recording; a non-numeric
+#     GAIN_THRESHOLD_DB skips gain without being executed as a program.
 GAIN_THRESHOLD_DB="${GAIN_THRESHOLD_DB:--26}"   # тише этого — усиливаем
 WAV_FOR_ASR="$WAV"
 TMP_NORM=""
 if [ -f "$WAV" ] && command -v ffmpeg >/dev/null 2>&1; then
   MEAN=$(ffmpeg -hide_banner -i "$WAV" -af volumedetect -f null - 2>&1 \
          | grep -oE 'mean_volume: -?[0-9.]+' | grep -oE '\-?[0-9.]+' | head -1)
-  if [ -n "$MEAN" ] && awk "BEGIN{exit !($MEAN < $GAIN_THRESHOLD_DB)}" 2>/dev/null; then
+  if [ -n "$MEAN" ] && [[ "$GAIN_THRESHOLD_DB" =~ ^-?[0-9]+([.][0-9]+)?$ ]] \
+     && awk -v mean="$MEAN" -v threshold="$GAIN_THRESHOLD_DB" 'BEGIN{exit !(mean < threshold)}' 2>/dev/null; then
     TMP_NORM="$(mktemp -t asrnorm-XXXXXX.wav 2>/dev/null)"
     if [ -n "$TMP_NORM" ] && ffmpeg -hide_banner -loglevel error -y -i "$WAV" \
          -af "loudnorm=I=-16:TP=-1.5:LRA=11" -ar 16000 -ac 1 "$TMP_NORM" 2>/dev/null \
@@ -57,34 +321,138 @@ if [ -f "$WAV" ] && command -v ffmpeg >/dev/null 2>&1; then
   fi
 fi
 
-RAW="$("$INNER" "$WAV_FOR_ASR" "$LANG")"; RC=$?
+# RU: Внутренний распознаватель. Его stderr не перехватывается и уходит вызывающему.
+# EN: The inner transcriber. Its stderr is not captured and goes to the caller.
+RAW="$("$INNER" "$WAV_FOR_ASR" "$YAZ")"; RC=$?
 [ -n "$TMP_NORM" ] && rm -f "$TMP_NORM" 2>/dev/null
 
+# RU: Галлюцинация → маркер вместо текста; код возврата внутреннего распознавателя сохраняется.
+# EN: Hallucination → marker instead of text; the inner transcriber's exit code is kept.
 if halluc_check "$RAW"; then
   printf '[речь не распознана — на записи тишина или шум, текст не получен]'
   exit "$RC"
 fi
+RAW="$(podst hvost "${SAGE_HALLUC_FILTER:-${SAGE_HOME:-/opt/sage-corrector}/hallucination-filter.txt}" "$RAW")"
+# RU: Пары собраны по СЫРОЙ речи — применяем их и ДО корректора, иначе он успевает исказить
+#     сырое раньше пары («пич кит» → «Пич. кит», «пул реквест» → «пул-реквест»; на тестовом
+#     диктанте так терялись 6 из 31 пары). Подставленный термин корректор не портит, если он
+#     есть в глоссарии корректора. После корректора пары применяются ещё раз; повтор безвреден,
+#     пока двойное применение равно одинарному (на нашем наборе из 43 пар это так: где замена
+#     совпадает со своим образцом, она даёт себя же). Новую пару вида «X → X-что-то»
+#     проверяйте на этот повтор: она развернётся дважды.
+# EN: The pairs were collected from RAW speech — so they are applied BEFORE the corrector too,
+#     otherwise it distorts the raw text before the pair gets a chance ("пич кит" → "Пич. кит",
+#     "пул реквест" → "пул-реквест"; on a test dictation 6 of 31 pairs were lost this way). The
+#     corrector does not spoil a substituted term if the term is in the corrector's glossary.
+#     After the corrector the pairs are applied once more; the repeat is harmless as long as
+#     applying twice equals applying once (true for our set of 43 pairs: where a replacement
+#     equals its own pattern it yields itself). Check any new pair of the form "X → X-something"
+#     for this: it will expand twice.
+RAW="$(podst zameny "$ZAMENY" "$RAW")"
 
+# RU: Корректор зовётся, только если ВСЁ сразу: код 0, текст не пустой, есть интерпретатор,
+#     есть файл клиента, есть сокет. Проверяется лишь существование сокета (-S), а не право
+#     на запись в него и не то, что служба отвечает, — это выясняется уже при вызове.
+# EN: The corrector is called only if ALL hold: exit code 0, non-empty text, the interpreter
+#     exists, the client file exists, the socket exists. Only the socket's existence (-S) is
+#     checked, not write permission nor that the service answers — that surfaces on the call.
 if [ "$RC" = "0" ] && [ -n "${RAW//[[:space:]]/}" ] && [ -x "$CLIENT_PY" ] && [ -f "$CLIENT" ] && [ -S "$SAGE_SOCK" ]; then
-  # тёплый демон через сокет; клиент сам делает passthrough сырого при сбое
-  # 🔴 СКЛЕЙКА СЕГМЕНТОВ ПЕРЕД КОРРЕКЦИЕЙ (2026-08-15).
-  # Распознаватель отдаёт текст ПОСТРОЧНО — по одной строке на сегмент звука.
-  # Корректор обрабатывает КАЖДУЮ СТРОКУ как отдельное предложение: ставит точку
-  # в конце и заглавную в начале следующей. Из-за этого слово, разрезанное на
-  # границе сегментов, превращалось в «распозн. Далась», а фраза — в «what your
-  # country can. Do for you.» Сырой текст при этом ПРАВИЛЬНЫЙ (запятые на месте,
-  # продолжение со строчной) — портила именно построчная подача.
-  # Переносы здесь — артефакт нарезки звука, а не смысл, поэтому склеиваем.
+  # RU: 🔴 СКЛЕЙКА СЕГМЕНТОВ ПЕРЕД КОРРЕКЦИЕЙ (2026-08-15).
+  #     Распознаватель отдаёт текст ПОСТРОЧНО — по одной строке на сегмент звука.
+  #     Корректор обрабатывает КАЖДУЮ СТРОКУ как отдельное предложение: ставит точку в конце
+  #     и заглавную в начале следующей. Из-за этого слово, разрезанное на границе
+  #     сегментов, превращалось в «распозн. Далась», а фраза — в «what your country can.
+  #     Do for you.» Сырой текст при этом ПРАВИЛЬНЫЙ (запятые на месте, продолжение со
+  #     строчной) — портила именно построчная подача.
+  #     Переносы здесь — артефакт нарезки звука, а не смысл, поэтому склеиваем в одну строку
+  #     и сжимаем повторные пробелы.
+  # EN: 🔴 SEGMENT JOINING BEFORE CORRECTION (2026-08-15).
+  #     The recogniser returns text LINE BY LINE — one line per audio segment.
+  #     The corrector treats EACH LINE as a separate sentence: a full stop at the end and a
+  #     capital at the start of the next. So a word split at a segment boundary became
+  #     "распозн. Далась", and a phrase became "what your country can. Do for you." The raw
+  #     text was CORRECT (commas in place, continuation in lower case) — the line-by-line
+  #     feed was what broke it.
+  #     Line breaks here are an artefact of audio slicing, not meaning, so we join into one
+  #     line and squeeze repeated spaces.
+  # RU: 🔴 КОРРЕКЦИЯ КУСКАМИ. Склеенный текст режется на куски ≤ SAGE_KUSOK знаков (600):
+  #     корректор тратит ~8 мс на знак (замер: 1000 знаков — 5,6 с, 3097 — 25,3 с), и длинное
+  #     голосовое целиком упиралось в предел клиента 20 с → уходило без коррекции. Режем по
+  #     концу предложения, иначе по запятой, иначе по пробелу (точка реза не раньше трети
+  #     куска), иначе жёстко на SAGE_KUSOK. Шов чиним: точку, поставленную корректором в конце
+  #     куска, где в сыром её не было, снимаем; заглавную в начале следующего куска, где в
+  #     сыром была строчная, возвращаем. Заодно один кусок держит службу недолго — соседнее
+  #     голосовое не ждёт за длинным.
+  #     Сроки: на кусок — SAGE_CLIENT_TIMEOUT+5 с (по умолчанию 25); общий бюджет SAGE_BUDZHET
+  #     (45 с) проверяется ПЕРЕД каждым куском — исчерпан, и остальные куски идут сырыми;
+  #     весь шаг жёстко обрезан timeout 70 — сработал, и ВЕСЬ текст уходит без коррекции.
+  #     Бюджет держит распознавание в пределе вызывающего канала (в нашем случае 120 с на
+  #     всё).
+  # EN: 🔴 CHUNKED CORRECTION. The joined text is cut into chunks of ≤ SAGE_KUSOK characters
+  #     (600): the corrector spends ~8 ms per character (measured: 1000 characters — 5.6 s,
+  #     3097 — 25.3 s), and a long voice note as a whole hit the client's 20 s limit → went out
+  #     uncorrected. Cuts go at a sentence end, else at a comma, else at a space (the cut point
+  #     no earlier than a third of the chunk), else hard at SAGE_KUSOK. Seams are repaired: a
+  #     full stop the corrector added at a chunk end where the raw text had none is removed; a
+  #     capital at the start of the next chunk where the raw text had lower case is lowered
+  #     back. A single chunk also holds the service only briefly — a neighbouring voice note
+  #     does not wait behind a long one.
+  #     Time limits: per chunk SAGE_CLIENT_TIMEOUT+5 s (25 by default); the overall budget
+  #     SAGE_BUDZHET (45 s) is checked BEFORE each chunk — once exhausted, the remaining chunks
+  #     go raw; the whole step is hard-capped by timeout 70 — if that fires, the WHOLE text
+  #     goes uncorrected. The budget keeps recognition within the calling channel's limit
+  #     (120 s for everything in our case).
+  # RU: 🔴 СЧЁТ НЕИСПРАВЛЕННЫХ КУСКОВ. Кусок без коррекции — пустой ответ клиента, слово
+  #     «passthrough» в его stderr (так клиент сообщает, что отдал сырой текст), тайм-аут или
+  #     исчерпанный бюджет. По строке на такой кусок и итоговая строка «ИТОГ корректора:
+  #     кусков N · без коррекции M · знаков L · T с» идут в $LOG. Если M ≠ 0 или итога нет
+  #     вовсе — строка в журнал системы с тегом transcribe-correct-wrap (её читает
+  #     golos-watch, вызываемый таймером пакета или администратором).
+  #     Чего НЕ ловит: непустой, но неверный ответ корректора; неудачу mktemp (тогда счёт
+  #     молча пропадает, коррекция идёт).
+  # EN: 🔴 COUNTING UNCORRECTED CHUNKS. An uncorrected chunk is an empty client reply, the word
+  #     "passthrough" in its stderr (that is how the client reports passing raw text through),
+  #     a timeout or an exhausted budget. One line per such chunk plus a summary line
+  #     "ИТОГ корректора: кусков N · без коррекции M · знаков L · T с" (summary: chunks N ·
+  #     uncorrected M · characters L · T s) go to $LOG. If M ≠ 0 or there is no summary at all,
+  #     a line goes to the system journal with the tag transcribe-correct-wrap (golos-watch reads it,
+  #     called by the packaged timer or an administrator).
+  #     What it does NOT catch: a non-empty but wrong corrector reply; an mktemp failure (the
+  #     count is then silently lost, correction still runs).
   RAW_ONE="$(printf '%s' "$RAW" | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//')"
-  COR="$(printf '%s' "$RAW_ONE" | timeout 25 "$CLIENT_PY" "$CLIENT" 2>>"$LOG")" || COR=""
-  # опциональный demo-лог RAW→COR только если явно включён SAGE_DEMO_LOG (по умолчанию OFF — privacy)
+  KSTAT="$(mktemp -t korr-XXXXXX 2>/dev/null)"
+  COR="$(printf '%s' "$RAW_ONE" | timeout 70 "$CLIENT_PY" -c "$KUSKI_PY" "$CLIENT_PY" "$CLIENT" 2>"${KSTAT:-/dev/null}")" || COR=""
+  if [ -n "$KSTAT" ]; then
+    ITOG="$(tail -n 1 "$KSTAT" 2>/dev/null)"
+    cat "$KSTAT" >> "$LOG" 2>/dev/null; rm -f "$KSTAT" 2>/dev/null
+    case "$ITOG" in
+      *"без коррекции 0 "*) ;;
+      *) logger -t transcribe-correct-wrap "🔴 корректор: ${ITOG:-итога нет — разрезка не отработала}" 2>/dev/null ;;
+    esac
+  fi
+  # RU: Необязательный demo-журнал RAW→COR — только если явно задан SAGE_DEMO_LOG (путь к
+  #     файлу). По умолчанию ВЫКЛЮЧЕН: в нём оказывается текст чужой речи (приватность).
+  #     В журнал идёт RAW до склейки (уже после среза хвоста и первой подстановки) и COR до
+  #     второй подстановки.
+  # EN: Optional RAW→COR demo log — only if SAGE_DEMO_LOG (a file path) is set explicitly.
+  #     OFF by default: it contains the text of other people's speech (privacy).
+  #     RAW is logged before joining (already after the tail cut and the first substitution),
+  #     COR before the second substitution.
   [ -n "${SAGE_DEMO_LOG:-}" ] && { printf '=== %s ===\nRAW: %s\nCOR: %s\n' "$(date -Is 2>/dev/null)" "$RAW" "$COR" >> "$SAGE_DEMO_LOG"; } 2>/dev/null
+  # RU: Вторая подстановка терминов — по ответу корректора; пустой ответ → по сырому
+  #     (несклеенному) тексту. Непустой, но неверный ответ корректора НЕ ловится — он уходит
+  #     как есть.
+  # EN: Second term substitution — over the corrector's reply; empty reply → over the raw
+  #     (unjoined) text. A non-empty but wrong corrector reply is NOT caught — it goes out
+  #     as is.
   if [ -n "${COR//[[:space:]]/}" ]; then
-    printf '%s' "$COR"
+    podst zameny "$ZAMENY" "$COR"
   else
-    printf '%s' "$RAW"
+    podst zameny "$ZAMENY" "$RAW"
   fi
 else
-  printf '%s' "$RAW"     # цепочка не 0 / пусто / демон не поднят → сырой текст как есть
+  # RU: Код не 0 / пусто / служба не поднята → сырой текст (с подстановкой терминов).
+  # EN: Non-zero code / empty / service not up → raw text (with term substitution).
+  podst zameny "$ZAMENY" "$RAW"     # цепочка не 0 / пусто / демон не поднят → сырой текст как есть
 fi
 exit "$RC"

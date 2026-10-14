@@ -1,0 +1,10 @@
+[Unit]
+Description=sadik VPN-only egress killswitch
+After=network-online.target awg-quick@awg3.service
+Wants=network-online.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/sadik-vpn-only-killswitch.sh
+[Install]
+WantedBy=multi-user.target

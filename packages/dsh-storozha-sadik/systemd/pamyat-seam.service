@@ -1,0 +1,18 @@
+[Unit]
+Description=Dynamic secretary-core-restore contract check
+OnFailure=pamyat-seam-failed@%n.service
+[Service]
+Type=oneshot
+User=coders
+Group=coders
+ExecStart=/bin/bash /usr/local/libexec/pamyat-seam/run.sh
+Environment=CEP_PLAGINY=/opt/agent-plugins/node_modules
+TimeoutStartSec=45
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pamyat-seam
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true
+UMask=0077

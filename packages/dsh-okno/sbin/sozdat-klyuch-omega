@@ -1,0 +1,15 @@
+#!/bin/bash
+# A-N-1173-ost: создать ключ службы OMEGA ≥1.5.19. Рука — root (Забава). Значение НЕ печатается, НЕ идёт в argv:
+# генерирует и пишет python, в файл сразу с правами 0600 root. Повторный запуск — ничего не делает (ключ уже есть).
+# Коды: 0 создан/был · 2 отказ.
+set -uo pipefail
+F=/etc/omega/mcp-klyuch.env
+[ "$(id -u)" = 0 ] || { echo "отказ: нужен root" >&2; exit 2; }
+install -d -m 0755 -o root -g root /etc/omega || exit 2
+if [ -e "$F" ]; then echo "ключ уже есть: $F ($(stat -c '%U:%G %a' "$F")) — не трогаю"; exit 0; fi
+python3 - "$F" <<'PY' || exit 2
+import os, secrets, sys
+f = sys.argv[1]; fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+os.write(fd, ('OMEGA_MCP_API_KEY=' + secrets.token_urlsafe(32) + '\n').encode()); os.close(fd)
+PY
+echo "создан: $F ($(stat -c '%U:%G %a %s' "$F") байт); значение не печатается"

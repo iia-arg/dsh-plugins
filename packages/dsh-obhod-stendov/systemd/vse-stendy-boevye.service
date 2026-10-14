@@ -1,0 +1,30 @@
+[Unit]
+Description=Обходчик стендов в боевой раскладке: расхождение → тревога, слепота → строка (A-N-630)
+Documentation=file:///opt/iskra/workspace/dorabotki/vse-stendy-po-tajmeru.sh
+After=multi-user.target
+
+[Service]
+Type=oneshot
+# Учётка iskra: стенды читают /opt/agent-plugins (группа agent-plugins) и платформу /opt/iskra/app,
+# пишут только во временные каталоги. root не нужен; дома кодеров — не нужны (платформа задана ниже).
+User=iskra
+Group=iskra
+# 🔴 Без этой строки 4 стенда квитанций уходят в слепоту, и прогон зеленеет, не проверив их.
+Environment=DSH_TEST_APP=/opt/iskra/app
+# 25.09.2026 (решение Забавы 14:42 МСК; находка Искры в П7 B-H-203): стенды адаптера подписки 0.1.3 (stend-perepolneniya,
+# stend-povtora) требуют STEND_APP ОБЯЗАТЕЛЬНО — громкая слепота вместо умолчания по пути; значение даёт зовущий.
+Environment=STEND_APP=/opt/iskra/app
+# B-N-639 (25.09.2026, Аврора): stend-restore боевой копии (/opt/agent-plugins/node_modules/dsh-pamyat-restore) вне дерева платформы
+# имя не разрешает и уходит в слепоту — пути задаются явно (существование проверено 25.09). Читает их только этот стенд.
+Environment=DSH_PERSIST=/opt/iskra/app/node_modules/@deepseek-ai/dsh-session-persistence/lib/index.js
+Environment=DSH_SESSION=/opt/iskra/app/node_modules/@deepseek-ai/dsh-session/lib/index.js
+RuntimeDirectory=vse-stendy-boevye
+RuntimeDirectoryMode=0700
+PrivateTmp=true
+ExecStart=/opt/iskra/workspace/dorabotki/vse-stendy-po-tajmeru.sh
+# 1 — находка (тревога уже ушла), 2 — слепота обхода: это ответы сторожа, а не его поломка.
+# Всё прочее (3 — тревога не доставлена / убит по времени) — failed, для сторожа упавших служб.
+SuccessExitStatus=1 2
+TimeoutStartSec=50min
+StandardOutput=journal
+StandardError=journal

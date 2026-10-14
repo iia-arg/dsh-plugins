@@ -1,8 +1,6 @@
 /**
- * Стенд связи. Транспорт подменяется намеренно: ветки отказа обязаны
- * проверяться порчей, а не отключением живой службы на общей машине.
- * Живой ответ проверен отдельно (см. стенд подтверждения — образцы оттуда сняты
- * с работающего хранилища).
+ * RU: Подставной транспорт проверяет отказы связи без отключения общей службы. Протокол ответа основан на эталонах стенда подтверждения; этот прогон не проверяет состояние живого провайдера.
+ * EN: A fake transport tests connection failures without disabling the shared service. The response protocol comes from confirmation-test fixtures; this run does not check the live provider state.
  */
 let sozdatSvyaz, razobratPotok
 try {
@@ -14,9 +12,8 @@ try {
   process.exit(2)
 }
 
-// 🔴 ПЕЧАТЬ СИЛЬНЕЕ СПРАВКИ (03.09.2026). Справка в README верна на день, когда её
-// писали; эта строка верна всегда, потому что снимается с дерева в момент прогона.
-// Довод: «число в тексте — перечень из одного элемента, и он устаревает молча».
+// RU: Фактическое число проб печатается из текущего прогона, а не устаревающей константой документации.
+// EN: Print the actual test count from the current run rather than a stale documentation constant.
 {
   const { createRequire } = await import('node:module')
   const trebovat = createRequire(import.meta.url)
@@ -27,16 +24,14 @@ try {
 }
 
 let vsego = 0, proshlo = 0;
-// 🔴 ХОДЫ КОПЯТСЯ И ДОЖИДАЮТСЯ ПЕРЕД ИТОГОМ (04.09.2026). Прежде пробы запускались и не
-// ожидались: `vsego` рос сразу, а тело выполнялось потом. Пока каждая проба разрешалась в
-// микрозадаче, итог случайно совпадал; первая же проба, уходящая за макрозадачу, не успевала
-// напечататься вовсе — ни ✅, ни ❌, только «7 из 8». Стенд, печатающий итог раньше своих
-// проб, показывает НЕ результат, а то, что успело.
+// RU: Асинхронные пробы сохраняются и ожидаются перед итогом. Иначе поздний результат после макрозадачи не попал бы в отчёт, а счёт запусков выглядел бы числом завершённых проверок.
+// EN: Collect asynchronous tests and await them before summarizing. Otherwise a late result after a macrotask would be absent from the report, and started tests would look like completed checks.
 const hody = [];
+const sud = (v) => { if (v !== undefined && v !== true) throw new Error('тело пробы ВЕРНУЛО «' + String(v).slice(0, 60) + '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы. Проверка ПО УСТРОЙСТВУ, а не по перечню значений (06.09.2026)'); };
 const proba = (imya, f) => {
   vsego++;
   hody.push((async () => {
-    try { await f(); proshlo++; console.log('  ✅ ' + imya); }
+    try { sud(await f()); proshlo++; console.log('  ✅ ' + imya); }
     catch (e) { console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 140)); }
   })());
 };
@@ -88,10 +83,8 @@ await proba('ПОРЧА: отказ службы отличается от об�
   if (!/отказало/.test(r.pochemu)) throw new Error('отказ службы не назван: ' + r.pochemu);
 });
 
-// 🔴 ПРИЧИНА ОТКАЗА НЕ ДОЛЖНА БЫТЬ ПУСТОЙ, даже когда у ошибки пустой message (долг 100).
-// Этот модуль ходит по сети: AggregateError с пустым собственным message — обычный исход
-// fetch, перебравшего адреса, а не редкость. `??` его не спасает: пустая строка для него —
-// найденное значение, и строка «связь не состоялась: » печаталась с пустотой.
+// RU: Пустой AggregateError.message не должен оставлять пустую причину отказа; nullish-подстановка одна этого не исправляет.
+// EN: An empty AggregateError.message must not leave a blank failure reason; nullish fallback alone does not fix it.
 proba('причина отказа непуста при пустом message (AggregateError от сети)', async () => {
   const s = sozdatSvyaz({
     adres: 'http://x/',
@@ -105,6 +98,48 @@ proba('причина отказа непуста при пустом message (A
   if (!/AggregateError/.test(r.pochemu)) throw new Error('класс ошибки потерян: ' + r.pochemu);
   if (!/ECONNREFUSED/.test(r.pochemu)) throw new Error('внутренняя причина потеряна: ' + r.pochemu);
 });
+
+// RU: Ключ OMEGA >= 1.5.19 проверяется настоящим HTTP на случайном локальном порту: без подмены fetch проверяются Authorization и отдельный отказ 401.
+// EN: Test the OMEGA >= 1.5.19 key with real HTTP on a random local port: without replacing fetch, check Authorization and the distinct 401 refusal.
+{
+  const http = await import('node:http');
+  const prishlo = {};   // RU: Заголовки сопоставляются по пути запроса, а не порядку прихода параллельных проб.
+  // EN: Match headers by request path, not the arrival order of concurrent tests.
+  const srv = http.createServer((req, res) => {
+    let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => {
+      prishlo[req.url] = req.headers.authorization ?? null;
+      if (req.headers.authorization !== 'Bearer k1') { res.writeHead(401, { 'content-type': 'application/json' }); res.end('{"error":"unauthorized"}'); return; }
+      res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(ZHIVOJ);
+    });
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const baza = 'http://127.0.0.1:' + srv.address().port;
+  const adres = baza + '/mcp/';
+  await proba('КЛЮЧ: передан → заголовок Bearer ушёл, ответ разобран', async () => {
+    const r = await sozdatSvyaz({ adres: baza + '/k1/', klyuch: 'k1' }).pozvat('omega_store', {});
+    if (prishlo['/k1/'] !== 'Bearer k1') throw new Error('заголовок не ушёл: ' + prishlo['/k1/']);
+    if (!r.udalos || !/Stored/.test(r.tekst)) throw new Error('ответ не разобран: ' + JSON.stringify(r).slice(0, 120));
+  });
+  await proba('КЛЮЧ: не задан → заголовка НЕТ (поведение до 1.5.19)', async () => {
+    await sozdatSvyaz({ adres: baza + '/bez/' }).pozvat('omega_store', {});
+    if (!('/bez/' in prishlo)) throw new Error('запрос не дошёл — проба слепа');
+    if (prishlo['/bez/'] !== null) throw new Error('ушёл заголовок без ключа: ' + prishlo['/bez/']);
+  });
+  await proba('ПОРЧА: ключ задан пустым → отказ при создании связи', () => {
+    try { sozdatSvyaz({ adres, klyuch: '  ' }); } catch (e) { if (e.code === 'OMEGA_KLYUCH_PUST') return; throw e; }
+    throw new Error('пустой ключ принят');
+  });
+  await proba('ПОРЧА: неверный ключ → «отказала в доступе (401): ключ не принят», не «не разобрано»', async () => {
+    const r = await sozdatSvyaz({ adres, klyuch: 'chuzhoj' }).pozvat('omega_store', {});
+    if (r.udalos !== false || !/отказала в доступе \(401\): ключ не принят/.test(r.pochemu)) throw new Error('отказ 401 не назван: ' + r.pochemu);
+  });
+  await proba('ПОРЧА: служба требует ключ, а он не передан → «ключ не передан»', async () => {
+    const r = await sozdatSvyaz({ adres }).pozvat('omega_store', {});
+    if (r.udalos !== false || !/ключ не передан/.test(r.pochemu)) throw new Error('причина не названа: ' + r.pochemu);
+  });
+  await Promise.all(hody);
+  srv.close();
+}
 
 await Promise.all(hody);
 console.log('  итог: ' + proshlo + ' из ' + vsego);

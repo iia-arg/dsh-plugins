@@ -1,15 +1,47 @@
+# RU: Служба oom-watch — один проход по ядерному журналу. Запускается таймером
+# RU: oom-watch.timer раз в минуту; сама в автозапуск не ставится, поэтому секции
+# RU: [Install] здесь нет намеренно: включают таймер, а не службу.
+# EN: The oom-watch service — one pass over the kernel journal. It is started by
+# EN: oom-watch.timer once a minute; it is not enabled on its own, so there is no
+# EN: [Install] section on purpose: you enable the timer, not the service.
+# RU: Описание ниже говорит о «пределе памяти», но сторож сообщает и о ГЛОБАЛЬНЫХ
+# RU: убийствах (память кончилась на всей машине) — см. docs/GUARDS.md.
+# EN: The description below speaks of "the memory limit", but the watchdog also
+# EN: reports GLOBAL kills (the whole machine ran out of memory) — see docs/GUARDS.md.
 [Unit]
 Description=OOM watchdog: catch silent kills by the memory limit
 
 [Service]
+# RU: oneshot: процесс делает один проход и выходит; таймер зовёт его снова.
+# EN: oneshot: the process makes one pass and exits; the timer calls it again.
 Type=oneshot
+# RU: Путь установки по README: install -m 755 bin/oom-watch /usr/local/bin/oom-watch.
+# EN: Install path as in the README: install -m 755 bin/oom-watch /usr/local/bin/oom-watch.
 ExecStart=/usr/local/bin/oom-watch
-# Runs as root on purpose: the kernel journal (journalctl -k) is not readable
-# otherwise, and a watchdog that cannot read its own signal fails silently.
+# RU: В поставляемом профиле root также имеет доступ к каналу фермы. Журнал доступен
+# RU: и учёткам группы systemd-journal/adm; вариант User= с правами канала — docs/SETTINGS.md.
+# EN: Root in the supplied profile also has access to the farm channel. Journal access
+# EN: is also possible through systemd-journal/adm; see SETTINGS for an alternative User.
+StateDirectory=oom-watch
 
-# Optional. Empty list = alert on ANY memory-cgroup OOM, which is the safe default:
-# a unit forgotten in the list is silence exactly where the watchdog was needed.
+# RU: Необязательно. Пустой список = тревога на ЛЮБОЕ убийство по пределу cgroup;
+# RU: это безопасное умолчание: забытый в списке юнит — молчание ровно там, где
+# RU: сторож был нужен. Глобальные и неопознанные убийства тревожат всегда.
+# EN: Optional. Empty list = alert on ANY memory-cgroup OOM, which is the safe default:
+# EN: a unit forgotten in the list is silence exactly where the watchdog was needed.
+# EN: Global and unidentified kills alert regardless of this list.
 #Environment=OOM_WATCH_UNITS=my-agent.service other.service
-# Optional external alert channel. Gets the message ON STDIN (the alert is multi-line).
-# Without it the watchdog still shouts into the journal.
-#Environment=OOM_WATCH_ALERT=/usr/local/bin/my-alert
+# RU: Необязательный внешний канал тревоги: ПОЛНЫЙ путь к исполняемому файлу, без
+# RU: аргументов. Получает текст тревоги на STDIN (он многострочный).
+# RU: Без канала сторож всё равно кричит в журнал службы.
+# EN: Optional external alert channel: a FULL path to an executable, no arguments.
+# EN: Gets the message ON STDIN (the alert is multi-line).
+# EN: Without it the watchdog still shouts into the journal.
+# RU: Канал этой фермы (B-N-1901). Без строки тревога уходит только в журнал службы и людям не видна:
+# RU: юнит из пакета обязан нести канал, иначе монтаж молча выключает тревоги.
+# EN: This farm's channel (B-N-1901). Without the line the alert goes only to the unit journal and people never see it:
+# EN: the packaged unit must carry the channel, otherwise a deploy silently switches alerts off.
+Environment=OOM_WATCH_ALERT=/usr/local/bin/agent-alert
+# RU: Необязательно: каталог состояния (файл курсора). Умолчание /var/lib/oom-watch.
+# EN: Optional: state directory (the cursor file). Default /var/lib/oom-watch.
+#Environment=OOM_WATCH_STATE=/var/lib/oom-watch

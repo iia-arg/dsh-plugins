@@ -1,0 +1,341 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""СТЕНД НА ШВЫ МЕЖДУ ПАКЕТАМИ (#203). Коды: 0 чисто · 3 НАХОДКА · 2 слепота.
+
+🔴 ЗАЧЕМ. Рассогласование договора между пакетами невидимо ни с одной стороны
+поотдельности: ОБЕ СТОРОНЫ ИСПРАВНЫ, и стенд каждого пакета честно молчит.
+За сутки 22.09.2026 мы трижды упёрлись в шов и трижды нашли его СЛУЧАЙНО.
+
+ЧТО ЛОВИТ (три вида):
+  Ш1 ПОЛЕ БЕЗ ВТОРОЙ СТОРОНЫ — колонка заводится (ALTER TABLE ADD COLUMN),
+     но никто в неё не пишет (нет UPDATE ... SET / INSERT ... с этим именем).
+     Живой случай: otnoshenie/otnositsya_k в dsh-pamyat-core — читатель есть,
+     писателя нет (#114-Б, открыт).
+  Ш2 ПУТЬ В ОБХОД ИМЕНИ — импорт по АБСОЛЮТНОМУ пути вместо имени пакета.
+     Живой случай: kompakt-dsh тянет dsh-pamyat-kompakt/index.mjs по /opt/…,
+     и три прибора ПО ИМЕНИ (профиль · node_modules · импорт по имени) дали
+     три ЧЕСТНЫХ нуля про живой файл.
+  Ш3 ИМПОРТ БЕЗ ЭКСПОРТА (B-N-653, 24.09.2026, кандидат Зари) — ПОТРЕБИТЕЛЬ ВНЕ /opt/agent-plugins
+     (шлюз /opt/claude-oauth) берёт пакет по абсолютному пути и называет имена
+     (`import { a, b } from "/opt/…"`, `const { a } = await import('/opt/…')`); каждое имя сверяется
+     с ЭКСПОРТАМИ целевого файла, снятыми ПО ТЕКСТУ (код пакета НЕ исполняется). Нет имени или нет
+     файла — шов: снос или переименование экспорта роняет шлюз целиком, а стенды пакета молчат.
+     🔴 ПОЧЕМУ НЕ ВТОРЫМ КОРНЕМ Ш1/Ш2: у шлюза абсолютный путь — ДОГОВОР (A-N-651), а не ошибка.
+     Корнем Ш2 он краснел бы навсегда на двух законных импортах — сторож, которого перестают читать.
+
+🔴 ЧЕГО НЕ ЛОВИТ — НАЗВАНО ЗДЕСЬ, А НЕ В ПИСЬМЕ: письмо теряется на сжатии,
+комментарий переживает.
+  · швы ПОВЕДЕНИЯ, а не текста: один источник, дающий в двух своих ветках разное
+    (случай Беты 21.09); один факт в двух носителях, расходящихся ТОЛЬКО после
+    восстановления (status против metadata.superseded, замер 21.09). В исходниках
+    оба выглядят согласованно — их ловит прогон с ПОРЧЕЙ, а не чтение;
+  · динамику: import() по переменной, require со склеенным путём;
+  · Ш3: экспорт вида `export const { a } = …` (деструктуризация), `export default` под другим
+    именем и `export *` глубже 3 уровней — не распознаются (такое имя назовётся ЛОЖНО отсутствующим);
+    ПОВЕДЕНИЕ экспорта (сигнатура, смысл) не сверяется — только наличие имени;
+  · договор, живущий В ЮНИТЕ (Environment=): один скрипт, два шва, решает настройка,
+    и этого нет в коде ни одного из пакетов;
+  · шов с ЧУЖИМ кодом: увидит, но лечить нечем — их исходники мы не правим;
+  · и главное: скажет «стороны не сходятся», но НЕ скажет, КАКАЯ сторона права.
+
+🔴 ЦЕНА, КОТОРУЮ ПЛАТИМ ОСОЗНАННО: признаки ищут ПО ТЕКСТУ. Значит комментарий,
+цитирующий код, и письмо в рабочем каталоге дадут ложное срабатывание — наш класс
+«текст, описывающий предмет, неотличим от предмета» ударит сюда первым.
+⇒ Поэтому вывод — ПОИМЁННЫЙ ПЕРЕЧЕНЬ и ЗНАМЕНАТЕЛЬ, а не число: читающий обязан
+иметь возможность отличить предмет от цитаты глазами.
+
+🔴 ПОЧЕМУ НАХОДКА — КОД 3, А НЕ 1. Код 1 занят системой наглухо: sudo схлопывает
+в него ВСЕ свои отказы (нет пути · не исполняем · нет права). Оставь мы 1 —
+неудача запуска пришла бы читателю как находка.
+"""
+import os, re, sys, glob, tempfile, shutil
+
+# ── ОБЛАСТЬ (замечание (2) ворот, 23.09): node_modules И наши пакеты вне его.
+# Вне node_modules жили 68 файлов (telegram-multiagent 55 · kompakt 12 · goal-marker 1),
+# и первая редакция о них молчала, называя покрытие «N из N» — N было про ОДИН корень.
+# У дополнительных корней их СОБСТВЕННЫЙ node_modules не обходится: это чужой код.
+# SHVY_KOREN может задать корни через «:» — для проб.
+if os.environ.get("SHVY_KOREN"):
+    KORNI = [k for k in os.environ["SHVY_KOREN"].split(":") if k]
+else:
+    # 🔴 ТОЛЬКО КАТАЛОГИ и без страховок: маска dsh-* ловит и архивы (*.tar, *.tgz,
+    # *.bak-*). Первый прогон v2 взял .tar.gz за корень и честно ослеп — страж сработал
+    # на моей же маске. Замер 23.09: под маской 7 имён, каталогов 3, файлов-архивов 4.
+    KORNI = ["/opt/agent-plugins/node_modules"] + sorted(
+        p for p in glob.glob("/opt/agent-plugins/dsh-*")
+        if os.path.isdir(p) and ".bak" not in os.path.basename(p))
+# B-N-1238 (30.09.2026): + .py. Писатель поля бывает на Python — chistka.py (dsh-pamyat-obsluzhivanie a6) пишет
+# zapisi.vychishcheno, а область без .py назвала это Ш1 ЛОЖНО («писателя НЕТ»). Замер 30.09: .py в корнях 21,
+# все наши (obsluzhivanie 19 · dsh-vypusk-watch 2). Чужой .py в node_modules тоже будет прочитан — это лишь цена чтения.
+RASSH = (".js", ".mjs", ".cjs", ".py")
+# Ш3: потребители пакетов ВНЕ области корней (свои файлы верхнего уровня, без node_modules и без .bak-копий —
+# у копий другое окончание, под RASSH они не попадают). SHVY_POTREBITELI через «:».
+# №17 аудита 16 (10.10.2026): умолчания НЕТ (было /opt/claude-oauth одной машины — без шлюза сторож слеп всегда).
+# Не задан — Ш3 пропущен и это сказано в строке покрытия; Ш1/Ш2 проверяются как прежде.
+POTREBITELI = [k for k in os.environ.get("SHVY_POTREBITELI", "").split(":") if k]
+RE_IMP_STAT = re.compile(r"""import\s*\{([^{}]*)\}\s*from\s*['"](/[^'"]+)['"]""")
+RE_IMP_DYN = re.compile(r"""\{([^{}]*)\}\s*=\s*await\s+import\(\s*['"](/[^'"]+)['"]\s*\)""")
+RE_EXP_DECL = re.compile(r"^export\s+(?:async\s+)?(?:function\*?|const|let|var|class)\s+([A-Za-z_$][\w$]*)", re.M)
+RE_EXP_LIST = re.compile(r"""^export\s*\{([^}]*)\}(?:\s*from\s*['"]([^'"]+)['"])?""", re.M)
+RE_EXP_ALL = re.compile(r"""^export\s*\*\s*from\s*['"]([^'"]+)['"]""", re.M)
+RE_EXP_DEF = re.compile(r"^export\s+default\b", re.M)
+OBRAZEC_SLOMANO = "shov_polyus_slomano"
+OBRAZEC_ISPRAVNO = "shov_polyus_ispravno"
+OBRAZEC_RAZNESENO = "shov_polyus_raznesyon"
+OBRAZEC_WHERE = "shov_polyus_where"
+
+# B-N-1819 r2 (условие ворот Вениамина 04:19Z): и обратные кавычки — import(`/opt/…`) иначе дал бы «сверять нечего» (Ш3)
+#   и не попал бы в Ш2. Шаблон с ${…} тоже попадёт: для Ш3 это слепота, а не «нечего», — осторожная сторона.
+RE_ABS = re.compile(r"""(?:from|require\(|import\()\s*['"`](/opt/[^'"`]+)['"`]""")
+# 🔴 v3 (A-N-071, замечание ворот 23.09): писатель сверяется ПО ТАБЛИЦЕ и ТОЛЬКО В ЧАСТИ SET.
+# v2 засчитывала запись по имени колонки где угодно в UPDATE/INSERT — и
+# «UPDATE drugaya SET x=? WHERE otnoshenie=?» дало бы ложное «чисто»: колонка
+# стоит в УСЛОВИИ чужой таблицы, а пишется другое поле.
+# Таблица из ALTER читается у всех 12 живых ADD COLUMN (замер 23.09: все «ALTER TABLE zapisi»).
+# Не прочлась (динамическое имя) — таблица None, и сверка идёт по одному имени, как в v2:
+# это слабее, и в выводе такие поля помечены.
+RE_ADD = re.compile(r"(?:ALTER\s+TABLE\s+([A-Za-z_]\w*)\s+)?ADD COLUMN\s+([a-z_][a-z0-9_]*)", re.I)
+RE_UPD = re.compile(r"UPDATE\s+([A-Za-z_]\w*)\s+SET\s+(.*?)(?=\bWHERE\b|;|$|[`'\"]\s*[,)])", re.I | re.S)
+RE_INS = re.compile(r"INSERT\s+(?:OR\s+\w+\s+)?INTO\s+([A-Za-z_]\w*)\s*\(([^)]*)\)", re.I)
+
+def pisateli(t):
+    """Пары (таблица, колонка), в которые текст ПИШЕТ: SET до WHERE и список INSERT."""
+    out = set()
+    for m in RE_UPD.finditer(t):
+        tab = m.group(1).lower()
+        for kol in re.findall(r"([a-z_][a-z0-9_]*)\s*=", m.group(2), re.I):
+            out.add((tab, kol.lower()))
+    for m in RE_INS.finditer(t):
+        tab = m.group(1).lower()
+        for kol in re.findall(r"[a-z_][a-z0-9_]*", m.group(2), re.I):
+            out.add((tab, kol.lower()))
+    return out
+
+def vyhod(kod, stroki):
+    for x in stroki: print(x)
+    sys.exit(kod)
+
+def fajly(koren, vnutr_nm):
+    for kat, podkat, imena in os.walk(koren):
+        if not vnutr_nm and "node_modules" in podkat:
+            podkat.remove("node_modules")
+        for i in imena:
+            if i.endswith(RASSH):
+                yield os.path.join(kat, i)
+
+def najti_shvy(teksty):  # noqa: вызывается и боем, и полюсами
+    """ОДНА функция и для боя, и для полюсов — иначе полюс проверял бы НЕ ТОТ код.
+    🔴 Замечание (1) ворот: писатель ищется по ВСЕМ текстам, а не только в файлах,
+    где колонка заводится. Шов «ADD в A, UPDATE в B» — исправный, а первая редакция
+    назвала бы его «писателя НЕТ»."""
+    sh2, add_cols, pishut = [], {}, set()
+    for f, t in teksty.items():
+        for m in RE_ABS.finditer(t):
+            sh2.append((f, m.group(1)))
+        for m in RE_ADD.finditer(t):
+            tab = (m.group(1) or "").lower() or None
+            add_cols.setdefault((tab, m.group(2).lower()), set()).add(f)
+        pishut |= pisateli(t)
+    sh1 = []
+    for (tab, pole), gde in sorted(add_cols.items(), key=lambda x: (x[0][0] or "", x[0][1])):
+        est = any(k == pole for _, k in pishut) if tab is None else (tab, pole) in pishut
+        if not est:
+            imya = f"{tab}.{pole}" if tab else f"?.{pole} (таблица не прочлась — сверка по имени)"
+            sh1.append((imya, sorted(gde)))
+    return sh1, sh2, add_cols
+
+def imena_spiska(t, vzyat_posle_as):
+    """«a, b as c» → имена. Для импорта берём ДО as (что просят у пакета), для экспорта — ПОСЛЕ (что отдают).
+    🔴 Динамический импорт — деструктуризация: «{ est: e2, b = 1, ...ostatok }» просит est и b. Имя — до «:»
+    и до «=», «...rest» не имя (ворота Вениамина 14:11: прежде «est:» уходило целиком — ложная тревога)."""
+    out = []
+    for kusok in re.sub(r"//[^\n]*|/\*.*?\*/", "", t, flags=re.S).split(","):
+        kusok = kusok.strip()
+        if not kusok or kusok.startswith("..."):
+            continue
+        if vzyat_posle_as:
+            ch = kusok.split()
+            out.append(ch[-1] if (len(ch) == 3 and ch[1] == "as") else ch[0])
+        else:
+            golova = kusok.split(":", 1)[0].split("=", 1)[0].split()
+            if golova:
+                out.append(golova[0])
+    return out
+
+def eksporty(put, glubina=0):
+    """Имена, которые файл ОТДАЁТ, — по тексту. None — файла нет или не читается."""
+    try:
+        t = open(put, encoding="utf-8", errors="replace").read()
+    except Exception:
+        return None
+    out = set(RE_EXP_DECL.findall(t))
+    for m in RE_EXP_LIST.finditer(t):
+        out |= set(imena_spiska(m.group(1), True))
+    if RE_EXP_DEF.search(t):
+        out.add("default")
+    if glubina < 3:
+        for m in RE_EXP_ALL.finditer(t):
+            ot = os.path.normpath(os.path.join(os.path.dirname(put), m.group(1)))
+            vlozh = eksporty(ot, glubina + 1)
+            if vlozh:
+                out |= vlozh - {"default"}
+    return out
+
+def najti_sh3(teksty):
+    """Ш3: (потребитель, цель, [нет-имён] | None-если-нет-файла), и счёт сверенного."""
+    sh3, imyon = [], 0
+    for f, t in teksty.items():
+        for re_ in (RE_IMP_STAT, RE_IMP_DYN):
+            for m in re_.finditer(t):
+                nuzhno = imena_spiska(m.group(1), False)
+                est = eksporty(m.group(2))
+                imyon += len(nuzhno)
+                if est is None:
+                    sh3.append((f, m.group(2), None))
+                elif set(nuzhno) - est:
+                    sh3.append((f, m.group(2), sorted(set(nuzhno) - est)))
+    return sh3, imyon
+
+def polyusa():
+    """Контроль зрячести на СВОЁМ образце вне измеряемой области, ТОЙ ЖЕ функцией."""
+    vrem = tempfile.mkdtemp(prefix="shvy-polyus-")
+    try:
+        a = os.path.join(vrem, "a.js"); b = os.path.join(vrem, "b.py")
+        open(a, "w", encoding="utf-8").write(
+            f'baza.exec("ALTER TABLE t ADD COLUMN {OBRAZEC_SLOMANO} TEXT");\n'
+            f'baza.exec("ALTER TABLE t ADD COLUMN {OBRAZEC_ISPRAVNO} TEXT");\n'
+            f'baza.prepare("UPDATE t SET {OBRAZEC_ISPRAVNO} = ?").run(1);\n'
+            f'baza.exec("ALTER TABLE t ADD COLUMN {OBRAZEC_RAZNESENO} TEXT");\n'
+            f'baza.exec("ALTER TABLE t ADD COLUMN {OBRAZEC_WHERE} TEXT");\n'
+            # четвёртый полюс: колонка стоит ТОЛЬКО в WHERE и ТОЛЬКО в чужой таблице ⇒ обязана быть швом
+            f'baza.prepare("UPDATE drugaya SET x = ? WHERE {OBRAZEC_WHERE} = ?").run(1, 2);\n'
+            f'baza.prepare("UPDATE t SET y = ? WHERE {OBRAZEC_WHERE} = ?").run(1, 2);\n'
+            'import { x } from "/opt/proba-polyusa/net.mjs";\n')
+        # третий полюс: ЗАВОДИТСЯ в a.js, ПИШЕТСЯ в b.py — обязан быть «исправно».
+        # B-N-1238: тексты отбирает ТА ЖЕ fajly(), что и бой, — полюс краснеет, если .py выпадет из области.
+        open(b, "w", encoding="utf-8").write(f'conn.execute("UPDATE t SET {OBRAZEC_RAZNESENO} = ?", (2,))\n')
+        teksty = {f: open(f, encoding="utf-8").read() for f in fajly(vrem, False)}
+        sh1, sh2, add_cols = najti_shvy(teksty)
+        polya = {p.split(".", 1)[-1] for p, _ in sh1}
+        slep = []
+        if OBRAZEC_SLOMANO not in polya:
+            slep.append("полюс «сломано» НЕ распознан как шов")
+        if OBRAZEC_ISPRAVNO in polya:
+            slep.append("полюс «исправно» (запись в том же файле) распознан как шов")
+        if OBRAZEC_RAZNESENO in polya:
+            slep.append("полюс «разнесён» (ADD в одном файле, UPDATE в другом) распознан как шов")
+        if OBRAZEC_WHERE not in polya:
+            slep.append("полюс «только в WHERE / чужая таблица» распознан как запись — ложное «чисто»")
+        if not sh2:
+            slep.append("полюс Ш2 не найден — прибор по путям ослеп")
+        # Полюса Ш3: пакет отдаёт «est» (объявлением) и «spiskom» (списком с as); потребитель просит
+        # их и «net» — статически и динамически. «net» ОБЯЗАН быть найден, «est»/«spiskom» — НЕТ.
+        pak = os.path.join(vrem, "pak.mjs"); pot = os.path.join(vrem, "potrebitel.mjs")
+        open(pak, "w", encoding="utf-8").write(
+            "export function est() {}\nconst vnutr = 1;\nexport { vnutr as spiskom };\n")
+        open(pot, "w", encoding="utf-8").write(
+            f'import {{ est, spiskom, net }} from "{pak}";\n'
+            # динамика ВНУТРИ блока: захват обязан начаться с ближней «{», а не с «{» блока (ложное «const», 24.09)
+            f"if (x) {{\n  const {{ est: e2, spiskom = 1, net_dinamicheski, ...ostatok }} = await import('{pak}');\n}}\n"
+            f'import {{ x }} from "{os.path.join(vrem, "net-fajla.mjs")}";\n')
+        sh3, _ = najti_sh3({pot: open(pot, encoding="utf-8").read()})
+        nety = {n for _, c, ns in sh3 if ns for n in ns}
+        # 🔴 РАВЕНСТВО, а не «не пересекается с перечнем» (ворота 14:11): перечень запрещённых видит только
+        # то, что я догадалась в него вписать, — «est:» из деструктуризации прошёл мимо него.
+        if nety != {"net", "net_dinamicheski"}:
+            slep.append(f"полюс Ш3: найдено отсутствующими {sorted(nety)}, ждала ровно ['net', 'net_dinamicheski']")
+        if not any(ns is None for _, _, ns in sh3):
+            slep.append("полюс Ш3: импорт несуществующего файла НЕ найден")
+        return slep
+    finally:
+        shutil.rmtree(vrem, ignore_errors=True)
+
+def glavnaya():
+    vse, nechitano = [], []
+    for k in KORNI:
+        if not os.path.isdir(k):
+            vyhod(2, [f"СЛЕПОТА: корня {k} нет — область неполна, «чисто» было бы ложью"])
+        vse += list(fajly(k, k.endswith("node_modules")))
+    if not vse:
+        vyhod(2, [f"СЛЕПОТА: в {' · '.join(KORNI)} нет файлов {'/'.join(RASSH)} — искать нечего"])
+    teksty = {}
+    for f in vse:
+        try:
+            teksty[f] = open(f, encoding="utf-8", errors="replace").read()
+        except Exception:
+            nechitano.append(f)
+    sh1, sh2, add_cols = najti_shvy(teksty)
+    # Ш3 — по ОТДЕЛЬНОЙ области потребителей: в Ш1/Ш2 она не входит (см. шапку).
+    teksty_p = {}
+    for k in POTREBITELI:
+        if not os.path.isdir(k):
+            vyhod(2, [f"СЛЕПОТА: потребителя {k} нет — Ш3 не проверен, «чисто» было бы ложью"])
+        for f in fajly(k, False):
+            try:
+                teksty_p[f] = open(f, encoding="utf-8", errors="replace").read()
+            except Exception:
+                nechitano.append(f)
+    sh3, imyon = najti_sh3(teksty_p)
+    # 🔴 ПУСТОЙ КОРЕНЬ ПОТРЕБИТЕЛЯ — СЛЕПОТА, А НЕ «ЧИСТО» (ворота Вениамина 14:11, воспроизведено): ночью
+    # сторожа зовёт registry-watchdog от iskra, а /opt/claude-oauth 750 claudeoauth — os.walk молча не видит
+    # ни одного файла, и Ш3 говорил «чисто». Файлов 0 или имён 0 в корне — проверять было нечего.
+    # B-N-1819 (08.10.2026, Заря): «имён 0» при прочитанных файлах — не всегда слепота. Шлюз 0.4.32 (04.10, 411d974)
+    #   убрал единственный абсолютный импорт, и с 05.10 сторож слеп каждую ночь, хотя файлы прочитаны (59 под root).
+    #   Имён 0 И абсолютных путей /opt/ в импортах 0 (RE_ABS, любой вид) — потребитель пакеты по пути не берёт,
+    #   сверять нечего: это в покрытии, не слепота. Путь есть, а имён 0 — форму импорта не распознала: СЛЕПОТА.
+    #   ЧЕГО НЕ ЛОВИТ: импорт по пути, склеенному из переменной (его не видит и RE_ABS) — см. «динамику» в шапке.
+    ne_berut = []
+    for k in POTREBITELI:
+        f_k = [f for f in teksty_p if f.startswith(k.rstrip("/") + "/")]
+        _, im_k = najti_sh3({f: teksty_p[f] for f in f_k})
+        if f_k and not im_k and not any(RE_ABS.search(teksty_p[f]) for f in f_k):
+            ne_berut.append(k); continue
+        if not f_k or not im_k:
+            vyhod(2, [f"СЛЕПОТА: Ш3 не проверен — в потребителе {k} прочитано файлов {len(f_k)}, сверено имён {im_k} "
+                      f"(нет прав? запуск от {os.environ.get('USER') or os.getuid()}); «чисто» было бы ложью"])
+    slepota = polyusa()
+    GRANICY = ("вне проверки: швы ПОВЕДЕНИЯ (две ветки одного источника · два носителя "
+               "одного факта) · динамика import()/require по переменной · договор в юните "
+               "(Environment=) · node_modules ВНУТРИ наших пакетов (чужой код) · и он НЕ говорит, "
+               "какая из сторон права · 🔴 INSERT БЕЗ СПИСКА КОЛОНОК (INSERT INTO t VALUES …, "
+               "INSERT INTO t SELECT …) записью НЕ засчитывается — колонку, в которую так пишут, "
+               "прибор назовёт Ш1 ЛОЖНО.")
+    POKRYTIE = (f"покрытие: прочитано {len(teksty)} из {len(vse)} файлов в корнях {len(KORNI)} "
+                f"({' · '.join(KORNI)}) · колонок ADD COLUMN {len(add_cols)}"
+                + (f" · Ш3: файлов потребителей {len(teksty_p)} в {' · '.join(POTREBITELI)}, имён сверено {imyon}"
+                   if POTREBITELI else " · Ш3 НЕ ПРОВЕРЯЛСЯ: потребители не заданы (SHVY_POTREBITELI пуст)")
+                + (f" (по абсолютному пути пакеты не берёт, сверять нечего: {' · '.join(ne_berut)})" if ne_berut else "")
+                + (f" · 🔴 НЕ ПРОЧИТАНО {len(nechitano)}" if nechitano else ""))
+    rel = lambda p: os.path.relpath(p, "/opt/agent-plugins") if p.startswith("/opt/agent-plugins") else p
+    if slepota:
+        vyhod(2, ["СЛЕПОТА: контроль зрячести не пройден:"] + [f"  · {x}" for x in slepota]
+                 + [f"  {POKRYTIE}", f"  {GRANICY}"])
+    if not sh1 and not sh2 and not sh3:
+        vyhod(0, [("чисто: швов Ш1, Ш2 и Ш3 не найдено" if POTREBITELI else
+                   "чисто: швов Ш1 и Ш2 не найдено (Ш3 не проверялся — SHVY_POTREBITELI пуст)"),
+                  f"  {POKRYTIE}", f"  {GRANICY}"])
+    out = [f"🔴 ШВЫ: Ш1 {len(sh1)} · Ш2 {len(sh2)} · Ш3 {len(sh3)}"]
+    for pole, gde in sh1:
+        out.append(f"  Ш1 поле «{pole}» заводится (ADD COLUMN), писателя НЕТ ни в одном файле области: "
+                   + ", ".join(rel(g) for g in gde))
+    for f, put in sh2:
+        out.append(f"  Ш2 {rel(f)} тянет по АБСОЛЮТНОМУ пути: {put}")
+    for f, cel, net in sh3:
+        out.append(f"  Ш3 {f} берёт из {cel} " + ("— ФАЙЛА НЕТ" if net is None
+                   else "имена, которых пакет НЕ экспортирует: " + ", ".join(net)))
+    out += [f"  {POKRYTIE}", f"  {GRANICY}",
+            "  ⚠️ перечень, а не число: часть попаданий может быть ЦИТАТОЙ кода в "
+            "комментарии — различать глазами, прибор этого не умеет"]
+    vyhod(3, out)
+
+# 🔴 ВСЁ ТЕЛО ПОД ОБЁРТКОЙ (замечание (3) ворот, 23.09). Прежде mkdtemp стоял вне try:
+# любое исключение давало traceback и КОД 1 — а код 1 мы сами объявили занятым
+# системой. Неожиданный отказ обязан быть СЛЕПОТОЙ, а не выдавать себя за чужой код.
+# __main__ (info ворот 14:11): импорт модуля для проб не должен исполнять сторож целиком.
+if __name__ == "__main__":
+    try:
+        glavnaya()
+    except SystemExit:
+        raise
+    except BaseException as e:
+        vyhod(2, [f"СЛЕПОТА: прибор отказал неожиданно — {type(e).__name__}: {e}"])

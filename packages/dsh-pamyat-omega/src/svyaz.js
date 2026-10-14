@@ -1,31 +1,15 @@
 /**
- * Связь с долговременным хранилищем по его точке MCP.
- *
- * ЧТО ЗДЕСЬ ЕСТЬ: один вызов инструмента и разбор ответа. Ни политики, ни
- * подтверждения доставки — они выше, в своих модулях. Этот слой отвечает на
- * единственный вопрос: «удалось ли поговорить и что нам сказали».
- *
- * 🔴 ЗАВЕРШАЮЩИЙ СЛЭШ В АДРЕСЕ ОБЯЗАТЕЛЕН. Проверено живым запросом 02.09: без
- * него служба отвечает перенаправлением (307) и ПУСТЫМ телом, а POST его не
- * переживает. Пустое тело легко принять за «хранилище молчит» — на деле мы
- * просто постучались не туда. Поэтому адрес без слэша — отказ с объяснением,
- * а не молчаливая попытка.
- *
- * 🔴 ОТВЕТ ИДЁТ ПОТОКОМ СОБЫТИЙ, а не голым JSON: строки вида `data: {…}`.
- * Разбор голым JSON.parse дал бы отказ на исправном ответе.
+ * RU: MCP-связь вызывает один инструмент и разбирает ответ, без политики и подтверждения доставки. Адрес требует завершающий слэш: поддерживаемая точка без него отвечает 307 с пустым телом. Ответ допускает SSE data: и строки JSON; разбор всего потока как одного JSON отверг бы исправный SSE.
+ * EN: The MCP connection calls one tool and parses its response, without policy or delivery confirmation. The address requires a trailing slash: the supported endpoint returns 307 with an empty body otherwise. Responses may contain SSE data: or JSON lines; parsing the entire stream as one JSON object would reject valid SSE.
  */
 
-/** Разобрать поток событий: ищем первую строку с полезной нагрузкой. */
 /**
- * Читаемая причина отказа из объекта ошибки (долг 100).
- *
- * 🔴 НЕ `e?.message ?? String(e)`: `??` реагирует только на null и undefined, а пустая строка
- * для него — найденное значение. Этот модуль ходит ПО СЕТИ, и `AggregateError` с пустым
- * `message` (fetch перебрал адреса) здесь не гипотеза, а обычный исход. Строка «связь не
- * состоялась: » печаталась с пустотой — а пустое поле хуже отсутствующего: оно читается как
- * «причину узнали, она пустая», и вопрос гаснет.
- * ⚠️ Местная НАМЕРЕННО: общей на пакеты не заводим, межпакетная зависимость ради десяти строк
- * дороже дублирования. Расхождение ловит проба в стенде, а не памятка.
+ * RU: Найти первую строку потока с JSON-RPC result или error; не считать прочие строки полезным ответом.
+ * EN: Find the first stream line containing JSON-RPC result or error; other lines are not a useful response.
+ */
+/**
+ * RU: Короткая причина использует имя, код и до трёх вложенных ошибок, не оставляя пустой AggregateError.message как объяснение. ?? не заменяет пустую строку. Форматирование местное, без зависимости между пакетами; его совпадение с ядром проверяет отдельный стенд.
+ * EN: Build a short reason from the name, code, and up to three nested errors rather than treating an empty AggregateError.message as an explanation. ?? does not replace an empty string. Formatting stays local without an inter-package dependency; a separate test checks agreement with the core.
  */
 function prichina_stroka(e) {
   const tekst = String(e?.message ?? '').trim();
@@ -46,19 +30,19 @@ export function razobratPotok(tekst) {
     try {
       const d = JSON.parse(chistaya);
       if (d && (d.result !== undefined || d.error !== undefined)) return d;
-    } catch { /* строка не JSON — часть протокола, пропускаем */ }
+    } catch { /**
+     * RU: Невалидная строка JSON может быть служебной строкой SSE; пропустить её и искать полезный ответ дальше.
+     * EN: An invalid JSON line may be an SSE protocol line; skip it and continue looking for a useful response.
+     */ }
   }
   return null;
 }
 
 /**
- * Создать связь.
- * @param {string} adres     адрес точки; ЗАВЕРШАЮЩИЙ СЛЭШ ОБЯЗАТЕЛЕН
- * @param {number} tajmautMs предел ожидания
- * @param {function} [otpravka] подменяемый транспорт — нужен стендам, чтобы
- *        ветки отказа проверялись порчей, а не отключением живой службы
+ * RU: Создать связь: adres со слэшем, tajmautMs — предел ожидания; otpravka подменяет транспорт для безопасных стендов. Необязательный klyuch добавляет Authorization: Bearer для OMEGA >= 1.5.19; undefined не добавляет заголовок, пустое заданное значение отвергается до запроса. Проверка наличия ключа не подтверждает, что служба его примет.
+ * EN: Create a connection: adres includes a slash and tajmautMs bounds waiting; otpravka replaces transport for safe tests. Optional klyuch adds Authorization: Bearer for OMEGA >= 1.5.19; undefined omits the header, while an explicitly empty value is rejected before requesting. Key presence does not prove service acceptance.
  */
-export function sozdatSvyaz({ adres, tajmautMs = 10000, otpravka } = {}) {
+export function sozdatSvyaz({ adres, tajmautMs = 10000, otpravka, klyuch } = {}) {
   if (!adres || typeof adres !== 'string') {
     const e = new Error('dsh-pamyat-omega: не задан адрес хранилища');
     e.code = 'OMEGA_NET_ADRESA';
@@ -74,30 +58,43 @@ export function sozdatSvyaz({ adres, tajmautMs = 10000, otpravka } = {}) {
     throw e;
   }
 
-  const poslat = otpravka ?? (async (telo) => {
+  if (klyuch !== undefined && (typeof klyuch !== 'string' || !klyuch.trim())) {
+    const e = new Error('dsh-pamyat-omega: ключ службы задан, но пуст — переменная окружения не дошла до процесса. ' +
+      'Служба ответит 401 на каждый вызов.');
+    e.code = 'OMEGA_KLYUCH_PUST';
+    throw e;
+  }
+  const zagolovki = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' };
+  if (klyuch !== undefined) zagolovki.Authorization = 'Bearer ' + klyuch.trim();
+
+  const poslat = otpravka ?? (async (telo, tajmaut = tajmautMs) => {
     const otvet = await fetch(adres, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      headers: zagolovki,
       body: JSON.stringify(telo),
-      signal: AbortSignal.timeout(tajmautMs),
+      signal: AbortSignal.timeout(tajmaut),
     });
+    // RU: 401/403 — отказ доступа, не полезный ответ MCP. Отделить его до SSE-разбора, чтобы не сообщить ложную ошибку формата.
+    // EN: 401/403 means access refusal, not a useful MCP response. Separate it before SSE parsing to avoid reporting a false format error.
+    if (otvet.status === 401 || otvet.status === 403) {
+      throw new Error('служба отказала в доступе (' + otvet.status + '): ключ ' +
+        (klyuch === undefined ? 'не передан' : 'не принят'));
+    }
     return otvet.text();
   });
 
   return {
     /**
-     * Позвать инструмент хранилища.
-     * Возвращает { udalos, tekst, pochemu } — «удалось поговорить» отделено от
-     * «что сказали»: связь могла оборваться, и тогда мы НЕ ЗНАЕМ результата,
-     * а не «получили отрицательный».
+     * RU: pozvat возвращает {udalos, tekst, pochemu}, различая состоявшийся разговор и неизвестный результат при обрыве. Успех транспорта ещё не подтверждает сохранение знания.
+     * EN: pozvat returns {udalos, tekst, pochemu}, distinguishing a completed exchange from an unknown result after interruption. Transport success does not yet confirm knowledge persistence.
      */
-    async pozvat(imya, argumenty) {
+    async pozvat(imya, argumenty, { tajmautMs: tajmautVyzova } = {}) {   // RU: A-N-1727: предел одного вызова (поиск по всем корням) · EN: per-call limit
       let syroj;
       try {
         syroj = await poslat({
           jsonrpc: '2.0', id: Date.now(), method: 'tools/call',
           params: { name: imya, arguments: argumenty },
-        });
+        }, tajmautVyzova ?? tajmautMs);
       } catch (prichina) {
         return {
           udalos: false, tekst: null,

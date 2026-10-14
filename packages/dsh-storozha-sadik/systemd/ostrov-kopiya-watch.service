@@ -1,0 +1,12 @@
+[Unit]
+Description=Сторож отставания копии API Острова для стендов от сайта (B-N-2018): разошлось/слепота — в agent-alert со строками обновления
+Documentation=file:///usr/local/sbin/ostrov-kopiya-watch
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/ostrov-kopiya-watch
+TimeoutStartSec=120
+# root читает манифесты в доме Марка (только чтение, до 2 МБ на файл) — пределы как у прочих root-сторожей (A-N-1963 №11)
+MemoryMax=128M
+MemorySwapMax=0

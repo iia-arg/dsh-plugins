@@ -1,0 +1,51 @@
+#!/usr/bin/python3
+# RU: python-padenie-70 — запуск Python-сторожа так, чтобы ПАДЕНИЕ не выглядело успехом.
+# RU: 🔴 ЗАЧЕМ. У многих сторожей код 1 значит «нашёл беду, тревога ушла», и юнит считает его успехом
+# RU: (SuccessExitStatus=1). Но тем же кодом 1 Python выходит, когда скрипт упал с непойманным исключением —
+# RU: в том числе ДО main(): ImportError, SyntaxError, ошибка при чтении настроек. Такой сторож «успешен» и слеп.
+# RU: Проверено: юнит с SuccessExitStatus=1, python3 -c "import <нет такого>" → Result=success.
+# RU: ЧТО ДЕЛАЕТ: исполняет скрипт как __main__ (runpy.run_path, sys.argv и sys.path[0] — как при обычном запуске).
+# RU: Намеренный выход (sys.exit(N), SystemExit) проходит КАК ЕСТЬ. Любое другое исключение — traceback в stderr и
+# RU: код 70 (вне любого SuccessExitStatus) — юнит failed, беду видит соседний сторож служб.
+# RU: ⚠️ НЕ ЛОВИТ: скрипт, который сам перехватывает всё и выходит кодом 1 (запускатель видит намеренный выход);
+# RU: исключение, проглоченное внутри скрипта (except … : дальше по коду); смерть процесса от сигнала.
+# RU: Коды: как у скрипта; 70 — скрипт упал; 71 — запускателю не дали скрипта или его нет (1.0.4: было 2 — а 2 у части
+# RU: юнитов в SuccessExitStatus, переехавший скрипт выглядел бы успехом).
+# EN: python-padenie-70 — run a Python watchdog so that a CRASH does not look like success.
+# EN: 🔴 WHY. For many watchdogs exit 1 means "found a problem, alert sent", and the unit counts it as success
+# EN: (SuccessExitStatus=1). But Python also exits 1 when the script dies of an uncaught exception — including BEFORE
+# EN: main(): ImportError, SyntaxError, a settings read error. Such a watchdog is "successful" and blind.
+# EN: WHAT IT DOES: runs the script as __main__ (runpy.run_path; sys.argv and sys.path[0] as in a normal run). A
+# EN: deliberate exit (sys.exit(N), SystemExit) passes AS IS. Any other exception — traceback to stderr and exit 70.
+# EN: ⚠️ DOES NOT CATCH: a script that catches everything itself and exits 1; an exception swallowed inside the
+# EN: script; death by signal. Exit codes: the script's own; 70 — the script crashed; 71 — no script given or missing
+# EN: (1.0.4: was 2, which some units count as success).
+import os, runpy, sys, traceback
+
+if len(sys.argv) < 2:
+    print("python-padenie-70: ОТКАЗ — нужен путь скрипта · REFUSED: a script path is required", file=sys.stderr)
+    sys.exit(71)
+put = sys.argv[1]
+if not os.path.isfile(put):
+    print(f"python-padenie-70: ОТКАЗ — скрипта нет: {put} · REFUSED: no such script", file=sys.stderr)
+    sys.exit(71)
+sys.argv = sys.argv[1:]
+# RU: 1.0.6: имя процесса — по скрипту, как при прямом запуске (ядро режет comm до 15 байт). Без этого ps, pgrep и
+# RU: «звал=» в agent-alert (ps -o comm= от родителя) видели «python-padenie-». Не вышло — работаем дальше: это имя, не защита.
+# EN: 1.0.6: the process name follows the script, as in a direct run (comm is cut to 15 bytes); on failure carry on.
+try:
+    with open("/proc/self/comm", "w") as c:
+        c.write(os.path.basename(put)[:15])
+except OSError:
+    pass
+# RU: как у обычного запуска: каталог скрипта — первым в sys.path (соседние модули импортируются).
+# EN: as in a normal run: the script's directory first in sys.path (sibling modules import).
+sys.path[0] = os.path.dirname(os.path.realpath(put))
+try:
+    runpy.run_path(put, run_name="__main__")
+except SystemExit:
+    raise
+except BaseException:
+    traceback.print_exc()
+    print(f"python-padenie-70: {put} упал с исключением — код 70 · crashed with an exception — exit 70", file=sys.stderr)
+    sys.exit(70)

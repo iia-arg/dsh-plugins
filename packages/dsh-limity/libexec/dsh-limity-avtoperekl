@@ -1,0 +1,157 @@
+#!/usr/bin/python3 -B
+# -*- coding: utf-8 -*-
+"""dsh-limity-avtoperekl — автопереключение ОБЩИХ Claude-шлюзов sadik при исчерпании подписки (B-N-1806, Аврора, 08.10.2026;
+слово владельца 08.10 00:00 МСК «да, переключай автоматически»). Зовёт свой таймер раз в 10 мин; отдельный юнит, а не проход
+dsh-limity-zamer: переключатель ждёт концов ходов до 600 с и перезапускает шлюзы, а у замера TimeoutStartSec=600 — внутри замера
+переключение убил бы срок, и замеры вставали бы на время переключения.
+
+  1. Кто где: живые claude-oauth-gateway@*, подписка по реестру (obshchaya-claude — общий; podpiska-N — своя, не трогается),
+     номер — из GATEWAY_TOKEN_FILE живого процесса (как переключатель). Неизвестное → слепота, переключения нет.
+  2. Исчерпана подписка, на которой стоит хоть один общий: замер свежий (≤ SVEZHEST_MIN) и 5 ч или неделя ≥ ISCHERPANA (0.99)
+     либо окно «rejected». Замер несвежий — не переключаю.
+  3. Цель: включённая Claude-подписка конфига dsh-limity (номер 1–3 — переключатель знает только их), не исчерпанная, которую
+     читатель заслона переключателя признаёт «свободной» (тот же прибор, те же пороги — иначе переключатель отказал бы); из них —
+     с наименьшей долей недели, при равенстве — 5 ч. Нет такой — тревога «некуда» с цифрами, без переключения.
+  4. Не чаще раза в RAZ_V_MIN (30) мин попытка: pereklyuchatel-podpiski <N> tiho (без своей тревоги; итог — в его файл итога).
+     Итог — одной строкой владельцу. Тревоги «некуда»/«слепота» — по переходу, «сказано» — по доставке.
+ЧЕГО НЕ ЛОВИТ: подписку Claude с номером вне 1–3 (переключатель их не знает) · исчерпание по несвежему замеру · расход вне sadik.
+Подмены путей — ТОЛЬКО при DSH_LIMITY_AVTO_STEND=1 (стенд); иное значение — отказ.
+Коды: 0 — проход состоялся (в т.ч. «нечего», «некуда», «рано»); 2 — слепота; 3 — ошибка вызова."""
+import json, os, re, subprocess, sys, time
+from pathlib import Path
+for _l in (os.environ.get('DSH_LIMITY_LIB'), Path(__file__).resolve().parent.parent / 'lib', '/usr/local/lib/dsh-limity'):
+    if _l and (Path(_l) / 'dsh_limity_konfig.py').is_file(): sys.path.insert(0, str(_l)); break
+import dsh_limity_konfig
+
+if len(sys.argv) > 1: print('ОТКАЗ: у dsh-limity-avtoperekl нет доводов', file=sys.stderr); sys.exit(3)
+STEND = os.environ.get('DSH_LIMITY_AVTO_STEND', '')
+if STEND not in ('', '1'): print(f'ОТКАЗ: DSH_LIMITY_AVTO_STEND=«{STEND}» — только 1 (стенд) или пусто (бой)', file=sys.stderr); sys.exit(3)
+def put(imya, boj): return os.environ.get(imya, boj) if STEND == '1' else boj
+VYDACHA = Path(put('DSH_LIMITY_VYDACHA', '/var/lib/dsh-limity/vydacha/limity.json'))
+PODPISKI = Path(put('DSH_LIMITY_PODPISKI', '/etc/dsh-limity/podpiski.json'))
+SOST = Path(put('DSH_LIMITY_AVTO_SOST', '/var/lib/dsh-limity/avtoperekl.json'))
+PEREKL = put('DSH_LIMITY_AVTO_PEREKL', '/usr/local/sbin/pereklyuchatel-podpiski')
+ITOG = Path(put('DSH_LIMITY_AVTO_ITOG', '/var/lib/pereklyuchatel-podpiski/last-itog.txt'))
+CHITATEL = put('DSH_LIMITY_AVTO_CHITATEL', '/usr/local/libexec/pereklyuchatel-podpiski-limity.py')
+REESTR = put('DSH_LIMITY_AVTO_REESTR', '/usr/local/bin/agent-registry')
+SYSTEMCTL = put('DSH_LIMITY_AVTO_SYSTEMCTL', 'systemctl')
+PROC = put('DSH_LIMITY_AVTO_PROC', '/proc')
+ALERT = put('DSH_LIMITY_AVTO_ALERT', '/usr/local/bin/agent-alert')
+ISCHERPANA = 0.99                     # слово Забавы 08.10 (наряд B-N-1806)
+SVEZHEST_MIN = 2 * 60 + 10            # = SVEZHEST_MIN dsh-limity-zamer: замер простаивающей раз в час ×2 + такт таймера 10 мин
+RAZ_V_MIN = 30                        # попытка переключения не чаще; переключатель сам ждёт концов ходов до 10 мин
+IMENA = {'iskra': 'Искра', 'zarya': 'Заря', 'avrora': 'Аврора', 'spartak': 'Спартак', 'varvara': 'Варвара', 'alfa': 'Альфа',
+         'beta': 'Бета', 'gamma': 'Гамма', 'marc': 'Марк', 'anna': 'Анна', 'master': 'Мастер', 'petrovich': 'Петрович'}
+
+def trevoga(tekst):
+    try: return os.access(ALERT, os.X_OK) and subprocess.run([ALERT, tekst], capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.SubprocessError): return False
+
+def kto_gde():
+    """→ {агент: номер подписки} общих живых Claude-шлюзов; неизвестное — ValueError (переключения не будет)."""
+    p = subprocess.run([SYSTEMCTL, 'list-units', '--no-pager', '--plain', '--type=service', 'claude-oauth-gateway@*'],
+                       capture_output=True, text=True, timeout=30)
+    if p.returncode: raise ValueError(f'список шлюзов не получен (systemctl код {p.returncode})')
+    gde = {}
+    for u in re.findall(r'claude-oauth-gateway@([a-z0-9_-]+)\.service', p.stdout):
+        r = subprocess.run([REESTR, 'pole', u, 'podpiska', '--json'], capture_output=True, text=True, timeout=30)
+        if r.returncode: raise ValueError(f'реестр не дал подписку {u}')
+        if r.stdout.strip() != '"obshchaya-claude"':
+            if re.fullmatch(r'"podpiska-\d+"', r.stdout.strip()): continue   # своя подписка — не трогаю
+            raise ValueError(f'у {u} в реестре podpiska={r.stdout.strip()[:40]}')
+        pid = subprocess.run([SYSTEMCTL, 'show', f'claude-oauth-gateway@{u}', '-p', 'MainPID', '--value'], capture_output=True, text=True, timeout=30).stdout.strip()
+        if not pid.isdigit(): raise ValueError(f'негодный MainPID шлюза {u}')
+        if pid == '0': print(f'ПРОПУСК: шлюз {u}, MainPID=0 — процесса нет'); continue
+        try: env = Path(PROC, pid, 'environ').read_bytes().split(b'\0')
+        except OSError as e: raise ValueError(f'окружение шлюза {u} не прочитано ({type(e).__name__})')
+        m = next((re.search(rb'/token-podpiska-(\d+)$', x) for x in env if x.startswith(b'GATEWAY_TOKEN_FILE=')), None)
+        if not m: raise ValueError(f'живой шлюз {u}: GATEWAY_TOKEN_FILE не на известной подписке')
+        gde[u] = int(m[1])
+    return gde
+
+def doli(z, teper):
+    """запись выдачи → (свежо, {окно: (доля, состояние)}, подпись для текста)."""
+    sn = z.get('snyato_unix') if isinstance(z, dict) else None
+    svezho = isinstance(sn, (int, float)) and teper - sn <= SVEZHEST_MIN * 60
+    okna = {}
+    for kl, metka in (('pyat_chasov', '5 ч'), ('nedelya', 'неделя')):
+        o = (z or {}).get(kl)
+        if isinstance(o, dict) and isinstance(o.get('izrashodovano_dolya'), (int, float)): okna[metka] = (o['izrashodovano_dolya'], o.get('sostoyanie'))
+    return svezho, okna, sn
+
+def prohod():
+    teper, svod = time.time(), []
+    sost = dsh_limity_konfig.prochitat_sostoyanie(SOST, 'avtoperekl')
+    def zapisat(): dsh_limity_konfig.zapisat_json(SOST, sost)
+    def skazat(klyuch, tekst):   # по переходу: та же картина — молчу; «сказано» — по доставке
+        if sost.get(klyuch) == tekst: return
+        if trevoga(tekst): sost[klyuch] = tekst; svod.append(f'{klyuch}: доставлено')
+        else: svod.append(f'{klyuch}: НЕ доставлено — повтор следующим проходом')
+    try:
+        konfig, oshibki, _ = dsh_limity_konfig.prochitat_rabochij(PODPISKI)
+        if not konfig: raise ValueError('конфиг подписок негоден: ' + '; '.join(oshibki)[:200])
+        vyd = json.loads(VYDACHA.read_text(encoding='utf-8'))['podpiski']
+        gde = kto_gde()
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as e:
+        print(f'СЛЕПОТА: {e}'); skazat('slepota', f'⚠️ Claude: автопереключение не видит, кто на какой подписке — {str(e)[:120]}'); zapisat(); return 2
+    sost.pop('slepota', None)
+    claude = {int(p['nomer']): p for p in konfig if p['provajder'] == 'claude' and p['vkl']}
+    def imya(n): return claude[n]['podpis'] if n in claude else f'подписка {n}'
+    def sostoyanie(n):
+        p = claude.get(n)
+        return doli(vyd.get(p['kluch']), teper) if p else (False, {}, None)
+    def ischerpana(n):
+        svezho, okna, _ = sostoyanie(n)
+        pochemu = [f'{m} {round(d * 100)}%' for m, (d, st) in okna.items() if d >= ISCHERPANA or st == 'rejected']
+        return ' · '.join(pochemu) if svezho and pochemu else None
+    na = sorted(set(gde.values()))
+    istochnik = next(((n, ischerpana(n)) for n in na if ischerpana(n)), None)
+    if not istochnik:
+        sost.pop('nekuda', None); zapisat()
+        print('dsh-limity-avtoperekl: общие на ' + ', '.join(imya(n) for n in na) + ' — не исчерпана, переключать нечего'); return 0
+    src, pochemu = istochnik
+    kandidaty, net = [], []
+    for n in sorted(claude):
+        if n in na and ischerpana(n): continue
+        svezho, okna, sn = sostoyanie(n)
+        if not 1 <= n <= 3: net.append(f'{imya(n)} — переключатель её не знает'); continue
+        if ischerpana(n): net.append(f'{imya(n)} {ischerpana(n)}'); continue
+        r = subprocess.run([CHITATEL, str(n)], capture_output=True, text=True, timeout=30)
+        if r.returncode == 0 and r.stdout.startswith('free'): kandidaty.append((okna.get('неделя', (1, 0))[0], okna.get('5 ч', (1, 0))[0], n)); continue
+        if not svezho: net.append(f'{imya(n)} — нет свежего замера' + (f' ({int((teper - sn) // 60)} мин)' if isinstance(sn, (int, float)) else ''))
+        else: net.append(f'{imya(n)} ' + ' · '.join(f'{m} {round(d * 100)}%' for m, (d, _) in okna.items()))
+    if not kandidaty:
+        skazat('nekuda', f'🔴 Claude: {imya(src)} {pochemu} — переключить некуда: ' + '; '.join(net or ['других включённых нет']))
+        zapisat(); print('dsh-limity-avtoperekl: некуда · ' + ' · '.join(svod)); return 0
+    cel = min(kandidaty)[2]
+    proshlo = teper - sost.get('popytka', 0)
+    if proshlo < RAZ_V_MIN * 60:
+        print(f'dsh-limity-avtoperekl: {imya(src)} {pochemu}, цель {imya(cel)} — попытка была {int(proshlo // 60)} мин назад, жду {RAZ_V_MIN}'); return 0
+    sost['popytka'] = teper; sost.pop('nekuda', None); zapisat()   # попытка учтена ДО вызова
+    try: r = subprocess.run([PEREKL, str(cel), 'tiho'], capture_output=True, text=True, timeout=900); kod = r.returncode
+    except subprocess.TimeoutExpired: kod = 124
+    try: itog = ITOG.read_text(encoding='utf-8').split('\t', 1)[-1].strip() if ITOG.stat().st_mtime >= teper - 1 else ''   # итог ЭТОГО прогона, не прошлого
+    except OSError: itog = ''
+    def lyudi(spisok): return ', '.join(IMENA.get(x, x) for x in spisok.split()) if spisok and spisok.strip() not in ('нет', 'никто') else ''
+    perevedeny = lyudi((re.search(r'переключены: ([a-z0-9_ -]*?)[.;]', itog) or [None, ''])[1])
+    zanyaty = lyudi((re.search(r'заняты и не переключены: ([a-z0-9_ -]*?)[.;]', itog) or [None, ''])[1])
+    if kod in (0, 7) and perevedeny:
+        sost.pop('neudacha', None)
+        tekst = f'🔁 Claude: {imya(src)} {pochemu} → {imya(cel)} · переведены: {perevedeny}' + (f', заняты: {zanyaty}' if zanyaty else '')
+        print(('ДОСТАВЛЕНО: ' if trevoga(tekst) else 'НЕ ДОСТАВЛЕНО: ') + tekst)   # каждое переключение — новое событие
+    elif kod == 0:
+        print(f'dsh-limity-avtoperekl: {itog[:200]}')   # «все уже на цели» — сказать нечего
+    else:   # неудача — по переходу: та же причина через RAZ_V_MIN — молчу
+        skazat('neudacha', f'🔴 Claude: {imya(src)} {pochemu} — перевести на {imya(cel)} не вышло (код {kod}): {itog[:150] or "итога нет"}')
+        print(f'dsh-limity-avtoperekl: неудача код {kod} · ' + ' · '.join(svod))
+    zapisat(); return 0
+
+def main():
+    try: return prohod()
+    except dsh_limity_konfig.SostoyanieError as e:
+        print(f'СЛЕПОТА: {e}')
+        print('ТРЕВОГА: ' + ('доставлена' if trevoga(str(e)) else 'НЕ доставлена'))
+        return 2
+
+if __name__ == '__main__':
+    sys.exit(main())

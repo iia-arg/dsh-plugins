@@ -1,0 +1,56 @@
+[
+  {
+    "pkg": "dsh-pamyat-core",
+    "name": "pamyat_otnoshenie",
+    "description": "Отметить в памяти, что НОВАЯ запись id ОТМЕНЯЕТ (otmenyaet) или УТОЧНЯЕТ (utochnyaet) СТАРУЮ запись k. Номера записей — #N в приветствии памяти. otmenyaet допустим к решениям, порядкам, ограничениям, выводам, урокам; к фактам, наблюдениям, ошибкам — только utochnyaet. Отказ приходит текстом с кодом PAMYAT_*.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "number",
+          "description": "id НОВОЙ записи (той, что отменяет или уточняет)"
+        },
+        "vid": {
+          "type": "string",
+          "description": "otmenyaet | utochnyaet"
+        },
+        "k": {
+          "type": "number",
+          "description": "id СТАРОЙ записи (к которой относится)"
+        }
+      },
+      "required": [
+        "id",
+        "vid",
+        "k"
+      ]
+    }
+  },
+  {
+    "pkg": "dsh-pamyat-core",
+    "name": "pamyat_ocenit",
+    "description": "Оценить запись памяти, которую ты ПРИМЕНИЛ в работе: pomoglo (сработало), podvelo (ошибочно/вредно), ustarelo (было верно, теперь нет). Оценивать можно только запись #N из ПРИВЕТСТВИЯ памяти, выданного тебе в этом процессе (после подъёма или сжатия); записи выдачи по смыслу (mem-…) этим инструментом не оцениваются. Одна оценка на одну выдачу записи; следующая — после того, как запись выдадут заново. pochemu — чем именно (20–400 знаков). Отказ приходит текстом с кодом PAMYAT_*.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "number",
+          "description": "номер записи (#N)"
+        },
+        "ishod": {
+          "type": "string",
+          "description": "pomoglo | podvelo | ustarelo"
+        },
+        "pochemu": {
+          "type": "string",
+          "description": "чем применение подтвердило или опровергло запись (20–400 знаков)"
+        }
+      },
+      "required": [
+        "id",
+        "ishod",
+        "pochemu"
+      ]
+    }
+  }
+]

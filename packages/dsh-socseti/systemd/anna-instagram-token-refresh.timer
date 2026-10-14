@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily eligibility check for Anna instagram token
+[Timer]
+OnCalendar=*-*-* 00:15:00 UTC
+Persistent=true
+AccuracySec=1min
+RandomizedDelaySec=5min
+[Install]
+WantedBy=timers.target

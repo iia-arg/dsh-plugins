@@ -1,0 +1,11 @@
+[Unit]
+Description=RU split-routing apply (mark RU-dst -> awg-ru egress)
+After=network-online.target awg-quick@awg-ru.service ru-cidr-update.service
+Wants=network-online.target
+Requires=awg-quick@awg-ru.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/ru-split-apply.sh
+[Install]
+WantedBy=multi-user.target

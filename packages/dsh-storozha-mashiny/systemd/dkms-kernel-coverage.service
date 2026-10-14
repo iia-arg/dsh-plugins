@@ -1,0 +1,16 @@
+[Unit]
+Description=Проверка покрытия ядер DKMS-модулем · DKMS module kernel coverage check
+# RU: Причина появления: однажды сервер был потерян из-за загрузки в ядро без модуля
+# RU: туннелей; позже покрытие пропадало после apt upgrade. Документация — в
+# RU: docs/moduli/dkms-kernel-coverage-check.md пакета (строкой Documentation= не
+# RU: указывать: systemd принимает там ТОЛЬКО URL и на каждое слово пишет «Invalid URL»).
+# EN: Why it exists: a server was once lost by booting into a kernel without the tunnel
+# EN: module; later coverage disappeared after apt upgrade. Documentation is in the
+# EN: package's docs/moduli/dkms-kernel-coverage-check.md (do not put prose in
+# EN: Documentation=: systemd accepts ONLY URLs there and logs "Invalid URL" per word).
+# RU: Имя модуля задаётся DKMS_COVERAGE_MODULE (drop-in машины); без него проверка выключена.
+# EN: The module name comes from DKMS_COVERAGE_MODULE (machine drop-in); without it the check is off.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/dkms-kernel-coverage-check.sh

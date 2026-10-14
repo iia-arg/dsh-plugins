@@ -1,0 +1,662 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""codex-limit-watch — ЗАСЛОН ЛИМИТА Codex-подписок sadik (B-N-1232, 30.09.2026, кандидат Зари).
+Слово владельца 01.10 09:48 МСК: «автопереключение на 95%» (B-N-1232).
+
+ИСТОЧНИК: app-server `account/rateLimits/read` под ПРОИЗВОДНЫМ КАЖДОЙ подписки (без хода к модели, ~1 с). Видит и
+  простаивающую подписку — журнал нити её не видит по устройству. Codex читает КОПИЮ производного в своём доме
+  (/var/lib/codex-limit-watch/p<N>/auth.json, root 0600): запущенный от root, он не допишет боевой файл (урок B-N-807).
+ЛИМИТ Codex (замер 30.09): одно окно, НЕДЕЛЬНОЕ (10080 мин); rate_limit_reached_type при 100 % не заполнялся ни разу.
+«ВЫБРАНА» = usedPercent ≥ POROG ИЛИ ordinaryUsageAllowed=false ИЛИ spendControlReached=true.
+«ГОДНА» (цель) = ordinaryUsageAllowed=true И spendControlReached≠true И доля цели < доля активной − GISTEREZIS
+  (относительно, как podpiski на aclaude: «доля целевой не меньше активной → не переключает»; активная на 100 %,
+  цель ниже 95 % — переключаем; обе ≥95 % — дальше рукой). GISTEREZIS 2 п.п. — запас на шум: внутри окна доля монотонна
+  (история 30.09: 11 024 точки, 93 падения, ни одного больше 1 п.п.) ⇒ качелей по устройству нет.
+ДОЛЯ = наибольшая из primary и secondary (у Codex сейчас secondary пуст у обоих тарифов; появится — войдёт в решение).
+ПЕРЕКЛЮЧЕНИЕ активная→другая: активная выбрана И другая годна И с прошлого авто ≥ VYDERZHKA_S И авто за 24 ч < PREDEL_24.
+  Выключатель /etc/codex-limit/nastrojka.json {"avto": true}; нет файла / не разобран / иное — ВЫКЛ (по умолчанию).
+  ВЫКЛ → тревога «пора переключить» (раз на эпизод). ВКЛ → зов pereklyuchatel-codex <N> (сам ссылок НЕ трогает).
+  Обратно «потому что первая сбросилась» — НЕТ: следующее переключение только когда выберем текущую.
+ОБЕ выбраны → не переключает; тревога один раз на эпизод со сроками сброса и кредитами (тратить кредиты при «обе» —
+  допустимо, слово владельца 30.09 16:21 МСК; о бесплатном полном сбросе НЕ напоминаем — владелец знает, там же).
+ПРЕДУПРЕЖДЕНИЕ: активная ≥ PREDUPR — раз на окно (resetsAt).
+B-N-1352: недельный горизонт 95/100 до сброса; кредитный горизонт ≤2 ч и исчерпание при запрете обычного доступа.
+  Два замера 60–1200 с, один и тот же контекст/окно; только тревоги активной подписки, без нового автодействия.
+  Пополнение/смена окна/слепота не считаются расходом, flat не продлевает старую оценку.
+  Новые тревоги объединены в одну доставку ≤30 с, отметки только после её успеха.
+B-N-1351: ранний риск по двум замерам одного окна (60–1200 с), если до95% по темпу ≤1200 с.
+  Раз на эпизод риска, отметка только после доставки; при сбросе/слепоте/устаревшем замере прогноз не строится.
+  Не гарантирует предупреждение при внезапном скачке, изменении серверных правил или model capacity.
+  RATE_LIMITS печатает окна/кредиты/причину ограничения без auth/accountId; баланс — как вернул API.
+СЛЕПОТА: чтение подписки не удалось SLEPOTA_N прогонов подряд → тревога (раз на эпизод); меньше — строка «не измерено».
+  «Не измерено» — НИКОГДА не «выбрано»: решение о переключении только по годному ответу ОБЕИХ.
+ДЕЛЁЖ: дома ведут на разные подписки → авто не действует ни в каком режиме. Слово владельца 07.10.2026 12:01 МСК — «делить»
+  (Марк — подписка 3, Альфа/Бета/Гамма — 4: окно кончается не у всех разом). Куда переводить группу, чья подписка выбрана, —
+  не решено, поэтому вместо авто — тревоги по КАЖДОЙ подписке, на которую ведёт хоть один дом: «выбрана» и PREDUPR, раз на
+  окно (якорь resetsAt, B-N-1363), с перечнем её агентов и готовой командой `pereklyuchatel-codex <другая> <агенты>`.
+  Прогноз риска и горизонты (B-N-1351/1352) при делёже по-прежнему НЕ строятся — они только для единой активной.
+ОТМЕТКИ «сказано» — в состояние ТОЛЬКО по успеху доставки agent-alert (класс B-N-792); не доставлено → код 3, повтор.
+B-N-1539: ОТОЗВАН — 401 при замере → тревога в первом же прогоне (раз на эпизод) с командой внеочередного refresh, код 1;
+  сеть/5xx/«нет ответа» — прежнее «не измерено» и слепота с SLEPOTA_N. Отметка снимается первым годным ответом.
+B-N-1585: КРЕДИТЫ. Доступны = hasCredits=true И (unlimited ИЛИ balance > 0) И spendControlReached≠true; иначе (0, нет, не
+  разобран) — не считаются. «ПУСТА» = выбрана И кредитов нет. Активная пуста → другая с кредитами ГОДНА и при доле ≥ порога (без
+  гистерезиса и запрета «обе близко»): 04.10 23:03Z – 05.10 01:43Z заслон держал агентов на пустой 4 (100 %, НЕЛЬЗЯ), когда у 3 было 99 % и
+  кредиты 15566 (слово владельца 01.10 11:44 МСК: «разрешить их использование и переключить агентов на эту подписку»). Активная
+  выбрана, но с кредитами → остаёмся на кредитах, если другой со свободной квотой нет; свободная квота другой — по-прежнему раньше кредитов.
+  Кредиты числом — в строке журнала и в тревогах переключения.
+КОДЫ: 0 прогон прошёл (тревоги, если были, доставлены) · 1 токен подписки отозван (401) · 2 слепота ≥ SLEPOTA_N или отказ ввода · 3 тревога не доставлена.
+ЧЕГО НЕ ЛОВИТ: достижение лимита между прогонами (≤10 мин; время от 95 до 100 % не измерено); иные ограничения сервера, кроме
+  этого ответа; ускорение расхода кредитов между замерами; при делёже — прогноз и горизонты (только 80 % и «выбрана»).
+ЗНАЧЕНИЯ ТОКЕНОВ И accountId НЕ ПЕЧАТАЮТСЯ.
+"""
+import json, math, os, re, select, shutil, subprocess, sys, time
+from decimal import Decimal, InvalidOperation
+
+POROG, PREDUPR, GISTEREZIS = 0.95, 0.80, 0.02
+VYDERZHKA_S, PREDEL_24, SLEPOTA_N = 3600, 3, 3
+PROGNOZ_S = 1200  # два интервала таймера по 600 с; предупреждение, НЕ переключение
+# предел ОДНОГО ответа app-server; худший прогон: 2 подписки × (2 × PREDEL_CHT + 10 с выхода) + переключатель 180 с
+# = 2×70 + 180 = 320 с < TimeoutStartSec 420 юнита (условие Вениамина «предел чтения/Timeout»)
+PREDEL_CHT = '30'
+# B-N-1539: ответ сервера 401 при замере = access ОТОЗВАН (04.10 ~09:0x–09:27Z после смены тарифа владельцем: все шлюзы
+# подписки 4 получили 401, заслон писал «НЕ ИЗМЕРЕНО» без тревоги, сторож токена «чисто» — он смотрит срок, не годность).
+# Различитель: «failed: 401» / «401 Unauthorized» в тексте ошибки app-server; сеть, 5xx, «нет ответа» — прежнее «не измерено».
+OTOZVAN = 'ОТОЗВАН 401 · '
+OTOZVAN_401 = re.compile(r'failed: 401\b|\b401 Unauthorized\b')
+OBNOVITEL = {'3': 'codex-obnovitel.service', '4': 'codex-obnovitel-4.service'}
+# B-N-1539(2): при 401 — флаг «внеочередной» в доме обновителя подписки и запуск его юнита; частоту (раз в 60 мин) держит обновитель.
+OBN_DOM = '/var/lib/codex-obnovitel/podpiska-{n}'
+SYSTEMCTL = '/usr/bin/systemctl'
+
+# Боевые значения; подмена — ТОЛЬКО стенду и ТОЛЬКО при явном ключе CLW_STEND=1 (B-N-1395, рецепт Вениамина B-N-1394).
+# Без ключа все CLW_* игнорируются (одна строка в stderr): забытая CLW_PEREKL в root-оболочке не подменит ИСПОЛНЯЕМЫЙ
+# переключатель, CLW_DOMA/CLW_KATALOG — подписки. Ключ с иным значением — ОТКАЗ, код 2, до чтения состояния и любых записей.
+# ГРАНИЦА: PATH ключом не закрыт; app-server получает окружение процесса (env={**os.environ, …}) как прежде.
+PODPISKI = '3 4'
+KATALOG = '/etc/claude-oauth/codex-podpiska-{n}'
+DOMA = ('/var/lib/coder-gateway-alfa/codex-home /var/lib/coder-gateway-beta/codex-home '
+        '/var/lib/coder-gateway-gamma/codex-home /var/lib/coder-gateway-marc/codex-home '
+        '/var/lib/coder-gateway-anna/codex-home '   # B-N-1837: Анна
+        '/var/lib/coder-gateway-master/codex-home')   # 13.10.2026: Мастер
+NASTROJKA = '/etc/codex-limit/nastrojka.json'
+SOST = '/var/lib/codex-limit-watch/sostoyanie.json'
+DOM_CHT = '/var/lib/codex-limit-watch'
+ISTOCHNIK = ''          # стенд: JSON-файл {"3": ответ|"ОШИБКА", "4": …} вместо app-server
+PEREKL = '/usr/local/sbin/pereklyuchatel-codex'
+ALERT = '/usr/local/bin/agent-alert'
+BIN = '/opt/claude-oauth/sdk-runtime/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex'
+TEPER = None            # бой — время запуска
+# CLW_<имя> → переменная; список фиксированный
+PODMENY = {'PREDEL_CHT': 'PREDEL_CHT', 'PODPISKI': 'PODPISKI', 'KATALOG': 'KATALOG', 'DOMA': 'DOMA', 'NASTROJKA': 'NASTROJKA',
+           'SOSTOYANIE': 'SOST', 'DOM': 'DOM_CHT', 'ISTOCHNIK': 'ISTOCHNIK', 'PEREKL': 'PEREKL', 'ALERT': 'ALERT',
+           'BIN': 'BIN', 'TEPER': 'TEPER', 'OBN_DOM': 'OBN_DOM', 'SYSTEMCTL': 'SYSTEMCTL'}
+_klyuch = os.environ.get('CLW_STEND', '')
+_zadany = [k for k in PODMENY if os.environ.get('CLW_' + k)]
+if _klyuch == '1':
+    for _k in _zadany:
+        globals()[PODMENY[_k]] = os.environ['CLW_' + _k]
+    print('ПОДМЕНЕНО: ' + (' '.join(_zadany) or 'ничего'), flush=True)
+elif _klyuch == '':
+    if _zadany:
+        print('ИГНОРИРУЮ (нет CLW_STEND=1), беру боевые: ' + ' '.join('CLW_' + k for k in _zadany), file=sys.stderr, flush=True)
+else:
+    print(f'ОТКАЗ: CLW_STEND=«{_klyuch}» — допустимо только 1 (стенд) или пусто (бой); ничего не тронуто', file=sys.stderr)
+    sys.exit(2)
+PREDEL_CHT = float(PREDEL_CHT)
+PODPISKI = PODPISKI.split()
+DOMA = DOMA.split()
+TEPER = time.time() if TEPER is None else float(TEPER)
+
+def proizv(n): return os.path.join(KATALOG.format(n=n), 'auth.json')
+def vremya(ts): return time.strftime('%d.%m %H:%MZ', time.gmtime(ts)) if ts else '?'
+
+def app_server(n):
+    """account/rateLimits/read под копией производного подписки n. Ответ-словарь или строка ошибки."""
+    dom = os.path.join(DOM_CHT, f'p{n}'); os.makedirs(dom, mode=0o700, exist_ok=True)
+    kop = os.path.join(dom, 'auth.json'); tmp = kop + '.novyj'
+    if os.path.islink(kop):
+        os.unlink(kop)
+    shutil.copyfile(proizv(n), tmp); os.chmod(tmp, 0o600); os.replace(tmp, kop)
+    p = subprocess.Popen([BIN, 'app-server', '--listen', 'stdio://'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL, cwd=dom, env={**os.environ, 'CODEX_HOME': dom, 'HOME': dom})
+    # Читаем СЫРОЙ дескриптор в свой буфер (условие Вениамина 30.09): select над буферизованным текстовым потоком
+    # не видит строк, уже осевших в буфере Python (уведомление + ответ одной записью → «нет ответа» при пришедшем
+    # ответе), а readline на оборванной строке ждёт мимо предела.
+    fd, bufr = p.stdout.fileno(), [b'']
+    def send(x): p.stdin.write((json.dumps(x) + '\n').encode()); p.stdin.flush()
+    def read(i):
+        konec = time.monotonic() + PREDEL_CHT
+        while True:
+            while b'\n' in bufr[0]:
+                l, bufr[0] = bufr[0].split(b'\n', 1)
+                try:
+                    x = json.loads(l)
+                except ValueError:
+                    continue
+                if isinstance(x, dict) and x.get('id') == i:
+                    if 'result' in x:
+                        return x.get('result')
+                    # B-N-1539: 401 распознаётся по ПОЛНОМУ тексту ошибки, до обрезки до 160 знаков (04.10 09:13Z «401» стоял
+                    # последним знаком обрезки — чуть длиннее адрес, и признак бы отрезался). Метка OTOZVAN — в начале строки.
+                    oshibka = str(x.get("error"))
+                    return (OTOZVAN if OTOZVAN_401.search(oshibka) else '') + f'ошибка: {oshibka[:160]}'
+            ost = konec - time.monotonic()
+            if ost <= 0:
+                return f'нет ответа за {PREDEL_CHT:g} с'
+            if not select.select([fd], [], [], ost)[0]:
+                continue
+            kus = os.read(fd, 65536)
+            if not kus:
+                return 'app-server завершился'
+            bufr[0] += kus
+    try:
+        send({'id': 1, 'method': 'initialize', 'params': {'clientInfo': {'name': 'codex-limit-watch', 'version': '1'}}})
+        r = read(1)
+        if isinstance(r, str):
+            return r
+        send({'method': 'initialized'}); send({'id': 2, 'method': 'account/rateLimits/read', 'params': {}})
+        return read(2)
+    finally:
+        try:
+            p.stdin.close()
+        except OSError:
+            pass
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            p.kill(); p.wait(timeout=5)
+
+def prochest(n):
+    """Сводка подписки n: dict(dolya, sbros, mozhno, spend, plan, kredity) или строка «не измерено: …»."""
+    try:
+        if ISTOCHNIK:
+            r = json.load(open(ISTOCHNIK, encoding='utf-8')).get(n, 'в подставе нет')
+        else:
+            r = app_server(n)
+    except (OSError, ValueError) as e:
+        return f'{type(e).__name__}: {e}'[:160]
+    if isinstance(r, str):
+        return r
+    try:
+        rl = r['rateLimits']
+        okna = [o for o in (rl.get('primary'), rl.get('secondary')) if o]
+        pr = max(okna, key=lambda o: float(o['usedPercent']))   # нет окон → ValueError → «не разобран»
+        if not isinstance(r.get('ordinaryUsageAllowed'), bool):
+            # нет поля — «не измерено» с причиной, а НЕ «нельзя» (иначе пропавшее поле само переключило бы подписку)
+            return f'ответ без ordinaryUsageAllowed ({type(r.get("ordinaryUsageAllowed")).__name__}) — формат сервера сменился?'
+        return {'dolya': float(pr['usedPercent']) / 100, 'sbros': pr.get('resetsAt'), 'mozhno': r['ordinaryUsageAllowed'],
+                'spend': rl.get('spendControlReached') is True, 'plan': rl.get('planType'),
+                'kredity': (rl.get('credits') or {}).get('balance'),
+                'okno': [rl.get('limitId'), 'primary' if pr is rl.get('primary') else 'secondary', pr.get('windowDurationMins'), pr.get('resetsAt')],
+                'diagnostika': {k: rl.get(k) for k in ('primary', 'secondary', 'credits', 'spendControlReached', 'rateLimitReachedType')},
+                'limit_ids': sorted((r.get('rateLimitsByLimitId') or {}).keys()),
+                'syroe': ochistit(r)}   # B-N-1776: всё, что отдал app-server, — службе лимитов (через состояние)
+    except (KeyError, TypeError, ValueError) as e:
+        return f'ответ не разобран ({type(e).__name__})'
+
+LICHNOE = re.compile(r'account|email|user_?id|token|auth', re.I)
+def ochistit(x, put=''):
+    """B-N-1776 (слово владельца 22:07/22:12 МСК «все доп параметры, и с Codex тоже»): СЫРОЙ ответ app-server для службы лимитов —
+    без ключей учётной записи (account*/email/user_id/token/auth: значения не нужны никому, имена выброшенного — в «_otbrosheno»)."""
+    otbr = []
+    def chist(v, p):
+        if isinstance(v, dict):
+            out = {}
+            for k, w in v.items():
+                if LICHNOE.search(str(k)): otbr.append(p + str(k)); continue
+                out[k] = chist(w, p + str(k) + '.')
+            return out
+        if isinstance(v, list): return [chist(w, p + '[].') for w in v]
+        return v
+    c = chist(x, put)
+    if otbr: c['_otbrosheno'] = sorted(set(otbr))
+    return c
+
+def risk_do_progonov(s, prev, now):
+    """Оценка по двум замерам одного окна. Не обещает верхнюю границу расхода."""
+    if not isinstance(prev, dict) or prev.get('okno') != s['okno']:
+        return None
+    try:
+        dt = now - float(prev['at'])
+        before = float(prev['dolya'])
+        delta = s['dolya'] - before
+        if not all(math.isfinite(x) for x in (dt, before, s['dolya'])):
+            return None
+        if not (60 <= dt <= PROGNOZ_S and 0 <= before < s['dolya'] < POROG):
+            return None
+        remaining = (POROG - s['dolya']) * dt / delta
+        return (remaining, delta * 600 / dt) if remaining <= PROGNOZ_S else None
+    except (KeyError, TypeError, ValueError):
+        return None
+
+# B-N-1352: только прогнозы/тревоги, не решение переключателя.
+KREDIT_HORIZONT_S = 7200  # 2 часа = 12 штатных тактов по 10 минут; запас для решения владельца
+
+def balance_number(value):
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        n = Decimal(str(value))
+        return n if n.is_finite() and n >= 0 else None
+    except InvalidOperation:
+        return None
+
+def horizon_sample(s, now):
+    weeks = {}
+    for slot in ('primary', 'secondary'):
+        w = s['diagnostika'].get(slot)
+        if isinstance(w, dict) and w.get('windowDurationMins') == 10080:
+            weeks[slot] = {'key': [s['okno'][0], s['plan'], slot, 10080, w.get('resetsAt')],
+                           'used': w.get('usedPercent'), 'reset': w.get('resetsAt')}
+    return {'at': now, 'weeks': weeks, 'credits': s['diagnostika'].get('credits'),
+            'context': [s['plan'], s['okno'][0], s['okno'][3]], 'allowed': s['mozhno']}
+
+def weekly_horizon(current, previous, now):
+    if not isinstance(previous, dict):
+        return {}
+    result = {}
+    try:
+        dt = now - float(previous['at'])
+        if not 60 <= dt <= PROGNOZ_S:
+            return result
+        for slot, w in current['weeks'].items():
+            before = previous.get('weeks', {}).get(slot)
+            if not before or before.get('key') != w['key']:
+                continue
+            used, old, reset = float(w['used']), float(before['used']), float(w['reset'])
+            if not all(math.isfinite(x) for x in (used, old, reset)) or not (0 <= old < used <= 100 and reset > now):
+                continue
+            rate = (used-old)/dt
+            result[slot] = {'key': w['key'], 'eta95': max(0, 95-used)/rate,
+                            'eta100': max(0, 100-used)/rate, 'reset_in': reset-now}
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return {}
+    return result
+
+def credit_horizon(current, previous, now):
+    c = current.get('credits') or {}
+    if c.get('unlimited') is True or not isinstance(previous, dict) or current['context'] != previous.get('context'):
+        return None
+    before = previous.get('credits') or {}
+    if before.get('unlimited') is True:
+        return None
+    try:
+        dt = now - float(previous['at'])
+        old, new = balance_number(before.get('balance')), balance_number(c.get('balance'))
+        if not 60 <= dt <= PROGNOZ_S or old is None or new is None or not old > new:
+            return None
+        rate = (old-new)/Decimal(str(dt))
+        eta = float(new/rate)
+        if not math.isfinite(eta):
+            return None
+        return eta, str(rate*3600)
+    except (KeyError, TypeError, ValueError, OverflowError, InvalidOperation):
+        return None
+
+def horizons(svod, akt, st, now, skazat):
+    previous = st.get('horizons') if isinstance(st.get('horizons'), dict) else {}
+    current = {}
+    for n, s in svod.items():
+        x = current[n] = horizon_sample(s, now)
+        prev = previous.get(n)
+        for slot, w in x['weeks'].items():
+            key = f'weekly-{n}-{slot}'
+            # Новое окно завершает старый эпизод; слепота/пауза сами по себе его не гасят.
+            if key in st['skazano'] and st['skazano'][key] != w['key']:
+                st['skazano'].pop(key, None)
+        for slot, h in weekly_horizon(x, prev, now).items():
+            text = (f'НЕДЕЛЬНЫЙ ГОРИЗОНТ: подписка {n} {slot}; при этом темпе 95% через {h["eta95"]/3600:.2f} ч, '
+                    f'100% через {h["eta100"]/3600:.2f} ч, сброс через {h["reset_in"]/86400:.2f} сут. '
+                    'Оценка по двум замерам, не гарантия; 0 ч означает порог уже достигнут.')
+            print(text)
+            key = f'weekly-{n}-{slot}'
+            if h['eta95'] < h['reset_in']:
+                # B-N-1625 (05.10.2026, Михалыч): активная уже выбрана и на доступных кредитах — эпизод накрыт тревогой 💳
+                # «выбрана, но на кредитах» (раз на эпизод); отдельный крик горизонта «95% через 0.00 ч» — лишний (06:43Z).
+                # Строка горизонта в журнал печатается выше как прежде. Пока квота НЕ выбрана — горизонт кричит, как раньше.
+                if n == akt and not (vybrana(s) and kredity(s) is not None):
+                    skazat(key, h['key'], '⚠️ '+text+' Решение владельцу: темп исчерпывает окно раньше сброса; оценить другую подписку/расход кредитов.')
+            else:
+                st['skazano'].pop(key, None)
+        c = x.get('credits') or {}
+        bal = balance_number(c.get('balance'))
+        unlimited = c.get('unlimited') is True
+        # Платный доступ — самостоятельный эпизод подписка+сброс, не рубеж остатка 2 ч.
+        paid_key = f'credits-paid-{n}'
+        episode = [n, s['sbros']]
+        paid_since = st.setdefault('paid_since', {})
+        observed = paid_since.get(n)
+        if x['allowed'] or (observed and observed.get('episode') != episode):
+            st['skazano'].pop(paid_key, None)
+            paid_since.pop(n, None)
+            observed = None
+        paid = not x['allowed'] and c.get('hasCredits') is True and bal is not None and bal > 0
+        if paid:
+            if observed is None:
+                was_allowed = isinstance(prev, dict) and prev.get('context') == x['context'] and prev.get('allowed') is True
+                observed = {'episode': episode, 'at': now, 'transition': was_allowed}
+                paid_since[n] = observed  # факт наблюдения; это НЕ отметка доставки
+            since = ('переход впервые замечен ' + vremya(observed['at']) if observed['transition'] else
+                     'идёт с неизвестного момента (возможно до монтажа); первое достоверное наблюдение ' + vremya(observed['at']))
+            if n == akt:
+                skazat(paid_key, episode,
+                       f'💳 КРЕДИТЫ ПОШЛИ В РАСХОД: подписка {n}, обычный доступ закрыт, balance {c.get("balance")}, '
+                       f'сброс окна {vremya(s["sbros"])}; {since}. '
+                       'Работа продолжается за разрешённые кредиты; отключения/переключения по этой тревоге нет.')
+        exhausted = not x['allowed'] and not unlimited and (c.get('hasCredits') is False or bal == 0)
+        if exhausted and n == akt:
+            skazat(f'credits-empty-{n}', 'exhausted',
+                   f'🔴 КРЕДИТЫ ИСЧЕРПАНЫ: подписка {n}, ordinaryUsageAllowed=false, hasCredits={c.get("hasCredits")}, '
+                   f'balance={c.get("balance")}. Нет обычного доступа и доступных кредитов — агенты могут встать; нужна доступная подписка или пополнение по решению владельца.')
+        elif x['allowed'] or unlimited or (c.get('hasCredits') is True and bal is not None and bal > 0):
+            st['skazano'].pop(f'credits-empty-{n}', None)
+        old = balance_number(((prev or {}).get('credits') or {}).get('balance'))
+        if unlimited or (old is not None and bal is not None and bal > old) or (prev and prev.get('context') != x['context']):
+            st['skazano'].pop(f'credits-{n}', None)
+        h = credit_horizon(x, prev, now)
+        if h is not None:
+            eta, rate = h
+            text = (f'КРЕДИТЫ: подписка {n}, balance={c.get("balance")}; убыль {rate} единиц balance/ч; '
+                    f'при текущем расходе хватит на {eta/3600:.2f} ч. Единица balance не установлена, пересчёта нет; оценка, не гарантия.')
+            print(text)
+            if 0 < eta <= KREDIT_HORIZONT_S and not exhausted and n == akt:
+                skazat(f'credits-{n}', 'low', '⚠️ КРЕДИТНЫЙ ГОРИЗОНТ: '+text+' Порог 2 ч; владельцу проверить пополнение/доступную подписку.')
+            elif eta > KREDIT_HORIZONT_S:
+                st['skazano'].pop(f'credits-{n}', None)
+    st['horizons'] = current  # после слепоты следующий успех только сеет новую точку
+
+def vybrana(s): return s['dolya'] >= POROG or not s['mozhno'] or s['spend']
+def godna(s, a): return s['mozhno'] and not s['spend'] and s['dolya'] < a['dolya'] - GISTEREZIS
+def kredity(s):
+    """B-N-1585: доступные кредиты — 'безлимит', balance > 0 (Decimal) или None (нет, ноль, не разобран, spendControl)."""
+    c = s['diagnostika'].get('credits') or {}
+    if c.get('hasCredits') is not True or s['spend']:
+        return None
+    if c.get('unlimited') is True:
+        return 'безлимит'
+    b = balance_number(c.get('balance'))
+    return b if b is not None and b > 0 else None
+def kr(s):
+    k = kredity(s)
+    return '' if k is None else f' · кредиты {k if isinstance(k, str) else k.quantize(Decimal("0.01"))}'
+def pusta(s): return vybrana(s) and kredity(s) is None
+
+def aktivnaya():
+    """Номер подписки, на которую ведут ВСЕ дома; неполный набор — 'делёж', без авто."""
+    zareg = {os.path.realpath(proizv(n)): n for n in PODPISKI}
+    kuda = set()
+    for d in DOMA:
+        a = os.path.join(d, 'auth.json')
+        kuda.add(zareg.get(os.path.realpath(a)) if os.path.islink(a) else None)
+    if None in kuda:
+        return 'делёж'
+    return kuda.pop() if len(kuda) == 1 else 'делёж'
+
+def avto_vkl():
+    try:
+        return json.load(open(NASTROJKA, encoding='utf-8')).get('avto') is True
+    except (OSError, ValueError, AttributeError):
+        return False
+
+def trevoga(tekst, timeout=60):
+    try:
+        return os.access(ALERT, os.X_OK) and subprocess.run(
+            [ALERT, f'лимит Codex ({os.uname().nodename}): {tekst}'], capture_output=True, timeout=timeout).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+# B-N-1363: resetsAt API дрожит на 1 с; сравниваем с ДОСТАВЛЕННЫМ якорем, не двигаем его на каждом такте.
+SBROS_SHUM_S = 2
+
+def obe_key(svod, active, decision, previous):
+    previous = previous if isinstance(previous, dict) else {}
+    old_subs = previous.get('subscriptions', {})
+    result = {'active': active, 'decision': decision, 'subscriptions': {}}
+    for n, s in sorted(svod.items()):
+        old = old_subs.get(n, {}) if isinstance(old_subs, dict) else {}
+        reset = s['sbros']
+        window = s['okno'][:3]
+        old_reset = old.get('reset')
+        if (old.get('window') == window and isinstance(reset, (int, float)) and not isinstance(reset, bool)
+                and isinstance(old_reset, (int, float)) and not isinstance(old_reset, bool)
+                and math.isfinite(reset) and math.isfinite(old_reset) and abs(reset-old_reset) <= SBROS_SHUM_S):
+            reset = old_reset
+        credits = s['diagnostika'].get('credits') or {}
+        balance = balance_number(credits.get('balance'))
+        result['subscriptions'][n] = {'selected': vybrana(s), 'near': s['dolya'] >= POROG,
+            'allowed': s['mozhno'], 'spend': s['spend'], 'plan': s['plan'], 'window': window, 'reset': reset,
+            'credits': {'has': credits.get('hasCredits'), 'unlimited': credits.get('unlimited'),
+                        'positive': None if balance is None else balance > 0}}
+    return result
+
+def imya_doma(d):
+    """/var/lib/coder-gateway-<имя>/codex-home → <имя>; стенд (…/doma/<имя>) → <имя>."""
+    d = d.rstrip('/'); b = os.path.basename(d)
+    return os.path.basename(os.path.dirname(d)).removeprefix('coder-gateway-') if b == 'codex-home' else b
+
+def kto_na_kakoj():
+    """{номер подписки: [агенты]} по ссылкам домов; дом не на зарегистрированную — под ключом None."""
+    zareg = {os.path.realpath(proizv(n)): n for n in PODPISKI}
+    out = {}
+    for d in DOMA:
+        a = os.path.join(d, 'auth.json')
+        out.setdefault(zareg.get(os.path.realpath(a)) if os.path.islink(a) else None, []).append(imya_doma(d))
+    return out
+
+def okno_yakor(st, n, sbros):
+    """B-N-1363: resetsAt дрожит на 1 с — держим прежний якорь окна, пока новое значение в пределах SBROS_SHUM_S."""
+    ya = st.setdefault('delyozh_yakor', {})
+    v = ya.get(n)
+    chislo = lambda x: isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+    if chislo(v) and chislo(sbros) and abs(v - sbros) <= SBROS_SHUM_S:
+        return v
+    ya[n] = sbros
+    return sbros
+
+def delyozh(svod, st, skazat):
+    """Делёж (слово владельца 07.10.2026 12:01 МСК): авто НЕ действует; по каждой подписке с агентами — тревога «выбрана» и
+    предупреждение PREDUPR, раз на окно, с агентами и командой. Не измеренная — только в строке (слепоту ведёт общий счёт)."""
+    itog = []
+    for n, kto in sorted((k, v) for k, v in kto_na_kakoj().items() if k is not None):
+        imena = ', '.join(kto)
+        if n not in svod:
+            itog.append(f'{n} ({imena}): не измерена'); continue
+        s = svod[n]
+        drugie = [m for m in PODPISKI if m != n]
+        kom = (f'сначала восстановить ссылки домов, затем sudo pereklyuchatel-codex {drugie[0]} {" ".join(kto)}'
+               if None in kto_na_kakoj() and len(drugie) == 1 else
+               f'sudo pereklyuchatel-codex {drugie[0]} {" ".join(kto)}' if len(drugie) == 1 else 'рукой')
+        yakor = okno_yakor(st, n, s['sbros'])
+        if vybrana(s):
+            skazat(f'delyozh-vybrana-{n}', yakor,
+                   f'🔴 подписка {n} выбрана ({s["dolya"]:.0%}{"" if s["mozhno"] else ", сервер: нельзя"}{kr(s)}) — на ней {imena}. '
+                   f'Делёж по слову владельца 07.10: авто не действует. Сброс {vremya(s["sbros"])}; перевести ЭТИХ рукой: {kom}')
+            itog.append(f'{n} ({imena}): ВЫБРАНА')
+        elif s['dolya'] >= PREDUPR:
+            skazat(f'delyozh-predupr-{n}', yakor,
+                   f'⚠️ подписка {n} на {s["dolya"]:.0%} (порог {POROG:.0%}) — на ней {imena}; делёж, авто не действует. Сброс {vremya(s["sbros"])}')
+            itog.append(f'{n} ({imena}): {s["dolya"]:.0%} — предупреждение')
+        else:
+            itog.append(f'{n} ({imena}): {s["dolya"]:.0%}')
+    return 'делёж — авто не действует; ' + ('; '.join(itog) or 'агентов нет')
+
+def glavnaya():
+    if len(sys.argv) > 1:
+        print(f'ОТКАЗ: доводов нет (получено: {" ".join(sys.argv[1:])[:60]}) — сторож только боевой, пробы через CLW_STEND=1 и CLW_*'); sys.exit(2)
+    try:
+        st = json.load(open(SOST, encoding='utf-8'))
+    except (OSError, ValueError):
+        st = {}
+    st.setdefault('otkazov', {}); st.setdefault('avto', []); st.setdefault('skazano', {})
+    samples = st.get('zamer') if isinstance(st.get('zamer'), dict) else {}
+    ned = []   # несостоявшиеся доставки
+    def skazat(klyuch, znach, tekst):
+        """Тревога один раз на значение ключа; отметка — только по успеху доставки."""
+        if st['skazano'].get(klyuch) == znach:
+            return
+        print(tekst)
+        if trevoga(tekst):
+            st['skazano'][klyuch] = znach
+        else:
+            ned.append(klyuch); print(f'🔴 ТРЕВОГА НЕ ДОСТАВЛЕНА (канал {ALERT})')
+    svod, stroka, slep, otozvan = {}, [], [], []
+    for n in PODPISKI:
+        s = prochest(n)
+        if isinstance(s, dict):
+            svod[n] = s; st['otkazov'][n] = 0
+            stroka.append(f'{n} ({s["plan"]}): {s["dolya"]:.0%} до {vremya(s["sbros"])}' + ('' if s['mozhno'] else ' · НЕЛЬЗЯ')
+                          + (' · spendControl' if s['spend'] else '') + kr(s))
+        else:
+            st['otkazov'][n] = st['otkazov'].get(n, 0) + 1
+            stroka.append(f'{n}: НЕ ИЗМЕРЕНО ×{st["otkazov"][n]} ({s})')
+            if s.startswith(OTOZVAN):
+                otozvan.append(n)
+            if st['otkazov'][n] >= SLEPOTA_N:
+                slep.append(n)
+    obe_blizki = len(svod) == len(PODPISKI) == 2 and all(s['dolya'] >= POROG for s in svod.values())
+    akt = aktivnaya(); vkl = avto_vkl()
+    bez_ssylki = sorted(kto_na_kakoj().get(None, []))
+    if bez_ssylki:
+        skazat('ssylki-domov', bez_ssylki, '⚠️ Codex: нет зарегистрированной ссылки auth.json у ' + ', '.join(bez_ssylki)
+               + '; авто не действует, известные подписки продолжаю наблюдать. Сначала восстановить ссылки домов.')
+    elif st['skazano'].get('ssylki-domov'):
+        skazat('ssylki-domov', [], '✅ Codex: ссылки auth.json всех домов снова зарегистрированы')
+    stroka.append(f'активная {akt} · авто {"ВКЛ" if vkl else "ВЫКЛ"}')
+    horizon_messages = []
+    def horizon_alert(key, value, text):
+        if st['skazano'].get(key) != value:
+            horizon_messages.append((key, value, text))
+    horizons(svod, akt, st, TEPER, horizon_alert)
+    if horizon_messages:
+        text = '\n\n'.join(m[2] for m in horizon_messages)
+        print(text)
+        # Один дополнительный канал ≤30 с: чтения140 + переключатель180 + старый канал60 + новый30 =410 <420.
+        if trevoga(text, timeout=30):
+            for key, value, _ in horizon_messages:
+                st['skazano'][key] = value
+        else:
+            ned.extend(m[0] for m in horizon_messages)
+            print('🔴 ГОРИЗОНТЫ НЕ ДОСТАВЛЕНЫ (предел канала 30 с), отметок нет')
+    reshenie = 'ничего'
+    if slep:
+        skazat('slepota', ','.join(slep), f'🔴 заслон лимита СЛЕП: подписка {", ".join(slep)} не читается {SLEPOTA_N}+ прогонов подряд — '
+                                          f'выбранный лимит не будет замечен ({"; ".join(stroka)})')
+    else:
+        st['skazano'].pop('slepota', None)
+    # B-N-1539: отозванный токен — тревога СРАЗУ (не ждём SLEPOTA_N прогонов), раз на эпизод; годный ответ снимает отметку.
+    for n in PODPISKI:
+        if n in otozvan:
+            unit = OBNOVITEL.get(n, f'codex-obnovitel-{n}.service')
+            flag = os.path.join(OBN_DOM.format(n=n), 'vneocherednoj')
+            try:
+                if not os.path.exists(flag):
+                    with open(flag, 'w') as f:
+                        f.write(f'401 при замере лимита {time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}\n')
+                zapusk = subprocess.run([SYSTEMCTL, 'start', '--no-block', unit], capture_output=True, text=True, timeout=30)
+                avto = (f'флаг внеочередного refresh стоит, {unit} запущен (код {zapusk.returncode}); обновитель снимет флаг только '
+                        f'после удачного refresh и пробы нового access, повтор — не чаще раза в 60 мин')
+            except (OSError, subprocess.SubprocessError) as e:
+                avto = f'флаг/запуск обновителя НЕ удались ({type(e).__name__}: {e})'[:200]
+            stroka.append(f'{n}: ОТОЗВАН · {avto}')
+            skazat(f'otozvan-{n}', 'da', f'🔴 подписка {n}: токен Codex ОТОЗВАН — сервер отвечает 401 на замер лимита; шлюзы на ней '
+                                        f'получают 401. {avto}. Если не поможет — вручную: пути из `systemctl cat {unit}` '
+                                        f'+ CODEX_OBN_POROG_CH=100000, `sudo env … /usr/local/sbin/codex-obnovitel` (так чинили 04.10 09:27Z).')
+        elif n in svod:
+            st['skazano'].pop(f'otozvan-{n}', None)
+    if akt in svod:
+        a = svod[akt]
+        risk = risk_do_progonov(a, samples.get(akt), TEPER)
+        if risk is not None:
+            remaining, growth = risk
+            skazat(f'prognoz-{akt}', a['okno'],
+                   f'🔴 РИСК ДО СЛЕДУЮЩИХ ПРОГОНОВ: подписка {akt} {a["dolya"]:.0%}; '
+                   f'рост {growth * 100:.1f} п.п./10 мин, до порога {POROG:.0%} по этому темпу ~{remaining / 60:.1f} мин. '
+                   'Оценка, не гарантия; порог автопереключения не изменён.')
+        else:
+            st['skazano'].pop(f'prognoz-{akt}', None)
+        drugie = [n for n in PODPISKI if n != akt]
+        if a['dolya'] >= PREDUPR and not vybrana(a):
+            skazat(f'predupr-{akt}', a['sbros'], f'⚠️ подписка {akt} выбрана на {a["dolya"]:.0%} (порог переключения {POROG:.0%}); '
+                                                f'порог 95 % задан владельцем; время от 95 до 100 % не измерено ({"; ".join(stroka)})')
+        if vybrana(a):
+            godnye = sorted((n for n in drugie if n in svod and not obe_blizki and godna(svod[n], a)), key=lambda n: svod[n]['dolya'])
+            if not godnye and pusta(a):
+                # B-N-1585: активная пуста — годна другая с кредитами, при любой доле (кредиты тратятся сверх лимита).
+                godnye = [n for n in drugie if n in svod and kredity(svod[n]) is not None]
+            neizm = [n for n in drugie if n not in svod]
+            if godnye:
+                cel = godnye[0]
+                epizod = f'{akt}->{cel}@{a["sbros"]}'
+                st['avto'] = [t for t in st['avto'] if TEPER - t < 86400]
+                if not vkl:
+                    reshenie = f'пора на {cel} (авто ВЫКЛ)'
+                    skazat('pora', epizod, f'🔴 подписка {akt} выбрана ({a["dolya"]:.0%}{"" if a["mozhno"] else ", сервер: нельзя"}), {cel} годна '
+                                           f'({svod[cel]["dolya"]:.0%}{kr(svod[cel])}). Авто ВЫКЛ — переключить рукой: sudo pereklyuchatel-codex {cel}')
+                elif st['avto'] and TEPER - max(st['avto']) < VYDERZHKA_S:
+                    reshenie = f'на {cel} — выдержка ({int((TEPER - max(st["avto"])) / 60)} мин из {VYDERZHKA_S // 60})'
+                elif len(st['avto']) >= PREDEL_24:
+                    reshenie = f'на {cel} — ПРЕДЕЛ {PREDEL_24} авто за 24 ч'
+                    skazat('predel', epizod, f'🔴 заслон лимита: подписка {akt} выбрана, {cel} годна, но авто уже {len(st["avto"])} раз за 24 ч — '
+                                             f'{"Обе близко к исчерпанию, дальше рукой" if obe_blizki else "Достигнут суточный предел автопереключений, дальше рукой"}: sudo pereklyuchatel-codex {cel}')
+                else:
+                    st['avto'].append(TEPER)   # попытка считается и при отказе переключателя — иначе повтор каждые 10 мин
+                    try:
+                        r = subprocess.run([PEREKL, cel], capture_output=True, text=True, timeout=180)
+                        itog = f'код {r.returncode}: {(r.stdout + r.stderr).strip()[-300:]}'
+                        ok = r.returncode == 0
+                    except (OSError, subprocess.SubprocessError) as e:
+                        itog, ok = f'не запущен: {type(e).__name__}', False
+                    reshenie = f'АВТО на {cel}: {"сделано" if ok else "ОТКАЗ"}'
+                    skazat('avto', f'{epizod}@{TEPER:.0f}', f'{"🔄" if ok else "🔴"} АВТОПЕРЕКЛЮЧЕНИЕ Codex {akt}→{cel}: подписка {akt} выбрана '
+                                                            f'({a["dolya"]:.0%}), {cel} {svod[cel]["dolya"]:.0%}{kr(svod[cel])} · pereklyuchatel-codex {itog}')
+            elif neizm:
+                reshenie = f'переключать некуда проверить: {", ".join(neizm)} не измерена'
+            elif not all(vybrana(svod[n]) for n in drugie):
+                reshenie = 'другая не ниже активной на запас шума — остаёмся'
+            elif not pusta(a):
+                reshenie = f'активная {akt} выбрана, но на кредитах{kr(a)} — остаёмся'
+                # тот же слот, что у «ОБЕ»: владелец узнаёт, что пошли кредиты, раз на эпизод.
+                # 🔴 B-N-1636 (05.10.2026, Михалыч): значение ключа было obe_key(…, reshenie, …) — а reshenie несёт
+                #   « · кредиты N» (kr), и в obe_key входят %, «разрешено», «близко» обеих подписок: каждое списание кредитов
+                #   давало новый ключ — 💳 7 раз за 06:00–08:13Z. Эпизод теперь = активная + её окно и сброс (дрожь
+                #   сброса гасит тот же obe_key/SBROS_SHUM_S). Новый эпизод: кредиты кончились (ветка «ОБЕ»), сменилась
+                #   активная, появилась свободная квота (слот снимается ниже), сброс окна. Остаток кредитов в пути —
+                #   «КРЕДИТНЫЙ ГОРИЗОНТ» (≤2 ч) и «кредиты кончились»; ежесуточного напоминания нет (выбор B-N-1636).
+                _ep = obe_key(svod, akt, 'на кредитах', st['skazano'].get('obe'))['subscriptions'][akt]
+                skazat('obe', {'active': akt, 'decision': 'активная на кредитах — остаёмся',
+                               'subscriptions': {akt: {'window': _ep['window'], 'reset': _ep['reset']}}},
+                       f'💳 подписка {akt} выбрана ({a["dolya"]:.0%}), но на кредитах{kr(a)}; свободной квоты у другой нет '
+                       f'({"; ".join(stroka)}). Остаёмся — работа идёт за кредиты.')
+            else:
+                reshenie = 'ОБЕ выбраны — остаёмся'
+                sbrosy = sorted((svod[n]['sbros'] or 0, n) for n in PODPISKI if n in svod)
+                dop = '; '.join(f'у {n} кредиты {svod[n]["kredity"]}' for n in PODPISKI if n in svod and svod[n]['kredity'] not in (None, '0'))
+                skazat('obe', obe_key(svod, akt, reshenie, st['skazano'].get('obe')),
+                       f'🔴 {"Обе близко к исчерпанию, дальше рукой" if obe_blizki else "ОБЕ подписки Codex выбраны"} ({"; ".join(stroka)}). Не переключаю. Ближайший сброс: {sbrosy[0][1]} в {vremya(sbrosy[0][0])}'
+                       + (f' · {dop} (тратить их при «обе» — допустимо, слово владельца 30.09)' if dop else ''))
+    elif akt == 'делёж':
+        reshenie = delyozh(svod, st, skazat)
+    elif akt == 'неизвестно':
+        reshenie = f'{akt} — заслон не действует (ссылки домов не на одну зарегистрированную подписку)'
+    # Выход из ОБЕ только по полному наблюдению; слепота не является восстановлением.
+    if akt in svod and len(svod) == len(PODPISKI) and reshenie != 'ОБЕ выбраны — остаёмся' and 'на кредитах' not in reshenie:
+        st['skazano'].pop('obe', None)
+    # Сохраняем только текущие успешные замеры: после слепоты не соединять окна.
+    st['zamer'] = {n: {'at': TEPER, 'dolya': x['dolya'], 'okno': x['okno'], 'syroe': x.get('syroe')} for n, x in svod.items()}
+    for n, x in svod.items():
+        print('RATE_LIMITS ' + json.dumps({'subscription': n, 'at': TEPER,
+              'ordinaryUsageAllowed': x['mozhno'], 'limitIds': x['limit_ids'],
+              **x['diagnostika']}, ensure_ascii=False, sort_keys=True))
+    stroka.append(f'решение: {reshenie}')
+    print(' · '.join(stroka))
+    try:
+        os.makedirs(os.path.dirname(SOST), exist_ok=True)
+        with open(SOST + '.tmp', 'w', encoding='utf-8') as f:
+            json.dump(st, f)
+        os.replace(SOST + '.tmp', SOST)
+    except OSError as e:
+        print(f'⚠️ состояние не записано: {e}')
+    sys.exit(3 if ned else (2 if slep else (1 if otozvan else 0)))
+
+if __name__ == '__main__':
+    glavnaya()

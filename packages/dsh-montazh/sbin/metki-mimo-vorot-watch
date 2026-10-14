@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+# RU: metki-mimo-vorot-watch — МЕТКА МИМО ВОРОТ (B-N-1923). Ворота vypusk-tegom метку не ставят — её ставит рука по «✅»;
+# RU: перед «✅» ворота пишут след (zhurnal-zapis) в журнал root:root /var/lib/vypusk-tegom/zhurnal.tsv. Сторож судит КАЖДУЮ метку
+# RU: деревьев реестра: есть ли след ворот на ТО ЖЕ содержимое каталога (tree), что лежит в метке.
+# RU: 🔴 ЦЕЛЬ — «метка мимо ворот ВИДНА», НЕ «невозможна»: у 8 учёток NOPASSWD ALL (/etc/sudoers.d, замер 09.10.2026: avrora, claud,
+# RU: claude, coders, iskra, marc, petrovich, zarya) любая может записать след помощником с выдуманными доводами. Ловится главный
+# RU: класс — ворота забыли или не стали звать, метку поставили на другой коммит, метку перенесли.
+# RU: ОБЛАСТЬ: метки всех деревьев derevo.address реестра (git for-each-ref refs/tags) + все derevo.ref реестра (метка, на которую
+# RU: указывает бой, судится даже если её нет в дереве). Своей копии перечня нет.
+# RU: ИСТОРИЧЕСКИЕ (поставлены до журнала): снимок istoricheskie-metki.tsv (имя → объект), снят один раз `--snimok` при монтаже.
+# RU: По дате их не отделить: у лёгкой метки нет даты создания. В снимке с тем же объектом — не красное, считается ЧИСЛОМ с
+# RU: разрезом по пакетам в сводке; объект другой — красное «ПЕРЕНЕСЕНА». В исключения скопом не идут.
+# RU: КТО ЗОВЁТ: свой таймер metki-mimo-vorot-watch.timer (15 мин). ГОЛОС — agent-alert; повтор не кричит (сказанное — в $SOST);
+# RU: отметка «сказано» — только после доставки. Итог — $ITOG (код, красные, исторические) — его ТОЛЬКО ЧИТАЕТ healthcheck.
+# RU: Коды: 0 — красных нет · 1 — красные есть, все уже сказаны · 3 — НОВЫЕ красные (сказано или нет — в выводе) · 2 — слепота.
+# RU: Git — от ВЛАДЕЛЬЦА дерева (setpriv), только for-each-ref/rev-parse с --no-optional-locks: индекс не читается и не пишется.
+# RU: НЕ ЛОВИТ: подделку следа рукой с NOPASSWD ALL; метку, поставленную и снятую между прогонами; метки вне деревьев реестра;
+# RU: верность самих ворот (сторож доказывает «метка = то, что ворота пропустили», не «ворота судили верно»).
+# EN: metki-mimo-vorot-watch — TAG BYPASSING THE RELEASE GATE. Every tag of the registry trees must have a gate trace for the same
+# EN: directory tree. Goal: a bypass is VISIBLE, not impossible (8 NOPASSWD ALL accounts). Exit 0 clean · 1 red, already told ·
+# EN: 3 NEW red · 2 blind. Historical tags (before the journal) come from a one-time snapshot, counted per package, not excepted.
+import json, os, re, stat, subprocess, sys, datetime
+
+REESTR = os.environ.get('MMV_REESTR', '/etc/agent-registry/plugins.yaml')
+ZD = os.environ.get('MMV_ZHURNAL_DIR', '/var/lib/vypusk-tegom')
+ALERT = os.environ.get('MMV_ALERT', '/usr/local/bin/agent-alert')
+SD = os.environ.get('MMV_STATE') or os.environ.get('STATE_DIRECTORY') or '/var/lib/metki-mimo-vorot-watch'
+ZHURNAL, SNIMOK = os.path.join(ZD, 'zhurnal.tsv'), os.path.join(ZD, 'istoricheskie-metki.tsv')
+SOST, ITOG = os.path.join(SD, 'skazano.txt'), os.path.join(SD, 'itog.json')
+RE_VER = re.compile(r'^(.+)-v([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]*[0-9A-Za-z-])?)$')   # B-N-2029: дефис внутри pre-release, образец = OBRAZEC_VERSII ворот
+
+def itog(kod, krasnye, tekst, dostavleno='-', ist=None):
+    try:
+        os.makedirs(SD, exist_ok=True)
+        with open(ITOG + '.new', 'w') as f:
+            json.dump({'code': kod, 'krasnyh': len(krasnye), 'dostavleno': dostavleno, 'istoricheskih': ist,
+                       'text': tekst[-600:], 'checked_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}, f, ensure_ascii=False)
+        os.replace(ITOG + '.new', ITOG)
+    except OSError as e: print(f'⚠️ итог не записан: {ITOG} ({e.strerror})')
+
+def skazat(t):
+    # №6 аудита A-N-1948 (10.10.2026): нет/не исполняется agent-alert — это «сказать не удалось», а не трасса Python с кодом 1
+    # (юнит держит SuccessExitStatus=1 3, и падение читалось бы успехом). Возвращает (код, причина).
+    try: r = subprocess.run([ALERT, '--plain', t], capture_output=True)
+    except OSError as e: return 127, f'{ALERT}: {e.strerror}'
+    return r.returncode, f'agent-alert код {r.returncode}'
+
+def slepo(why):
+    t = f'СЛЕПОТА metki-mimo-vorot-watch: {why}'
+    print(t); itog(2, [], t)
+    kod, prichina = skazat(t)
+    print('   сказано' if kod == 0 else f'   СКАЗАТЬ НЕ УДАЛОСЬ ({prichina})'); sys.exit(2)
+
+def git(repo, *a):
+    # От ВЛАДЕЛЬЦА .git (setpriv, без PAM и без safe.directory): конфиг чужого дерева исполняется с правами автора, не root
+    # (условие Вениамина 09:46Z; for-each-ref/rev-parse fsmonitor не зовут, но так дешевле, чем доказывать). Не пишет: --no-optional-locks.
+    import pwd
+    try: st = os.lstat(os.path.join(repo, '.git'))
+    except OSError as e: slepo(f'нет .git в дереве реестра {repo} ({e.strerror})')
+    if st.st_uid == 0: slepo(f'.git {repo} принадлежит root — git от root по чужому конфигу не зову')
+    try: dom = pwd.getpwuid(st.st_uid).pw_dir
+    except KeyError: slepo(f'владелец .git {repo} (uid {st.st_uid}) не найден в passwd')
+    env = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'HOME': dom, 'LANG': 'C.UTF-8', 'GIT_OPTIONAL_LOCKS': '0'}
+    r = subprocess.run(['setpriv', f'--reuid={st.st_uid}', f'--regid={st.st_gid}', '--clear-groups', '--',
+                        'git', '--no-optional-locks', '-C', repo, *a], capture_output=True, text=True, env=env)
+    return r.returncode, r.stdout, r.stderr.strip()
+
+def root_tolko(put, kak):   # хозяин root, без записи группе/всем — иначе след подделывается без sudo
+    try: st = os.stat(put)
+    except OSError as e: slepo(f'{kak} не читается: {put} ({e.strerror})')
+    if st.st_uid != 0 or st.st_mode & (stat.S_IWGRP | stat.S_IWOTH): slepo(f'{kak} {put} — хозяин не root или пишется группой/всеми')
+
+def oblast():
+    try:
+        import yaml
+        d = yaml.safe_load(open(REESTR))
+    except Exception as e: slepo(f'реестр не разобран: {REESTR} ({str(e)[:120]})')
+    repos, refs = set(), []
+    for s in ('plugins', 'services'):
+        for z in d.get(s) or []:
+            dv = (z or {}).get('derevo') or {}
+            if dv.get('address'):
+                repos.add(dv['address'])
+                if dv.get('ref'): refs.append((dv['address'], dv['ref'], z.get('id')))
+    if not repos: slepo(f'в реестре нет ни одной записи с derevo.address — судить нечего ({REESTR})')
+    return sorted(repos), refs
+
+def metki(repo):
+    kod, out, err = git(repo, 'for-each-ref', 'refs/tags', '--format=%(refname:short)\t%(objectname)\t%(*objectname)\t%(taggername)\t%(creatordate:iso8601)')
+    if kod != 0: slepo(f'метки дерева {repo} не прочитаны: {err[:160]}')
+    m = {}
+    for l in out.splitlines():
+        imya, obj, pod, kto, kogda = (l.split('\t') + [''] * 5)[:5]
+        m[imya] = {'obj': obj, 'kommit': pod or obj, 'kto': kto or '(лёгкая)', 'kogda': kogda}
+    return m
+
+def paket_metki(imya):
+    r = RE_VER.match(imya); return r.group(1) if r else '(не <пакет>-v<версия>)'
+
+def snimok(repos):
+    if os.path.exists(SNIMOK): print(f'ОТКАЗ: снимок уже есть: {SNIMOK} — исторические снимаются ОДИН раз (переснять = узаконить всё, что легло после)'); sys.exit(1)
+    root_tolko(ZD, 'каталог журнала')
+    stroki, po = [], {}
+    for repo in repos:
+        for imya, v in metki(repo).items():
+            stroki.append(f'{repo}\t{imya}\t{v["obj"]}\t{v["kommit"]}\n'); po[paket_metki(imya)] = po.get(paket_metki(imya), 0) + 1
+    with open(SNIMOK, 'w') as f: f.writelines(sorted(stroki))
+    os.chmod(SNIMOK, 0o444)
+    print(f'СНИМОК исторических: {len(stroki)} меток в {len(repos)} дереве(ах) → {SNIMOK} (0444)')
+    for p, n in sorted(po.items(), key=lambda x: -x[1])[:15]: print(f'   {n:5}  {p}')
+    sys.exit(0)
+
+def sud(repos, refs):
+    root_tolko(ZD, 'каталог журнала'); root_tolko(SNIMOK, 'снимок исторических')
+    if os.path.exists(ZHURNAL): root_tolko(ZHURNAL, 'журнал ворот')
+    ist = {}
+    for l in open(SNIMOK):
+        f = l.rstrip('\n').split('\t')
+        if len(f) == 4: ist[(f[0], f[1])] = f[2]
+    sled = []
+    if os.path.exists(ZHURNAL):
+        for l in open(ZHURNAL):
+            f = l.rstrip('\n').split('\t')
+            if len(f) >= 12 and f[8] == '1': sled.append({'metka': f[1], 'paket': f[2], 'repo': f[4], 'subdir': f[5], 'tree': f[7], 'vremya': f[0]})
+    krasnye, ist_po, ist_n, novyh = [], {}, 0, 0
+    for repo in repos:
+        for imya, v in metki(repo).items():
+            if (repo, imya) in ist:
+                if ist[(repo, imya)] == v['obj']:
+                    ist_n += 1; ist_po[paket_metki(imya)] = ist_po.get(paket_metki(imya), 0) + 1; continue
+                krasnye.append(f'ПЕРЕНЕСЕНА историческая метка {imya} ({repo}): в снимке {ist[(repo, imya)][:12]}, сейчас {v["obj"][:12]} → коммит {v["kommit"][:12]}, {v["kto"]}'); continue
+            novyh += 1
+            r = RE_VER.match(imya)
+            kand = []
+            for s in sled:
+                if s['repo'] != repo: continue
+                sr = RE_VER.match(s['metka'])
+                if not sr or not r or sr.group(2) != r.group(2): continue
+                if r.group(1) in (sr.group(1), s['paket'].split('/')[-1]): kand.append(s)
+            if not kand:
+                krasnye.append(f'МИМО ВОРОТ: метка {imya} → коммит {v["kommit"][:12]} ({v["kto"]}, {v["kogda"]}) — следа ворот на неё нет'); continue
+            ok = False; vidim = []
+            for s in kand:
+                kod, out, _ = git(repo, 'rev-parse', f'{v["kommit"]}^{{tree}}' if s['subdir'] == '.' else f'{v["kommit"]}:{s["subdir"]}')
+                t = out.strip() if kod == 0 else '(нет каталога)'
+                vidim.append(f'{s["subdir"]}: ворота {s["tree"][:12]}, в метке {t[:12]}')
+                if t == s['tree']: ok = True; break
+            if not ok: krasnye.append(f'НЕ ТО, ЧТО СУДИЛИ: метка {imya} → коммит {v["kommit"][:12]} ({v["kto"]}) — tree ≠ следу ворот: ' + '; '.join(vidim[:3]))
+    vse = {(r_, i) for r_ in repos for i in metki(r_)}
+    ist_reestr = 0
+    for repo, ref, ident in refs:
+        if (repo, ref) not in vse: krasnye.append(f'РЕЕСТР ССЫЛАЕТСЯ НА МЕТКУ, КОТОРОЙ НЕТ: {ident} → {ref} ({repo})')
+        elif (repo, ref) in ist: ist_reestr += 1
+    print(f'СВОДКА: деревьев {len(repos)} · меток {len(vse)} · исторических {ist_n} (из них derevo.ref реестра {ist_reestr} из {len(refs)}) · '
+          f'после журнала {novyh} · красных {len(krasnye)} · строк следа {len(sled)}')
+    if ist_po: print('   исторические по пакетам (первые 12): ' + ', '.join(f'{p} {n}' for p, n in sorted(ist_po.items(), key=lambda x: -x[1])[:12]))
+    return krasnye, f'{ist_n} (реестр {ist_reestr}/{len(refs)})'
+
+if __name__ == '__main__':
+    repos, refs = oblast()
+    if sys.argv[1:] == ['--snimok']: snimok(repos)
+    if sys.argv[1:]: print('ОТКАЗ: неизвестный довод (знаю только --snimok); проверка — без доводов'); sys.exit(2)
+    krasnye, ist = sud(repos, refs)
+    for k in krasnye: print(f'🔴 {k}')
+    try: skazano = set(open(SOST).read().splitlines())
+    except OSError: skazano = set()
+    novye = [k for k in krasnye if k not in skazano]
+    if not krasnye:
+        if skazano:
+            try: open(SOST, 'w').close()
+            except OSError: pass
+        print('чисто: каждая метка после журнала — со следом ворот'); itog(0, [], 'чисто', ist=ist); sys.exit(0)
+    if not novye:
+        print(f'красных {len(krasnye)}, все уже сказаны'); itog(1, krasnye, '\n'.join(krasnye), 'da', ist); sys.exit(1)
+    tekst = 'Метки мимо ворот выпуска (metki-mimo-vorot-watch):\n' + '\n'.join(novye[:10]) + (f'\n…ещё {len(novye) - 10}' if len(novye) > 10 else '')
+    kod, prichina = skazat(tekst)
+    if kod == 0:
+        os.makedirs(SD, exist_ok=True)
+        with open(SOST, 'w') as f: f.write('\n'.join(sorted(skazano & set(krasnye) | set(novye))) + '\n')
+        print(f'НОВЫХ красных {len(novye)} — сказано'); itog(3, krasnye, tekst, 'da', ist)
+    else:
+        print(f'НОВЫХ красных {len(novye)} — СКАЗАТЬ НЕ УДАЛОСЬ ({prichina}); скажу в следующий прогон'); itog(3, krasnye, tekst, 'net', ist)
+    sys.exit(3)

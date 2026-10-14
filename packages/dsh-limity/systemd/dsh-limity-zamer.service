@@ -1,0 +1,20 @@
+# B-N-1776 источник Б (Заря, 07.10.2026; решение Забавы 19:05Z, частота — слово владельца 21:27 МСК «раз в час»):
+# штатный usage SDK через вход владельца pN (учётки limity-zamer-pN), БЕЗ хода к модели → окна и кредиты → приёмная dsh-limity.
+# Обёртка — root (таблица только чтением, своё состояние, тревоги agent-alert); замер — от учётки замера (setpriv).
+# Код 2 — слепота настройки (названа в журнале), не сбой службы.
+[Unit]
+Description=Источник Б службы лимитов: usage раз в час по простаивающей подписке Claude (B-N-1776)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+# r2 (Вениамин 19:06Z): коннекторы claude.ai выключены здесь; обёртка и замер без этой строки — отказ, не замер
+Environment=ENABLE_CLAUDEAI_MCP_SERVERS=false
+# usage раз в час у ВСЕХ подписок Claude, и с трафиком — кредиты событие шлюза не несёт (решение Забавы 19:27Z; на бою — drop-in svezho.conf
+# с 19:49Z, снимается тем же окном, что ставит эту строку — условие Вениамина 19:49Z)
+Environment=DSH_LIMITY_ZAMER_SVEZHO_MIN=0
+ExecStart=/usr/local/libexec/dsh-limity-zamer
+SuccessExitStatus=0
+TimeoutStartSec=600
+PrivateTmp=yes

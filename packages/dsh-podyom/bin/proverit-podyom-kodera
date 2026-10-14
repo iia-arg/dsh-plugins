@@ -1,0 +1,152 @@
+#!/usr/bin/python3 -B
+"""Read-only preflight for alfa/beta/gamma/marc/anna/master. 0 idle, 1 busy, 2 blind/refused.
+No restart, no write to service state; the caller must use this immediately before action.
+"""
+import argparse
+import datetime
+import json
+import os
+import re
+import selectors
+import signal
+import time
+import subprocess
+import sys
+
+HOD = '/usr/local/libexec/agent-hod/hod-sluzhby'
+UNITS = ('alfa.service', 'beta.service', 'gamma.service', 'marc.service', 'anna.service', 'master.service')  # B-N-1837: Анна; 13.10.2026: Мастер
+LIMIT = 16 * 1024 * 1024
+
+
+class Blind(Exception):
+    pass
+
+
+def run(args):
+    environment = {**os.environ, 'LC_ALL': 'C',
+                   'HOD_SYSTEMCTL': '/usr/bin/systemctl',
+                   'HOD_JOURNALCTL': '/usr/bin/journalctl' if os.geteuid() == 0 else '/usr/bin/sudo -n -- /usr/bin/journalctl'}
+    try:
+        process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   start_new_session=True, env=environment)
+    except OSError as e:
+        raise Blind(f'{args[0]}: {type(e).__name__}') from e
+    streams = selectors.DefaultSelector()
+    buffers = {'stdout': bytearray(), 'stderr': bytearray()}
+    total = 0
+    deadline = time.monotonic() + 10
+    try:
+        streams.register(process.stdout, selectors.EVENT_READ, 'stdout')
+        streams.register(process.stderr, selectors.EVENT_READ, 'stderr')
+        while streams.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise Blind(f'{args[0]}: таймаут 10 с')
+            ready = streams.select(remaining)
+            if not ready:
+                raise Blind(f'{args[0]}: таймаут 10 с')
+            for key, _ in ready:
+                block = os.read(key.fileobj.fileno(), 65536)
+                if not block:
+                    streams.unregister(key.fileobj)
+                    continue
+                total += len(block)
+                if total > LIMIT:
+                    raise Blind(f'{args[0]}: stdout+stderr больше {LIMIT} байт; не усекать')
+                buffers[key.data].extend(block)
+        code = process.wait(timeout=max(0.001, deadline-time.monotonic()))
+        return subprocess.CompletedProcess(args, code, buffers['stdout'].decode(), buffers['stderr'].decode())
+    except BaseException as e:
+        # Kill this command's private group, even if its leader exited first.
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(process.pid, sig)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                pass
+        if isinstance(e, (subprocess.TimeoutExpired, UnicodeError)):
+            raise Blind(f'{args[0]}: {type(e).__name__}') from e
+        raise
+    finally:
+        streams.close()
+        process.stdout.close()
+        process.stderr.close()
+
+
+def state(unit, execute):
+    p = execute(['/usr/bin/systemctl', 'show', unit, '-p', 'MainPID', '-p', 'InvocationID', '-p', 'ActiveState'])
+    if p.returncode:
+        raise Blind(f'systemctl show rc={p.returncode}')
+    data = dict(line.split('=', 1) for line in p.stdout.splitlines() if '=' in line)
+    if data.get('ActiveState') != 'active' or not re.fullmatch(r'[1-9][0-9]*', data.get('MainPID', '')):
+        raise Blind('служба не active или MainPID отсутствует; нужна отдельная процедура')
+    if not re.fullmatch(r'[0-9a-f]{32}', data.get('InvocationID', '')):
+        raise Blind('InvocationID не прочитан')
+    return data
+
+
+def check(unit, execute=run):
+    if unit not in UNITS:
+        raise Blind('служба вне области: ' + unit)
+    first = state(unit, execute)
+    pid, invocation = first['MainPID'], first['InvocationID']
+    # Use the existing turn predicate, not a second implementation of turn/start/end.
+    hod = execute([HOD, unit])
+    fields = dict(x.split('=', 1) for x in hod.stdout.split() if '=' in x)
+    if hod.returncode not in (0, 1) or fields.get('zhurnal') != 'est' or fields.get('pid') != pid:
+        raise Blind(f'hod-sluzhby rc={hod.returncode}, журнал/идентичность не подтверждены: {hod.stdout.strip()}')
+    if not all(re.fullmatch(r'[0-9]+', fields.get(k, '')) for k in ('start', 'end')) or fields.get('poslednee') not in ('', 'turn/start', 'turn/end') or hod.returncode != (1 if fields.get('poslednee') == 'turn/start' else 0):
+        raise Blind('hod-sluzhby: противоречивый/неполный ответ')
+    args = ['/usr/bin/journalctl', '_SYSTEMD_UNIT='+unit, '_PID='+pid,
+            '_SYSTEMD_INVOCATION_ID='+invocation, '-o', 'json', '--no-pager',
+            '--output-fields=MESSAGE,_SYSTEMD_UNIT,_PID,_SYSTEMD_INVOCATION_ID']
+    journal = execute(args if os.geteuid() == 0 else ['/usr/bin/sudo', '-n', '--', *args])
+    if journal.returncode:
+        raise Blind(f'journalctl rc={journal.returncode}: {journal.stderr.strip()[:300]}')
+    rows = [json.loads(line) for line in journal.stdout.splitlines() if line.strip()]
+    if not rows:
+        raise Blind(f'журнал главного PID {pid} пуст — это не отсутствие работы')
+    for row in rows:
+        if not isinstance(row, dict) or row.get('_PID') != pid or row.get('_SYSTEMD_UNIT') != unit or row.get('_SYSTEMD_INVOCATION_ID') != invocation or not isinstance(row.get('MESSAGE'), str):
+            raise Blind('журнал содержит не тот процесс/юнит/InvocationID или неверную MESSAGE')
+    messages = [line for row in rows for line in row['MESSAGE'].splitlines()]
+    called = sum('] дистилляция: ПОЗВАНА —' in line for line in messages)
+    finished = sum('] дистилляция: ЗАКОНЧЕНА —' in line or '] дистилляция НЕ СОБРАЛАСЬ:' in line for line in messages)
+    hod_after = execute([HOD, unit])
+    after_fields = dict(x.split('=', 1) for x in hod_after.stdout.split() if '=' in x)
+    if hod_after.returncode != hod.returncode or after_fields != fields:
+        raise Blind('ход изменился во время проверки; снять новый снимок')
+    if state(unit, execute) != first:
+        raise Blind('служба/PID/InvocationID изменились во время проверки')
+    evidence = (f'unit={unit} pid={pid} invocation={invocation} строк={len(rows)}; '
+                f'ход: {hod.stdout.strip()}; дистилляция ПОЗВАНА={called} завершена={finished}')
+    if finished > called:
+        raise Blind('концов дистилляции больше позывов; журнал неполон/формат изменён; '+evidence)
+    reasons = []
+    if hod.returncode == 1:
+        reasons.append('ход ИДЁТ')
+    if called > finished:
+        reasons.append('дистилляция ИДЁТ; знания среза не запишутся — дождитесь ЗАКОНЧЕНА/НЕ СОБРАЛАСЬ')
+    return (1, 'ОТКАЗ: '+'; '.join(reasons)+'; '+evidence) if reasons else (0, 'МОЖНО ПО СНИМКУ: '+evidence)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('unit', choices=UNITS)
+    args = parser.parse_args()
+    if os.geteuid() != 0:
+        print('СЛЕПОТА-ОТКАЗ: запускать через sudo -n; нужен полный журнал и управление группой дочерней команды')
+        return 2
+    try:
+        rc, message = check(args.unit)
+    except (Blind, ValueError, TypeError) as e:
+        rc, message = 2, 'СЛЕПОТА-ОТКАЗ: '+str(e)
+    print(datetime.datetime.now(datetime.timezone.utc).isoformat()+' '+message)
+    return rc
+
+
+if __name__ == '__main__':
+    sys.exit(main())

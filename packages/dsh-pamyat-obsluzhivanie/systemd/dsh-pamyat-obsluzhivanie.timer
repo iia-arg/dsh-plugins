@@ -1,0 +1,11 @@
+[Unit]
+Description=Memory maintenance at 04:00 Moscow
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 Europe/Moscow
+Persistent=true
+AccuracySec=1min
+Unit=dsh-pamyat-obsluzhivanie.service
+
+[Install]
+WantedBy=timers.target

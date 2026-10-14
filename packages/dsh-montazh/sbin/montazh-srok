@@ -1,0 +1,81 @@
+#!/bin/bash
+# montazh-srok — уборщик страховок монтажей на sadik по сроку 14 суток (B-N-1169, Михалыч 29.09.2026;
+# слово владельца 29.09 12:41 МСК «Согласен, 14 суток нормально»; наряд Забавы 12:44 МСК).
+# ЗАЧЕМ: /var/backups/montazh рос без предела (552 объекта, 2–3 ГБ, стенды с копиями omega.db и node_modules)
+# и каждую ночь целиком едет в копию sadik.
+# ЧТО: в корнях KORNI объект = файл верхнего уровня ЛИБО элемент второго уровня (внутри каталога пункта).
+#   Объект удаляется, если САМОЕ СВЕЖЕЕ из (рождение btime, ctime) среди него и всего, что внутри, старше срока.
+#   Опустевший каталог пункта удаляется, если он сам старше срока.
+# ПОЧЕМУ РОЖДЕНИЕ, А НЕ mtime: страховки кладутся через cp -p / tar -p, и mtime сохраняется от ОРИГИНАЛА
+#   (замер 29.09: tell-komu.CEL.bak-… рождён 23.09 11:45, mtime 06:43 от оригинала) — по mtime свежая страховка
+#   ушла бы в тот же день. Одно рождение тоже НЕ годится: mv на той же ФС сохраняет inode и рождение ОРИГИНАЛА
+#   (замер 29.09: B-H-387/claude-oauth-gateway.service.moved рождён 19.08, перенесён 25.09 — ctime). Перенос, копия
+#   и chmod двигают ctime; все они делают объект только «моложе» — ошибка возможна лишь в сторону «подержать дольше».
+#   Рождение неизвестно (0) → объект НЕ трогается (неизвестное — в отказ, а не в удаление).
+# ГДЕ НЕ ПРИМЕНЯЕТСЯ: всё вне KORNI (в т.ч. страховки Искры strahovki* и /opt/*/workspace — не трогаются по построению);
+#   символические ссылки в корне и корень не root:root — отказ.
+# ИСКЛЮЧЕНИЯ: список ISKLYUCHENIYA (имена верхнего уровня), сейчас пуст — поимённо и с причиной, если понадобится.
+# ЧЕГО НЕ ЛОВИТ: страховку, которую ещё нужна после 14 суток (решение владельца: «в бэкапе возьмём»);
+#   рост ВНУТРИ срока (за 14 суток может накопиться снова — это видит сторож копии).
+# Режимы: --suho (перечень и объём, ничего не удаляет) · --boj (удаляет) · иное → ОТКАЗ, код 2.
+# Коды: 0 сделано · 1 сбой (тревога ушла через agent-alert) · 2 отказ по вводу.
+# Подмены окружением — ТОЛЬКО для проб, о каждой пишется в stderr: MONTAZH_SROK_SEK, MONTAZH_KORNI, MONTAZH_ALERT.
+set -uo pipefail
+SROK=$((14*86400)); KORNI=(/var/backups/montazh /var/backups/montazh-s-klyuchom); ALERT=/usr/local/bin/agent-alert
+[ -n "${MONTAZH_SROK_SEK:-}" ] && { SROK=$MONTAZH_SROK_SEK; echo "⚠️ ПОДМЕНА срок=$SROK с" >&2; }
+[ -n "${MONTAZH_KORNI:-}" ] && { read -r -a KORNI <<< "$MONTAZH_KORNI"; echo "⚠️ ПОДМЕНА корни=${KORNI[*]}" >&2; }
+[ -n "${MONTAZH_ALERT:-}" ] && { ALERT=$MONTAZH_ALERT; echo "⚠️ ПОДМЕНА тревога=$ALERT" >&2; }
+# ОГРАДА ПОДМЕН (условие ворот Вениамина 29.09 09:57Z): забытая переменная + ручной --boj = удаление не там.
+# Подмена срока или корней принимается ТОЛЬКО если корни подменены и КАЖДЫЙ (после realpath) лежит под /var/tmp/.
+# Подмена срока на боевых корнях — тоже отказ: тот же вред, что и чужой корень.
+if [ -n "${MONTAZH_SROK_SEK:-}" ] || [ -n "${MONTAZH_KORNI:-}" ]; then
+  [ -n "${MONTAZH_KORNI:-}" ] || { echo "ОТКАЗ: подмена срока без подмены корней (стендовые корни — только под /var/tmp/)"; exit 2; }
+  for K in "${KORNI[@]}"; do
+    r=$(realpath -m -- "$K"); case "$r" in /var/tmp/?*) ;; *) echo "ОТКАЗ: подменённый корень «$K» ($r) не под /var/tmp/"; exit 2 ;; esac
+  done
+fi
+ISKLYUCHENIYA=()
+case "${1:-}" in --suho) BOJ=0 ;; --boj) BOJ=1 ;; *) echo "ОТКАЗ: режим «${1:-}» (--suho | --boj)"; exit 2 ;; esac
+[ "$(id -u)" = 0 ] || { echo "ОТКАЗ: нужен root"; exit 2; }
+SEJCHAS=$(date +%s); POROG=$((SEJCHAS - SROK)); SBOI=()
+sboj() { SBOI+=("$1"); echo "🔴 СБОЙ: $1"; }
+svezhee_rozhdenie() {   # самое свежее max(btime, ctime) в дереве объекта; 0 если хоть у одного btime неизвестен
+  find "$1" -xdev -exec stat -c '%W %Z' {} + 2>/dev/null | awk 'BEGIN{m=0;z=0} {if($1==0)z=1; t=($2>$1?$2:$1); if(t>m)m=t} END{print (z?0:m)}'
+}
+N_UD=0; N_OST=0; N_NEIZV=0; B_UD=0
+for K in "${KORNI[@]}"; do
+  [ -e "$K" ] || { echo "корня $K нет — пропуск"; continue; }
+  [ -L "$K" ] && { sboj "$K — символическая ссылка, не трогаю"; continue; }
+  [ "$(stat -c '%U:%G' "$K")" = root:root ] || { sboj "$K не root:root ($(stat -c '%U:%G' "$K")) — не трогаю"; continue; }
+  OBJ=()
+  while IFS= read -r -d '' e; do
+    n=$(basename "$e"); for x in "${ISKLYUCHENIYA[@]}"; do [ "$n" = "$x" ] && continue 2; done
+    if [ -d "$e" ] && [ ! -L "$e" ]; then
+      while IFS= read -r -d '' c; do OBJ+=("$c"); done < <(find "$e" -mindepth 1 -maxdepth 1 -print0)
+    else OBJ+=("$e"); fi
+  done < <(find "$K" -mindepth 1 -maxdepth 1 -print0)
+  for o in "${OBJ[@]}"; do
+    b=$(svezhee_rozhdenie "$o")
+    if [ "${b:-0}" = 0 ]; then N_NEIZV=$((N_NEIZV+1)); echo "?  рождение неизвестно — оставляю: $o"; continue; fi
+    if [ "$b" -lt "$POROG" ]; then
+      r=$(du -sb --one-file-system "$o" 2>/dev/null | cut -f1); r=${r:-0}
+      echo "−  $(( (SEJCHAS-b)/86400 )) сут  $((r/1048576)) МБ  $o"
+      if [ $BOJ = 1 ]; then rm -rf --one-file-system -- "$o" 2>/dev/null && [ ! -e "$o" ] || { sboj "не удалось удалить $o"; continue; }; fi
+      N_UD=$((N_UD+1)); B_UD=$((B_UD+r))
+    else N_OST=$((N_OST+1)); fi
+  done
+  # опустевшие каталоги пунктов, сами старше срока
+  while IFS= read -r -d '' p; do
+    [ -z "$(ls -A "$p" 2>/dev/null)" ] || continue
+    pb=$(stat -c '%W %Z' "$p" | awk '{print ($1==0?0:($2>$1?$2:$1))}'); [ "$pb" != 0 ] && [ "$pb" -lt "$POROG" ] || continue
+    echo "−  пустой каталог пункта: $p"; [ $BOJ = 1 ] && { rmdir -- "$p" 2>/dev/null || sboj "не удалось убрать пустой $p"; }
+  done < <(find "$K" -mindepth 1 -maxdepth 1 -type d ! -type l -print0)
+done
+RE=$([ $BOJ = 1 ] && echo "удалено" || echo "К УДАЛЕНИЮ (сухо)")
+echo "итог: $RE $N_UD, объём $((B_UD/1048576)) МБ · оставлено $N_OST · рождение неизвестно $N_NEIZV · срок $((SROK/86400)) сут ($SROK с)"
+if [ ${#SBOI[@]} -gt 0 ]; then
+  "$ALERT" --plain -- "🔴 montazh-srok на $(hostname): сбоев ${#SBOI[@]} — ${SBOI[0]}$([ ${#SBOI[@]} -gt 1 ] && echo " (и ещё $(( ${#SBOI[@]}-1 )))")" \
+    || echo "🔴 тревога НЕ доставлена"
+  exit 1
+fi
+exit 0

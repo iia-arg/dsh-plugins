@@ -1,0 +1,9 @@
+[Unit]
+Description=Сторож подмены модели агента (B-N-1260): ответ не той моделью, model/rerouted Codex, непустые remote-settings — в agent-alert
+Documentation=file:///usr/local/sbin/model-podmena-watch
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/model-podmena-watch
+TimeoutStartSec=300

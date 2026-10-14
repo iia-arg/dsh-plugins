@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+# RU: Прибор: настоящая заполненность окна контекста агентов DSH на этой машине.
+# EN: Instrument: the real context-window fill of the DSH agents on this machine.
+# RU: Величина — projectedTokens, вычисляется по формуле САМОЙ платформы
+# RU:   (пакет @deepseek-ai/dsh-token-meter, lib/index.js:390; одинаков у всех агентов на момент замера):
+# EN: The quantity is projectedTokens, computed by the formula of the platform ITSELF
+# EN:   (package @deepseek-ai/dsh-token-meter, lib/index.js:390; identical for all agents when measured):
+#   projectedTokens = max(0, pressureTokens + surfaceTokens - sampledSurfaceTokens)
+# RU: Та же величина печатается командой /compact-status как
+# RU:   «Расчёт DSH: опора + изменение истории = totalTokens» (плагин dsh-telegram-multiagent, src/compact-status.js:67).
+# EN: The same quantity is printed by the /compact-status command as
+# EN:   "DSH calculation: base + history change = totalTokens" (plugin dsh-telegram-multiagent, src/compact-status.js:67).
+# RU: Номинальный порог/окно берутся готовыми из D.defaultRoute (файл порогов агента), без пересчёта.
+# RU: Это не effective-порог запроса с резервом ответа; модель сессии не выводим из старого кэша.
+# RU: При негодном D — «не измерено», без подстановки профиля или старого числа.
+# EN: The nominal threshold/window are taken ready-made from D.defaultRoute (the agent's threshold file), not recomputed.
+# EN: This is not the effective per-request threshold with the reply reserve; the session model is not inferred from an old cache.
+# EN: With an invalid D — "not measured", with no fallback to the profile or an old number.
+# RU: Без ключей — вывод для человека; --mashinno — машинный формат v=1 с явным route_source
+# RU:   (его читает сторож компакта dsh-compact-watch, вызывая этот прибор с --mashinno).
+# EN: Without arguments — human-readable output; --mashinno — machine format v=1 with an explicit route_source
+# EN:   (read by the compaction watcher dsh-compact-watch, which calls this instrument with --mashinno).
+# RU: Коды: 0 величина(ы) получены · 1 сессии есть, ни одной величины · 2 прибор слеп
+# EN: Exit codes: 0 value(s) obtained · 1 sessions exist, no value at all · 2 the instrument is blind
+import json, glob, sys, os, re
+
+# RU: Дома (каталоги .dsh агентов) — по факту наличия кэша ЛЮБОЙ формы (session_projcache.json | session_projcache/).
+# RU: KONTEKST_ZAMER_DOMA — явный список домов через «:» (стенд на подставных домах; иначе проба шла бы по боевым).
+# RU: KONTEKST_ZAMER_SHABLONY — шаблоны glob каталогов .dsh через «:», где искать дома; умолчание /opt/*/.dsh.
+# EN: Homes (agents' .dsh directories) — by the actual presence of a cache of ANY form (session_projcache.json |
+# EN: session_projcache/). KONTEKST_ZAMER_DOMA — an explicit ":"-separated list of homes (stand on fake homes; otherwise
+# EN: a probe would walk the live ones). KONTEKST_ZAMER_SHABLONY — ":"-separated glob patterns of .dsh directories to
+# EN: search; default /opt/*/.dsh.
+# RU: Настройки — через lib/nastrojka пакета: окружение → файл настроек → умолчание (порядок и формат — в её
+# RU: шапке). Зовётся списком аргументов, без оболочки. Ищется рядом с НАСТОЯЩИМ путём этого файла (установка:
+# RU: bin/ и lib/ бок о бок; символическая ссылка раскрывается), запасной путь —
+# RU: /usr/local/lib/dsh-storozha-mashiny/lib/nastrojka. Нет ни там, ни там — громкий отказ, код 2.
+# EN: Settings come through the package's lib/nastrojka: environment → settings file → default (order and format
+# EN: are in its header). Called with an argument list, no shell. Looked up next to the REAL path of this file
+# EN: (install layout: bin/ and lib/ side by side; a symlink is resolved), fallback path —
+# EN: /usr/local/lib/dsh-storozha-mashiny/lib/nastrojka. Found in neither place — a loud refusal, exit 2.
+def _nastrojka(klyuch, umolchanie):
+    import subprocess
+    put = os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir, 'lib', 'nastrojka')
+    if not os.access(put, os.X_OK):
+        put = '/usr/local/lib/dsh-storozha-mashiny/lib/nastrojka'
+    if not os.access(put, os.X_OK):
+        print('ОТКАЗ · REFUSED: нет lib/nastrojka пакета (рядом с bin/ и в /usr/local/lib/dsh-storozha-mashiny/lib)'
+              ' · package lib/nastrojka not found', file=sys.stderr)
+        sys.exit(2)
+    r = subprocess.run([put, klyuch, umolchanie], stdout=subprocess.PIPE)
+    if r.returncode != 0:
+        sys.exit(2)   # RU: причину nastrojka уже сказала в stderr  EN: nastrojka already told the reason on stderr
+    v = r.stdout.decode('utf-8', 'surrogateescape')
+    return v[:-1] if v.endswith('\n') else v
+
+
+SHABLONY = _nastrojka("KONTEKST_ZAMER_SHABLONY", "/opt/*/.dsh")
+DOMA = (os.environ["KONTEKST_ZAMER_DOMA"].split(":") if os.environ.get("KONTEKST_ZAMER_DOMA") else
+        sorted(set(os.path.dirname(os.path.dirname(p)) for p in
+                   sum((glob.glob(sh + "/storages/session_projcache*") for sh in SHABLONY.split(":") if sh), []))))
+MASHINNO = "--mashinno" in sys.argv
+
+
+# ── RU: КЭШ ПРОЕКЦИЙ В ДВУХ ФОРМАХ И ДОЛЯ ИЗ РЕЕСТРА · EN: PROJECTION CACHE IN TWO FORMS AND THE RATIO FROM THE REGISTRY ──
+# RU: Тот же текст — в kontekst-zamer и dsh-compact-watch (два читателя кэша).
+# RU: DSH 0.1.1: один файл <home>/storages/session_projcache.json {unit{version 3}, tables.sessions[sid].rows.<ключ>.val}.
+# RU: DSH 0.2.0: домен session_projcache v7 раскладкой per-record — документ на сессию
+# RU:   <home>/storages/session_projcache/sessions/<sid>.json = {version: 7, record: {identity, rows}}: dsh-storage-json 0.2.0
+# RU:   README «per-record» и lib :411–420 (ключ = имя файла без .json), dsh-session-projection-cache 0.2.0 spec (rows: ключ →
+# RU:   {ver, seq, val}). Выбор — ПО ФАКТУ, не по номеру версии: есть каталог — читаем его, а прежний файл (хранилище оставляет
+# RU:   его после переноса) НЕ читаем: иначе старые числа давления выдаются как текущие. Нет каталога — прежний файл. Нет ни
+# RU:   того ни другого — слепота с причиной. Незнакомая версия документа — отказ, не угадывание.
+# RU: ⚠️ ГРАНИЦА: форма документа 0.2.0 снята с кода пакетов 0.2.0-rc.2 — живую 0.2.0 не поднимали; форму val contextPressure
+# RU:   считаю прежней (pressureTokens/surfaceTokens/sampledSurfaceTokens/contextWindow) — сверить на первом живом подъёме.
+# EN: The same text lives in kontekst-zamer and dsh-compact-watch (two readers of the cache).
+# EN: DSH 0.1.1: a single file <home>/storages/session_projcache.json {unit{version 3}, tables.sessions[sid].rows.<key>.val}.
+# EN: DSH 0.2.0: domain session_projcache v7 in a per-record layout — one document per session
+# EN:   <home>/storages/session_projcache/sessions/<sid>.json = {version: 7, record: {identity, rows}}: dsh-storage-json 0.2.0
+# EN:   README "per-record" and lib :411–420 (key = file name without .json), dsh-session-projection-cache 0.2.0 spec (rows:
+# EN:   key → {ver, seq, val}). The choice is BY FACT, not by version number: if the directory exists we read it and do NOT read
+# EN:   the old file (storage leaves it behind after migration): otherwise old pressure numbers would be shown as current. No
+# EN:   directory — the old file. Neither — blindness with a reason. An unknown document version — refusal, not a guess.
+# EN: ⚠️ BOUNDARY: the 0.2.0 document shape was taken from the code of packages 0.2.0-rc.2 — a live 0.2.0 was not run; the
+# EN:   shape of val contextPressure is assumed unchanged (pressureTokens/surfaceTokens/sampledSurfaceTokens/contextWindow) —
+# EN:   to be verified on the first live start.
+KESH_VERSII_ZAPISI = {7}
+
+
+def kesh_proekcij(home):
+    """RU: (форма, {сессия: val contextPressure}, причина). Форма: 'zapisi' (0.2.0) | 'fajl' (0.1.1) | None (нет кэша).
+    EN: (form, {session: val contextPressure}, reason). Form: 'zapisi' (0.2.0) | 'fajl' (0.1.1) | None (no cache)."""
+    kat = os.path.join(home, "storages", "session_projcache", "sessions")
+    fajl = os.path.join(home, "storages", "session_projcache.json")
+    if os.path.isdir(kat):
+        itog = {}
+        for imya in sorted(os.listdir(kat)):
+            if not imya.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(kat, imya), encoding="utf-8") as f:
+                    doc = json.load(f)
+            except (OSError, ValueError) as e:
+                return "zapisi", None, f"документ {imya} не прочитан ({type(e).__name__})"
+            if not isinstance(doc, dict) or doc.get("version") not in KESH_VERSII_ZAPISI:
+                ver = doc.get("version") if isinstance(doc, dict) else None
+                return "zapisi", None, f"документ {imya}: версия {ver!r} незнакома (знаю {sorted(KESH_VERSII_ZAPISI)})"
+            itog[imya[:-5]] = ((doc.get("record") or {}).get("rows") or {}).get("contextPressure", {}).get("val", {})
+        return "zapisi", itog, None
+    if os.path.isfile(fajl):
+        try:
+            with open(fajl) as f:
+                d = json.load(f)
+        except Exception as e:
+            return "fajl", None, f"файл не прочитан ({e})"
+        return "fajl", {s: v.get("rows", {}).get("contextPressure", {}).get("val", {})
+                        for s, v in d.get("tables", {}).get("sessions", {}).items()}, None
+    return None, None, "кэша проекций нет ни в одной форме (ни каталога session_projcache/sessions, ни session_projcache.json)"
+
+
+# RU: Реестр агентов (F) нужен только для home -> kompakt_agent; числа — только готовые porogi из D.
+# RU: KONTEKST_REESTR_PRIBOR — путь к программе agent-registry (Python-модуль с zagruzit() и chitat_porog_d()).
+# EN: The agent registry (F) is only needed for home -> kompakt_agent; numbers come only from the ready porogi of D.
+# EN: KONTEKST_REESTR_PRIBOR — path to the agent-registry program (a Python module with zagruzit() and chitat_porog_d()).
+REESTR_PRIBOR = os.environ.get("KONTEKST_REESTR_PRIBOR", "/usr/local/bin/agent-registry")
+_REESTR = []
+
+
+def _gotovy_porog(home):
+    if not _REESTR:
+        import importlib.machinery, importlib.util
+        sys.dont_write_bytecode = True
+        loader = importlib.machinery.SourceFileLoader("agent_registry_porogi", REESTR_PRIBOR)
+        module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        try:
+            loader.exec_module(module)
+            data = module.zagruzit()
+        except SystemExit as e:
+            raise ValueError(f"реестр не загружен (код {e.code})") from e
+        _REESTR.extend([module, data])
+    module, registry = _REESTR
+    dom = home.rstrip("/")
+    if dom.endswith("/.dsh"):
+        dom = dom[:-len("/.dsh")]
+    agents = [a for a in registry["agenty"] if a.get("namerenie", {}).get("dom") == dom]
+    if len(agents) != 1:
+        raise ValueError(f"реестр: для дома {dom} найдено {len(agents)} агентов")
+    # RU: В contextPressure и в журнале немоты нет надёжной пары запроса: ЯВНО defaultRoute.
+    # EN: Neither contextPressure nor the silence journal has a reliable request pair: EXPLICITLY defaultRoute.
+    return module.chitat_porog_d(agents[0]["namerenie"].get("kompakt_agent"),
+                                katalog=os.environ.get("KOMPAKT_NASTROJKI_KATALOG"))
+
+
+def imya_agenta(put):
+    # RU: Каталог ПЕРЕД /.dsh/ — устойчиво к ЛЮБОЙ глубине пути.
+    # RU: Прежняя редакция брала parts[2]/parts[3] по позиции и врала на другой глубине:
+    # RU: подстава /tmp/proba-zamer/agentX/... печаталась как «proba-zamer». Поймано пробой.
+    # EN: The directory BEFORE /.dsh/ — robust to ANY path depth.
+    # EN: An earlier version took parts[2]/parts[3] by position and lied at another depth:
+    # EN: a fake /tmp/proba-zamer/agentX/... was printed as "proba-zamer". Caught by a probe.
+    golova = put.split("/.dsh/")[0]
+    return golova.rsplit("/", 1)[-1] or golova
+
+if not MASHINNO:
+    print("{:9} {:22} {:>11} {:>10} {:>7} {:>10} {:>11}".format(
+        "агент", "сессия", "projected", "окно", "%", "порог", "до порога"))
+    print("-" * 88)
+if not DOMA:
+    print("🔴 НИ ОДНОГО кэша проекций не найдено (ни файла, ни каталога) — прибор слеп, а не агенты пусты")
+    sys.exit(2)
+vsego = nazvano = 0
+doli = []
+formy = []
+for home in DOMA:
+    who = imya_agenta(home + "/")
+    try:
+        policy = _gotovy_porog(home)
+    except (Exception, SystemExit) as e:
+        print(f"v=1 agent={who} status=ne_izmereno reason=D" if MASHINNO else f"{who}: порог D НЕ ИЗМЕРЕН: {e}")
+        print(f"{who}: D: {e}", file=sys.stderr)
+        continue
+    TH, OKNO_P = policy["ratio"], policy["window"]
+    # RU: 1.0.1: было неопределённое имя prichina — ветка «доли нет» падала NameError и обрывала весь прибор.
+    # EN: 1.0.1: the undefined name prichina crashed the whole instrument with NameError on the "no ratio" branch.
+    doli.append("{} {}".format(who, TH if TH is not None else "слепо (" + str(policy.get("prichina") or "доля D не задана в пресете") + ")"))
+    forma, sessii, kesh_prich = kesh_proekcij(home)   # RU: две формы кэша · EN: two cache forms
+    if forma == "zapisi" and os.path.isfile(os.path.join(home, "storages", "session_projcache.json")):
+        formy.append(f"{who}: запись на сессию; прежний session_projcache.json замер — НЕ читаю")
+    elif forma == "zapisi":
+        formy.append(f"{who}: запись на сессию")
+    if sessii is None:
+        print(("v=1 agent={} status=fail_read".format(who)) if MASHINNO
+              else "{:9} 🔴 кэш не прочитан: {}".format(who, kesh_prich))
+        continue
+    for s, cp in sessii.items():
+        p = cp.get("pressureTokens"); su = cp.get("surfaceTokens")
+        sa = cp.get("sampledSurfaceTokens"); w = cp.get("contextWindow")
+        # RU: окно из D, если оно объявлено; окно кэша расходится — пометка (строка кэша устарела)
+        # EN: the window from D if declared; if the cache window differs — a note (the cache row is stale)
+        w_kesh = w
+        if OKNO_P is not None and w is not None: w = OKNO_P
+        ist_m = " okno_ist=D route_source=defaultRoute threshold_kind=nominal" + (f" okno_kesha={w_kesh}" if w != w_kesh else "")
+        ist_h = f"  ⚠️ окно кэша {w_kesh:,} отличается — показано D.defaultRoute {w:,}" if (w is not None and w != w_kesh) else ""
+        vsego += 1
+        if p is None or w is None:
+            print(("v=1 agent={} sessiya={} status=ne_izmereno".format(who, s)) if MASHINNO
+                  else "{:9} {:22} ⚠️ НЕ ИЗМЕРЕНО: провайдер ещё не отчитался".format(who, s[:22]))
+            continue
+        if su is None or sa is None:
+            # RU: только нижняя оценка: единицу называем, чтобы её не приняли за projected
+            # EN: a lower bound only: the unit is named so it is not mistaken for projected
+            print(("v=1 agent={} sessiya={} status=tolko_pressure pressure={} okno={}".format(who, s, p, w) + ist_m)
+                  if MASHINNO else
+                  "{:9} {:22} {:>11,} {:>10,} {:>7} {:>10} {:>11}  ⚠️ только pressure, НИЖНЯЯ оценка"
+                  .format(who, s[:22], p, w, "{:.1f}%".format(100*p/w), "", "") + ist_h)
+            nazvano += 1
+            continue
+        pr = max(0, p + su - sa)
+        porog = policy["nominalThreshold"]
+        if MASHINNO:
+            print("v=1 agent={} sessiya={} projected={} okno={} dolya={:.4f} porog={} dolya_poroga={}"
+                  .format(who, s, pr, w, pr / w, porog if porog is not None else "slepo",
+                          TH if TH is not None else "slepo") + ist_m)
+        elif porog is None:
+            print("{:9} {:22} {:>11,} {:>10,} {:>7} {:>10} {:>11}"
+                  .format(who, s[:22], pr, w, "{:.1f}%".format(100*pr/w), "слепо", "") + ist_h)
+        else:
+            print("{:9} {:22} {:>11,} {:>10,} {:>7} {:>10,} {:>11,}"
+                  .format(who, s[:22], pr, w, "{:.1f}%".format(100*pr/w), porog, porog - pr) + ist_h)
+        nazvano += 1
+if not MASHINNO:
+    print("-" * 88)
+    print("сессий в обходе: {} · с названной величиной: {} · файлов: {}".format(vsego, nazvano, len(DOMA)))
+    print("номинальные доли D (defaultRoute): " + " · ".join(doli))
+    if formy:
+        print("кэш проекций 0.2.0: " + " · ".join(formy))
+if nazvano == 0:
+    print("🔴 НИ ОДНОЙ величины не снято при {} сессиях — это про ПРИБОР, не про агентов".format(vsego))
+    sys.exit(1)

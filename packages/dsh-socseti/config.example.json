@@ -1,0 +1,19 @@
+{
+  "port": 8381,
+  "stateDir": "/var/lib/socseti",
+  "keyFiles": {
+    "varvara": "/etc/socseti/varvara.key",
+    "monitor": "/etc/socseti/monitor.key"
+  },
+  "targets": {
+    "vk": "127999849",
+    "instagram": "17841453053403067",
+    "threads": "26794519373575025",
+    "telegram": "-1004451262289"
+  },
+  "telegram": {
+    "enabled": true,
+    "tokenFile": "/etc/socseti/telegram-bot.token",
+    "approvalChatId": -1004416192741
+  }
+}

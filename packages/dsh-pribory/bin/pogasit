@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# pogasit — погасить процесс ПО TCP-ПОРТУ или ПО ЮНИТУ, никогда по маске командной строки.
+# RU: UDP не проверяется. Коды: 0 остановлено/не активно; 2 отказ ввода/слепота; 3 неоднозначность/гашение не удалось.
+# EN: UDP is not checked. Codes: 0 stopped/inactive; 2 bad input/blindness; 3 ambiguity/stop failed.
+#
+# 🔴 ЗАЧЕМ. 02.09.2026 маска в ДЕЙСТВИИ трижды за сутки задевала не то: `pkill -f`
+# дважды поймал собственную команду (код 144 — убила свою же оболочку), `rm -rf`
+# по маске съела рабочий файл. Правило «для действия — точный опознаватель» было
+# записано 22.08 и не сработало ни разу: правило помнят, а команду набирают.
+# Лечение не в памятке, а в том, чтобы под рукой была КОРОТКАЯ ПРАВИЛЬНАЯ команда.
+#
+#   pogasit --port 39411          погасить того, кто слушает порт
+#   pogasit --unit foo.service    остановить юнит (через systemctl, не сигналом)
+#   pogasit --port 39411 --sudo   если слушатель чужой
+#
+# 🔴 ЧЕГО ОНА НЕ ДЕЛАЕТ: не принимает маску командной строки ни в каком виде.
+# Это не забытая возможность, а предмет: маска — признак, а не адрес.
+# EN: pogasit — stop a process BY PORT or BY UNIT, never by a command-line pattern.
+#     🔴 WHY. On 02.09.2026 a pattern used in an ACTION hit the wrong thing three times in a day: `pkill -f`
+#     twice caught its own command (code 144 — it killed its own shell), `rm -rf` by pattern ate a working file.
+#     The rule "an action needs an exact identifier" was written on 22.08 and never worked once: people remember
+#     rules, but they type commands.
+#     The cure is not in a memo but in having a SHORT CORRECT command at hand.
+#     pogasit --port 39411 — stop whoever listens on the port
+#     pogasit --unit foo.service — stop a unit (via systemctl, not by a signal)
+#     pogasit --port 39411 --sudo — if the listener belongs to someone else
+#     🔴 WHAT IT DOES NOT DO: it does not accept a command-line pattern in any form. This is not a forgotten
+#     feature but the point: a pattern is a sign, not an address.
+set -uo pipefail
+
+SUDO=""; PORT=""; UNIT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --port) PORT="${2:?--port требует номер}"; shift 2 ;;
+    --unit) UNIT="${2:?--unit требует имя юнита}"; shift 2 ;;
+    --sudo) SUDO="sudo -n"; shift ;;
+    -f|--pattern|-P)
+      echo "🔴 pogasit: маска командной строки НЕ ПРИНИМАЕТСЯ — это предмет, а не недоделка." >&2
+      echo "   Маска ловит и того, кто её ищет: 02.09 pkill -f убил собственную оболочку." >&2
+      echo "   Используйте --port <номер> или --unit <имя>." >&2
+      exit 2 ;;
+    *)
+      echo "🔴 pogasit: неизвестный довод «$1». Только --port, --unit, --sudo." >&2
+      echo "   Довод, начинающийся с «-», НЕ уезжает молча как данные: это отказ." >&2
+      exit 2 ;;
+  esac
+done
+
+[ -n "$PORT$UNIT" ] || { echo "использование: pogasit --port <номер> | --unit <имя> [--sudo]" >&2; exit 2; }
+[ -n "$PORT" ] && [ -n "$UNIT" ] && { echo "🔴 pogasit: --port и --unit разом не бывает" >&2; exit 2; }
+
+if [ -n "$UNIT" ]; then
+  # Юнит гасим systemctl'ом, а не сигналом: иначе Restart= поднимет его обратно,
+  # и «погасил» окажется неправдой через секунду.
+  # EN: A unit is stopped with systemctl, not by a signal: otherwise Restart= brings it back, and "stopped"
+  #     turns out untrue a second later.
+  zagruzka=$(systemctl show "$UNIT" -p LoadState --value 2>/dev/null); kod=$?
+  [ "$kod" -eq 0 ] && [ -n "$zagruzka" ] && [ "$zagruzka" != "not-found" ] || { echo "СЛЕПОТА: юнит $UNIT не найден или systemctl не ответил" >&2; exit 2; }
+  sost=$(systemctl is-active "$UNIT" 2>/dev/null); kod=$?
+  [ "$kod" -eq 0 ] || [ "$kod" -eq 3 ] || { echo "СЛЕПОТА: systemctl не снял состояние $UNIT" >&2; exit 2; }
+  case "$sost" in active|inactive|failed|activating|deactivating|reloading) ;; *) echo "СЛЕПОТА: состояние $UNIT не снято" >&2; exit 2;; esac
+  [ "$sost" != "inactive" ] && [ "$sost" != "failed" ] || { echo "pogasit: юнит $UNIT не активен (состояние: ${sost:-неизвестно}) — гасить нечего"; exit 0; }
+  $SUDO systemctl stop "$UNIT" || { echo "🔴 pogasit: systemctl stop $UNIT не удался" >&2; exit 3; }
+  sleep 1
+  posle=$(systemctl is-active "$UNIT" 2>/dev/null); kod=$?
+  [ "$kod" -eq 0 ] || [ "$kod" -eq 3 ] || { echo "СЛЕПОТА: состояние $UNIT после stop не снято" >&2; exit 2; }
+  case "$posle" in
+    inactive|failed) ;;
+    active|activating|deactivating|reloading) echo "ОТКАЗ: $UNIT не остановился (состояние $posle)" >&2; exit 3 ;;
+    *) echo "СЛЕПОТА: состояние $UNIT после stop неизвестно" >&2; exit 2 ;;
+  esac
+  echo "pogasit: юнит $UNIT остановлен (было $sost, стало ${posle:-inactive})"
+  exit 0
+fi
+
+# 🔴 PID берётся у ЯДРА через слушателя порта, а не поиском по тексту команды.
+# Поэтому строка, случайно совпавшая с чьей-то командой, сюда не попадает никогда.
+# EN: 🔴 The PID is taken from the KERNEL via the port listener, not by searching command text. So a line that
+#     happens to match someone's command never gets in here.
+[[ "$PORT" =~ ^[0-9]+$ ]] && [ "${#PORT}" -le 5 ] && [ "$((10#$PORT))" -ge 1 ] && [ "$((10#$PORT))" -le 65535 ] || { echo "ОТКАЗ: TCP-порт должен быть числом 1..65535" >&2; exit 2; }
+command -v ss >/dev/null 2>&1 || { echo "СЛЕПОТА: ss не установлен (iproute2)" >&2; exit 2; }
+SLUSHATELI=$($SUDO ss -lptnH "sport = :$PORT" 2>/dev/null) || { echo "СЛЕПОТА: ss не прочитал TCP-порт $PORT" >&2; exit 2; }
+PIDY=$(printf '%s\n' "$SLUSHATELI" | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)
+if [ -n "$SLUSHATELI" ] && [ -z "$PIDY" ]; then echo "СЛЕПОТА: TCP-порт $PORT занят, но PID не виден (нужен --sudo)" >&2; exit 2; fi
+if [ -z "$PIDY" ]; then
+  echo "pogasit: порт $PORT никто не слушает (или слушатель чужой — тогда нужен --sudo). Гасить нечего."
+  exit 0
+fi
+n=$(printf '%s\n' "$PIDY" | wc -l)
+[ "$n" -gt 1 ] && { echo "🔴 pogasit: порт $PORT слушают $n процессов — не угадываю, гасите поимённо: $(echo $PIDY)" >&2; exit 3; }
+
+echo "pogasit: порт $PORT слушает pid $PIDY — $(ps -o cmd= -p "$PIDY" 2>/dev/null | cut -c1-70)"
+$SUDO kill "$PIDY" 2>/dev/null || { echo "🔴 pogasit: kill $PIDY не удался (чужой процесс? нужен --sudo)" >&2; exit 3; }
+sleep 2
+# Проверка РЕЗУЛЬТАТА, а не кода kill: процесс мог не умереть.
+# EN: Check the RESULT, not the kill code: the process may not have died.
+KONTROL=$(LC_ALL=C $SUDO kill -0 "$PIDY" 2>&1); kod=$?
+if [ "$kod" -eq 0 ]; then
+  echo "🔴 pogasit: pid $PIDY ЖИВ через 2 с после сигнала. Не гашу силой — решайте руками." >&2
+  exit 3
+fi
+case "$KONTROL" in *"No such process"*) ;; *) echo "СЛЕПОТА: живость pid $PIDY не снята: $KONTROL" >&2; exit 2 ;; esac
+POSLE=$($SUDO ss -lntH "sport = :$PORT" 2>/dev/null) || { echo "СЛЕПОТА: TCP-порт $PORT после сигнала не прочитан" >&2; exit 2; }
+[ -z "$POSLE" ] || { echo "ОТКАЗ: pid $PIDY исчез, но TCP-порт $PORT всё ещё занят" >&2; exit 3; }
+echo "pogasit: pid $PIDY погашен, TCP-порт $PORT свободен"

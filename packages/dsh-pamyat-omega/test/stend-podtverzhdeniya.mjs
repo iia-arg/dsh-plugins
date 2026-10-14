@@ -1,10 +1,6 @@
 /**
- * Стенд подтверждения доставки.
- *
- * ЭТАЛОНЫ СНЯТЫ С ЖИВОЙ СЛУЖБЫ 02.09.2026, omega-memory 1.5.13 — дважды и
- * двумя разными людьми, независимо. Стенд на выдуманных ответах закрепляет
- * наше представление вместо поведения службы; в соседнем пакете это уже
- * стоило зелёной пробы на несуществующем значении.
+ * RU: Эталоны подтверждения основаны на ответах OMEGA 1.5.13 и 1.5.19. Они сохраняют внешнюю форму, которую должен понимать parser; зелёный стенд сам не доказывает, что живая служба всё ещё использует эту форму.
+ * EN: Confirmation fixtures come from OMEGA 1.5.13 and 1.5.19 responses. They retain the external shape the parser must understand; passing tests alone do not prove that a live service still uses that shape.
  */
 let istolkovatOtvet
 try {
@@ -17,15 +13,17 @@ try {
 }
 
 let vsego = 0, proshlo = 0;
+const sud = (v) => { if (v !== undefined && v !== true) throw new Error('тело пробы ВЕРНУЛО «' + String(v).slice(0, 60) + '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы. Проверка ПО УСТРОЙСТВУ, а не по перечню значений (06.09.2026)'); };
 const proba = (imya, f) => {
   vsego++;
-  try { f(); proshlo++; console.log('  ✅ ' + imya); }
+  try { sud(f()); proshlo++; console.log('  ✅ ' + imya); }
   catch (e) { console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 140)); }
 };
 
 const ID = 'mem-dfc9d0754cc9';
 const NASH = 'Журнал, пишущий НАМЕРЕНИЕ в прошедшем времени, врёт при отказе';
-// живой ответ: усечённый опознаватель, перенос и пустая строка СОХРАНЕНЫ, обрыв по длине
+// RU: Эталон сохраняет усечённый id, перенос, пустую строку и обрыв Source по длине.
+// EN: The fixture retains a truncated id, a line break, a blank line, and a length-truncated Source.
 const NAJDENO = '# Similar Memories (5)\n\n**Source:** `mem-dfc9d075` — Журнал, пишущий НАМЕРЕНИЕ в прошедшем времени, врёт при отказе.\n\nПрецедент 25.08.2026 (детектор сиро';
 const NE_NAJDENO = 'Memory `mem-be7f5026` not found.';
 
@@ -52,16 +50,21 @@ proba('ГЛАВНОЕ: «not found» ВНУТРИ нашего знания не
   if (r.sostoyanie !== 'dostavleno') throw new Error('слова из содержимого приняты за ответ службы: ' + r.sostoyanie);
 });
 
+// RU: A-N-1948 №3 (№2): образец из одних пробелов после rovno() пуст, а includes('') истинно для любой строки — ложная доставка.
+// EN: A-N-1948 №3 (№2): a whitespace-only sample is empty after rovno(), and includes('') is true for any text.
+proba('образец из одних пробелов → ne-udalos-proverit, а не доставка', () => {
+  const r = istolkovatOtvet(NAJDENO, ID, '   \n\t ');
+  if (r.sostoyanie !== 'ne-udalos-proverit') throw new Error('пустой образец дал ' + r.sostoyanie);
+});
+
 proba('точный ответ об отсутствии → ne-najdeno', () => {
   const r = istolkovatOtvet(NE_NAJDENO, ID, NASH);
   if (r.sostoyanie !== 'ne-najdeno') throw new Error(r.sostoyanie);
 });
 
 proba('ГЛАВНОЕ: наш текст в ПОХОЖЕЙ записи не подтверждает доставку (Source наш, содержимое чужое)', () => {
-  // 🔴 Эта проба переписана после ворот: прежняя ставила в Source ЧУЖОЙ
-  // опознаватель и потому падала на ветке опознавателя, не дойдя до содержимого.
-  // Зелёная проба, проверявшая не то, что заявлено. Теперь опознаватель НАШ —
-  // проверяется именно граница захвата содержимого.
+  // RU: Source содержит наш id, чтобы проба дошла до границы содержимого. Чужой id остановил бы проверку раньше и не проверил бы захват похожего текста.
+  // EN: Source contains our id so the test reaches the content boundary. A foreign id would stop the check earlier and leave similar-text capture untested.
   const s = '# Similar Memories (3)\n\n**Source:** `mem-dfc9d075` — совершенно чужое содержимое\n\n1. `mem-bbbbbbbb` — ' + NASH + '\n2. `mem-cccccccc` — ещё чужое';
   const r = istolkovatOtvet(s, ID, NASH);
   if (r.sostoyanie === 'dostavleno') throw new Error('подтвердились по тексту из ПОХОЖЕЙ записи');
@@ -107,6 +110,27 @@ proba('РАЗЛИЧЕНИЕ: три исхода не схлопываются',
   const b = istolkovatOtvet('', ID, NASH).sostoyanie;
   const c = istolkovatOtvet(NAJDENO, ID, NASH).sostoyanie;
   if (new Set([a, b, c]).size !== 3) throw new Error('исходы слиплись: ' + [a, b, c].join('/'));
+});
+
+// RU: Эталон ответа OMEGA 1.5.19 включает вторую похожую запись с заголовком ## N. [тип] `mem-…`; граница должна сохранить заголовки внутри знания и отсечь этот список.
+// EN: The OMEGA 1.5.19 fixture includes a second similar record headed ## N. [type] `mem-…`; the boundary must preserve headings inside knowledge and exclude this list.
+const ID_1364 = 'mem-11124e46078e';
+const ZHIVOJ_0110 = '# Similar Memories (5)\n\n**Source:** `mem-11124e46` — # Возраст записи выдачу не отсекает\n\n## Было — стало\n\n**Было (черновик замысла выдачи, §5).** Правил\n\n## 1. [decision] `mem-ac5366b1` (similarity: 0.90)\n# Возраст записи не отсекает её при выдаче знаний по задаче\n\n**Было — стало.** В замысле выдачи знаний по смыслу задачи было заложено правило плугина restore: запись старше 7 суток (порог `ignoreAfter\n\n## 2. [decision] `mem-f3cb3df9` (similarity: 0.78)\n# Снимки состояния в выдаче знаний отсекать по давности, а не всем классом\n\n## Откуда правило\n\n';
+
+proba('source-readback ГЛАВНОЕ: короткий первый заголовок и «## Раздел» следом — запись находит сама себя (живой 01.10)', () => {
+  const r = istolkovatOtvet(ZHIVOJ_0110, ID_1364, '# Возраст записи выдачу не отсекает\n\n## Было — стало\n\n**Было (черновик замысла выдачи, §5).** Правила');
+  if (r.sostoyanie !== 'dostavleno') throw new Error('Source оборван на заголовке внутри знания: ' + r.sostoyanie);
+});
+
+proba('source-readback ГЛАВНОЕ: наш текст только в ПОХОЖЕЙ записи живой формы «## N. [тип]» → не доставка', () => {
+  const r = istolkovatOtvet(ZHIVOJ_0110, ID_1364, '# Возраст записи не отсекает её при выдаче знаний по задаче');
+  if (r.sostoyanie === 'dostavleno') throw new Error('захват Source ушёл в список похожих — подтвердились по ЧУЖОЙ записи');
+});
+
+proba('source-readback: обычное знание без заголовков в живой форме списка → доставка', () => {
+  const s = '# Similar Memories (2)\n\n**Source:** `mem-dfc9d075` — ' + NASH + '.\n\n## 1. [lesson_learned] `mem-eeeeeeee` (similarity: 0.71)\nчужое';
+  const r = istolkovatOtvet(s, ID, NASH);
+  if (r.sostoyanie !== 'dostavleno') throw new Error(r.sostoyanie);
 });
 
 console.log('  итог: ' + proshlo + ' из ' + vsego);

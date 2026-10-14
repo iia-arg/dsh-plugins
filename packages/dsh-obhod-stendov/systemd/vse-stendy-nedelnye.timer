@@ -1,0 +1,11 @@
+[Unit]
+Description=Недельный прогон долгих стендов (B-N-1074): среда 01:30 UTC — между 00:20 (копия OMEGA) и 03:00 (sadik-backup), вне ночного обхода 03:40 и registry-watchdog 07:30, не в воскресенье (mdcheck/e2scrub)
+
+[Timer]
+OnCalendar=Wed *-*-* 01:30:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=vse-stendy-nedelnye.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,9 @@
+[Unit]
+Description=Копия базы долговременной памяти (omega)
+# Отказ копирования обязан быть слышен: иначе узнаем о нём в день, когда копия понадобится.
+OnFailure=omega-db-backup-failed.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/omega-db-backup.sh
+Environment=LC_ALL=C.UTF-8

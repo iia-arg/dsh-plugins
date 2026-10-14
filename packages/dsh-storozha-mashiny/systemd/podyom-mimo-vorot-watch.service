@@ -1,0 +1,17 @@
+# RU: Свой зовущий вместо healthcheck реестра. Итог прогона — /var/lib/podyom-mimo-vorot-watch/last.json (644);
+# RU: healthcheck его только ЧИТАЕТ. Коды 2 и 3 — не отказ службы: находка и слепота живут в last.json
+# RU: (иначе юнит «упал» бы на каждой находке).
+# EN: Its own caller instead of the registry healthcheck. Run result — /var/lib/podyom-mimo-vorot-watch/last.json (644);
+# EN: the healthcheck only READS it. Codes 2 and 3 are not a service failure: findings and blindness live in
+# EN: last.json (otherwise the unit would "fail" on every finding).
+[Unit]
+Description=Сторож подъёма мимо ворот: служба агента поднята не через podyom-uzla · Start-bypassing-the-gate watchdog
+Documentation=file:///usr/local/sbin/podyom-mimo-vorot-watch
+After=multi-user.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/podyom-mimo-vorot-watch
+SuccessExitStatus=2 3
+TimeoutStartSec=180
+StandardOutput=journal
+StandardError=journal

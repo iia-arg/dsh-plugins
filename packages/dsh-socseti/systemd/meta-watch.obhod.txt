@@ -1,0 +1,9 @@
+# Coordinator installs both rows together with Meta, outside Alpha Telegram files.
+# OBLAST_STENDOV in vse-stendy-boevye.sh AND perechen-boevyh-stendov.txt:
+/opt/socseti-anna/test/stend-meta-watch.mjs @anna /opt/anna/app
+# SREDA_STENDOV in vse-stendy-boevye.sh:
+/opt/socseti-anna/test/stend-meta-watch.mjs META_WATCH_CONFIG=/opt/anna/.config/socseti/config.json
+
+# The source copy discovered by the stand sweep uses the same role/config:
+/opt/iskra/workspace/dsh-plugins/packages/dsh-socseti/test/stend-meta-watch.mjs @anna /opt/anna/app
+/opt/iskra/workspace/dsh-plugins/packages/dsh-socseti/test/stend-meta-watch.mjs META_WATCH_CONFIG=/opt/anna/.config/socseti/config.json

@@ -1,0 +1,11 @@
+[Unit]
+Description=Ежесуточный прогон сторожа Codex на sadik (B-P-100)
+
+[Timer]
+OnCalendar=*-*-* 07:10:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=codex-katalog-watch.service
+
+[Install]
+WantedBy=timers.target

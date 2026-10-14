@@ -1,0 +1,12 @@
+# B-N-1640: опрос выдачи раз в 10 минут (договор Марка: «один запрос на такт», период — за владельцем читателя).
+[Unit]
+Description=Список сотрудников сайта — опрос раз в 10 минут (B-N-1640)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+RandomizedDelaySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

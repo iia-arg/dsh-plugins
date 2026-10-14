@@ -1,0 +1,313 @@
+#!/usr/bin/env bash
+# RU: Единая отправка тревог, HTML/plain, повтор сети/5xx/429 (3 попытки, паузы 5/15 с, retry_after ≤300 с, запрос 20 с).
+# EN: Shared HTML/plain alert sender; retry network/5xx/429 failures (3 attempts, 5/15 s delays, retry_after ≤300 s, 20 s request).
+# RU: Хвост только дописывается под flock 5 с, не читается; нет хвоста/записи — отказ записи в журнале.
+# EN: Tail is append-only under flock with a 5 s wait; missing/unwritable tail logs a write refusal.
+# RU: Журнал видит первые 120 знаков; общий бюджет канала 4096 единиц UTF-16 с префиксом/подписью.
+# EN: Journal sees the first 120 characters; channel budget is 4096 UTF-16 units including prefix/footer.
+# RU: Ручной запуск таймерного юнита неотличим от расписания; признак источника не заменяет метку пробы.
+# EN: Manual starts of timer-backed units cannot be distinguished from schedules; source tags do not mark probes.
+set -uo pipefail
+
+# RU: --proverit-nastrojku — проверка настройки без отправки: настройка разрешается тем же читателем, файлы токена
+#     и чата должны существовать, читаться текущей учёткой и иметь непустую первую строку. Сеть, журнал и хвост не
+#     трогаются, значения не печатаются и в переменные не берутся. Код 0 — годна, 2 — нет (все причины в stdout).
+#     Не проверяет: что токен принимает Telegram и что чат существует — это знает только отправка.
+# EN: --proverit-nastrojku checks configuration without sending: the same reader resolves settings; token and chat
+#     files must exist, be readable by the current account and have a non-empty first line. No network, journal or
+#     tail; values are neither printed nor stored. Exit 0 — usable, 2 — not (every reason on stdout).
+#     Not checked: whether Telegram accepts the token or the chat exists — only a send can tell.
+if [ "${1:-}" = --proverit-nastrojku ]; then
+  [ $# -eq 1 ] || { echo "ОТКАЗ НАСТРОЙКИ: --proverit-nastrojku принимает только себя, лишний довод «${2:0:40}»"; exit 2; }
+  LIB_DIR="$(dirname -- "$(readlink -f -- "$0")")/../lib/dsh-trevogi"
+  if ! settings="$(python3 "$LIB_DIR/nastrojki.py" 2>&1)"; then
+    echo "ОТКАЗ НАСТРОЙКИ: настройка не разрешена: ${settings##*$'\n'}"; exit 2
+  fi
+  kto="$(id -un 2>/dev/null || echo '?')"; prichin=0
+  for para in "токен|AGENT_ALERT_TOKEN_FILE" "чат|AGENT_ALERT_CHAT_FILE"; do
+    imya="${para%%|*}"; put="$(printf '%s\n' "$settings" | sed -n "s/^${para#*|}=//p")"
+    if [ ! -f "$put" ]; then echo "ОТКАЗ НАСТРОЙКИ: $imya — нет обычного файла: $put"; prichin=$((prichin + 1))
+    elif [ ! -r "$put" ]; then echo "ОТКАЗ НАСТРОЙКИ: $imya — файл не читается учёткой $kto: $put"; prichin=$((prichin + 1))
+    elif ! head -1 -- "$put" | grep -q '[^[:space:]]'; then echo "ОТКАЗ НАСТРОЙКИ: $imya — первая строка пуста: $put"; prichin=$((prichin + 1))
+    fi
+  done
+  put="$(printf '%s\n' "$settings" | sed -n 's/^AGENT_ALERT_TOKEN_FILE=//p')"
+  if [ -f "$put" ]; then
+    mode="$(stat -c %a -- "$put" 2>/dev/null)"
+    if [[ ! "$mode" =~ ^[0-7]+$ ]] || (( (8#$mode & 4) != 0 )); then
+      echo "ОТКАЗ НАСТРОЙКИ: токен — права позволяют чтение прочим или не прочитаны: $put"; prichin=$((prichin + 1))
+    fi
+  fi
+  [ "$prichin" -eq 0 ] || exit 2
+  echo "НАСТРОЙКА ГОДНА: токен и чат читаются учёткой $kto и не пусты; Telegram не спрашивался"
+  exit 0
+fi
+
+FORMAT=html
+if [ "${1:-}" = --plain ]; then FORMAT=plain; shift; fi
+case "${1:-}" in
+  --) shift ;;
+  -h|--help) echo "agent-alert: --plain — обычный текст без HTML; без ключа — HTML. НЕ отправляю. Вызов: agent-alert \"текст\" · echo текст | agent-alert · agent-alert -- \"-текст\" · agent-alert --proverit-nastrojku — проверить настройку без отправки" >&2
+             logger -t agent-alert "исход=справка" 2>/dev/null; exit 0 ;;
+  -*) echo "agent-alert: «${1:0:40}» похоже на ключ — НЕ отправляю. Текст, начинающийся с «-», подавать после «--»" >&2
+      logger -t agent-alert "исход=отказ-ключ аргумент=${1:0:40}" 2>/dev/null; exit 2 ;;
+esac
+msg="${*:-}"
+[ -z "$msg" ] && msg="$(cat)"
+[ -z "$msg" ] && { echo "agent-alert: пустое сообщение — не отправляю"; exit 1; }
+
+# RU: Проба сама выставляет метку. До неё разобран ввод; токен, хвост и сеть не трогаются.
+#     В журнал — первые 120 знаков текста (перевод строки → ⏎): видно, ЧТО проба не отправила.
+#     Молчание только по явной метке 1; без метки — отправка как прежде.
+# EN: The probe sets its own mark. Input is parsed first; token, tail and network stay untouched.
+#     The journal gets the first 120 characters (newline → ⏎): it shows WHAT the probe did not send.
+#     Silence only with the explicit mark 1; without it — sending as before.
+case "${DSH_PROBA:-0}" in
+  1) echo 'agent-alert: проба, не отправлено'
+     nachalo="$(LC_ALL=C.utf8; t="${msg:0:120}"; printf '%s' "${t//$'\n'/⏎}")"
+     logger -t agent-alert -- "версия=3.1.1 исход=проба, не отправлено текст[0:120]=$nachalo" || exit 1
+     exit 0 ;;
+  0) ;;
+  *) echo 'agent-alert: DSH_PROBA допускает только 0 или 1 / requires 0 or 1' >&2; exit 2 ;;
+esac
+# RU: Один читатель для всех утилит; конфиг не исполняется оболочкой.
+# EN: One reader for all utilities; the shell never evaluates configuration.
+LIB_DIR="$(dirname -- "$(readlink -f -- "$0")")/../lib/dsh-trevogi"
+if ! settings="$(python3 "$LIB_DIR/nastrojki.py")"; then exit 2; fi
+while IFS= read -r setting; do
+  key="${setting%%=*}"; value="${setting#*=}"
+  export "$key=$value"
+done <<< "$settings"
+
+TOKEN_FILE="$AGENT_ALERT_TOKEN_FILE"
+CHAT_FILE="$AGENT_ALERT_CHAT_FILE"
+POPYTOK="$AGENT_ALERT_POPYTOK"
+PAUZY="$AGENT_ALERT_PAUZY"
+TAJMAUT="$AGENT_ALERT_TAJMAUT"
+ZHURNAL_ZNAKOV=120
+HVOST_FAJL="$AGENT_ALERT_HVOST"
+HVOST_PREDEL_BAJT="$AGENT_ALERT_HVOST_PREDEL"
+
+token="$(cat "$TOKEN_FILE" 2>/dev/null | head -1 | tr -d '[:space:]')"
+chat="$(cat "$CHAT_FILE" 2>/dev/null | head -1 | tr -d '[:space:]')"
+if [ -z "$token" ] || [ -z "$chat" ]; then
+  echo "agent-alert: нет токена ($TOKEN_FILE) или чата ($CHAT_FILE) — тревога НЕ отправлена"
+  exit 1
+fi
+
+# B-N-1830 (08.10.2026, Михалыч; вопрос владельца 12:10 МСК «что значит ПОЗВАНО РУКОЙ»): метка — по ПОЛОЖИТЕЛЬНОМУ признаку.
+#   таймер (TriggeredBy) → без метки · служба без таймера (агент, шлюз, демон) → «служба <юнит>» · cron.service → «по cron» ·
+#   РУКА — только session-*.scope (ssh/sudo/логин) → «ПОЗВАНО РУКОЙ» · прочее (вне юнита, чужой .scope) → «источник не установлен (<хвост cgroup>)».
+#   Было: всё, что не таймер, — «рукой»; служба zarya.service получала ложное «ПОЗВАНО РУКОЙ».
+# ⚠️ НЕ ЛОВИТ: руку, запустившую команду через systemd-run (это уже служба/чужой scope); службу пользовательского менеджера — назовётся «служба».
+istochnik_trevogi() {
+  local cg u tb
+  cg="$(sed -n 's/^0:://p' /proc/self/cgroup 2>/dev/null | head -1)"
+  [ -n "$cg" ] || cg="$(tail -1 /proc/self/cgroup 2>/dev/null | cut -d: -f3-)"
+  u="$(printf '%s' "$cg" | grep -oE '[a-zA-Z0-9@._-]+\.(service|scope)' | tail -1)"
+  if [ -n "${MONITOR_UNIT:-}" ]; then
+    printf 'ПО ОТКАЗУ СЛУЖБЫ %s' "$MONITOR_UNIT"; return
+  fi
+  case "$u" in
+    session-*.scope) printf 'ПОЗВАНО РУКОЙ (%s)' "$u"; return ;;
+    cron.service|crond.service) printf 'по cron (%s)' "$u"; return ;;
+    *.service)
+      tb="$(systemctl show "$u" -p TriggeredBy --value 2>/dev/null)"
+      [ -n "$tb" ] && { printf ''; return; }
+      printf 'служба %s' "$u"; return ;;
+  esac
+  [ "${#cg}" -gt 64 ] && cg="…${cg: -63}"   # ${cg: -64} на строке короче 64 даёт ПУСТО (пойман пробой r1)
+  printf 'источник не установлен (%s)' "${cg:-cgroup не прочитан}"
+}
+ISTOCHNIK="$(istochnik_trevogi)"
+host="$(hostname -s 2>/dev/null || echo '?')"
+PREFIX="[${host}]${ISTOCHNIK:+ ⚠️ $ISTOCHNIK ·} "
+msg_polnyj="$msg"
+PREDEL_ZNAKOV="${AGENT_ALERT_PREDEL:-3900}"
+podgotovit_plain() {
+  PREDEL="$PREDEL_ZNAKOV" PREFIX="$PREFIX" HVOST="$HVOST_FAJL" MSG="$msg" python3 - <<'PY_PLAIN'
+import os, sys
+text, prefix, path = os.environ['MSG'], os.environ['PREFIX'], os.environ['HVOST']
+try:
+    raw = os.environ['PREDEL']
+    if not raw.isascii() or not raw.isdecimal() or int(raw) < 1:
+        raise ValueError('предел plain должен быть положительным целым')
+    limit = min(int(raw), 4096)
+    def units(s): return len(s.encode('utf-16-le')) // 2
+    total = len(text)
+    if total <= limit and units(prefix + text) <= 4096:
+        print(text, end='')
+    else:
+        def result(n):
+            return (text[:n] + f'\n⚠️ ОБРЕЗАНО каналом: показано {n} из {total} знаков. '
+                    f'Полный текст — в хвосте тревог {path} на этой машине (читает root).')
+        if units(prefix + result(0)) > 4096:
+            raise ValueError('предел plain: префикс и подпись не помещаются')
+        lo, hi = 0, min(total, limit)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if units(prefix + result(mid)) <= 4096: lo = mid
+            else: hi = mid - 1
+        print(result(lo), end='')
+except (ValueError, UnicodeError) as e:
+    print(f'agent-alert: {e}', file=sys.stderr)
+    sys.exit(1)
+PY_PLAIN
+}
+if [ "$FORMAT" = plain ]; then
+  if ! msg="$(podgotovit_plain)"; then
+    echo 'agent-alert: plain не подготовлен — НЕ отправлено' >&2
+    exit 1
+  fi
+else
+if ! msg_html="$(PREDEL="$PREDEL_ZNAKOV" PREFIX="$PREFIX" HVOST="$HVOST_FAJL" MSG="$msg" python3 - <<'PY_HTML'
+import os, re, sys, html
+from html.parser import HTMLParser
+text, prefix, path = os.environ['MSG'], os.environ['PREFIX'], os.environ['HVOST']
+try:
+    raw = os.environ['PREDEL']
+    if not raw.isascii() or not raw.isdecimal() or int(raw) < 1:
+        raise ValueError('предел html должен быть положительным целым')
+    limit = min(int(raw), 4096)
+    def units(s): return len(s.encode('utf-16-le')) // 2
+    def vlezaet(t): return units(prefix + html.unescape(re.sub(r'<[^>]*>', '', t))) <= 4096
+    total = len(text)
+    if total <= limit and vlezaet(text):
+        print(text, end=''); sys.exit(0)
+    def razrez(n):
+        t = text[:n]
+        t = re.sub(r'&+[a-zA-Z#0-9]*$', '', t)
+        t = re.sub(r'<[^>]*$', '', t)
+        class OpenTags(HTMLParser):
+            def __init__(self):
+                super().__init__(convert_charrefs=False)
+                self.stack = []
+            def handle_starttag(self, tag, attrs):
+                self.stack.append(tag)
+            def handle_startendtag(self, tag, attrs):
+                pass
+            def handle_endtag(self, tag):
+                if not self.stack or self.stack[-1] != tag:
+                    raise ValueError('неверная вложенность HTML')
+                self.stack.pop()
+        parser = OpenTags()
+        parser.feed(t)
+        if parser.rawdata:
+            t = t[:-len(parser.rawdata)]
+        parser.close()
+        return t + ''.join(f'</{tag}>' for tag in reversed(parser.stack))
+    def result(n):
+        t = razrez(n)
+        return (t + f'\n⚠️ ОБРЕЗАНО каналом: показано {len(t)} из {total} знаков. '
+                f'Полный текст — в хвосте тревог {path} на этой машине (читает root).')
+    if not vlezaet(result(0)):
+        raise ValueError('предел html: префикс и подпись не помещаются')
+    lo, hi = 0, min(total, limit)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if vlezaet(result(mid)): lo = mid
+        else: hi = mid - 1
+    print(result(lo), end='')
+except (ValueError, UnicodeError) as e:
+    print(f'agent-alert: {e}', file=sys.stderr)
+    sys.exit(1)
+PY_HTML
+)"; then
+  echo 'agent-alert: html не подготовлен — пробую текстом (plain)' >&2
+  PREFIX="${PREFIX}⚠️ html не подготовлен, отправлено текстом · "
+  FORMAT=plain-zapas
+  if ! msg="$(podgotovit_plain)"; then
+    echo 'agent-alert: ни html, ни plain не подготовлены — НЕ отправлено' >&2
+    exit 1
+  fi
+else
+  msg="$msg_html"
+fi
+fi
+
+otpravit() {
+  local -a format_args=()
+  [ "$FORMAT" != html ] || format_args=(--data-urlencode "parse_mode=HTML")
+  printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$token" \
+  | curl -sS -m "$TAJMAUT" -X POST --config - \
+  --write-out '\n%{http_code}' \
+  --data-urlencode "chat_id=${chat}" \
+  --data-urlencode "text=${PREFIX}${msg}" \
+  "${format_args[@]}" 2>&1
+}
+
+zapisat_hvost() {
+  local stroka razmer
+  if [ ! -f "$HVOST_FAJL" ] || [ ! -w "$HVOST_FAJL" ]; then
+    logger -t agent-alert "хвост НЕ записан: $HVOST_FAJL отсутствует или закрыт для $(id -un)"
+    return 0
+  fi
+  razmer="$(stat -c %s "$HVOST_FAJL" 2>/dev/null || echo 0)"
+  if [ "$razmer" -gt "$HVOST_PREDEL_BAJT" ]; then
+    logger -t agent-alert "хвост НЕ записан: $HVOST_FAJL $razmer Б больше предела $HVOST_PREDEL_BAJT — обрезка (agent-alert-hvost-obrezka.timer) не работает?"
+    return 0
+  fi
+  stroka="$(date -u +%FT%TZ) исход=$1 format=$FORMAT ЮНИТ=$2 звал=$3 знаков=${#msg_polnyj} текст=${msg_polnyj//$'\n'/⏎}"
+  (
+    flock -w 5 9 || { logger -t agent-alert "хвост НЕ записан: $HVOST_FAJL занят дольше 5 с"; exit 0; }
+    printf '%s\n' "$stroka" >&9 || logger -t agent-alert "хвост НЕ записан: запись в $HVOST_FAJL отказала"
+  ) 9>>"$HVOST_FAJL"
+}
+
+popytka=0
+while : ; do
+  popytka=$((popytka + 1))
+zhurnal() {
+  local LC_ALL=C.utf8
+  local ishod="$1" hvost="${2:-}"
+  hvost="${hvost:0:$ZHURNAL_ZNAKOV}"
+  local zvavshij
+  zvavshij="$(ps -o comm= -p "$PPID" 2>/dev/null || echo '?')"
+  local yunit
+  yunit="$(grep -oE '[a-zA-Z0-9@._-]+\.(service|scope)' /proc/self/cgroup 2>/dev/null | tail -1)"
+  : "${yunit:=вне-юнита}"
+  logger -t agent-alert "версия=3.1.1 исход=$ishod format=$FORMAT ЮНИТ=$yunit звал=$zvavshij($PPID) текст[0:$ZHURNAL_ZNAKOV]=${msg:0:$ZHURNAL_ZNAKOV}${hvost:+ | $hvost}"
+  zapisat_hvost "$ishod" "$yunit" "$zvavshij"
+}
+
+  resp="$(otpravit)"; kod_curl=$?
+  # RU: curl может вернуть URL с токеном в ошибке; закрываем его до любого журнала/вывода.
+  # EN: curl may echo the token URL on errors; redact it before any log or output.
+  resp="${resp//"$token"/[redacted]}"
+
+  result="$(printf '%s' "$resp" | python3 -c '
+import json,sys
+raw=sys.stdin.read();body,sep,status=raw.rpartition("\n")
+http=int(status) if sep and len(status)==3 and status.isascii() and status.isdecimal() else 0
+if not http: body=raw
+try: data=json.loads(body)
+except ValueError: data=None
+error_code=data.get("error_code") if isinstance(data,dict) else None
+if isinstance(data,dict) and data.get("ok") is True and (not http or 200<=http<300):
+ print("ok -")
+elif data is None or http==429 or 500<=http<600 or (type(error_code) is int and (error_code==429 or 500<=error_code<600)):
+ retry=data.get("parameters",{}).get("retry_after") if isinstance(data,dict) and isinstance(data.get("parameters",{}),dict) else None
+ print("transient", retry if type(retry) is int and 0<=retry<=300 else "over-limit" if retry is not None else "-")
+else: print("refusal -")
+')"
+  read -r category retry_after <<< "$result"
+  if [ "$kod_curl" -eq 0 ]; then
+    if [ "$category" = ok ]; then zhurnal доставлено; exit 0; fi
+    if [ "$category" = refusal ] || [ "$retry_after" = over-limit ]; then
+      echo "agent-alert: телеграм ответил отказом (попытка $popytka; retry_after предел 300 с): ${resp:0:200}"
+      zhurnal отказ-телеграма "$resp"; exit 1
+    fi
+  fi
+  prichina="сеть не пустила"
+  [ "$kod_curl" -ne 0 ] || prichina="временный отказ Telegram"
+  if [ "$popytka" -ge "$POPYTOK" ]; then
+    echo "agent-alert: $prichina, попыток $popytka из $POPYTOK, curl код $kod_curl: ${resp:0:200}"
+    zhurnal сеть-не-пустила "curl код $kod_curl; попыток $popytka"; exit 1
+  fi
+  pauza="$(echo "$PAUZY" | cut -d' ' -f"$popytka")"
+  [ -n "$pauza" ] || pauza=15
+  if [ "$kod_curl" -eq 0 ] && [ "$retry_after" != - ]; then pauza="$retry_after"; fi
+  echo "agent-alert: $prichina (попытка $popytka, curl код $kod_curl: ${resp:0:$ZHURNAL_ZNAKOV}) — жду ${pauza} с" >&2
+  sleep "$pauza" || { zhurnal сеть-не-пустила 'пауза прервана'; exit 1; }
+
+done

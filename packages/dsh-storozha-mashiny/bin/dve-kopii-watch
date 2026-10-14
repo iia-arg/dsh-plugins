@@ -1,0 +1,283 @@
+#!/usr/bin/env python3
+"""dve-kopii-watch — сторож «две копии пакетов платформы».
+dve-kopii-watch — watchdog for "two copies of the platform packages".
+
+RU: ЗАЧЕМ. В процессе каждого агента платформы живут ДВЕ копии общих пакетов: ядро берёт их из
+<app агента>/node_modules, плагины памяти — из общего дерева плагинов (настройка DKW_OSNOVA). Пока код копий
+побайтно одинаков, это безопасно. Опасно, когда копии разойдутся КОДОМ: instanceof HarnessError (dsh-llm) и
+instanceof TimeoutReason (dsh-timeout) через границу копий дают ложь, а разные версии договора живут в одном
+процессе молча.
+EN: WHY. Every platform agent process holds TWO copies of the shared packages: the core loads them from
+<agent app>/node_modules, the memory plugins from the shared plugin tree (setting DKW_OSNOVA). While the code of
+both copies is byte-identical this is safe. It is dangerous when the copies diverge in CODE: instanceof
+HarnessError (dsh-llm) and instanceof TimeoutReason (dsh-timeout) across the copy boundary return false, and two
+contract versions live silently in one process.
+
+RU: ЧТО ДЕЛАЕТ. Для 9 общих пакетов считает sha256 дерева пакета БЕЗ верхнего package.json (строка версии и
+диапазоны зависимостей не в счёт: 4.0.1↔4.0.2 при одинаковом коде — не повод) в дереве плагинов и в app каждой
+установки из DKW_APPS. Разошёлся код → тревога в agent-alert: пакет, оба пути, обе суммы, первые различающиеся файлы.
+EN: WHAT IT DOES. For 9 shared packages it hashes (sha256) the package tree WITHOUT the top-level package.json
+(the version string and dependency ranges do not count: 4.0.1↔4.0.2 with identical code is no reason) in the
+plugin tree and in the app of every installation from DKW_APPS. Code diverged → alert to agent-alert: package,
+both paths, both hashes, the first differing files.
+
+RU: НАСТРОЙКИ (окружение; без DKW_OSNOVA и DKW_APPS сторож НЕ сверяет ничего и говорит «НЕ НАСТРОЕНО», код 2):
+  DKW_OSNOVA     — каталог node_modules общего дерева плагинов;
+  DKW_APPS       — установки через пробел: «имя=каталог_node_modules имя=каталог_node_modules …» (порядок = порядок вывода);
+  DKW_SOSTOYANIE — файл последнего исхода (умолчание /var/lib/dve-kopii-watch/posledniy-ishod);
+  DKW_ALERT      — команда канала тревоги (умолчание /usr/local/bin/agent-alert);
+  DKW_MASHINA    — имя машины в тексте тревоги (умолчание — имя узла);
+  DKW_PODPIS     — подпись «кто» в тексте тревоги (умолчание dve-kopii-watch).
+EN: SETTINGS (environment; without DKW_OSNOVA and DKW_APPS the watchdog compares NOTHING and says "НЕ НАСТРОЕНО"
+(not configured), exit 2):
+  DKW_OSNOVA     — node_modules directory of the shared plugin tree;
+  DKW_APPS       — space-separated installations: "name=node_modules_dir name=node_modules_dir …" (order = output order);
+  DKW_SOSTOYANIE — last-outcome file (default /var/lib/dve-kopii-watch/posledniy-ishod);
+  DKW_ALERT      — alert channel command (default /usr/local/bin/agent-alert);
+  DKW_MASHINA    — machine name in the alert text (default: node name);
+  DKW_PODPIS     — "who" signature in the alert text (default dve-kopii-watch).
+
+RU: ИСХОД: 0 — код совпал везде · 1 — разошёлся код (красное) · 2 — слепота (не смог прочесть дерево, нет основы,
+не ушла тревога, не настроен) · 4 — адресная отсрочка с --avto-montazh, не зелёное; прежнее состояние и отбой не меняются.
+Итоговая строка всегда в журнал: logger -t dve-kopii-watch.
+Тревога: при 1/2 — на КАЖДОМ прогоне (таймер суточный = раз в сутки, пока не починят); при возврате в 0 после
+1/2 — одна строка «сошлось снова». Не ушла тревога → состояние не пишется (повтор на следующем прогоне), исход 2.
+EN: EXIT: 0 — code matched everywhere · 1 — code diverged (red) · 2 — blindness (could not read a tree, no base,
+alert not delivered, not configured) · 4 — scoped deferral with --avto-montazh, not green; previous state retained, no recovery alert.
+The summary line always goes to the journal: logger -t dve-kopii-watch.
+Alert: on 1/2 — on EVERY run (daily timer = once a day until fixed); on return to 0 after 1/2 — one
+"matched again" line. Alert not delivered → state is not written (repeat on the next run), exit 2.
+
+RU: ГДЕ НЕ ПРИМЕНЯЕТСЯ И ЧЕГО НЕ ЛОВИТ (класс «две копии» этим НЕ закрыт):
+ - --avto-montazh допускает код 4 только для всех точных файлов обеих сторон;
+   настоящая ошибка в этом составе откладывается не более1800с; ручной режим строгий.
+   Отсрочка не зелёная, не глушит слепоту или отличающийся файл вне состава окна.
+ - вложенные node_modules внутри пакета пропускаются целиком (их копии не сверяются);
+ - только 9 пакетов из PAKETY: новый общий пакет сюда сам не попадёт;
+ - только установки из DKW_APPS: новая установка сама не попадёт — её надо дописать строкой;
+ - плагины вне общего дерева (плагины в каталоге самого агента) не сверяются: это отдельный путь загрузки;
+ - что РЕАЛЬНО загружено в живом процессе, не видит: сверяет диск, не память
+   (пакет обновили на диске, а процесс не перезапущен — сторож зелёный, процесс на старом);
+ - package.json не сверяется вовсе: расхождение, спрятанное в нём (exports/main указывает на другой файл),
+   не ловится;
+ - пакета нет в app — это не две копии, строка «нет в app», не красное.
+Прибор только читает; ничего не чинит.
+EN: WHERE IT DOES NOT APPLY AND WHAT IT DOES NOT CATCH (the "two copies" class is NOT closed by it):
+ - --avto-montazh defers only exact differing files on both sides through montazh-okno (dsh-montazh,
+   MONTAZH_OKNO_BIN default /usr/local/sbin/montazh-okno, 5 s per call); window at most 1800 s.
+   The manual mode is strict. Deferred is not green; blindness or files outside the window remain visible.
+   The packaged unit enables this flag, but SuccessExitStatus=1 does not include 4, so deferred is failed.
+ - nested node_modules inside a package are skipped entirely (their copies are not compared);
+ - only the 9 packages in PAKETY: a new shared package will not get here by itself;
+ - only installations from DKW_APPS: a new installation will not get here by itself — add it as an entry;
+ - plugins outside the shared tree (plugins in the agent's own directory) are not compared: separate load path;
+ - it does not see what is ACTUALLY loaded in a live process: it compares disk, not memory
+   (package updated on disk, process not restarted — watchdog green, process on the old code);
+ - package.json is not compared at all: a divergence hidden there (exports/main pointing to another file)
+   is not caught;
+ - package missing from an app is not two copies: a "нет в app" (not in app) line, not red.
+The tool only reads; it fixes nothing.
+"""
+import argparse, hashlib, os, subprocess, sys, time
+import re
+from pathlib import Path
+
+PAKETY = ['@deepseek-ai/cordis', '@deepseek-ai/cosmokit', '@deepseek-ai/schemastery',
+          '@deepseek-ai/dsh-attachment', '@deepseek-ai/dsh-brand', '@deepseek-ai/dsh-invariants',
+          '@deepseek-ai/dsh-llm', '@deepseek-ai/dsh-timeout', '@standard-schema/spec']
+# RU: Частные значения машины — только настройками окружения; умолчания нейтральны (пусто = не настроено).
+# RU: DKW_APPS — ФАКТИЧЕСКИЕ app служб, снятые с ExecStart (systemctl cat <служба>), а не шаблоном каталога:
+# RU: каталог, который не запускает ни одна служба, даёт ложный красный (его никто не обновит), а настоящий app,
+# RU: которого нет в списке, — вне сторожа. ЧЕГО НЕ ЛОВИТ: служба, которой в списке нет.
+# EN: Machine-private values come only from environment settings; defaults are neutral (empty = not configured).
+# EN: DKW_APPS must hold the ACTUAL service apps taken from ExecStart (systemctl cat <service>), not a directory
+# EN: template: a directory no service runs gives a false red (nobody updates it), and a real app missing from the
+# EN: list is outside the watchdog. DOES NOT CATCH: a service that is not in the list.
+OSNOVA = os.environ.get('DKW_OSNOVA', '')
+APPS_STROKA = os.environ.get('DKW_APPS', '')
+SOSTOYANIE = os.environ.get('DKW_SOSTOYANIE', '/var/lib/dve-kopii-watch/posledniy-ishod')
+ALERT = os.environ.get('DKW_ALERT', '/usr/local/bin/agent-alert')
+MASHINA = os.environ.get('DKW_MASHINA', os.uname().nodename)
+PODPIS = os.environ.get('DKW_PODPIS', 'dve-kopii-watch')
+FAJLOV_V_TREVOGE = 3
+
+
+def derevo(kat):
+    """RU: {относительный путь: sha256 | 'link:'+цель}, без верхнего package.json и без вложенных node_modules.
+    EN: {relative path: sha256 | 'link:'+target}, without the top-level package.json and nested node_modules."""
+    out = {}
+    def oshibka(e): raise e
+    for root, dirs, files in os.walk(kat, followlinks=False, onerror=oshibka):
+        for d in list(dirs):
+            p = os.path.join(root, d)
+            if d == 'node_modules':
+                dirs.remove(d)
+            elif os.path.islink(p):
+                out[os.path.relpath(p, kat)] = 'link:' + os.readlink(p); dirs.remove(d)
+        for f in files:
+            p = os.path.join(root, f); rel = os.path.relpath(p, kat)
+            if rel == 'package.json':
+                continue
+            if os.path.islink(p):
+                out[rel] = 'link:' + os.readlink(p)
+            else:
+                with open(p, 'rb') as fh:
+                    out[rel] = hashlib.sha256(fh.read()).hexdigest()
+    return out
+
+
+def summa(d):
+    h = hashlib.sha256()
+    for k in sorted(d):
+        h.update(k.encode() + b'\0' + d[k].encode() + b'\n')
+    return h.hexdigest()[:16]
+
+
+def montazh_pair(po, pa, do, da, started):
+    changed = sorted(set(do) ^ set(da) | {n for n in do.keys() & da.keys() if do[n] != da[n]})
+    details, codes = [], []
+    helper = os.environ.get('MONTAZH_OKNO_BIN', '/usr/local/sbin/montazh-okno')
+    for name in changed:
+        for base in (po, pa):
+            subject = 'file:' + os.path.abspath(os.path.join(base, name))
+            try:
+                p = subprocess.run([helper, 'otlozheno', '--avto-montazh', '--since-ns', str(started), subject],
+                                   capture_output=True, text=True, timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                return 0, []
+            codes.append(p.returncode)
+            if p.returncode == 4:
+                details.append(p.stdout.strip())
+    if 6 in codes:
+        return 6, []
+    return (4, details) if codes and all(c == 4 for c in codes) else (0, [])
+
+
+def main():
+    ap = argparse.ArgumentParser(description='сторож двух копий пакетов платформы', allow_abbrev=False)
+    ap.add_argument('--osnova', default=OSNOVA, help='дерево плагинов (для стенда)')
+    ap.add_argument('--app', action='append', metavar='ИМЯ=КАТАЛОГ', help='app для сверки (для стенда); заменяет APPS')
+    ap.add_argument('--tolko-pechat', action='store_true', help='не слать тревогу и не писать состояние')
+    ap.add_argument('--avto-montazh', action='store_true')
+    a = ap.parse_args()
+    started = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+    # RU: установки — из настройки DKW_APPS; --app (стенд) заменяет их целиком.
+    # EN: installations come from setting DKW_APPS; --app (test stand) replaces them entirely.
+    apps = {}
+    for x in (a.app or APPS_STROKA.split()):
+        if '=' not in x:
+            ap.error(f'--app ждёт ИМЯ=КАТАЛОГ, дано «{x}»')
+        k, v = x.split('=', 1); apps[k] = v
+    # RU: Нейтральное умолчание: без основы или без установок сверять нечего — сказать об этом, а не молчать «чисто».
+    # EN: Neutral default: without a base or installations there is nothing to compare — say so, never a silent "clean".
+    if not a.osnova or not apps:
+        print('НЕ НАСТРОЕНО: ' + ('нет DKW_OSNOVA (--osnova); ' if not a.osnova else '')
+              + ('нет DKW_APPS (--app); ' if not apps else '') + 'сверять нечего, тревога не шлётся, исход 2')
+        return 2
+
+    krasnoe, slepota, strok, deferred = [], [], [], []
+    deferred_pairs = 0
+    sovpalo = sravneno = net_v_app = 0
+    for pk in PAKETY:
+        po = os.path.join(a.osnova, pk)
+        try:
+            if not os.path.isdir(po):
+                raise FileNotFoundError('нет каталога пакета в основе')
+            do = derevo(po); so = summa(do)
+            if not do:
+                raise ValueError('пустое дерево основы')
+        except Exception as e:
+            slepota.append(f'СЛЕПОТА {pk} основа {po}: {e}'); continue
+        for imya, kat in apps.items():
+            pa = os.path.join(kat, pk)
+            try:
+                if not os.path.isdir(kat):
+                    raise FileNotFoundError(f'нет каталога app {kat}')
+                if not os.path.isdir(pa):
+                    net_v_app += 1; strok.append(f'нет в app {imya}: {pk}'); continue
+                da = derevo(pa); sa = summa(da)
+            except Exception as e:
+                slepota.append(f'СЛЕПОТА {pk} {imya} {pa}: {e}'); continue
+            if sa != so and a.avto_montazh:
+                result, details = montazh_pair(po, pa, do, da, started)
+                if result == 6:
+                    try:
+                        do, da = derevo(po), derevo(pa)
+                        if not do:
+                            raise ValueError('пустое дерево основы после пересъёма')
+                        so, sa = summa(do), summa(da)
+                    except Exception as e:
+                        slepota.append(f'СЛЕПОТА пересъёма {pk} {imya}: {e}'); continue
+                elif result == 4:
+                    sravneno += 1
+                    deferred_pairs += 1
+                    deferred.extend(details)
+                    continue
+            sravneno += 1
+            if sa == so:
+                sovpalo += 1; continue
+            raz = sorted([f'лишний {n}' for n in da.keys() - do.keys()] +
+                         [f'нет {n}' for n in do.keys() - da.keys()] +
+                         [f'разный {n}' for n in do.keys() & da.keys() if do[n] != da[n]])
+            krasnoe.append((pk, imya, po, so, pa, sa, len(do), len(da), raz))
+
+    for previous in sorted(set(deferred)):
+        match = re.fullmatch(r'ОТЛОЖЕНО ([0-9a-f]{32}) \S+ до \S+ (.+)', previous)
+        if not match:
+            print('СЛЕПОТА: форма ответа отсрочки не узнана'); return 2
+        helper = os.environ.get('MONTAZH_OKNO_BIN', '/usr/local/sbin/montazh-okno')
+        try:
+            result = subprocess.run([helper, 'otlozheno', '--avto-montazh', '--since-ns', str(started), match[2]], capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError): result = None
+        if result is None or result.returncode != 4 or not result.stdout.startswith('ОТЛОЖЕНО ' + match[1] + ' '):
+            if os.environ.get('DKW_MO_RESCAN') != '1':
+                os.environ['DKW_MO_RESCAN'] = '1'
+                print('ПЕРЕСНИМАЮ: срок/поколение окна изменились перед итогом')
+                return main()
+            print('СЛЕПОТА: повторная смена предмета после пересъёма'); return 2
+    for pk, imya, po, so, pa, sa, no, na, raz in krasnoe:
+        print(f'РАЗОШЁЛСЯ КОД {pk} [{imya}]: {po} sha256[:16] {so} ({no} файлов) ≠ {pa} sha256[:16] {sa} ({na} файлов); '
+              f'различий {len(raz)}: ' + '; '.join(raz[:FAJLOV_V_TREVOGE]) + (' …' if len(raz) > FAJLOV_V_TREVOGE else ''))
+    for s in slepota: print(s)
+    for s in strok: print(s)
+    for s in sorted(set(deferred)): print(s)
+    ishod = 2 if slepota else 1 if krasnoe else 4 if deferred else 0
+    itog = (f'пакетов {len(PAKETY)} · app {len(apps)} · пар сравнено {sravneno} · совпало {sovpalo} · '
+            f'разошлось {len(krasnoe)} · отложено {deferred_pairs} · нет в app {net_v_app} · слепота {len(slepota)} · исход {ishod}')
+    print(itog)
+    if a.tolko_pechat or ishod == 4:
+        # Нельзя переписать прежний красный итог и послать «снова совпадают».
+        return ishod
+
+    try:
+        prezhde = int(Path(SOSTOYANIE).read_text().strip())
+    except Exception:
+        prezhde = 0
+    tekst = None
+    if ishod:
+        glava = f'🔴 {MASHINA}: две копии пакетов платформы разошлись КОДОМ' if krasnoe else f'⚠️ {MASHINA}: сторож двух копий пакетов ослеп'
+        stroki = [f'{pk} [{imya}]\n  {po}: {so}\n  {pa}: {sa}\n  ' + '; '.join(raz[:FAJLOV_V_TREVOGE])
+                  for pk, imya, po, so, pa, sa, no, na, raz in krasnoe[:6]] + slepota[:4]
+        tekst = glava + '\n' + '\n'.join(stroki) + f'\n{itog}\nкто: {PODPIS}; чинить: выровнять копию в {os.path.dirname(a.osnova)} с app или наоборот'
+    elif prezhde:
+        tekst = f'✅ {MASHINA}: две копии пакетов платформы снова совпадают кодом\n{itog}'
+    ushlo = True
+    if tekst:
+        try:
+            r = subprocess.run([ALERT, '--plain', '--', tekst[:3500]], capture_output=True, text=True, timeout=120)
+            ushlo = r.returncode == 0
+            if not ushlo:
+                print(f'СЛЕПОТА канала: agent-alert код {r.returncode}: {(r.stdout + r.stderr).strip()[:200]}')
+        except Exception as e:
+            ushlo = False; print(f'СЛЕПОТА канала: {e}')
+    if ushlo:
+        Path(SOSTOYANIE).parent.mkdir(parents=True, exist_ok=True)
+        Path(SOSTOYANIE).write_text(f'{ishod}\n')
+    else:
+        ishod = 2
+    subprocess.run(['logger', '-t', 'dve-kopii-watch', f'{itog} · тревога {"нет повода" if not tekst else "ушла" if ushlo else "НЕ УШЛА"}'])
+    return ishod
+
+
+if __name__ == '__main__':
+    sys.exit(main())

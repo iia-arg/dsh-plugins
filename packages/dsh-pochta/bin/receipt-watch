@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Read-only receipt watchdog: 0 clear, 1 overdue, 2 incomplete inspection.
+
+RECEIPT_LEDGER_PATHS: absolute SQLite paths, one per line; unset uses defaults.
+RECEIPT_MAX_AGE_SECONDS: positive integer, default 86400.
+One pass, no retries, SQLite lock wait 1 second, query budget 5 seconds per ledger.
+"""
+import os
+from pathlib import Path
+import sqlite3
+import sys
+import time
+
+DEFAULT_PATHS = ('/opt/iskra/workspace/.message-receipts/receipts.sqlite',
+                 '/opt/petrovich/workspace/.message-receipts/receipts.sqlite')
+# B-N-766 (24.09.2026): канал 1.5.38 (B-H-123) пишет момент взятия receipts.claimed_at. Возраст — от
+# COALESCE(claimed_at, received_at): от взятия, где оно записано, иначе с получения (верхняя оценка).
+# Сколько взятых посчитано от чего — печатается в строке каждого ledger.
+DISCLAIMER = ('возраст ОТ ВЗЯТИЯ (claimed_at), где оно записано; иначе С ПОЛУЧЕНИЯ (received_at) — '
+              'это ВЕРХНЯЯ оценка; основа по каждому ledger — в его строке')
+REQUIRED = {'received_at', 'claimed_turn', 'channel_started', 'blocked', 'finished_at', 'outcome'}
+# B-N-766: с K1 (канал 1.5.30+) ledger — user_version=2; прежнее требование «ровно 1» с 23.09 08:08Z
+# давало СЛЕПОТУ на всех ledger (8 из 8, код 2 каждый час). Поля состояния в v2 те же.
+VERSIONS = {1, 2}
+TAKEN = "(claimed_turn IS NOT NULL OR channel_started=1 OR blocked='interrupted_unknown')"
+UNFINISHED = 'finished_at IS NULL AND outcome IS NULL'
+# порог 86400 — ЗАПАС, не замер
+# наблюдённый максимум длительности хода 20400 с (agent_runs.duration_ms, съём 18.09)
+DEFAULT_MAX_AGE_SECONDS = 86400
+
+
+def emit(message):
+    print(f'[receipt-watch] {message}')
+
+
+def inspect(path, cutoff_ms):
+    """Return (total, overdue, basis) from one SQLite read transaction.
+
+    basis — (есть ли столбец claimed_at, взятых без исхода от взятия, взятых без исхода с получения).
+    """
+    # This detects OS permission errors separately from SQLite/schema failures.
+    with path.open('rb'):
+        pass
+    deadline = time.monotonic()+5
+    connection = sqlite3.connect(path.as_uri()+'?mode=ro', uri=True, timeout=1)
+    try:
+        connection.execute('PRAGMA query_only=ON')
+        connection.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
+        connection.execute('BEGIN')
+        version = connection.execute('PRAGMA user_version').fetchone()[0]
+        table = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='receipts'").fetchone()
+        columns = {row[1] for row in connection.execute('PRAGMA table_info(receipts)')}
+        if version not in VERSIONS or not table or not REQUIRED <= columns:
+            raise ValueError(f'схема ledger не поддержана: нужны user_version из {sorted(VERSIONS)} '
+                             f'(есть {version}) и таблица receipts с полями состояния')
+        est = 'claimed_at' in columns
+        # Без столбца (ledger до 1.5.38) основа — только received_at; NULL в claimed_at — тоже received_at.
+        basis = 'COALESCE(claimed_at, received_at)' if est else 'received_at'
+        bad_claimed = (" OR (claimed_at IS NOT NULL AND (typeof(claimed_at) != 'integer' OR claimed_at < 0))"
+                       if est else '')
+        invalid = connection.execute(
+            'SELECT count(*) FROM receipts WHERE typeof(received_at) != ? OR received_at < 0 '
+            'OR (finished_at IS NULL) != (outcome IS NULL)' + bad_claimed, ('integer',)).fetchone()[0]
+        if invalid:
+            raise ValueError(f'схема данных: негодное время или непарный исход у {invalid} записей')
+        ot_vzyatiya = 'claimed_at IS NOT NULL' if est else '0'
+        return connection.execute(
+            f'SELECT count(*), coalesce(sum(CASE WHEN {TAKEN} AND {UNFINISHED} '
+            f'AND {basis} < ? THEN 1 ELSE 0 END),0), '
+            f'coalesce(sum(CASE WHEN {TAKEN} AND {UNFINISHED} AND {ot_vzyatiya} THEN 1 ELSE 0 END),0), '
+            f'coalesce(sum(CASE WHEN {TAKEN} AND {UNFINISHED} AND NOT ({ot_vzyatiya}) THEN 1 ELSE 0 END),0) '
+            'FROM receipts', (cutoff_ms,)).fetchone() + (est,)
+    finally:
+        connection.close()
+
+
+def main():
+    if len(sys.argv) != 1:
+        emit('СЛЕПОТА: аргументы не поддерживаются; настройка только через переменные окружения; код 2')
+        return 2
+    source = 'переменная RECEIPT_LEDGER_PATHS' if 'RECEIPT_LEDGER_PATHS' in os.environ else 'умолчание'
+    try:
+        paths = (os.environ['RECEIPT_LEDGER_PATHS'].splitlines()
+                 if 'RECEIPT_LEDGER_PATHS' in os.environ else list(DEFAULT_PATHS))
+        if not paths or any(not p or not Path(p).is_absolute() for p in paths):
+            raise ValueError('список путей пуст или содержит не абсолютный путь/пустую строку')
+        if len(set(paths)) != len(paths):
+            raise ValueError('повтор пути в списке')
+        threshold = os.environ.get('RECEIPT_MAX_AGE_SECONDS', str(DEFAULT_MAX_AGE_SECONDS))
+        if not threshold.isascii() or not threshold.isdecimal() or int(threshold) <= 0:
+            raise ValueError('RECEIPT_MAX_AGE_SECONDS должен быть положительным целым числом')
+        threshold = int(threshold)
+    except ValueError as error:
+        emit(f'СЛЕПОТА настройки: {error}; источник списка: {source}; код 2')
+        return 2
+
+    now_ms = time.time_ns()//1000000
+    emit(f'ПОРОГ: {threshold} секунд; источник порога: '
+          + ('переменная RECEIPT_MAX_AGE_SECONDS' if 'RECEIPT_MAX_AGE_SECONDS' in os.environ else 'умолчание'))
+    emit(DISCLAIMER)
+    emit('ПРИЗНАК: без исхода = finished_at IS NULL AND outcome IS NULL; '
+          'взято = claimed_turn IS NOT NULL OR channel_started=1 OR blocked=interrupted_unknown; '
+          'возраст = сейчас − COALESCE(claimed_at, received_at), строго больше порога')
+    emit(f'ЗАМЕР: now_ms={now_ms}; uid={os.geteuid()}; список из {source}')
+    checked, overdue = [], 0
+    for name in paths:
+        path = Path(name)
+        try:
+            total, count, ot_vzyatiya, s_polucheniya, est = inspect(path, now_ms-threshold*1000)
+        except FileNotFoundError:
+            try:
+                path.parent.stat()
+                reason = 'каталог есть, ледджера нет'
+            except FileNotFoundError:
+                reason = 'нет каталога и ледджера'
+            except OSError:
+                reason = 'ледджер не найден; доступность каталога не установлена'
+        except PermissionError:
+            try:
+                path.parent.stat()
+                reason = 'каталог есть, а прочитать не смог: доступ запрещён'
+            except OSError:
+                reason = 'доступ запрещён; наличие каталога проверить не смог'
+        except sqlite3.Error as error:
+            reason = f'ошибка SQLite: {error}'
+        except (OSError, ValueError, OverflowError) as error:
+            reason = str(error)
+        else:
+            checked.append(name)
+            overdue += count
+            osnova = (f'возраст взятых без исхода: от взятия {ot_vzyatiya}, с получения {s_polucheniya}'
+                      if est else f'столбца claimed_at нет (ledger до 1.5.38): все {s_polucheniya} взятых без исхода — с получения')
+            emit(f'LEDGER: {name}; доступен; всего {total}; просрочено {count} без исхода '
+                  f'(finished_at IS NULL AND outcome IS NULL); {osnova}')
+            if count:
+                emit(f'ТРЕВОГА: {name}; просрочено {count} при {total} записей всего; порог {threshold} секунд')
+            continue
+        emit(f'СЛЕПОТА: {name}; {reason}; число квитанций НЕ УСТАНОВЛЕНО; просрочка НЕ УСТАНОВЛЕНА')
+    unchecked = [p for p in paths if p not in checked]
+    code = 1 if overdue else 2 if unchecked else 0
+    emit(f'ОХВАТ: проверено {len(checked)} ледджеров из {len(paths)}, список из {source}')
+    emit('ПРОВЕРЕНЫ: ' + ('; '.join(checked) or 'нет'))
+    emit('НЕ ПРОВЕРЕНЫ: ' + ('; '.join(unchecked) or 'нет'))
+    emit(f'ИТОГ: просрочено {overdue} в прочитанных ledger; непроверенных {len(unchecked)}; код {code}')
+    return code
+
+
+if __name__ == '__main__':
+    sys.exit(main())

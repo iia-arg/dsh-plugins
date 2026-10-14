@@ -1,4 +1,17 @@
-/** Стенд порогов: когда подталкивает и что отвечает на «хватит ли». */
+/**
+ * RU: Стенд порогов: когда пакет подталкивает и что отвечает на «хватит ли». 24 пробы на настоящем Context:
+ *     тревога от занятости, а не от суммы; один раз за цикл; «хватит ли» никогда не говорит «хватает»; учёт
+ *     событий assistant/message в живой форме журнала; расход сводки компакта; отметки пути и их невлияние на
+ *     тревогу.
+ *     Запуск: node test/stend-porogov.mjs из каталога пакета; код 0 — все пробы зелёные, 1 — есть красные, 2 —
+ *     СЛЕПОТА (предмет не загрузился, обычно не установлены зависимости: npm install).
+ * EN: Thresholds stand: when the package nudges and what it answers to "is there enough". 24 probes on a real
+ *     Context: the alarm from occupancy, not from the sum; once per cycle; "is there enough" never says
+ *     "enough"; counting assistant/message events in the journal's live form; the compaction summary's spend;
+ *     path marks and their non-influence on the alarm.
+ *     Run: node test/stend-porogov.mjs from the package directory; exit 0 — all probes green, 1 — some are red,
+ *     2 — BLINDNESS (the subject did not load, usually dependencies are missing: npm install).
+ */
 let name, Config, apply, Context
 try {
   ;({ Context } = await import('@deepseek-ai/cordis'))
@@ -11,10 +24,36 @@ try {
 }
 
 let vsego = 0, proshlo = 0;
-const proba = async (imya, f) => { vsego++; try { await f(); proshlo++; console.log('  ✅ ' + imya); }
+const proba = async (imya, f) => {
+  vsego++;
+  try {
+    const vernulos = await f();
+    // RU: 🔴 ВОЗВРАТ ТЕЛА УЧИТЫВАЕТСЯ, А НЕ ВЫБРАСЫВАЕТСЯ (07.09.2026). Обёртка судила ровно по ИСКЛЮЧЕНИЮ, и
+    //     проба вида «вернуть причину строкой» была зелёной при ЛЮБОМ содержимом. Найдено не чтением: прибор
+    //     проверки обёрток прежде НЕ ВИДЕЛ эту форму объявления (`const proba = async (`) и молча относил файл
+    //     к обёрткам-условиям — то есть на глухоту он не мерился вовсе, а итог «глухих 0» читался как
+    //     «проверено».
+    //     По УСТРОЙСТВУ, а не по перечню значений: перечень (строка, false) пропускает 0, null, объект и число.
+    //     Годен один вопрос — вернуло ли тело что-то, кроме молчания.
+    // EN: 🔴 THE BODY'S RETURN VALUE IS CHECKED, NOT DISCARDED (07.09.2026). The wrapper judged by EXCEPTION
+    //     only, and a probe of the form "return the reason as a string" was green whatever it contained. Found
+    //     not by reading: the wrapper-checking instrument previously did NOT RECOGNISE this declaration form
+    //     (`const proba = async (`) and silently classed the file as a condition wrapper — so it never measured
+    //     it for deafness, and the result "0 deaf" read as "checked".
+    //     By CONSTRUCTION, not by a list of values: a list (string, false) misses 0, null, an object and a
+    //     number. Only one question is valid — did the body return anything other than silence.
+    if (vernulos !== undefined && vernulos !== true) {
+      throw new Error('тело пробы ВЕРНУЛО «' + String(vernulos).slice(0, 60) +
+                      '», а обёртка судила по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы');
+    }
+    proshlo++; console.log('  ✅ ' + imya); }
   catch (e) { console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 180)); } };
 
-// Служба появляется НЕ СРАЗУ: cordis применяет плагин асинхронно.
+// RU: Служба появляется НЕ СРАЗУ: cordis применяет плагин асинхронно — podnyat ждёт 50 мс. slushat
+//     перехватывает console.error, чтобы проба видела крики пакета; vernut возвращает прежний.
+// EN: The service does NOT appear at once: cordis applies the plugin asynchronously — podnyat waits 50 ms.
+//     slushat intercepts console.error so the probe sees the package's shouts; vernut restores the previous
+//     one.
 function podnyat(nastrojka) {
   const k = new Context();
   k.plugin({ name, Config, apply }, nastrojka);
@@ -36,9 +75,12 @@ await proba('ГЛАВНОЕ: порог перейдён → подталкив�
   const s = slushat();
   try {
     const k = await podnyat({ predel: 1000, dolyaTrevogi: 0.8 });
-    // 🔴 МЕРА СМЕНИЛАСЬ 03.09.2026: порог считается от ЗАНЯТОСТИ окна (вход последнего
-    // вызова), а не от суммы расхода по всем вызовам. Прежде здесь стояло 700+200=900
-    // «расхода»; выход в занятость не входит — он станет частью ВХОДА следующего вызова.
+    // RU: 🔴 МЕРА СМЕНИЛАСЬ 03.09.2026: порог считается от ЗАНЯТОСТИ окна (вход последнего вызова), а не от
+    //     суммы расхода по всем вызовам. Прежде здесь стояло 700+200=900 «расхода»; выход в занятость не входит
+    //     — он станет частью ВХОДА следующего вызова.
+    // EN: 🔴 THE MEASURE CHANGED ON 03.09.2026: the threshold is computed from window OCCUPANCY (the last call's
+    //     input), not from the spend sum over all calls. This used to be 700+200=900 of "spend"; output does
+    //     not count towards occupancy — it becomes part of the next call's INPUT.
     k.nudzhPamyati.uchest({ inputTokens: 900, outputTokens: 200 });
   } finally { s.vernut(); }
   const t = s.kriki.join(' ');
@@ -50,9 +92,12 @@ await proba('🔴 СУММА ВЫШЕ ПОРОГА, А ЗАНЯТОСТЬ НЕТ
   const s = slushat();
   try {
     const k = await podnyat({ predel: 1000, dolyaTrevogi: 0.8 });
-    // Два вызова по 700: сумма 1400 — выше и порога, и самого предела. Занятость 700 —
-    // ниже порога 800. Это ровно боевая картина 03.09.2026 («1255120 из 1000000» при
-    // двух вызовах и без всякого переполнения окна). Тревоги быть НЕ ДОЛЖНО.
+    // RU: Два вызова по 700: сумма 1400 — выше и порога, и самого предела. Занятость 700 — ниже порога 800. Это
+    //     ровно картина 03.09.2026 («1255120 из 1000000» при двух вызовах и без всякого переполнения окна).
+    //     Тревоги быть НЕ ДОЛЖНО.
+    // EN: Two calls of 700: the sum 1400 is above both the threshold and the limit itself. Occupancy 700 is
+    //     below the threshold of 800. This is exactly the picture of 03.09.2026 ("1255120 of 1000000" with two
+    //     calls and no window overflow at all). There must be NO alarm.
     k.nudzhPamyati.uchest({ inputTokens: 700, outputTokens: 0 });
     k.nudzhPamyati.uchest({ inputTokens: 700, outputTokens: 0 });
   } finally { s.vernut(); }
@@ -236,7 +281,8 @@ await proba('🔴 ШОВ ЦЕЛИКОМ: два события с числом �
   } finally { s.vernut(); }
   if (itog.uchtenoVyzovov !== 2) throw new Error('учтено ' + itog.uchtenoVyzovov);
   if (itog.bezChisla !== 1) throw new Error('без числа ' + itog.bezChisla);
-  // 2+39996+1236+5 = 41239, плюс 30 от сводки
+  // RU: 2+39996+1236+5 = 41239, плюс 30 от сводки
+  // EN: 2+39996+1236+5 = 41239, plus 30 from the summary
   if (itog.neMenshe !== 41269) throw new Error('сумма ' + itog.neMenshe + ', ожидалось 41269');
 });
 
@@ -255,12 +301,16 @@ await proba('ПРЕРВАННЫЙ вызов считается: расход с
 });
 
 await proba('🔴 ЖИВАЯ ФОРМА СОБЫТИЯ: фикстура снята с журнала, а не выдумана', async () => {
-  // 03.09 стенд был ЗЕЛЁНЫМ при неработающем коде: фикстуры клали usage рядом с
-  // type (плоско), потому что их писал тот же, кто писал код, — и с той же
-  // догадкой. Проба проверяла с ТОЙ ЖЕ стороны, что проверяемое.
-  // Эта фикстура повторяет форму, снятую с живого журнала платформы:
-  // { seq, time, type, data: { turn, step, message, usage } } — по d.ts
-  // SessionEvent и по строке журнала (содержимое сообщения обезличено).
+  // RU: 03.09 стенд был ЗЕЛЁНЫМ при неработающем коде: фикстуры клали usage рядом с type (плоско), потому что
+  //     их писал тот же, кто писал код, — и с той же догадкой. Проба проверяла с ТОЙ ЖЕ стороны, что
+  //     проверяемое.
+  //     Эта фикстура повторяет форму, снятую с живого журнала платформы: { seq, time, type, data: { turn, step,
+  //     message, usage } } — по d.ts SessionEvent и по строке журнала (содержимое сообщения обезличено).
+  // EN: On 03.09 the stand was GREEN with non-working code: the fixtures put usage next to type (flat), because
+  //     they were written by the same author as the code — with the same guess. The probe checked from the SAME
+  //     side as the subject.
+  //     This fixture repeats the shape taken from the platform's live journal: { seq, time, type, data: { turn,
+  //     step, message, usage } } — per the SessionEvent d.ts and a journal line (message content anonymised).
   const zhivoe = {
     seq: 40, time: 1756900000000, type: 'assistant/message',
     data: {
@@ -281,8 +331,10 @@ await proba('🔴 ЖИВАЯ ФОРМА СОБЫТИЯ: фикстура сня�
 });
 
 await proba('🔴 ПЛОСКАЯ форма (наша прежняя догадка) НЕ засчитывается как расход', async () => {
-  // Обратная проба: если код вернётся к чтению usage рядом с type, эта проба
-  // позеленеет и предупредит, что мы снова читаем не оттуда.
+  // RU: Обратная проба: если код вернётся к чтению usage рядом с type, эта проба позеленеет и предупредит, что
+  //     мы снова читаем не оттуда.
+  // EN: The reverse probe: if the code goes back to reading usage next to type, this probe turns green and
+  //     warns that we are reading from the wrong place again.
   const s = slushat(); let itog;
   try {
     const k = await podnyat({ predel: 100000 });
@@ -298,9 +350,11 @@ await proba('🔴 ПЛОСКАЯ форма (наша прежняя догад�
 });
 
 
-// ═══ ОТМЕТКИ ПУТИ (05.09.2026) ═══════════════════════════════════════════════
-// 🔴 Они про НАБЛЮДЕНИЕ, а не про решение: пакет ведёт себя точно так же, отметки
-// только печатаются. Поэтому проб две пары — что печатаются и что НЕ влияют.
+// RU: ═══ ОТМЕТКИ ПУТИ (05.09.2026) · PATH MARKS ═══
+//     🔴 Они про НАБЛЮДЕНИЕ, а не про решение: пакет ведёт себя точно так же, отметки только печатаются. Поэтому
+//     проб две пары — что печатаются и что НЕ влияют.
+// EN: 🔴 They are about OBSERVATION, not decision: the package behaves exactly the same, marks are only printed.
+//     Hence two pairs of probes — that they are printed and that they do NOT influence.
 
 await proba('отметки пути: печатаются по одной на пересечённую, в порядке пути', async () => {
   const s = slushat()

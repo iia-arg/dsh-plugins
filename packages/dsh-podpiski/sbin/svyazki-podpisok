@@ -1,0 +1,258 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Раскладчик связок «агент → ключ подписки».
+
+ЧТО ДЕЛАЕТ. Читает реестр агентов (поле namerenie.podpiska — ИМЯ ключа) и пишет
+строку GATEWAY_TOKEN_FILE в файл настроек экземпляра шлюза. Путь к файлу ключа
+собирается по имени: /etc/claude-oauth/token-<имя-ключа>.
+
+ПОЧЕМУ ИМЯ, А НЕ ПУТЬ. Путь в реестре означал бы, что переименование файла тихо
+рвёт связку: реестр остался бы верным по виду и ложным по делу.
+
+ЧЕГО НЕ ДЕЛАЕТ.
+  • не создаёт файлы ключей и не трогает их права — это рука фермы;
+  • не перезапускает службы: строка вступит в силу при следующем подъёме экземпляра,
+    и об этом говорится вслух;
+  • не проверяет, что ключ РАБОЧИЙ, — только что файл есть и читается;
+  • агента без подписки (podpiska пусто) не трогает вовсе;
+  • агента с общей подпиской (obshchaya-claude, B-N-1457) не трогает: номер ведёт
+    pereklyuchatel-podpiski у всех Claude-шлюзов разом — запись номера из реестра его откатила бы.
+
+ДОСТУП К КЛЮЧУ (B-N-1621 k2, Искра). Шлюз читает ключ не группой, а ACL на СВОЮ подписку
+(svesti-dostup-podpisok). Поэтому после записи строк — `svesti-dostup-podpisok --dobavit`
+(выдать ACL на назначенный ключ); не выдал — записанные env возвращаются как были и ОТКАЗ, код 2.
+`--svesti` (отозвать прежний ключ) здесь НЕ зовётся: перезапуска раскладчик не делает, живой
+процесс читает прежний ключ до подъёма — отзыв оставил бы его без токена. --svesti — после
+перезапуска экземпляра (это печатается). Подмена помощника SVYAZKI_SVESTI действует ТОЛЬКО вместе
+с подменой каталога KATALOG_KLYUCHEJ (стенд); каталог подменён, а помощник нет — ОТКАЗ до записей:
+боевой помощник на подставном каталоге сводил бы БОЕВЫЕ права.
+
+ГРАНИЦА ЗАЩИТЫ. Права файлов ключей разделяют агентов по НЕОСТОРОЖНОСТИ и не
+удерживают намеренного: у агентов машины есть sudo. Принято владельцем сознательно
+(01.09.2026). Подробности — /etc/claude-oauth/PRAVA-TOKENOV.md
+"""
+import os, subprocess, sys
+
+STEND = os.environ.get('SVYAZKI_STEND', '')
+if STEND not in ('', '1'): print('ОТКАЗ: SVYAZKI_STEND — только 1 или пусто', file=sys.stderr); sys.exit(2)
+def put(k, d):
+    if k in os.environ and STEND != '1': print(f'ИГНОРИРУЮ {k}: нет SVYAZKI_STEND=1', file=sys.stderr)
+    return os.environ.get(k, d) if STEND == '1' else d
+REESTR = put("AGENTS_REGISTRY", "/etc/agent-registry/agents.yaml")
+KATALOG = put("KATALOG_KLYUCHEJ", "/etc/claude-oauth")
+SVESTI = "/usr/local/sbin/svesti-dostup-podpisok"   # B-N-1621: выдача ACL на назначенный ключ
+if STEND == '1' and os.environ.get("KATALOG_KLYUCHEJ") and os.environ.get("SVYAZKI_SVESTI"):
+    SVESTI = os.environ["SVYAZKI_SVESTI"]
+elif 'SVYAZKI_SVESTI' in os.environ: print('ИГНОРИРУЮ SVYAZKI_SVESTI: нужен SVYAZKI_STEND=1 и KATALOG_KLYUCHEJ', file=sys.stderr)
+OBSHCHAYA = "obshchaya-claude"   # B-N-1457: у Claude-агентов реестр номер не хранит — env шлюзов ведёт переключатель
+KRASNY, ZELENY, ZHELTY, OFF = "\033[31m", "\033[32m", "\033[33m", "\033[0m"
+
+def put_klyucha(imya): return os.path.join(KATALOG, f"token-{imya}")
+def put_env(agent):    return os.path.join(KATALOG, f"instance-{agent}.env")
+
+def _slepota(soobshchenie):
+    """Слепота — ДРУГОЙ разряд, чем тревога, и код у неё свой: 2.
+    У соседних носителей того же класса (zastryalo-v-shcheli, proverit-env-ekzemplyara)
+    слепота тоже 2, а тревога 1. Один класс — один разряд, иначе пробы несравнимы."""
+    print(soobshchenie, file=sys.stderr)
+    raise SystemExit(2)
+
+
+def chitat_reestr():
+    import yaml
+    with open(REESTR, encoding="utf-8") as f:
+        d = yaml.safe_load(f)
+    # 🔴 ЗНАЧЕНИЕ, ДОБЫТОЕ ИЗ ИСТОЧНИКА, СЧИТАЕТСЯ ДОБЫТЫМ ТОЛЬКО ПРИ УСПЕХЕ ДОБЫЧИ.
+    # `d.get("agenty") or []` молча превращает ТРИ разных состояния в одно «агентов 0»:
+    # ключа нет · ключ есть, но не список · список пуст. Замер 22.09 на подставном
+    # реестре: ключа нет ⇒ «агентов в реестре: 0», код 0 — то есть «проверять нечего»
+    # неотличимо от «всё в порядке». Пустое не равно пустому.
+    if not isinstance(d, dict) or "agenty" not in d:
+        _slepota("🔴 СЛЕПОТА: в реестре нет ключа «agenty» — структура не та, "
+                         "это НЕ «агентов 0». Реестр: " + REESTR)
+    syr = d["agenty"]
+    if not isinstance(syr, list):
+        _slepota("🔴 СЛЕПОТА: «agenty» в реестре не список (%s) — читать нечем: %s"
+                         % (type(syr).__name__, REESTR))
+    if not syr:
+        _slepota("🔴 СЛЕПОТА: «agenty» в реестре ПУСТ — сверять не с чем, "
+                         "это НЕ «расхождений нет». Реестр: " + REESTR)
+    out = []
+    for a in syr:
+        n = a.get("namerenie") or {}
+        out.append({"imya": a.get("imya"), "podpiska": n.get("podpiska"),
+                    "polzovatel": n.get("polzovatel")})
+    return out
+
+def zhivoj_put(agent):
+    """Путь к ключу у ЖИВОГО процесса экземпляра — из его окружения, не из файла."""
+    r = subprocess.run(["systemctl", "show", f"claude-oauth-gateway@{agent}.service",
+                        "-p", "MainPID", "--value"], capture_output=True, text=True)
+    pid = (r.stdout or "").strip()
+    if not pid or pid == "0":
+        return None, "экземпляр не запущен"
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            sreda = f.read().decode("utf-8", "replace").split("\0")
+    except PermissionError:
+        return None, f"среда процесса {pid} не читается (нужен root)"
+    except FileNotFoundError:
+        return None, f"процесс {pid} исчез"
+    for kv in sreda:
+        if kv.startswith("GATEWAY_TOKEN_FILE="):
+            return kv.split("=", 1)[1], None
+    return None, "GATEWAY_TOKEN_FILE в среде процесса не задан (действует умолчание кода)"
+
+def cmd_pokazat():
+    """Сверяет НАЗНАЧЕННОЕ в реестре с ПРИМЕНЁННЫМ у живого процесса."""
+    bed = 0
+    agenty = chitat_reestr()
+    print(f"агентов в реестре: {len(agenty)}")
+    for a in agenty:
+        imya, klyuch = a["imya"], a["podpiska"]
+        if not klyuch:
+            print(f"  {imya:12} подписки нет — раскладчик не трогает")
+            continue
+        if klyuch == OBSHCHAYA:
+            print(f"  {imya:12} подписка общая — номер ведёт pereklyuchatel-podpiski, сверяет agent-registry verify «подписка-общая»")
+            continue
+        naznacheno = put_klyucha(klyuch)
+        zhivoe, pochemu = zhivoj_put(imya)
+        if zhivoe is None:
+            print(f"  {imya:12} назначено {klyuch} ({naznacheno})")
+            print(f"  {' ':12} {ZHELTY}применённое не прочитано: {pochemu}{OFF}")
+            bed += 1
+        elif zhivoe == naznacheno:
+            print(f"  {imya:12} {ZELENY}сходится{OFF}: {klyuch} -> {zhivoe}")
+        else:
+            print(f"  {imya:12} {KRASNY}РАСХОЖДЕНИЕ{OFF}: назначено {naznacheno}, "
+                  f"процесс исполняет {zhivoe}")
+            print(f"  {' ':12} правка в env уже есть? тогда не хватает перезапуска экземпляра")
+            bed += 1
+    print()
+    print("ПРОВЕРЯЕТСЯ ПРИМЕНЁННОЕ (среда живого процесса), а не записанное в файл.")
+    return 1 if bed else 0
+
+def cmd_razlozhit(ustanovit):
+    bed = 0
+    izmeneno = 0
+    zapisano = []   # (путь env, прежний текст) — для отката, если помощник не выдал доступ
+    if ustanovit and STEND == '1' and os.environ.get("KATALOG_KLYUCHEJ") and not os.environ.get("SVYAZKI_SVESTI"):
+        print(f"{KRASNY}🔴 ОТКАЗ: каталог ключей подменён (KATALOG_KLYUCHEJ), а помощник доступа нет "
+              f"(SVYAZKI_SVESTI) — боевой svesti свёл бы боевые права. Ничего не записано.{OFF}", file=sys.stderr)
+        return 2
+    agenty = chitat_reestr()
+    # Reject ambiguous EnvironmentFile values before writing any agent's settings.
+    for agent in agenty:
+        if not agent.get("podpiska") or agent["podpiska"] == OBSHCHAYA:
+            continue
+        path = put_env(agent["imya"])
+        try:
+            with open(path, encoding="utf-8") as source:
+                count = sum(line.lstrip().startswith("GATEWAY_TOKEN_FILE=") for line in source)
+        except FileNotFoundError:
+            continue  # The ordinary missing-file report below handles this case.
+        except OSError as e:
+            print(f"СЛЕПОТА: {path} не прочитан ({type(e).__name__}); ничего не записано", file=sys.stderr)
+            return 2
+        if count > 1:
+            print(f"ОТКАЗ: повтор GATEWAY_TOKEN_FILE в {path}; ничего не записано", file=sys.stderr)
+            return 2
+    for a in agenty:
+        imya, klyuch = a["imya"], a["podpiska"]
+        if not klyuch:
+            print(f"  {imya:12} подписки нет — пропуск (это решение, не пропуск по ошибке)")
+            continue
+        if klyuch == OBSHCHAYA:
+            print(f"  {imya:12} подписка общая — НЕ пишу: номер ведёт pereklyuchatel-podpiski (B-N-1457; писать номер из реестра = откатить /switch)")
+            continue
+        put_k = put_klyucha(klyuch)
+        if not os.path.exists(put_k):
+            print(f"{KRASNY}🔴 ОТКАЗ: у агента {imya} ключ «{klyuch}», а файла {put_k} НЕТ.{OFF}",
+                  file=sys.stderr)
+            print("   Опечатка в имени ключа или ключ не заведён. Ничего не записано.",
+                  file=sys.stderr)
+            bed += 1
+            continue
+        put_e = put_env(imya)
+        if not os.path.exists(put_e):
+            print(f"{KRASNY}🔴 ОТКАЗ: нет файла настроек экземпляра {put_e}{OFF}", file=sys.stderr)
+            bed += 1
+            continue
+        with open(put_e, encoding="utf-8") as f:
+            stroki = f.read().splitlines()
+        nuzhno = f"GATEWAY_TOKEN_FILE={put_k}"
+        est = [i for i, s in enumerate(stroki) if s.lstrip().startswith("GATEWAY_TOKEN_FILE=")]
+        if len(est) > 1:
+            errors = []
+            for previous_path, previous_text in reversed(zapisano):
+                try:
+                    with open(previous_path, "w", encoding="utf-8") as target:
+                        target.write(previous_text)
+                    with open(previous_path, encoding="utf-8") as target:
+                        if target.read() != previous_text:
+                            raise OSError('сверка восстановления не сошлась')
+                except OSError:
+                    errors.append(previous_path)
+            print(f"ОТКАЗ: повтор GATEWAY_TOKEN_FILE появился в {put_e} после проверки; помощник доступа не вызван", file=sys.stderr)
+            if errors:
+                print("Откат НЕ подтверждён: " + ", ".join(errors), file=sys.stderr)
+                return 1
+            print("Прежние записи этого прогона восстановлены", file=sys.stderr)
+            return 2
+        if est and stroki[est[0]] == nuzhno:
+            print(f"  {imya:12} уже стоит: {klyuch} -> {put_k}")
+            continue
+        if est:
+            stroki[est[0]] = nuzhno
+        else:
+            stroki += ["", "# связка агент -> ключ подписки, разложено svyazki-podpisok", nuzhno]
+        if ustanovit:
+            with open(put_e, encoding="utf-8") as f:
+                zapisano.append((put_e, f.read()))
+            with open(put_e, "w", encoding="utf-8") as f:
+                f.write("\n".join(stroki) + "\n")
+            print(f"  {imya:12} {ZELENY}записано{OFF}: {klyuch} -> {put_k}")
+        else:
+            print(f"  {imya:12} будет записано: {klyuch} -> {put_k}")
+        izmeneno += 1
+    if zapisano:
+        try:
+            r = subprocess.run([SVESTI, "--dobavit"], capture_output=True, text=True)
+        except OSError as e:   # помощника нет/не исполняется — это тоже «не выдал», с тем же откатом
+            r = subprocess.CompletedProcess([SVESTI], 127, "", f"не запустился: {e}")
+        if r.returncode != 0:
+            for put_e, bylo in zapisano:
+                with open(put_e, "w", encoding="utf-8") as f:   # тот же inode: владелец и права не меняются
+                    f.write(bylo)
+            print((r.stdout or "") + (r.stderr or ""), file=sys.stderr)
+            print(f"{KRASNY}🔴 ОТКАЗ: {SVESTI} --dobavit код {r.returncode} — доступ к назначенному ключу НЕ выдан; "
+                  f"записанные env ({len(zapisano)}) возвращены как были.{OFF}", file=sys.stderr)
+            return 2
+        print(f"  доступ выдан: {SVESTI} --dobavit код 0")
+    if bed:
+        print(f"{KRASNY}БЕД: {bed} — испорченный env не записан{OFF}", file=sys.stderr)
+        return 1
+    if not ustanovit:
+        print("\nэто сухой прогон; ставить: тот же вызов с --ustanovit")
+    elif izmeneno:
+        print(f"\n{ZHELTY}Изменено файлов: {izmeneno}. Строка вступит в силу при СЛЕДУЮЩЕМ "
+              f"подъёме экземпляра — перезапуск раскладчик не делает.{OFF}")
+        print(f"После перезапуска экземпляра: sudo {SVESTI} --svesti — отзовёт прежний ключ (B-N-1621).")
+    return 0
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        print("svyazki-podpisok pokazat            — сверить назначенное с применённым")
+        print("svyazki-podpisok razlozhit [--ustanovit] — записать связки в instance-*.env")
+        return 0
+    if args[0] == "pokazat":
+        return cmd_pokazat()
+    if args[0] == "razlozhit":
+        return cmd_razlozhit("--ustanovit" in args)
+    print(f"{KRASNY}неизвестная команда: {args[0]}{OFF}", file=sys.stderr)
+    return 2
+
+if __name__ == "__main__":
+    sys.exit(main())

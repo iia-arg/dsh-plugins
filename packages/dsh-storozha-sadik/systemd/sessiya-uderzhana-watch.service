@@ -1,0 +1,16 @@
+# /etc/systemd/system/sessiya-uderzhana-watch.service — B-N-1633 (05.10.2026, кандидат Зари; рекомендация Вениамина к B-N-1624).
+# Сторож удержанной сессии: незавершённый /new держит поколение сессии агента — письма не подаются, почтовый /stop
+# не достаёт. Тревога agent-alert — раз на эпизод. Читает ledger всех агентов реестра только на чтение (root).
+# Коды: 0 тихо · 1 тревога не ушла · 2 слепота. 1 и 2 ⇒ failed ⇒ читает sadik-watch (строка в storozha-sutochnye.txt).
+[Unit]
+Description=Сторож удержанной сессии агента: незавершённый /new дольше 10 мин → тревога (B-N-1633)
+Documentation=file:///usr/local/sbin/sessiya-uderzhana-watch
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/sessiya-uderzhana-watch
+StateDirectory=sessiya-uderzhana-watch
+StateDirectoryMode=0700
+UMask=0077
+# 10 ledger × до 6 с (блокировка 1 + запрос 5) + ОБЩИЙ бюджет тревог 100 с (BUDZHET_TREVOG_S, A-N-1948 №5 №27) + запас 20 с.
+TimeoutStartSec=180

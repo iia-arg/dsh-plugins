@@ -1,15 +1,17 @@
 {
   "name": "dsh-pamyat-core",
-  "version": "0.1.0-alpha.54",
-  "description": "Оперативная память агента для DSH: локальное хранилище, журнал решений и политика записи по классам. Ноль внешних зависимостей.",
+  "version": "3.1.2",
+  "description": "Локальная память агента, политика записи и журнал решений · Local agent memory, write policy and decision journal",
   "type": "module",
   "main": "src/index.js",
   "files": [
     "src",
     "test",
+    "examples",
     "README.md",
     "README.en.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "docs"
   ],
   "scripts": {
     "test": "node test/vse-stendy.mjs"
@@ -18,12 +20,12 @@
     "node": ">=22"
   },
   "license": "MIT",
+  "author": "Aleksandr Argelander",
   "keywords": [
-    "dsh",
-    "deepseek-harness",
-    "agent",
-    "memory",
-    "plugin"
+    "DSH · dsh",
+    "память-агента · agent-memory",
+    "локальное-хранилище · sqlite",
+    "политика-подтверждения · approval-policy"
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

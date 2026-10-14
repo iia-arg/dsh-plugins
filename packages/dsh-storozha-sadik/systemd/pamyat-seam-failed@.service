@@ -1,0 +1,10 @@
+[Unit]
+Description=Report failed dynamic memory contract check
+[Service]
+Type=oneshot
+User=root
+ExecStart=/bin/bash /usr/local/libexec/pamyat-seam/failed-v2.sh %i
+TimeoutStartSec=110
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pamyat-seam-alert

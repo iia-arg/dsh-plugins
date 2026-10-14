@@ -1,0 +1,93 @@
+#!/usr/bin/python3 -B
+# -*- coding: utf-8 -*-
+"""dsh-limity-deepseek (B-N-1776 r10; слово владельца 07.10 22:18 / 22:56 МСК; признаки Вениамина 19:56Z): остаток денег DeepSeek по ключам конфига.
+Зовёт dsh-limity-deepseek.timer (10 мин), юнит — учётка limity-ds без шелла, БЕЗ root. Ключ — только из $CREDENTIALS_DIRECTORY/dsh-limity-<kluch>
+(LoadCredential в drop-in юнита пишет `dsh-limity-podpiski klyuch <kluch>`; права файла ключа не трогаются), в процессе — только в заголовок запроса
+(urllib: не argv, не env, не журнал). Раз в час на ключ, потолок 24/сутки (формулой). Журнал — строка на КАЖДЫЙ вызов: код, мс, остатки строками по
+валютам как пришли (без сложения). Снимок {vid:deepseek_balans, podpiska, dannye|oshibka} — файлом этой учётки в приёмную; служба берёт его только от
+DSH_LIMITY_DS_UCH. Тревоги (не измерено / недоступен / ниже порога) шлёт НЕ эта программа, а замер dsh-limity-zamer (root, agent-alert) по таблице.
+ЧЕГО НЕ ЛОВИТ: ключ на другой машине (mashina) — не меряется; баланс не говорит, сколько осталось «ходов»."""
+import json, os, re, sys, time, urllib.error, urllib.request
+from pathlib import Path
+for _l in (os.environ.get('DSH_LIMITY_LIB'), Path(__file__).resolve().parent.parent / 'lib', '/usr/local/lib/dsh-limity'):
+    if _l and (Path(_l) / 'dsh_limity_konfig.py').is_file(): sys.path.insert(0, str(_l)); break
+import dsh_limity_konfig
+
+if len(sys.argv) > 1:
+    print('ОТКАЗ: у dsh-limity-deepseek нет доводов, всё задаётся окружением DSH_LIMITY_*', file=sys.stderr); sys.exit(3)
+E = os.environ.get
+PODPISKI = Path(E('DSH_LIMITY_PODPISKI', '/etc/dsh-limity/podpiski.json'))
+VHOD = Path(E('DSH_LIMITY_VHOD', '/var/spool/dsh-limity/vhod'))
+SOST = Path(E('DSH_LIMITY_DS_SOST', str(Path(E('STATE_DIRECTORY', '/var/lib/dsh-limity-deepseek').split(':')[0]) / 'sostoyanie.json')))
+STEND = E('DSH_LIMITY_DEEPSEEK_STEND', '')
+if STEND not in ('', '1'): print('ОТКАЗ: DSH_LIMITY_DEEPSEEK_STEND — только 1 или пусто', file=sys.stderr); sys.exit(3)
+if 'DSH_LIMITY_DEEPSEEK_URL' in os.environ and STEND != '1': print('ИГНОРИРУЮ DSH_LIMITY_DEEPSEEK_URL: нет DSH_LIMITY_DEEPSEEK_STEND=1', file=sys.stderr)
+URL = (E('DSH_LIMITY_DEEPSEEK_URL', 'https://api.deepseek.com') if STEND == '1' else 'https://api.deepseek.com').rstrip('/') + '/user/balance'
+RAZ_V_MIN = int(E('DSH_LIMITY_DS_RAZ_V_MIN', '60'))
+POTOLOK_SUTKI = int(E('DSH_LIMITY_DS_POTOLOK_SUTKI', str(24 * 60 // RAZ_V_MIN)))   # формулой: сутки / интервал
+
+def imya_klyucha(kluch): return 'dsh-limity-' + re.sub(r'[^A-Za-z0-9_-]', '_', kluch)   # имя LoadCredential — то же пишет команда klyuch
+
+def balans(kluch):
+    """→ (код|None, тело|None, мс, ошибка|None). Ключ — из каталога учётных данных юнита; значение живёт только до заголовка."""
+    kat = E('CREDENTIALS_DIRECTORY')
+    if not kat: return None, None, 0, 'нет $CREDENTIALS_DIRECTORY — юнит без LoadCredential'
+    f = Path(kat) / imya_klyucha(kluch)
+    try: kl = f.read_text(encoding='utf-8').strip()
+    except OSError: return None, None, 0, f'нет учётных данных {f.name} (dsh-limity-podpiski klyuch {kluch})'
+    if not kl or any(c.isspace() for c in kl): return None, None, 0, 'ключ пуст или негоден'
+    zapros = urllib.request.Request(URL, headers={'Authorization': 'Bearer ' + kl, 'Accept': 'application/json'}); del kl
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(zapros, timeout=20) as o: kod, telo = o.status, o.read(65536)
+    except urllib.error.HTTPError as e: kod, telo = e.code, b''
+    except (urllib.error.URLError, OSError, TimeoutError) as e: return None, None, int((time.time() - t0) * 1000), f'нет ответа ({type(e).__name__})'
+    ms = int((time.time() - t0) * 1000)
+    if kod != 200: return kod, None, ms, f'HTTP {kod}'
+    try: d = json.loads(telo)
+    except ValueError: return kod, None, ms, 'ответ не JSON'
+    if not (isinstance(d, dict) and isinstance(d.get('balance_infos'), list)): return kod, None, ms, 'в ответе нет balance_infos'
+    return kod, d, ms, None
+
+def snimok(n, dannye, oshibka):
+    imya = f'ds-{n}-{time.time_ns()}.json'
+    dsh_limity_konfig.zapisat_json(VHOD / imya, {'vid': 'deepseek_balans', 'moment_utc': time.time(),
+                                             'podpiska': n, 'dannye': dannye, 'oshibka': oshibka}, mode=0o640)
+
+def prohod():
+    konfig, oshibki, na_godnom = dsh_limity_konfig.prochitat_rabochij(PODPISKI)
+    if oshibki and not na_godnom:
+        for o in oshibki: print(f'СЛЕПОТА: конфиг: {o}')
+        return 2
+    sost = dsh_limity_konfig.prochitat_sostoyanie(SOST, 'deepseek')
+    teper, svod, uzel = time.time(), [], os.uname().nodename
+    for p in konfig:
+        if p['provajder'] != 'deepseek' or not p['vkl'] or (p.get('mashina') and p['mashina'] != uzel) or not p.get('klyuch_fajl'): continue
+        n, kluch = p['nomer'], p['kluch']
+        s = sost.setdefault(kluch, {'popytki': []})
+        s['popytki'] = [t for t in s['popytki'] if teper - t < 86400]
+        if s['popytki'] and teper - s['popytki'][-1] < RAZ_V_MIN * 60: svod.append(f'{kluch}: запрос был {int((teper - s["popytki"][-1]) // 60)} мин назад'); continue
+        if len(s['popytki']) >= POTOLOK_SUTKI: svod.append(f'{kluch}: ПОТОЛОК {POTOLOK_SUTKI} запросов/сутки — запроса нет'); continue
+        s['popytki'].append(teper); dsh_limity_konfig.zapisat_json(SOST, sost)   # попытка учтена ДО запроса
+        kod, d, ms, osh = balans(kluch)
+        ost = ', '.join(f'{b.get("total_balance")} {b.get("currency")}' for b in (d or {}).get('balance_infos', []) if isinstance(b, dict))
+        print(f'deepseek {kluch}: GET /user/balance → {kod if kod else "—"}{" (" + osh + ")" if osh else ""} за {ms} мс'
+              + (f' · остаток {ost}' if ost else ''))   # журнал КАЖДОГО вызова; суммы — строками как пришли, без сложения
+        snimok(n, d, osh)
+        svod.append(f'{kluch}: баланс → {"ne_izmereno (" + osh + ")" if osh else "izmereno"}')
+    print('dsh-limity-deepseek: ' + (' · '.join(svod) or 'ключей DeepSeek для этой машины нет'))
+    return 0
+
+def main():
+    try: return prohod()
+    except dsh_limity_konfig.SostoyanieError as e:
+        print(f'СЛЕПОТА: {e}')
+        konfig, _, _ = dsh_limity_konfig.prochitat_rabochij(PODPISKI)
+        for p in konfig:
+            if p['provajder'] == 'deepseek' and p['vkl'] and (not p.get('mashina') or p['mashina'] == os.uname().nodename) and p.get('klyuch_fajl'):
+                try: snimok(p['nomer'], None, str(e))
+                except dsh_limity_konfig.SostoyanieError as se: print(f'СЛЕПОТА: снимок ошибки не записан: {se}')
+        return 2
+
+if __name__ == '__main__':
+    sys.exit(main())

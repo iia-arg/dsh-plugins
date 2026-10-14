@@ -1,19 +1,15 @@
-/**
- * Стенд звука: доказывает, что громкий отказ РЕАЛЬНО СЛЫШЕН.
- *
- * Зачем отдельный стенд, если крик проверяют и другие. Потому что до 03.09 его
- * проверяли ПОДДЕЛЬНЫМ ctx с самодельным `logger`, и три пробы были зелёными,
- * подтверждая громкость, которой в бою НЕ БЫЛО: настоящий `ctx.logger` cordis
- * 4.0.1 существует, вызов проходит, а сообщение ложится в кольцевой буфер,
- * который никто не читает.
- *
- * Поэтому здесь мерится не «вызвалась ли функция вывода», а КОНЕЧНЫЙ результат:
- * строка в `stderr` ОТДЕЛЬНОГО процесса, поднявшего пакет под НАСТОЯЩИМ
- * Context. Между вызовом и этой проверкой не остаётся ни одной нашей подделки.
- */
+// RU: Проверяем слышимость отказа по stderr отдельного процесса с настоящим Context. Подставной logger не доказывает вывод: logger cordis 4.0.1 может писать только в непрочитанный кольцевой буфер.
+// EN: Test audible rejection through stderr of a separate process using a real Context. A fake logger cannot prove output: the cordis 4.0.1 logger may write only to an unread ring buffer.
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+// RU: Базы создаём в отдельном mkdtemp и убираем на путях выхода. Общий фиксированный путь может остаться чужой учётке и превратить исправный контроль в проверку отказа доступа.
+// EN: Create databases in a separate mkdtemp and clean them on exit paths. A shared fixed path may remain owned by another account and turn the healthy control into an access-denial test.
+const KAT = mkdtempSync(join(tmpdir(), '.proba-krik-zvuchit-core-'));
+process.on('exit', () => rmSync(KAT, { recursive: true, force: true }));
+process.on('SIGTERM', () => process.exit(143)); process.on('SIGINT', () => process.exit(130));
 
 const zdes = dirname(fileURLToPath(import.meta.url));
 let vsego = 0, proshlo = 0;
@@ -21,20 +17,23 @@ const proba = (imya, f) => {
   vsego++;
   try {
     const vernulos = f();
-    // 🔴 ПРИРОДА ТЕЛА ПРОВЕРЯЕТСЯ, А НЕ ПОДРАЗУМЕВАЕТСЯ (05.09.2026). Прогонщик синхронный —
-    // ждать не умеет. Ожидающее тело вернёт промис, try его НЕ поймает, проба зачтётся
-    // мгновенно, а брошенное внутри уйдёт в никуда. Такая проба не краснеет НИКОГДА, ни на
-    // каких данных: это не ложно-зелёное, а отсутствие проверки под видом проверки.
-    // Замер 05.09: семь стендов ядра из десяти зеленели на подложенном падении в ожидающем
-    // теле. Действующих async-тел не было ни одного — беда была впереди, и закрыта устройством.
+    // RU: Прогонщик синхронный и не ждёт промис: async-тело могло бы зачесть успех до исключения внутри. Возвращённый промис означает отказ пробы.
+    // EN: The runner is synchronous and does not await promises: an async body could record success before an inner exception. A returned promise fails the probe.
     if (vernulos && typeof vernulos.then === 'function') {
       throw new Error('тело пробы ОЖИДАЮЩЕЕ, а прогонщик синхронный: вынеси ожидание наружу');
+    }
+    // RU: Тело пробы должно бросить ошибку или вернуть undefined. Любое другое значение, включая строку, false, 0, null и объект, означает отказ: игнорирование возврата даёт ложный успех.
+    // EN: The probe body must throw an error or return undefined. Any other value, including a string, false, 0, null, or an object, means failure: ignoring returns produces false success.
+    if (vernulos !== undefined && vernulos !== true) {
+      throw new Error('тело пробы ВЕРНУЛО «' + String(vernulos).slice(0, 60) +
+                      '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы');
     }
     proshlo++; console.log('  ✅ ' + imya); }
   catch (e) { console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 200)); }
 };
 
-// Поднимает пакет под настоящим Context в ОТДЕЛЬНОМ процессе и отдаёт его потоки.
+// RU: Поднимаем пакет с настоящим Context в отдельном процессе и возвращаем его потоки.
+// EN: Start the package with a real Context in a separate process and return its streams.
 function podnyat(kod) {
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', kod], {
     cwd: join(zdes, '..'), encoding: 'utf8', timeout: 20000,
@@ -42,10 +41,8 @@ function podnyat(kod) {
   return { stderr: r.stderr ?? '', stdout: r.stdout ?? '', kod: r.status };
 }
 
-// 🔴 СЛЕПОТА, А НЕ РАСХОЖДЕНИЕ (03.09.2026). Без установленных зависимостей
-// дочерний процесс не поднимется вовсе, и первая же проба сообщила бы
-// «не поднялся» — код 1, то есть «предмет сломан». Это неправда: проверить
-// не удалось. Спрашиваем ОДИН раз и отвечаем словами с кодом 2.
+// RU: Один раз проверяем зависимости. Если дочерний процесс нельзя поднять из-за их отсутствия, возвращаем слепоту с кодом 2, а не дефект с кодом 1.
+// EN: Check dependencies once. If missing dependencies prevent child startup, report an unobservable test with code 2 rather than a defect with code 1.
 {
   const rProba = podnyat("import '@deepseek-ai/cordis';")
   if (/ERR_MODULE_NOT_FOUND/.test(rProba.stderr)) {
@@ -61,7 +58,7 @@ proba('стенд годен: под настоящим Context пакет во�
     import { Context } from '@deepseek-ai/cordis';
     import { apply } from './src/index.js';
     const k = new Context();
-    k.plugin({ apply }, { putBazy: '/tmp/pamyat-zvuk-ok.db', agent: 'stend' });
+    k.plugin({ apply }, { putBazy: ${JSON.stringify(join(KAT, 'zvuk-ok.db'))}, agent: 'stend' });
     console.log('PODNYALSYA', typeof k.logger?.error === 'function');
   `);
   if (!/PODNYALSYA/.test(r.stdout)) throw new Error('не поднялся: ' + r.stderr.slice(0, 160));
@@ -107,7 +104,7 @@ proba('УЗЕЛ БЕЗ ОТВЕЧАЮЩЕГО: предупреждение то
     import { Context } from '@deepseek-ai/cordis';
     import { apply } from './src/index.js';
     const k = new Context();
-    k.plugin({ apply }, { putBazy: '/tmp/pamyat-zvuk-uzel.db', agent: 'stend', otvechayushchegoNet: true });
+    k.plugin({ apply }, { putBazy: ${JSON.stringify(join(KAT, 'zvuk-uzel.db'))}, agent: 'stend', otvechayushchegoNet: true });
   `);
   if (!/спрашивать некого/.test(r.stderr)) {
     throw new Error('узел без отвечающего поднялся молча в настоящем процессе');

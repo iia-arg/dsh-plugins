@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""codex-auth-watch — СТОРОЖ срока и ссылок токена Codex подписки (B-N-800, 24.09.2026, кандидат Зари).
+
+ЧТО ПРОВЕРЯЕТ (каждый пункт — отдельной строкой, беда называет предмет):
+  ПОДПИСОК НЕСКОЛЬКО (codex-podpiska-4, 30.09): $CODEX_WATCH_PODPISKI «N:каталог:след», пункты 1–4 — на КАЖДУЮ.
+  1. срок access в ПРОИЗВОДНОМ файле: до конца ≥ $CODEX_WATCH_MIN_CH (48) ч;
+  2. обновитель жив: след последнего прогона не старше $CODEX_WATCH_PROGON_CH (26) ч, итог не «otkaz»;
+  3. в производном refresh_token ПУСТОЙ (полный токен не утёк к шлюзам);
+  4. полный носитель — root, права 0600; аккаунт производного = аккаунт полного (иначе его записал обновитель
+     ЧУЖОЙ подписки); след прогона — своей подписки (поле polnyj); у разных подписок — разные аккаунты;
+  5. для каждого дома шлюза: auth.json — ССЫЛКА на производный ОДНОЙ ИЗ подписок (не копия, не битая);
+     итог называет, какой шлюз на какой подписке (переключатель pereklyuchatel-codex);
+     его ЧИТАЕТ учётка ЮНИТА шлюза с группами, которые даёт ей systemd: User/Group из юнита,
+     группы учётки из /etc/group и SupplementaryGroups юнита. Группу сторож НЕ подставляет сам.
+КОДЫ: 0 чисто · 1 беда (тревога agent-alert с перечнем) · 2 слепота · 3 тревога не доставлена.
+ЧЕГО НЕ ЛОВИТ: жив ли токен у СЕРВЕРА (проверяет только прогон обновителя); ход агента, упавший
+  на авторизации между прогонами; шлюз, которого нет в перечне $CODEX_WATCH_DOMA;
+  подписку, которой нет в $CODEX_WATCH_PODPISKI (дом, ведущий на неё, назовётся «не на зарегистрированную»);
+  лимит подписки (признак лимита Codex не заведён).
+ЗНАЧЕНИЯ ТОКЕНОВ НЕ ПЕЧАТАЮТСЯ.
+"""
+import base64, grp, hashlib, json, os, pwd, subprocess, sys, time, datetime
+
+# ПОДПИСКИ (codex-podpiska-4, 30.09): «N:каталог:след» через пробел; производный = каталог/auth.json, полный = каталог/polnyj/auth.json.
+PODPISKI = ('3:/etc/claude-oauth/codex-podpiska-3:/var/lib/codex-obnovitel/posledniy-progon.json '
+            '4:/etc/claude-oauth/codex-podpiska-4:/var/lib/codex-obnovitel/posledniy-progon-4.json')
+DOMA = ('/var/lib/coder-gateway-alfa/codex-home:coder-gateway@alfa.service '
+        '/var/lib/coder-gateway-beta/codex-home:coder-gateway@beta.service '
+        '/var/lib/coder-gateway-gamma/codex-home:coder-gateway@gamma.service '
+        '/var/lib/coder-gateway-marc/codex-home:coder-gateway-marc.service '
+        '/var/lib/coder-gateway-anna/codex-home:coder-gateway-anna.service '   # B-N-1837: Анна
+        '/var/lib/coder-gateway-master/codex-home:coder-gateway-master.service')   # 13.10.2026: Мастер
+MIN_CH = '48'
+PROGON_CH = '26'
+ALERT = '/usr/local/bin/agent-alert'
+# B-N-1395: подмена — ТОЛЬКО стенду и ТОЛЬКО при CODEX_WATCH_STEND=1 (рецепт B-N-1394). Без ключа CODEX_WATCH_* игнорируются
+# (строка в stderr); ключ иной — ОТКАЗ, код 2, до чтений и тревоги. ГРАНИЦА: PATH (systemctl, runuser) ключом не закрыт.
+PODMENY = ('PODPISKI', 'DOMA', 'MIN_CH', 'PROGON_CH', 'ALERT')  # CODEX_WATCH_<имя> → <имя>; список фиксированный
+_klyuch = os.environ.get('CODEX_WATCH_STEND', '')
+_zadany = [v for v in PODMENY if os.environ.get('CODEX_WATCH_' + v)]
+if _klyuch == '1':
+    for _v in _zadany:
+        globals()[_v] = os.environ['CODEX_WATCH_' + _v]
+    print('ПОДМЕНЕНО: ' + (' '.join(_zadany) or 'ничего'), flush=True)
+elif _klyuch == '':
+    if _zadany:
+        print('ИГНОРИРУЮ (нет CODEX_WATCH_STEND=1), беру боевые: ' + ' '.join('CODEX_WATCH_' + v for v in _zadany),
+              file=sys.stderr, flush=True)
+else:
+    print(f'ОТКАЗ: CODEX_WATCH_STEND=«{_klyuch}» — допустимо только 1 (стенд) или пусто (бой); ничего не тронуто', file=sys.stderr)
+    sys.exit(2)
+MIN_CH = float(MIN_CH)
+PROGON_CH = float(PROGON_CH)
+
+def trevoga(kod, tekst):
+    print(tekst, flush=True)
+    try:
+        if os.access(ALERT, os.X_OK) and subprocess.run(
+                [ALERT, f'токен Codex подписки ({os.uname().nodename}): {tekst}'], capture_output=True, timeout=60).returncode == 0:
+            sys.exit(kod)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    print(f'🔴 ТРЕВОГА НЕ ДОСТАВЛЕНА (канал {ALERT})'); sys.exit(3)
+
+def kak_v_yunite(yunit):
+    """Учётка и группы процесса юнита — так, как их выставит systemd. None, если юнит не годен."""
+    r = subprocess.run(['systemctl', 'show', yunit, '-p', 'LoadState', '-p', 'User', '-p', 'Group',
+                        '-p', 'SupplementaryGroups'], capture_output=True, text=True)
+    v = dict(x.split('=', 1) for x in r.stdout.splitlines() if '=' in x)
+    if v.get('LoadState') != 'loaded' or not v.get('User'):
+        return None
+    pw = pwd.getpwnam(v['User'])
+    osn = v.get('Group') or grp.getgrgid(pw.pw_gid).gr_name
+    gr = [grp.getgrgid(g).gr_name for g in os.getgrouplist(pw.pw_name, pw.pw_gid)] + v.get('SupplementaryGroups', '').split()
+    return pw.pw_name, osn, list(dict.fromkeys(gr))
+
+def exp_jwt(jwt):
+    try:
+        pl = jwt.split('.')[1]; pl += '=' * (-len(pl) % 4)
+        return int(json.loads(base64.urlsafe_b64decode(pl))['exp'])
+    except Exception:
+        return None
+
+def akkaunt(d):
+    """account_id пары (tokens.account_id, иначе из id_token). Сравнивается, не печатается."""
+    t = (d or {}).get('tokens') or {}
+    if t.get('account_id'):
+        return str(t['account_id'])
+    try:
+        pl = t['id_token'].split('.')[1]; pl += '=' * (-len(pl) % 4)
+        return str(json.loads(base64.urlsafe_b64decode(pl))['https://api.openai.com/auth']['chatgpt_account_id'])
+    except Exception:
+        return None
+
+def podpiska(n, kat, sled_put, teper, bedy, ok):
+    """Пункты 1–4 и сверка аккаунта для одной подписки. Возвращает (реальный путь производного, аккаунт) или None."""
+    proizv, polnyj = os.path.join(kat, 'auth.json'), os.path.join(kat, 'polnyj', 'auth.json')
+    pr = f'подписка {n}:'
+    try:
+        p = json.load(open(proizv, encoding='utf-8')); t = p['tokens']
+    except (OSError, ValueError, KeyError) as e:
+        bedy.append(f'{pr} производный {proizv} не читается ({type(e).__name__})')
+        return None
+    e = exp_jwt(t.get('access_token', ''))
+    if e is None:
+        bedy.append(f'{pr} срок access в производном не читается')
+    else:
+        ost = (e - teper) / 3600
+        (ok if ost >= MIN_CH else bedy).append(
+            f'{pr} access до {datetime.datetime.fromtimestamp(e, datetime.timezone.utc):%Y-%m-%d %H:%MZ}, осталось {ost:.1f} ч (порог {MIN_CH:g})')
+    if t.get('refresh_token'):
+        bedy.append(f'🔴 {pr} в производном НЕПУСТОЙ refresh_token — шлюзы могут сжечь токен всем')
+    else:
+        ok.append(f'{pr} refresh у шлюзов пустой')
+    try:
+        s = json.load(open(sled_put, encoding='utf-8'))
+        voz = (teper - s['vremya']) / 3600
+        chej = s.get('polnyj')
+        if chej and os.path.realpath(chej) != os.path.realpath(polnyj):
+            bedy.append(f'🔴 {pr} след {sled_put} — прогон ДРУГОЙ подписки ({chej}): обновитель этой не виден')
+        elif voz > PROGON_CH:
+            bedy.append(f'{pr} обновитель молчит {voz:.1f} ч (порог {PROGON_CH:g}) — таймер мёртв?')
+        elif s.get('itog') == 'otkaz':
+            bedy.append(f'{pr} последний прогон обновителя — ОТКАЗ ({str(s.get("prichina"))[:120]})')
+        else:
+            ok.append(f'{pr} обновитель: {s.get("itog")} {voz:.1f} ч назад' + ('' if chej else ' (след без пути полного — прежний обновитель)'))
+    except (OSError, ValueError, KeyError):
+        bedy.append(f'{pr} следа прогона обновителя нет ({sled_put}) — не запускался?')
+    a = akkaunt(p)
+    try:
+        st = os.stat(polnyj)
+        if st.st_uid != 0 or (st.st_mode & 0o077):
+            bedy.append(f'{pr} полный носитель не root 0600: uid {st.st_uid} {oct(st.st_mode & 0o777)}')
+        else:
+            ok.append(f'{pr} полный носитель root 0600')
+        ap = akkaunt(json.load(open(polnyj, encoding='utf-8')))
+        if not a or a != ap:
+            bedy.append(f'🔴 {pr} производный — ДРУГОГО аккаунта, чем полный (акк.#{h8(a)} ≠ #{h8(ap)}): записан обновителем чужой подписки?')
+    except OSError as ex:
+        bedy.append(f'{pr} полного носителя нет: {ex.strerror}')
+    except (ValueError, KeyError) as ex:
+        bedy.append(f'{pr} полный носитель не читается ({type(ex).__name__})')
+    return os.path.realpath(proizv), a
+
+def h8(s):
+    return hashlib.sha256((s or '').encode()).hexdigest()[:8]
+
+def glavnaya():
+    if len(sys.argv) > 1:
+        print('ОТКАЗ: доводов нет', file=sys.stderr); sys.exit(2)
+    bedy, ok = [], []
+    teper = time.time()
+    try:
+        spisok = [z.split(':', 2) for z in PODPISKI.split()]
+        assert spisok and all(len(z) == 3 and z[0] and z[1] and z[2] for z in spisok)
+    except (AssertionError, ValueError):
+        trevoga(2, f'СЛЕПОТА: перечень подписок не разобран: {PODPISKI!r}')
+    podp = {}   # реальный путь производного → номер
+    akki = {}
+    for n, kat, sled_put in spisok:
+        r = podpiska(n, kat, sled_put, teper, bedy, ok)
+        if r:
+            podp[r[0]] = n
+            if r[1]:
+                akki.setdefault(r[1], []).append(n)
+    for a, nn in akki.items():
+        if len(nn) > 1:
+            bedy.append(f'🔴 подписки {", ".join(nn)} — ОДИН аккаунт (акк.#{h8(a)}): одну переписали другой?')
+    raspr = {}
+    for zapis in DOMA.split():
+        dom, yunit = zapis.rsplit(':', 1)
+        a = os.path.join(dom, 'auth.json')
+        if not os.path.islink(a):
+            bedy.append(f'{a}: НЕ ссылка ({"обычный файл — копия, мина вернулась" if os.path.exists(a) else "нет файла"})')
+            continue
+        n = podp.get(os.path.realpath(a))
+        if n is None:
+            bedy.append(f'{a}: ссылка ведёт не на производный зарегистрированной подписки ({os.readlink(a)})')
+            continue
+        kak = kak_v_yunite(yunit)
+        if kak is None:
+            bedy.append(f'{a}: юнит {yunit} не загружен или без User= — чтение не проверить')
+            continue
+        kto, osn, gr = kak
+        r = subprocess.run(['runuser', '-u', kto, '-g', osn] + [k for g in gr for k in ('-G', g)] + ['--', 'test', '-r', a],
+                           capture_output=True)
+        (ok if r.returncode == 0 else bedy).append(f'{a}: {"читается" if r.returncode == 0 else "НЕ читается"} от {yunit} ({kto})')
+        raspr.setdefault(n, []).append(yunit.replace('.service', ''))
+    ok.append('шлюзы по подпискам: ' + (' · '.join(f'{n}: {", ".join(v)}' for n, v in sorted(raspr.items())) or 'нет'))
+    if bedy:
+        trevoga(1, '🔴 ' + ' · '.join(bedy) + (f' || в порядке: {len(ok)}' if ok else ''))
+    print('чисто: ' + ' · '.join(ok)); sys.exit(0)
+
+if __name__ == '__main__':
+    try:
+        glavnaya()
+    except SystemExit:
+        raise
+    except BaseException as ex:
+        trevoga(2, f'СЛЕПОТА: сторож упал — {type(ex).__name__}: {ex}')

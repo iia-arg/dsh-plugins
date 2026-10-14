@@ -1,59 +1,86 @@
 {
   "kak_schitano": {
-    "instrument": "summa-predmeta",
-    "summa_instrumenta": "d4fc96426534a870",
-    "gde": "рабочее дерево семейства, рядом с packages/",
-    "kontrol": "summa-predmeta --kontrol → «контроль зрячести: ПРОЙДЕН»",
-    "pochemu_ne_prozoy": "способ, описанный словами, имеет столько реализаций, сколько читателей: 03.09 два добросовестных описания дали 8 разных чисел на 4 предметах. Способ, живущий файлом, имеет одну.",
-    "prob": "число проб снято ПРОГОНОМ стендов в установленных каталогах (строки ok/✅), а не счётом объявлений по коду. 03.09.2026 счёт по шаблону proba( совпал у ПЯТИ членов и разошёлся вшестеро у шестого: он объявляет пробы другим именем. Пять совпадений подряд не подтверждают способ, если шестой предмет устроен иначе.",
-    "prob_upalo": "у restore число проб снизилось 86 -> 78 при переходе alpha.13 -> alpha.14, и это НЕ потеря покрытия: крючок welcome сменился с turn===1&&step===1 на «первый шаг после старта процесса», и проверки, мерившие прежнее условие, заменены на проверки нового. Число снято ПРОГОНОМ в установленном каталоге, а не счётом по коду; падение объяснено, а не проглочено.",
-    "slepoty_restore": "у restore прогон даёт код 2 при 5 слепотах: пакеты платформы @deepseek-ai/dsh-session и часть окружения в чистой установке отсутствуют. Это СЛЕПОТА, а не расхождение: расхождений 0. Число проб снято тем же способом, что и прежде (строки ok/✅), и сопоставимо с прежним: 88 при a16 → 90 при a18."
+    "predmet_ne_fingerprint": "RU: сумма предмета (summa-predmeta) не равна отпечатку реестра ПО ПОСТРОЕНИЮ: у dsh-pamyat-kompakt отпечаток реестра исключает nastrojki/, а summa-predmeta считает весь состав вместе с nastrojki/ (a30: предмет 843da84a9c57130a, отпечаток 502b4956bb0a9b56). Равенство этих двух чисел не проверять — разные области (условие приёмки). · EN: the subject checksum (summa-predmeta) differs from the registry fingerprint BY CONSTRUCTION: for dsh-pamyat-kompakt the registry fingerprint excludes nastrojki/, while summa-predmeta counts the whole file list including nastrojki/ (a30: subject 843da84a9c57130a, fingerprint 502b4956bb0a9b56). Do not check these two numbers for equality — different scopes (an acceptance condition).",
+    "instrument": "summa-predmeta-2",
+    "summa_instrumenta": "e6812fdcceb909f5",
+    "gde": "RU: внутри метапакета; в рабочем дереве — ещё и рядом с packages/ · EN: inside the metapackage; in the working tree also next to packages/",
+    "kontrol": "summa-predmeta-2 --kontrol → «контроль зрячести: ПРОЙДЕН»",
+    "pochemu_ne_prozoy": "RU: способ, описанный словами, имеет столько реализаций, сколько читателей: два добросовестных описания дали 8 разных чисел на 4 предметах. Способ, живущий файлом, имеет одну. · EN: a method described in words has as many implementations as readers: two honest descriptions produced 8 different numbers on 4 subjects. A method that lives as a file has one.",
+    "prob": "RU: число проб снято ПРОГОНОМ стендов в установленных каталогах (строки ok/✅), а не счётом объявлений по коду. Однажды счёт по шаблону proba( совпал у ПЯТИ членов и разошёлся вшестеро у шестого: он объявляет пробы другим именем. Пять совпадений подряд не подтверждают способ, если шестой предмет устроен иначе. · EN: probe counts were taken by RUNNING the stands in installed directories (ok/✅ lines), not by counting declarations in code. Once, counting by the proba( pattern matched for FIVE members and was six times off for the sixth: it declares probes under another name. Five matches in a row do not confirm a method if the sixth subject is built differently.",
+    "prob_upalo": "RU: у restore число проб снизилось 86 -> 78 при переходе alpha.13 -> alpha.14, и это НЕ потеря покрытия: крючок welcome сменился с turn===1&&step===1 на «первый шаг после старта процесса», и проверки, мерившие прежнее условие, заменены на проверки нового. Число снято ПРОГОНОМ в установленном каталоге, а не счётом по коду; падение объяснено, а не проглочено. · EN: restore's probe count dropped 86 -> 78 going from alpha.13 to alpha.14, and this is NOT lost coverage: the welcome hook changed from turn===1&&step===1 to \"first step after process start\", and checks of the old condition were replaced by checks of the new one. The number was taken by a RUN in the installed directory, not by counting code; the drop is explained, not swallowed.",
+    "slepoty_restore": "RU: у restore прогон даёт код 2 при 5 слепотах: пакеты платформы @deepseek-ai/dsh-session и часть окружения в чистой установке отсутствуют. Это СЛЕПОТА, а не расхождение: расхождений 0. Число проб снято тем же способом, что и прежде (строки ok/✅), и сопоставимо с прежним: 88 при a16 → 90 при a18. · EN: restore's run exits 2 with 5 blind probes: platform packages @deepseek-ai/dsh-session and part of the environment are absent in a clean install. This is BLINDNESS, not divergence: 0 divergences. The probe count was taken the same way as before (ok/✅ lines) and is comparable: 88 at a16 → 90 at a18.",
+    "prob_a34": "RU: число проб в alpha.34 НЕ снималось (набор снят с установки и полки, не прогоном стендов) — поле prob пусто намеренно: пустота ≠ ноль. · EN: probe counts were NOT taken in alpha.34 (the set was taken from the installation and the shelf, not by running stands) — the prob field is empty on purpose: empty ≠ zero.",
+    "istochnik_a34": "RU: с alpha.34 состав сверяется с ЛОКАЛЬНОЙ ПОЛКОЙ архивов (integrity — из package-lock.json каталога установленных плагинов) и с УСТАНОВКОЙ (node_modules того же каталога), а не с реестром npm: публикация была остановлена решением владельца. · EN: since alpha.34 the composition is checked against the LOCAL archive SHELF (integrity from the installed-plugins directory's package-lock.json) and against the INSTALLATION (that directory's node_modules), not the npm registry: publishing was stopped by the owner's decision.",
+    "sostav_a34": "RU: решение координатора: в набор входит всё семейство, что стоит во всех web-профилях агентов (+ kompakt, которого kompakt-dsh зовёт по имени). dsh-pamyat-vyvoz — ЗА БОРТОМ: в каталог установленных плагинов не ставится, в сессиях не живёт, зовут рукой из дерева. · EN: coordinator's decision: the set holds the whole family installed in every agent web profile (+ kompakt, which kompakt-dsh calls by name). dsh-pamyat-vyvoz is OUT: it is not installed into the plugins directory, does not live in sessions, and is run by hand from the tree."
   },
   "sostav": [
     {
       "paket": "dsh-pamyat-core",
-      "versiya": "0.1.0-alpha.40",
-      "predmet": "7d585ad81f5bc4d3",
-      "faylov": 21,
-      "prob": 166
+      "versiya": "3.1.2",
+      "predmet": "2a8dc18befabc2d5",
+      "faylov": 67,
+      "prob": null
     },
     {
       "paket": "dsh-pamyat-omega",
-      "versiya": "0.1.0-alpha.10",
-      "predmet": "b03fa2a7057f37a1",
-      "faylov": 12,
-      "prob": 41
+      "versiya": "3.1.2",
+      "predmet": "9107cb261de5808e",
+      "faylov": 30,
+      "prob": null
     },
     {
       "paket": "dsh-pamyat-secretary",
-      "versiya": "0.1.0-alpha.16",
-      "predmet": "388dd191094001cd",
-      "faylov": 18,
-      "prob": 78
+      "versiya": "3.1.2",
+      "predmet": "9ebec56882100ded",
+      "faylov": 67,
+      "prob": null
     },
     {
       "paket": "dsh-pamyat-byudzhet",
-      "versiya": "0.1.0-alpha.8",
-      "predmet": "08a2d50ef06c4e5a",
-      "faylov": 12,
-      "prob": 39
+      "versiya": "3.1.2",
+      "predmet": "12571d3a7e8d7400",
+      "faylov": 18,
+      "prob": null
     },
     {
       "paket": "dsh-pamyat-nudzh",
-      "versiya": "0.1.0-alpha.12",
-      "predmet": "e1ee86550f7389e1",
-      "faylov": 11,
-      "prob": 52
+      "versiya": "3.1.2",
+      "predmet": "1f7361009772ae9e",
+      "faylov": 19,
+      "prob": null
     },
     {
       "paket": "dsh-pamyat-restore",
-      "versiya": "0.1.0-alpha.18",
-      "predmet": "5609aa89b9ccf3ea",
-      "faylov": 8,
-      "prob": 90
+      "versiya": "3.1.2",
+      "predmet": "e20a6b08c19d627c",
+      "faylov": 25,
+      "prob": null
+    },
+    {
+      "paket": "dsh-pamyat-storozha",
+      "versiya": "3.1.3",
+      "predmet": "fd5b84c6e8902b6a",
+      "faylov": 50,
+      "prob": null
+    },
+    {
+      "paket": "dsh-pamyat-kompakt-dsh",
+      "versiya": "3.1.2",
+      "predmet": "004c424bbf5802c2",
+      "faylov": 31,
+      "prob": null
+    },
+    {
+      "paket": "dsh-pamyat-kompakt",
+      "versiya": "3.1.2",
+      "predmet": "9c0fc3e2ecc9e2ef",
+      "faylov": 31,
+      "prob": null,
+      "katalog": "dsh-pamyat-kompakt",
+      "pochemu_katalog": "RU: в установке kompakt стоит КАТАЛОГОМ, не пакетом: package.json каталога установленных плагинов объявляет «file:./dsh-pamyat-kompakt», в lock — link:true; архива a28 на полке нет. Набор с A-N-1873 называет kompakt точным номером, как остальных членов (в dependencies — 1.1.40, не file:): установка ставит каталог ссылкой, а набор сверяет его номер и сумму предмета. Цена честно: каталог не заморожен, как архив, — его правка без пересборки набора краснеет пробой сумм. Нужен kompakt-dsh (зовёт его по ИМЕНИ, в своём манифесте зависимости не объявляет) и шлюзу подписки (тот — по абсолютному пути, набором не покрывается). · EN: in the installation kompakt sits AS A DIRECTORY, not a package: the installed-plugins package.json declares \"file:./dsh-pamyat-kompakt\", the lock has link:true; there is no a28 archive on the shelf. Since A-N-1873 the set names kompakt by an exact version like the other members (1.1.40 in dependencies, not file:): the installation links the directory, and the set checks its version and subject checksum. Honest price: a directory is not frozen like an archive — editing it without rebuilding the set turns the checksum probe red. Needed by kompakt-dsh (which calls it by NAME and does not declare the dependency in its manifest) and by the subscription gateway (by absolute path, not covered by the set)."
     }
   ],
-  "podtverzhdeno": "суммы, версии и число проб сняты моей рукой 04.09.2026 ИЗ РЕЕСТРА npm (скачано с --prefer-online, распаковано, посчитано каноном summa-predmeta), а не из рабочего каталога и не из письма. ПОДТВЕРЖДЕНИЯ ВТОРОЙ РУКОЙ У ЭТОЙ РЕДАКЦИИ ЕЩЁ НЕТ — требуются ворота заново.",
-  "pro_nomera": "номер версии может быть поднят без изменения кода — правились манифесты или справка; одинаковая сумма ИСХОДНИКА при разных номерах не означает потерянную правку; сумма ПРЕДМЕТА при этом меняется всегда, потому что манифест входит в предмет",
-  "otsechka_snyatiya": "2026-09-04 04:3x МСК, из реестра npm своей рукой. Суммы сняты каноном по распакованным тарболам, число проб — ПРОГОНОМ стендов в установленных каталогах, где рядом стоят все шесть членов. Пересборка вызвана тем, что набор отстал от трёх членов сразу: ставящий получал ядро без очереди недоставленного, слой без proverit и секретаря с падающим швом на отказе по деньгам."
+  "podtverzhdeno": "RU: версии, суммы и число файлов сняты 10.10.2026 (A-N-1948 модуль №3, Искра): summa-predmeta-2 (e6812fdcceb909f5, контроль ПРОЙДЕН). Пять членов модуля №3 (core, omega, restore, byudzhet, nudzh 3.1.1) и dsh-pamyat-storozha 1.1.51 — по каталогам дерева (= будущим архивам этого окна). secretary 1.1.108, kompakt-dsh 1.1.33, kompakt 1.1.40 — по полке и бою (решение координатора 10.10 08:38Z (а)): их документы в master без номера ждут их выпуска (модуль №7). Перезакрепление 14.10.2026 (набор 3.1.2, Аврора): dsh-pamyat-storozha 3.1.1 (A-N-1948 №17) — a8b6bc5d8c74351a / 49 файлов по архиву полки, равно бою и дереву. · EN: versions, checksums and file counts taken 10.10.2026 (A-N-1948 module 3): summa-predmeta-2, control PASSED. The five module-3 members (3.1.1) and dsh-pamyat-storozha 1.1.51 — from the tree directories (= this window's archives); secretary 1.1.108, kompakt-dsh 1.1.33, kompakt 1.1.40 — from the shelf and the live install (their docs in master await their release, module 7). Re-pinned 14.10.2026 (set 3.1.2, Avrora): dsh-pamyat-storozha 3.1.1 (A-N-1948 #17) — a8b6bc5d8c74351a / 49 files from the shelf archive, equal to the live install and the tree. · RU: 14.10.2026 (подготовка к публикации, оформление, Искра): secretary, byudzhet, nudzh, restore, storozha, kompakt-dsh, kompakt 3.1.2 пересняты по кандидату (npm pack из дерева → summa-predmeta-2 e6812fdc, тот же вызов, что стенд); core и omega 3.1.1 пересчитаны тем же способом — совпали с прежними · EN: 2026-10-14 (publication prep, docs): seven members at 3.1.2 re-measured from the candidate (npm pack from the tree → summa-predmeta-2 e6812fdc, the same call as the stand); core and omega 3.1.1 recomputed the same way — equal to the previous values.",
+  "pro_nomera": "RU: номер версии может быть поднят без изменения кода — правились манифесты или справка; одинаковая сумма ИСХОДНИКА при разных номерах не означает потерянную правку; сумма ПРЕДМЕТА при этом меняется всегда, потому что манифест входит в предмет · EN: a version number can be bumped without code changes — manifests or docs were edited; an identical SOURCE checksum under different numbers does not mean a lost edit; the SUBJECT checksum always changes, because the manifest is part of the subject",
+  "otsechka_snyatiya": "RU: 2026-10-10 08:4x UTC, дерево master a9c1164f (+ полка и бой для трёх нетронутых). · EN: 2026-10-10 08:4x UTC, tree master a9c1164f (+ shelf and live install for the three untouched members)."
 }

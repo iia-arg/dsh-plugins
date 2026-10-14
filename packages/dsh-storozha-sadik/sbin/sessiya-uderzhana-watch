@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""Сторож удержанной сессии агента (B-N-1633): 0 тихо, 1 тревога не ушла, 2 слепота.
+
+Удержание — незавершённый /new держит поколение сессии: строка session_rotations в фазе prepared,
+или aborted с неснятыми пунктами отмены (rotation_items planned/started/restored). Условие — дословно
+holdsSession (dsh-telegram-multiagent src/conversation-sessions.js:34) плюс сверка с ТЕКУЩЕЙ сессией
+маршрута (channel_sessions): после удачного повторного /new старая строка остаётся навсегда, но уже
+ничего не держит. Пока сессия удержана, письма агенту не подаются, почтовый /stop не достаёт.
+
+Только чтение: SQLite mode=ro, query_only, ожидание блокировки 1 с, бюджет запроса 5 с на ledger.
+Список ledger — из реестра агентов: <dom>/workspace/.message-receipts/receipts.sqlite.
+Тревога — один раз на эпизод (ledger + receipt_id команды /new); эпизод кончается, когда удержание
+снято. Неотправленная тревога в состояние не пишется и уходит следующим прогоном.
+
+Настройка только переменными окружения, доводы не принимаются (любой довод — отказ, код 2):
+  SUW_REGISTRY    реестр агентов, умолчание /etc/agent-registry/agents.yaml
+  SUW_STATE       файл состояния, умолчание /var/lib/sessiya-uderzhana-watch/state.json
+  SUW_ALERT       отправитель тревог, умолчание /usr/local/bin/agent-alert
+  SUW_PREDEL_MIN  порог в минутах, умолчание 10 (назначенный, не замер — обоснование в DOVOD)
+
+НЕ ЛОВИТ: удержание с ДРУГОЙ причиной, чем незавершённый /new (пауза /stop, конверт в удержании,
+застрявшая квитанция — у них свои сторожа); агента вне реестра; ledger по другому пути (это слепота,
+код 2, а не тишина); подделку ledger рукой с sudo. Повтора после отправленной тревоги нет: долгое
+удержание после неё видно только строкой «уже послана» в журнале юнита.
+"""
+import json
+import os
+from pathlib import Path
+import sqlite3
+import subprocess
+import sys
+import time
+
+DEFAULT_REGISTRY = '/etc/agent-registry/agents.yaml'
+DEFAULT_STATE = '/var/lib/sessiya-uderzhana-watch/state.json'
+DEFAULT_ALERT = '/usr/local/bin/agent-alert'
+# DOVOD порога (назначенный): сама попытка /new живёт ≤ deadline (begin: now+60000 мс); удержание сверх
+# срока само не снимается — снимает его только следующий удачный /new. Порог — окно реакции человека,
+# получившего «Отказ /new», и равен окну предела попыток почтового /new (B-N-1624 К3: 3 за 10 мин).
+# Замера нет: на 05.10.2026 07:51Z на sadik ротаций 3 (все committed, у Зари), удержаний 0 из 10 ledger.
+DEFAULT_PREDEL_MIN = 10
+# A-N-1948 №5 (№27): ОБЩИЙ бюджет на все тревоги такта, а не 100 с на каждую. Счёт юнита: 10 ledger × 6 с + этот бюджет
+# + запас 20 с = TimeoutStartSec=180. Прежде N зависших тревог × 100 с переходили предел — systemd убивал процесс ДО записи
+# состояния и строки ИТОГ. Тревога, на которую бюджета не осталось, считается неушедшей и уходит следующим прогоном.
+BUDZHET_TREVOG_S = 100
+HELD = ("(r.phase='prepared' OR (r.phase='aborted' AND EXISTS(SELECT 1 FROM rotation_items i "
+        "WHERE i.receipt_id=r.receipt_id AND i.state IN ('planned','started','restored'))))")
+CURRENT = ('EXISTS(SELECT 1 FROM channel_sessions c WHERE c.route_key=r.route_key '
+           'AND c.session_id=r.old_id AND c.session_created=r.old_created)')
+TABLES = {'session_rotations': {'receipt_id', 'route_key', 'old_id', 'old_created', 'deadline', 'phase'},
+          'rotation_items': {'receipt_id', 'kind', 'state'},
+          'channel_sessions': {'route_key', 'session_id', 'session_created'},
+          'audit': {'receipt_id', 'at', 'kind', 'detail'}}
+
+
+def emit(message):
+    print(f'[sessiya-uderzhana-watch] {message}', flush=True)
+
+
+def ledgers(registry):
+    import yaml
+    data = yaml.safe_load(Path(registry).read_text(encoding='utf-8'))
+    agents = data.get('agenty') if isinstance(data, dict) else None
+    if not isinstance(agents, list) or not agents:
+        raise ValueError('в реестре нет списка agenty')
+    out = []
+    for agent in agents:
+        name, dom = agent.get('imya'), (agent.get('namerenie') or {}).get('dom')
+        if not isinstance(name, str) or not name or not isinstance(dom, str) or not Path(dom).is_absolute():
+            raise ValueError(f'запись реестра без imya или абсолютного namerenie.dom: {str(agent)[:80]}')
+        out.append((name, str(Path(dom) / 'workspace/.message-receipts/receipts.sqlite')))
+    if len({p for _, p in out}) != len(out):
+        raise ValueError('повтор пути ledger в реестре')
+    return out
+
+
+def inspect(path, now_ms):
+    """Удержания одного ledger одной транзакцией чтения: (текущие, прежних поколений)."""
+    with open(path, 'rb'):
+        pass  # отказ ОС отдельно от отказа SQLite
+    deadline = time.monotonic() + 5
+    db = sqlite3.connect(Path(path).as_uri() + '?mode=ro', uri=True, timeout=1)
+    try:
+        db.execute('PRAGMA query_only=ON')
+        db.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
+        db.execute('BEGIN')
+        for table, need in TABLES.items():
+            have = {row[1] for row in db.execute(f'PRAGMA table_info({table})')}
+            if not need <= have:
+                raise ValueError(f'схема: нет таблицы {table} или полей {sorted(need - have)}')
+        rows = db.execute(f'SELECT r.receipt_id, r.route_key, r.old_id, r.deadline, r.phase, {CURRENT} '
+                          f'FROM session_rotations r WHERE {HELD}').fetchall()
+        held, stale = [], 0
+        for receipt_id, route_key, old_id, rot_deadline, phase, current in rows:
+            if not current:
+                stale += 1
+                continue
+            if not isinstance(rot_deadline, int):
+                raise ValueError(f'схема данных: deadline не целое у {receipt_id}')
+            items = db.execute("SELECT kind, count(*) FROM rotation_items WHERE receipt_id=? "
+                               "AND state IN ('planned','started','restored') GROUP BY kind ORDER BY kind",
+                               (receipt_id,)).fetchall()
+            reason = db.execute("SELECT detail FROM audit WHERE receipt_id=? AND kind='session_rotation_aborted' "
+                                'ORDER BY seq DESC LIMIT 1', (receipt_id,)).fetchone()
+            held.append({'receipt_id': receipt_id, 'route_key': route_key, 'session': old_id, 'phase': phase,
+                         'sverh_sroka_ms': now_ms - rot_deadline,
+                         'items': ', '.join(f'{k} {n}' for k, n in items) or 'нет',
+                         'reason': (reason[0] or '')[:200] if reason else ''})
+        return held, stale
+    finally:
+        db.close()
+
+
+def text(name, h, predel_min):
+    phase = ('попытка /new без исхода (процесс завис или умер без перезапуска)' if h['phase'] == 'prepared'
+             else 'попытка /new прервана, отмена не завершена')
+    return (f'🔴 {os.uname().nodename}: сессия агента {name} удержана незавершённым /new дольше {predel_min} мин\n'
+            f'маршрут {h["route_key"]}, сессия {h["session"]}, команда {h["receipt_id"]}\n'
+            f'{phase}; сверх срока попытки {h["sverh_sroka_ms"] // 60000} мин\n'
+            f'неснятые пункты отмены: {h["items"]}; причина: {h["reason"] or "не записана"}\n'
+            'следствие: письма агенту не подаются, почтовый /stop не достаёт\n'
+            'выход: повторный /new агенту. Тревога одна на эпизод, повтора не будет')
+
+
+def main():
+    if len(sys.argv) != 1:
+        emit(f'ОТКАЗ: доводы не принимаются («{sys.argv[1][:40]}»); настройка только переменными SUW_*; код 2')
+        return 2
+    registry = os.environ.get('SUW_REGISTRY', DEFAULT_REGISTRY)
+    state_file = Path(os.environ.get('SUW_STATE', DEFAULT_STATE))
+    alert = os.environ.get('SUW_ALERT', DEFAULT_ALERT)
+    predel = os.environ.get('SUW_PREDEL_MIN', str(DEFAULT_PREDEL_MIN))
+    try:
+        if not predel.isascii() or not predel.isdecimal() or int(predel) <= 0:
+            raise ValueError('SUW_PREDEL_MIN должен быть положительным целым числом минут')
+        predel = int(predel)
+        spisok = ledgers(registry)
+        state = json.loads(state_file.read_text()) if state_file.exists() else {}
+        if not isinstance(state, dict) or any(not isinstance(v, (int, float)) for v in state.values()):
+            raise ValueError(f'файл состояния негоден: {state_file}')
+    except Exception as error:
+        emit(f'СЛЕПОТА настройки: {error}; реестр {registry}; код 2')
+        return 2
+
+    now_ms = time.time_ns() // 1000000
+    emit(f'ПОРОГ: {predel} мин сверх срока попытки (сейчас − deadline; удержание на 1 мин длиннее); '
+         f'реестр {registry}; ЗАМЕР now_ms={now_ms} uid={os.geteuid()}')
+    read, unread, current_keys, due, failed = [], [], set(), [], 0
+    for name, path in spisok:
+        try:
+            held, stale = inspect(path, now_ms)
+        except FileNotFoundError:
+            reason = 'каталог есть, ledger нет' if Path(path).parent.exists() else 'нет ни каталога, ни ledger'
+        except PermissionError:
+            reason = 'доступ запрещён'
+        except sqlite3.Error as error:
+            reason = f'ошибка SQLite: {error}'
+        except (OSError, ValueError) as error:
+            reason = str(error)
+        else:
+            read.append(path)
+            emit(f'LEDGER: {name}; {path}; удержано текущих {len(held)}; прежних поколений {stale}')
+            for h in held:
+                key = f'{path}|{h["receipt_id"]}'
+                current_keys.add(key)
+                if h['sverh_sroka_ms'] <= predel * 60000:
+                    emit(f'  удержана {h["receipt_id"]} {h["phase"]}, {h["sverh_sroka_ms"] // 1000} с — не дольше порога')
+                elif key in state:
+                    emit(f'  удержана {h["receipt_id"]} {h["phase"]}, {h["sverh_sroka_ms"] // 60000} мин — '
+                         f'тревога уже послана в {time.strftime("%H:%M:%SZ", time.gmtime(state[key]))}')
+                else:
+                    due.append((key, name, h))
+            continue
+        unread.append(path)
+        emit(f'СЛЕПОТА: {name}; {path}; {reason}; удержание НЕ УСТАНОВЛЕНО')
+
+    # Эпизод кончается, только если ledger ПРОЧИТАН и удержания в нём нет; непрочитанный — ключ хранится.
+    state = {k: v for k, v in state.items() if k in current_keys or k.split('|', 1)[0] not in read}
+    konec = time.monotonic() + BUDZHET_TREVOG_S
+    for key, name, h in due:
+        message = text(name, h, predel)
+        ostalos = konec - time.monotonic()
+        if ostalos < 1:
+            failed += 1
+            emit(f'ТРЕВОГА НЕ УШЛА: {name}; {h["receipt_id"]}; бюджет такта на тревоги ({BUDZHET_TREVOG_S} с) исчерпан — уйдёт следующим прогоном')
+            continue
+        try:
+            result = subprocess.run([alert, '--plain', '--', message], capture_output=True, text=True, timeout=min(100, ostalos))
+            ok = result.returncode == 0
+        except (OSError, subprocess.TimeoutExpired) as error:
+            ok, result = False, error
+        if ok:
+            state[key] = time.time()
+            emit(f'ТРЕВОГА: {name}; {h["receipt_id"]}; отправлена')
+        else:
+            failed += 1
+            emit(f'ТРЕВОГА НЕ УШЛА: {name}; {h["receipt_id"]}; {str(getattr(result, "returncode", result))[:120]}')
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    temp = state_file.with_name(state_file.name + '.new')
+    temp.write_text(json.dumps(state))
+    os.replace(temp, state_file)
+    code = 2 if unread else 1 if failed else 0
+    emit(f'ОХВАТ: прочитано {len(read)} ledger из {len(spisok)}; НЕ ПРОЧИТАНЫ: {"; ".join(unread) or "нет"}')
+    emit(f'ИТОГ: тревог отправлено {len(due) - failed}, не ушло {failed}; код {code}')
+    return code
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except Exception as error:  # падение — слепота, не успех
+        emit(f'СЛЕПОТА: {type(error).__name__}: {error}; код 2')
+        sys.exit(2)

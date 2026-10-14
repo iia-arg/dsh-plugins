@@ -1,0 +1,10 @@
+[Unit]
+Description=Таймер автопереключения подписки Claude (B-N-1806)
+
+[Timer]
+OnBootSec=7min
+OnUnitActiveSec=10min
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

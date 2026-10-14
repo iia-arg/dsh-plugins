@@ -1,0 +1,16 @@
+[Unit]
+Description=Метки мимо ворот выпуска: каждая метка деревьев реестра — со следом vypusk-tegom (B-N-1923)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/metki-mimo-vorot-watch
+# 1 = красные уже сказаны, 3 = новые красные (тревога ушла или нет — в выводе) — не падение юнита; 2 = слепота — failed.
+SuccessExitStatus=1 3
+# Только чтение чужих деревьев и журнала; пишет лишь своё состояние (сказанное, итог). root — потому что /opt/iskra 750 (DynamicUser не читает).
+StateDirectory=metki-mimo-vorot-watch
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+Nice=10
+TimeoutStartSec=5min

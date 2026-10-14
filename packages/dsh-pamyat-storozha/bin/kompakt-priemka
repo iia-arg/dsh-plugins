@@ -1,0 +1,249 @@
+#!/usr/bin/env python3
+"""Read-only acceptance of DSH/Codex compaction, never triggers a compact or repairs state."""
+import argparse,datetime as dt,hashlib,json,os,re,sqlite3,subprocess,sys
+from pathlib import Path
+OK='работает';BAD='не работает';UNKNOWN='не измерено'
+# Файл настройки пакета dsh-pamyat-storozha: строки «КЛЮЧ=значение», «#» — комментарий; берётся последнее вхождение.
+# Путь меняет DSH_PAMYAT_STOROZHA_CONF. Порядок: переменная → файл → нейтральное умолчание; нет ничего — СЛЕПОТА, код 2.
+# EN: Settings file of the dsh-pamyat-storozha package: "KEY=value" lines, a line starting with "#" is a
+#     comment; the last occurrence wins.
+#     DSH_PAMYAT_STOROZHA_CONF changes the path. Order: variable → file → neutral default; nothing at all —
+#     BLINDNESS, code 2.
+KONF=os.environ.get('DSH_PAMYAT_STOROZHA_CONF','/etc/dsh-pamyat-storozha/dsh-pamyat-storozha.conf')
+def _konf(key,default):
+    value=None
+    try:
+        with open(KONF,encoding='utf-8') as f:
+            for s in f:
+                s=s.strip()
+                if s and not s.startswith('#') and s.partition('=')[0].strip()==key:value=s.partition('=')[2]
+    except OSError:pass
+    # « #» в значении — громкий отказ, а не склеивание пояснения со значением: комментарий только с начала строки.
+    # Код 3 — провал для юнитов, считающих успехом 1 и 2 (omega) или 1 (writer).
+    # EN: " #" in a value is a loud refusal, not gluing the note into the value: a comment only from the line start.
+    #     Code 3 is a failure for units counting 1 and 2 (omega) or 1 (writer) as success.
+    if value is not None and (' #' in value or '\t#' in value):
+        print(f'ОТКАЗ: значение ключа {key} в {KONF} содержит « #» — комментарий допускается только с начала строки'); raise SystemExit(3)
+    value=value.strip() if value else value
+    return value or default
+ISHODY=_konf('KP_ISHODY','')  # каталог исходов компакта Codex: state.json и turns/ · EN: Codex compaction outcomes directory: state.json and turns/
+SHLYUZ=_konf('KP_SHLYUZ','')  # каталог шлюза агента, шаблон с {agent} · EN: agent gateway directory, template with {agent}
+
+def ms(value):
+    if isinstance(value,(int,float)):return int(value)
+    return int(dt.datetime.fromisoformat(value.replace('Z','+00:00')).timestamp()*1000)
+def iso(value):return dt.datetime.fromtimestamp(value/1000,dt.timezone.utc).isoformat()
+def body(blocks):
+    if isinstance(blocks,str):return blocks
+    return '\n'.join(b.get('text','') for b in (blocks or []) if b.get('type')=='text')
+def key(message):return hashlib.sha256((message.get('role','user')+'\0'+body(message.get('content'))).encode()).hexdigest()[:32]
+def read_rows(path,zstd=False):
+    if path.stat().st_size>128*1024*1024:raise ValueError('input >128 MiB')
+    raw=subprocess.check_output(['zstd','-dc','--long=27','--',str(path)],stderr=subprocess.PIPE,timeout=20) if zstd else path.read_bytes()
+    if len(raw)>256*1024*1024 or not raw.endswith(b'\n'):raise ValueError('oversize or incomplete input')
+    return [json.loads(l) for l in raw.splitlines() if l.strip()]
+def dbrows(path,query,args=()):
+    with sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True,timeout=5) as db:
+        db.row_factory=sqlite3.Row;return [dict(x) for x in db.execute(query,args)]
+# Дом и семейство берём из реестра; имя не определяет расположение или движок.
+# DSH 0.1.7+/0.2.0 пишет журнал новым ПОКОЛЕНИЕМ в session.vN.jsonl(.zstd) рядом со старым session.jsonl(.zstd),
+# а старый замирает (dsh-session-format 0.2.0 :474 «session.v${N}.jsonl»). Читаем в каждом каталоге сессии ТОЛЬКО новейшее
+# поколение. Имена — точные (копии вида session.jsonl.zstd.bak-… не подходят: урок 22.08).
+# EN: Home and family come from the registry; the name does not determine location or engine.
+#     DSH 0.1.7+/0.2.0 writes the log as a new GENERATION in session.vN.jsonl(.zstd) next to the old
+#     session.jsonl(.zstd), and the old one freezes (dsh-session-format 0.2.0 :474 "session.v${N}.jsonl"). In
+#     each session directory we read ONLY the newest generation. Names are exact (copies like
+#     session.jsonl.zstd.bak-… do not match: lesson of 22.08).
+POKOLENIE_ZHURNALA=re.compile(r'^session(?:\.v([1-9][0-9]*))?\.jsonl(\.zstd)?$')
+def novejshie_pokoleniya(puti,tolko_zstd=False):
+    luchshee={}
+    for p in puti:
+        m=POKOLENIE_ZHURNALA.match(p.name)
+        if not m or (tolko_zstd and not m.group(2)):continue
+        k=(int(m.group(1) or 0),1 if m.group(2) else 0)
+        if p.parent not in luchshee or k>luchshee[p.parent][0]:luchshee[p.parent]=(k,p)
+    return sorted(p for _,p in luchshee.values())
+
+def pole_reestra(agent,pole):
+    r=subprocess.run(['/usr/local/bin/agent-registry','pole',agent,pole,'--json'],capture_output=True,text=True,timeout=10)
+    if r.returncode:raise ValueError(f'реестр {agent}.{pole}: '+(r.stderr or r.stdout).strip()[:150])
+    try:return json.loads(r.stdout)
+    except ValueError as e:raise ValueError(f'реестр {agent}.{pole}: негодный JSON') from e
+
+def dom_i_semejstvo(agent):
+    dom=pole_reestra(agent,'dom')
+    if not isinstance(dom,str) or not dom.strip() or not Path(dom).is_absolute() or Path(dom)==Path('/'):
+        raise ValueError(f'реестр {agent}.dom: нужен непустой абсолютный дом, не /')
+    raskladka=pole_reestra(agent,'raskladka')
+    family=raskladka.get('semejstvo') if isinstance(raskladka,dict) else None
+    if family not in ('codex','sdk-claude'):raise ValueError(f'реестр {agent}.raskladka: неизвестное семейство {family!r}')
+    return Path(dom),family
+
+def load(agent,since,until):
+    home,family=dom_i_semejstvo(agent)
+    facts=dict(agent=agent,family=family,since=since,until=until,journals=[],codex=[],log=[],memory=[],knowledge=[],turns=[],problems=[],coverage={})
+    def problem(part,e):facts['problems'].append(part+': '+type(e).__name__+': '+str(e)[:200])
+    paths=novejshie_pokoleniya((home/'.dsh/sessions').rglob('session*.jsonl.zstd'),tolko_zstd=True);facts['coverage']['dsh_files']=len(paths)
+    if not paths:problem('DSH',ValueError('no journals'))
+    for p in paths:
+        try:
+            rows=read_rows(p,True);header=rows[0]
+            if header.get('type')!='session':raise ValueError('no session header')
+            events=[e for e in rows[1:] if isinstance(e.get('time'),(int,float)) and e['time']<=until]
+            facts['journals'].append(dict(path=str(p),sid=header['id'],created=header['createdAt'],events=events))
+        except (OSError,ValueError,subprocess.SubprocessError,KeyError) as e:problem(str(p),e)
+    facts['coverage']['dsh_read']=len(facts['journals'])
+    if family=='codex':
+        if not ISHODY or not SHLYUZ:raise ValueError(f'Codex: не заданы ключи KP_ISHODY и KP_SHLYUZ в {KONF}')
+        bindings={}
+        try:
+            state=json.loads((Path(ISHODY)/'state.json').read_text());bindings=state.get('bindings',{}).get(agent,{})
+        except (OSError,ValueError) as e:problem('historical bindings',e)
+        try:
+            mappings=dbrows(SHLYUZ.replace('{agent}',agent)+'/sessii.db','SELECT kluch,sessionId FROM sessions');mp={}
+            for r in mappings:mp.setdefault(r['kluch'],set()).add(r['sessionId'])
+            for journal in facts['journals']:
+                identity=journal['path']+'#'+str(journal['created'])
+                for e in journal['events']:
+                    if e['type']!='user/message':continue
+                    for uuid in mp.get(key(e['data']),[]):
+                        ids=bindings.setdefault(uuid,[])
+                        if identity not in ids:ids.append(identity)
+        except (OSError,ValueError,sqlite3.Error,KeyError) as e:problem('gateway map',e)
+        facts['coverage']['bound_uuids']=len(bindings);facts['coverage']['rollouts_read']=0
+        if not bindings:problem('Codex',ValueError('no verified bindings'))
+        for uuid,identities in bindings.items():
+            try:
+                if len(identities)!=1 or not re.fullmatch(r'[a-fA-F0-9-]{36}',uuid):raise ValueError('ambiguous/invalid binding')
+                files=list((Path(SHLYUZ.replace('{agent}',agent))/'codex-home/sessions').rglob('*-'+uuid+'.jsonl'))
+                if len(files)!=1:raise ValueError('expected one rollout, found '+str(len(files)))
+                rows=read_rows(files[0]);facts['coverage']['rollouts_read']+=1
+                if rows[0].get('payload',{}).get('id')!=uuid:raise ValueError('rollout identity mismatch')
+                for line,r in enumerate(rows,1):
+                    if r.get('type')=='compacted' and since<=ms(r['timestamp'])<=until:facts['codex'].append(dict(time=ms(r['timestamp']),uuid=uuid,path=str(files[0]),line=line,identity=identities[0]))
+            except (OSError,ValueError,KeyError) as e:problem('Codex '+uuid,e)
+    else:facts['coverage']['codex']='не применяется: семейство '+family
+    try:
+        memory=home/'pamyat/pamyat.db'
+        facts['memory']=dbrows(memory,"SELECT id,klass,istochnik,sozdano,soderzhim FROM zapisi WHERE agent=? AND klass LIKE 'svodka-kompakcii%'",(agent,))
+        facts['knowledge']=dbrows(memory,'SELECT id,klass,istochnik,sozdano FROM zapisi WHERE agent=?',(agent,))
+        facts['coverage']['memory_read']=True;facts['coverage']['memory_rows']=len(facts['knowledge'])
+    except (OSError,sqlite3.Error) as e:problem('memory',e)
+    for bootstrap in [False,True]:
+        cmd=['journalctl','-u',agent+'.service','-o','json','--no-pager']
+        if bootstrap:cmd+=['--grep','подъём: класс','-n','100']
+        else:cmd+=['--since',iso(since),'--until',iso(until)]
+        try:
+            r=subprocess.run(cmd,capture_output=True,text=True,timeout=30);r.check_returncode();count=0
+            for line in r.stdout.splitlines():
+                e=json.loads(line);count+=1;text=e.get('MESSAGE','')
+                if not isinstance(text,str):continue
+                if re.match(r'^\[(?:kompakt-dsh|kompakt-nash|dsh-pamyat-secretary|dsh-pamyat-restore)(?:\s|\])',text):facts['log'].append(dict(time=int(e['__REALTIME_TIMESTAMP'])/1000,pid=e.get('_PID'),text=text))
+            facts['coverage']['startup_rows' if bootstrap else 'journal_rows']=count
+            if not bootstrap and not count:problem('journal',ValueError('0 rows in window'))
+        except (OSError,ValueError,KeyError,subprocess.SubprocessError) as e:problem('journal',e)
+    facts['log']=sorted({(e['time'],e['pid'],e['text']):e for e in facts['log']}.values(),key=lambda e:e['time'])
+    if family=='codex':
+        root=Path(ISHODY)/'turns';files=sorted(root.glob(agent+'.jsonl*'));facts['coverage']['sensor_files']=len(files)
+        if not files:problem('sensor',ValueError('no turn logs'))
+        for p in files:
+            try:facts['turns']+=read_rows(p)
+            except (OSError,ValueError) as e:problem('sensor '+str(p),e)
+    return facts
+
+def mark(status,evidence,**data):return dict(status=status,evidence=evidence,**data)
+def inspect(f):
+    episodes=[]
+    for j in f['journals']:
+        events=j['events'];ids={e.get('data',{}).get('compactionId') for e in events if e['type'].startswith('compaction/') and f['since']<=e['time']<=f['until'] and e.get('data',{}).get('compactionId')}
+        for cid in ids:
+            parts={k:[e for e in events if e['type']=='compaction/'+k and e.get('data',{}).get('compactionId')==cid] for k in ['start','summary','end']}
+            episode={'session':j['sid'],'created':j['created'],'file':j['path'],'compactionId':cid,'checks':{k:mark(UNKNOWN,'нет подтверждённой цепочки для этого звена') for k in ['chain','summary','memory','secretary','restore']}}
+            ep=episode['checks'];episodes.append(episode)
+            if any(len(parts[k])!=1 for k in parts):ep['chain']=mark(UNKNOWN,'start/summary/end не образуют единственную тройку',counts={k:len(v) for k,v in parts.items()});continue
+            start,summary,end=[parts[k][0] for k in ['start','summary','end']];episode.update(time=summary['time'],start=start['time'],end=end['time'],seqs=[start['seq'],summary['seq'],end['seq']])
+            if 'error' in end['data']:ep['chain']=mark(BAD,'compaction/end содержит error');continue
+            if not start['seq']<summary['seq']<end['seq']:ep['chain']=mark(BAD,'порядок seq нарушен');continue
+            ep['chain']=mark(OK,'start/summary/end: 3/3, error отсутствует')
+            text=body(summary['data'].get('summary'));mode=bool(re.match(r'^\s*\[MODE=(ACTIVE|DIALOG)\][ \t]*\r?\n\s*\S',text))
+            ep['summary']=mark(OK if mode else BAD,'MODE и тело присутствуют' if mode else 'сводка без MODE или без тела',checked=1,expected=1,chars=len(text),utf16=len(text.encode('utf-16-le'))//2,provider=summary['data'].get('provider'))
+            seqs=summary['data'].get('shadowedSeqs') or []
+            if not seqs:ep['memory']=mark(UNKNOWN,'shadowedSeqs отсутствуют');continue
+            source=j['sid']+'#'+str(min(seqs))+('-'+str(max(seqs)) if min(seqs)!=max(seqs) else '')
+            episode['source']=source
+            candidates=[r for r in f['memory'] if r['istochnik']==source and summary['time']<=r['sozdano']<=f['until']]
+            if len(candidates)==1:
+                record=candidates[0];ep['memory']=mark(OK if record['klass']=='svodka-kompakcii' else BAD,'совпали источник и время; текущий класс и равенство тела указаны',body_matches=record['soderzhim']==text,matches=1,expected=1,id=record['id'],klass=record['klass'],istochnik=source,created=record['sozdano'])
+            else:record=None;ep['memory']=mark(BAD if not candidates and f['coverage'].get('memory_read') else UNKNOWN,'запись по источнику и времени отсутствует либо неоднозначна',matches=len(candidates),expected=1)
+            writers=[l for l in f['log'] if 'сводка компакции ЗАПИСАНА' in l['text'] and re.search(r'источник '+re.escape(source)+r'(?:,|\s|$)',l['text']) and l['time']>=summary['time']]
+            if len(writers)!=1:ep['secretary']=mark(UNKNOWN,'нет единственной строки записи с источником',writer_lines=len(writers),expected=1);ep['restore']=mark(UNKNOWN,'не установлен процесс-писатель');continue
+            writer=writers[0];pid=writer['pid'];next_summary=min([e['time'] for q in f['journals'] for e in q['events'] if e['type']=='compaction/summary' and e['time']>summary['time']]+[f['until']+1])
+            logs=[l for l in f['log'] if l['pid']==pid and summary['time']<=l['time']<next_summary]
+            calls=[l for l in logs if 'дистилляция: ПОЗВАНА' in l['text']];ends=[l for l in logs if 'дистилляция: ЗАКОНЧЕНА' in l['text']]
+            inputs=[l for l in logs if 'источник дистилляции: события сессии '+j['sid'] in l['text']]
+            startup=[l for l in f['log'] if l['pid']==pid and l['time']<=summary['time'] and 'подъём: класс' in l['text']]
+            pass_key=bool(startup and 'ключ из pass ' in startup[-1]['text']);incomplete=any('срез сессии неполон' in l['text'] for l in logs)
+            itog=re.search(r'ЗАКОНЧЕНА — исход ([^,]+), знаний (\d+)',ends[0]['text']) if len(ends)==1 else None
+            knowledge=[r for r in f['knowledge'] if (r.get('istochnik') or '').startswith(source+'#okno') and summary['time']<=r['sozdano']<=f['until']]
+            if incomplete or (len(ends)==1 and 'ОТКАЗ' in ends[0]['text']):status=BAD
+            elif itog and itog[1]=='ok' and f['coverage'].get('memory_read') and int(itog[2])!=len(knowledge):status=BAD
+            elif len(calls)==len(ends)==1 and ends[0]['time']>=calls[0]['time'] and inputs and pass_key and itog and itog[1]=='ok' and int(itog[2])==len(knowledge):status=OK
+            else:status=UNKNOWN
+            ep['secretary']=mark(status,'связь по source, PID и непересекающемуся интервалу до следующей summary; не по соседству строк',called=len(calls),finished=len(ends),session_source_lines=len(inputs),pass_key=pass_key,incomplete=incomplete,outcome=itog[1] if itog else None,knowledge_reported=int(itog[2]) if itog else None,knowledge_stored=len(knowledge))
+            restores=[l for l in logs if record and l['time']>=end['time'] and f'восстановление после компакта вставлено в сессию {j["sid"]}: запись {record["id"]},' in l['text']]
+            ep['restore']=mark(OK if restores else UNKNOWN,'вставка того же ID после end' if restores else 'вставка того же ID после end не подтверждена',matches=len(restores))
+            model_lines=[l for l in f['log'] if l['pid']==pid and start['time']<=l['time']<=writer['time'] and 'наша сводка:' in l['text']]
+            if len(model_lines)==1:
+                numbers=re.search(r'наша сводка: (\d+) зн\. из (\d+) зн\.',model_lines[0]['text'])
+                if numbers:ep['summary'].update(reported_length=int(numbers[1]),input_length=int(numbers[2]),ratio=int(numbers[1])/int(numbers[2]) if int(numbers[2]) else None)
+            barriers=[l for l in f['log'] if l['pid']==pid and start['time']<=l['time']<=end['time'] and 'сводка нарушает договор промта' in l['text']];ep['summary']['barrier_lines']=len(barriers)
+            if barriers:ep['summary'].update(status=OK,evidence='барьер отклонил нашу сводку; сохранена сводка fallback, её качество отдельно не доказано')
+            elif summary['data'].get('provider')!='dsh-pamyat-kompakt' and mode:ep['summary'].update(status=UNKNOWN,evidence='MODE есть, но происхождение нашей сводки не подтверждено')
+            turns=[r for r in f['turns'] if r.get('session')==j['sid'] and r.get('created')==j['created'] and not r.get('error')]
+            before=sorted([r for r in turns if r['time']<=start['time']],key=lambda r:r['time']);after=sorted([r for r in turns if r['time']>=end['time']],key=lambda r:r['time'])
+            episode['sensor']={'before':{k:before[-1].get(k) for k in ['turn','time','tokens','threshold','window']} if before else None,'after':{k:after[0].get(k) for k in ['turn','time','tokens','threshold','window']} if after else None}
+            if f['family']=='codex':
+                ep['sensor']=mark(OK if before and after and before[-1].get('threshold') is not None and after[0].get('threshold') is not None else UNKNOWN,'срезы соседних границ turn/end вокруг компакта',matched=int(bool(before))+int(bool(after)),expected=2)
+    for c in f['codex']:
+        points=sorted([r for r in f['turns'] if r.get('uuid')==c['uuid'] and not r.get('error')],key=lambda r:r['time'])
+        before=[r for r in points if r['time']<c['time']];after=[r for r in points if r['time']>c['time']]
+        c['sensor_before']={k:before[-1].get(k) for k in ['time','turn','tokens','threshold','window']} if before else None
+        c['sensor_after']={k:after[0].get(k) for k in ['time','turn','tokens','threshold','window']} if after else None
+        c['sensor_pair_proven']=bool(before and after and before[-1]['session']==after[0]['session'] and before[-1]['created']==after[0]['created'] and after[0]['turn']==before[-1]['turn']+1)
+    episodes.sort(key=lambda x:x.get('time',0));has_dsh=any(e['checks']['chain']['status']==OK for e in episodes);has_codex=bool(f['codex']);origin='оба' if has_dsh and has_codex else 'платформа' if has_dsh else 'Codex' if has_codex else 'никто'
+    starts=[(e['start'],'платформа') for e in episodes if 'start'in e and e['checks']['chain']['status']==OK]+[(c['time'],'Codex') for c in f['codex']]
+    states=[v['status'] for e in episodes for v in e['checks'].values()]
+    waiting={k:mark(UNKNOWN,'платформенный компакт в окне не подтверждён',matched=0,expected=1) for k in ['chain','summary','memory','secretary','restore']} if not episodes else {}
+    states.extend(v['status'] for v in waiting.values())
+    code=1 if BAD in states else 2 if f['problems'] or not episodes or UNKNOWN in states else 0
+    # Codex alone or alongside DSH is not proof that our platform chain won first.
+    if has_codex and code==0:code=2
+    return dict(waiting=waiting,totals={'episodes':len(episodes),'codex_events':len(f['codex']),'checks':len(states),'working':states.count(OK),'failed':states.count(BAD),'unmeasured':states.count(UNKNOWN)},agent=f['agent'],since=iso(f['since']),until=iso(f['until']),observed=origin,first_observed=min(starts)[1] if starts else None,first_definition='start завершённой DSH-цепочки против Codex compacted; времена указаны отдельно',episodes=episodes,codex=f['codex'],coverage=f['coverage'],problems=f['problems'],code=code)
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('agent',help='имя агента из agent-registry');p.add_argument('--since',help='UTC ISO8601, default today 00:00Z');p.add_argument('--json',action='store_true');args=p.parse_args()
+    now=dt.datetime.now(dt.timezone.utc)
+    if args.since:
+        try: stamp=dt.datetime.fromisoformat(args.since.replace('Z','+00:00'))
+        except ValueError:p.error('since must be UTC ISO8601')
+        if stamp.tzinfo is None or stamp.utcoffset()!=dt.timedelta(0):p.error('since must explicitly specify UTC (Z or +00:00)')
+    since=ms(args.since) if args.since else int(now.replace(hour=0,minute=0,second=0,microsecond=0).timestamp()*1000)
+    if since>int(now.timestamp()*1000):p.error('since is in future')
+    try:result=inspect(load(args.agent,since,int(now.timestamp()*1000)))
+    except (OSError,ValueError,KeyError,TypeError,sqlite3.Error,subprocess.SubprocessError) as e:result={'agent':args.agent,'code':2,'error':type(e).__name__+': '+str(e)[:200]}
+    if args.json:print(json.dumps(result,ensure_ascii=False,indent=2))
+    else:
+        print('агент:',args.agent,'окно:',result.get('since'),result.get('until'));print('наблюдено:',result.get('observed','не измерено'),'первым:',result.get('first_observed'))
+        print('покрытие:',json.dumps(result.get('coverage',{}),ensure_ascii=False))
+        for name,v in result.get('waiting',{}).items():print(' ',name,v['status'],v['evidence'],'0/1')
+        for e in result.get('episodes',[]):
+            print('компакт:',e['compactionId'],'сессия:',e['session'],'seq:',e.get('seqs'),'источник:',e.get('source'))
+            for name,v in e['checks'].items():print(' ',name,v['status'],json.dumps({k:x for k,x in v.items() if k!='status'},ensure_ascii=False))
+            print('  датчик:',json.dumps(e.get('sensor'),ensure_ascii=False))
+        for e in result.get('codex',[]):print('Codex:',json.dumps(e,ensure_ascii=False))
+        for e in result.get('problems',[]):print('СЛЕПОТА:',e)
+        if 'error'in result:print('СЛЕПОТА:',result['error'])
+        print('знаменатели:',json.dumps(result.get('totals',{}),ensure_ascii=False))
+        print(f"ИТОГ {args.agent}: код {result['code']} — "+{0:'все звенья работают',1:'есть неработающее звено',2:'не измерено/слепота'}[result['code']])
+    return result['code']
+if __name__=='__main__':sys.exit(main())

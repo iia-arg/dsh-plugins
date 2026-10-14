@@ -1,0 +1,8 @@
+[Unit]
+Description=Сторож компакта: события компакта и пороги занятости окна в @arg_dsh_alert_bot (числа порогов — ТОЛЬКО в самом скрипте, здесь намеренно не дублируются: 07.09 они менялись 85/90 -> 78/82, и эта строка врала. 06.09.2026, поручение Александра)
+Documentation=man:journalctl(1)
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/dsh-compact-watch

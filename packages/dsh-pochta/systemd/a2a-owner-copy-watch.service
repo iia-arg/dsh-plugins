@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch delayed A2A owner question copies
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/a2a-owner-copy-watch
+StateDirectory=a2a-owner-copy-watch
+StateDirectoryMode=0700
+UMask=0077
+TimeoutStartSec=90
+SuccessExitStatus=1

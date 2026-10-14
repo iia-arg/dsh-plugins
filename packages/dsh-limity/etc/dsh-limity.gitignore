@@ -1,0 +1,4 @@
+# r7 B-N-1776: учёт /etc/dsh-limity (как /etc/agent-registry) — признак: git -C /etc/dsh-limity status --porcelain -uall → 0 строк.
+# Страховки команды (podpiski.json.<время>.bak) и её временные файлы — вне учёта: прежние редакции живут в .bak, не в git.
+*.bak
+.podpiski.json.*

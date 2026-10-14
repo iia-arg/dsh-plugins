@@ -1,18 +1,15 @@
-/**
- * Стенд СЧЁТЧИКА КАСАНИЙ (Э8.3 П1) — по воротам приёмки В1–В3, В9.
- *
- * 🔴 РАЗНЫЕ БАЗЫ НА РАЗНЫЕ ВОРОТА (поправка автора предмета, принятая на рубеже).
- * Проба миграции добавляет записи; проба идемпотентности считает их же. На одной базе
- * вторая покраснела бы на ИСПРАВНОМ поведении. Признак пары: порча одного критерия
- * меняет число, которое проверяет другой.
- *
- * ЧЕГО ЭТОТ СТЕНД НЕ ЛОВИТ: он НЕ проверяет, что касание ставит тот, кто выдаёт агенту, —
- * это свойство ВЫЗЫВАЮЩЕГО (бюджет), и проверяется у него. Здесь проверяется, что чужой
- * повод отвергается, а не что все зовущие называют повод честно.
- */
+// RU: Проверяем счётчик касаний. Миграция и идемпотентность используют разные базы: вставки первой не должны менять счёт второй. Отвергаем чужой повод; честность всех вызывающих и факт касания при выдаче проверяются у потребителя.
+// EN: Test the touch counter. Migration and idempotency use separate databases so inserts in one do not change the other’s count. Reject invalid reasons; caller honesty and touches on delivery are tested in the consumer.
 import { mkdtempSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+// RU: Каждый mkdtemp создаём через vremennyj(): уборка выполняется при обычном выходе, исключении, process.exit и SIGTERM/SIGINT, включая timeout 120. SIGKILL не перехватывается; временные файлы дочернего процесса убирает сам дочерний процесс.
+// EN: Create every mkdtemp through vremennyj(): cleanup runs on normal exit, exceptions, process.exit, and SIGTERM/SIGINT, including timeout 120. SIGKILL cannot be intercepted; a child process must clean up its own temporary files.
+import { mkdtempSync as mkdtempSync_, rmSync as rmSync_ } from 'node:fs'
+const VREMENNYE = []
+const vremennyj = (...a) => { const k = mkdtempSync_(...a); VREMENNYE.push(k); return k }
+process.on('exit', () => { for (const k of VREMENNYE) rmSync_(k, { recursive: true, force: true }) })
+process.on('SIGTERM', () => process.exit(143)); process.on('SIGINT', () => process.exit(130))
 
 let otkrytHranilishche;
 try {
@@ -23,7 +20,10 @@ try {
   process.exit(2)
 }
 
-let vsego = 0, proshlo = 0;
+let vsego = 0, proshlo = 0, slepyh = 0;
+// RU: A-N-1948 №3 (№9): проба, чьё условие на этой машине не выполнимо, объявляет СЛЕПОТУ (код 2 стенда), а не красное и не зелёное.
+// EN: A-N-1948 №3 (№9): a probe whose precondition cannot hold here declares BLINDNESS (stand exit 2), neither red nor green.
+const slepaya = (pochemu) => Object.assign(new Error(pochemu), { slepota: true });
 const proba = (imya, f) => {
   vsego++;
   try {
@@ -31,10 +31,17 @@ const proba = (imya, f) => {
     if (vernulos && typeof vernulos.then === 'function') {
       throw new Error('тело пробы ОЖИДАЮЩЕЕ, а прогонщик синхронный: вынеси ожидание наружу');
     }
-    if (typeof vernulos === 'string') throw new Error(vernulos);
-    if (vernulos === false) throw new Error('тело пробы вернуло false без причины');
+    // RU: Тело пробы должно бросить ошибку или вернуть undefined. Любое другое значение, включая строку, false, 0, null и объект, означает отказ: игнорирование возврата даёт ложный успех.
+    // EN: The probe body must throw an error or return undefined. Any other value, including a string, false, 0, null, or an object, means failure: ignoring returns produces false success.
+    if (vernulos !== undefined && vernulos !== true) {
+      throw new Error('тело пробы ВЕРНУЛО «' + String(vernulos).slice(0, 60) +
+                      '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы');
+    }
     proshlo++; console.log('  ✅ ' + imya);
-  } catch (e) { console.log('  ❌ ' + imya + ' — ' + String(e.message).slice(0, 160)); }
+  } catch (e) {
+    if (e?.slepota) { slepyh++; console.log('  ⚠️  СЛЕПОТА ' + imya + ' — ' + String(e.message).slice(0, 160)); return; }
+    console.log('  ❌ ' + imya + ' — ' + String(e.message).slice(0, 160));
+  }
 };
 const dolzhnoUpast = (kod, f) => {
   try { f(); } catch (e) {
@@ -44,10 +51,11 @@ const dolzhnoUpast = (kod, f) => {
   throw new Error('не упало, а должно было (' + kod + ')');
 };
 
-const katalog = mkdtempSync(join(tmpdir(), 'pamyat-kasaniya-'));
+const katalog = vremennyj(join(tmpdir(), 'pamyat-kasaniya-'));
 const svezhaya = (imya) => join(katalog, imya + '.db');
 
-/** База «как до миграции касаний»: записи есть, полей нет. */
+// RU: База до миграции касаний: записи есть, полей касаний нет.
+// EN: Database before touch migration: records exist, touch fields do not.
 function bazaBezKasanij(put, skolko) {
   const h = otkrytHranilishche(put);
   for (let i = 0; i < skolko; i++) {
@@ -55,17 +63,21 @@ function bazaBezKasanij(put, skolko) {
   }
   h.baza.exec('ALTER TABLE zapisi DROP COLUMN kasanij');
   h.baza.exec('ALTER TABLE zapisi DROP COLUMN poslednee_kasanie');
+  h.baza.exec('ALTER TABLE zapisi DROP COLUMN poslednyaya_vydacha');   /* RU: Поле выдачи добавляется той же миграцией.
+ * EN: The same migration adds the delivery field.
+ */
   h.zakryt();
 }
 
 console.log('СТЕНД СЧЁТЧИКА КАСАНИЙ');
 
-// ═══ В1: миграция ═══
-proba('В1 миграция добавила ОБА поля', () => {
+// RU: Проверяем миграцию.
+// EN: Test migration.
+proba('В1 миграция добавила ВСЕ поля касаний (kasanij, poslednee_kasanie, poslednyaya_vydacha)', () => {
   const put = svezhaya('v1'); bazaBezKasanij(put, 5);
   const h = otkrytHranilishche(put);
   const stolbcy = h.baza.prepare('PRAGMA table_info(zapisi)').all().map((r) => r.name);
-  const net = ['kasanij', 'poslednee_kasanie'].filter((k) => !stolbcy.includes(k));
+  const net = ['kasanij', 'poslednee_kasanie', 'poslednyaya_vydacha'].filter((k) => !stolbcy.includes(k));
   h.zakryt();
   if (net.length) return 'после миграции нет полей: ' + net.join(', ');
 });
@@ -73,11 +85,12 @@ proba('В1 миграция добавила ОБА поля', () => {
 proba('В1 старые записи: касаний 0, последнее касание NULL', () => {
   const put = svezhaya('v1b'); bazaBezKasanij(put, 4);
   const h = otkrytHranilishche(put);
-  const r = h.baza.prepare('SELECT COUNT(*) n, SUM(kasanij) s, SUM(poslednee_kasanie IS NULL) nul FROM zapisi').get();
+  const r = h.baza.prepare('SELECT COUNT(*) n, SUM(kasanij) s, SUM(poslednee_kasanie IS NULL) nul, SUM(poslednyaya_vydacha IS NULL) vnul FROM zapisi').get();
   h.zakryt();
   if (Number(r.n) !== 4) return 'записей стало ' + r.n + ', а было 4 — миграция тронула данные';
   if (Number(r.s) !== 0) return 'сумма касаний ' + r.s + ', ожидалось 0';
   if (Number(r.nul) !== 4) return 'poslednee_kasanie не NULL у ' + (4 - Number(r.nul)) + ' записей';
+  if (Number(r.vnul) !== 4) return 'poslednyaya_vydacha не NULL у ' + (4 - Number(r.vnul)) + ' записей — выданными до миграции их считать нельзя';
 });
 
 proba('В1 повторное открытие НЕ обнуляет накопленное (идемпотентность)', () => {
@@ -87,25 +100,49 @@ proba('В1 повторное открытие НЕ обнуляет накоп�
   h1.otmetitKasanie({ ids, povod: 'vydacha-agentu' });
   h1.otmetitKasanie({ ids: [ids[0]], povod: 'vydacha-agentu' });
   const do_ = h1.baza.prepare('SELECT SUM(kasanij) s FROM zapisi').get().s;
+  const vdo = h1.baza.prepare('SELECT SUM(poslednyaya_vydacha IS NOT NULL) v FROM zapisi').get().v;
   h1.zakryt();
-  const h2 = otkrytHranilishche(put);   // вторая миграция на той же базе
+  const h2 = otkrytHranilishche(put);   /* RU: Повторяем миграцию на той же базе.
+ * EN: Repeat migration on the same database.
+ */
   const posle = h2.baza.prepare('SELECT SUM(kasanij) s FROM zapisi').get().s;
+  const vposle = h2.baza.prepare('SELECT SUM(poslednyaya_vydacha IS NOT NULL) v FROM zapisi').get().v;
   h2.zakryt();
+  if (Number(vdo) !== 3 || Number(vposle) !== 3) return 'момент выдачи: до повторной миграции у ' + vdo + ', после у ' + vposle + ' записей, ожидалось 3 и 3';
   if (Number(do_) !== 4) return 'до повторного открытия сумма касаний ' + do_ + ', ожидалось 4';
   if (Number(posle) !== Number(do_)) return 'повторная миграция изменила касания: было ' + do_ + ', стало ' + posle;
 });
 
-// ═══ В2: что есть касание ═══
+// RU: Проверяем определение касания.
+// EN: Test what counts as a touch.
 proba('В2 касание с поводом «выдача агенту» растит счётчик и ставит время', () => {
   const put = svezhaya('v2'); const h = otkrytHranilishche(put);
   const id = h.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'предмет' });
   const kogda = 1757000000000;
   const itog = h.otmetitKasanie({ ids: [id], povod: 'vydacha-agentu', kogda });
-  const r = h.baza.prepare('SELECT kasanij k, poslednee_kasanie p FROM zapisi WHERE id = ?').get(id);
+  const r = h.baza.prepare('SELECT kasanij k, poslednee_kasanie p, poslednyaya_vydacha v FROM zapisi WHERE id = ?').get(id);
   h.zakryt();
   if (itog.otmecheno !== 1) return 'отмечено ' + itog.otmecheno + ', ожидалась 1';
   if (Number(r.k) !== 1) return 'касаний ' + r.k + ', ожидалось 1';
   if (Number(r.p) !== kogda) return 'время касания ' + r.p + ', ожидалось ' + kogda;
+  if (Number(r.v) !== kogda) return 'момент выдачи ' + r.v + ', ожидалось ' + kogda + ' (touch-policy: выдача пишет poslednyaya_vydacha)';
+});
+
+// RU: Законный повод povtor-sudom принимается самим ядром: секретарь признал статью повтором записи. Проверка не ограничивается стендом потребителя.
+// EN: The core itself accepts the valid povtor-sudom reason: the secretary judged an article to repeat a record. The check is not confined to the consumer’s suite.
+proba('В2а касание с поводом «povtor-sudom» (repeat-policy) растит счётчик и ставит время', () => {
+  const put = svezhaya('v2p'); const h = otkrytHranilishche(put);
+  const id = h.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'предмет' });
+  const kogda = 1757000000123;
+  const itog = h.otmetitKasanie({ ids: [id], povod: 'povtor-sudom', kogda });
+  const r = h.baza.prepare('SELECT kasanij k, poslednee_kasanie p, poslednyaya_vydacha v FROM zapisi WHERE id = ?').get(id);
+  h.zakryt();
+  if (itog.otmecheno !== 1) return 'отмечено ' + itog.otmecheno + ', ожидалась 1';
+  if (Number(r.k) !== 1) return 'касаний ' + r.k + ', ожидалось 1';
+  if (Number(r.p) !== kogda) return 'время касания ' + r.p + ', ожидалось ' + kogda;
+  // RU: Повтор судом не считается выдачей: иначе use можно засчитать без повторной выдачи.
+  // EN: A judged repeat is not a delivery; otherwise use could be counted without another delivery.
+  if (r.v !== null) return 'повтор судом записал момент выдачи ' + r.v + ' — должен оставить NULL';
 });
 
 proba('В2 ЧУЖОЙ повод — ОТКАЗ, и счётчик не тронут', () => {
@@ -131,8 +168,8 @@ proba('В2 пустой список — НЕ отказ и не ошибка', 
 proba('В2 повтор id В ОДНОМ ходе греет ОДИН раз, а не вдвое', () => {
   const put = svezhaya('v2d'); const h = otkrytHranilishche(put);
   const id = h.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'предмет' });
-  // Так выглядит живой случай: сводка компакта добавляется к отобранным отдельно и может
-  // совпасть с одной из них. Список приходит с дублем, ход при этом ОДИН.
+  // RU: Компактная сводка может дублировать выбранную запись: список содержит дубль, ход остаётся один.
+  // EN: A compact summary can duplicate a selected record: the list contains a duplicate, but there is still one turn.
   const itog = h.otmetitKasanie({ ids: [id, id, id], povod: 'vydacha-agentu' });
   const r = h.baza.prepare('SELECT kasanij k FROM zapisi WHERE id = ?').get(id);
   h.zakryt();
@@ -151,8 +188,11 @@ proba('В2 разные записи в одном ходе греются ка�
   if (Number(sum) !== 2) return 'сумма касаний ' + sum + ', ожидалось 2 — дедупликация съела не тот дубль';
 });
 
-// ═══ В3: отказ записи не ломает выдачу ═══
+// RU: Отказ записи касания не должен ломать выдачу.
+// EN: A failed touch write must not break delivery.
 proba('В3 база только на чтение: метод НЕ бросает, называет отказ', () => {
+  // RU: Под root chmod 0444 запись не запрещает — отказа не будет, и проба мерила бы не то. EN: under root chmod 0444 does not forbid writing.
+  if (process.getuid?.() === 0) throw slepaya('под root chmod 0444 не запрещает запись — отказ записи этой пробой не вызвать; гоняйте от обычной учётки');
   const put = svezhaya('v3'); const h = otkrytHranilishche(put);
   const id = h.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'предмет' });
   h.zakryt();
@@ -164,14 +204,17 @@ proba('В3 база только на чтение: метод НЕ бросае
   } catch (e) {
     chmodSync(put, 0o644);
     return 'метод БРОСИЛ при недоступной записи (' + e.code + ') — выдача агенту была бы разрушена';
-  } finally { try { ro.zakryt(); } catch { /* закрытие не предмет пробы */ } }
+  } finally { try { ro.zakryt(); } catch { /* RU: Закрытие базы не является предметом этой пробы.
+ * EN: Database closing is outside this probe’s subject.
+ */ } }
   chmodSync(put, 0o644);
   if (itog.otkaz === null) return 'запись в базу только для чтения прошла — проба меряет не то';
   if (itog.otkaz.code !== 'PAMYAT_KASANIE_NE_ZAPISANO') return 'код отказа ' + itog.otkaz.code;
   if (!itog.otkaz.pochemu) return 'отказ без причины: молчаливый отказ неотличим от «касаний не было»';
 });
 
-// ═══ В9: рубеж и сверка не трогаются ═══
+// RU: Рубеж и сверка остаются неизменными.
+// EN: The provenance boundary and verification remain unchanged.
 proba('В9 касание НЕ меняет происхождение и сверку', () => {
   const put = svezhaya('v9'); const h = otkrytHranilishche(put);
   const id = h.zapisat({ agent: 'stend', klass: 'zametka', soderzhim: 'предмет' });
@@ -200,5 +243,5 @@ proba('В9 статус записи НИЖЕ рубежа после касан
   }
 });
 
-console.log(`итог: ${proshlo} из ${vsego}`);
-process.exit(proshlo === vsego ? 0 : 1);
+console.log(`итог: ${proshlo} из ${vsego}` + (slepyh ? `, слепых ${slepyh}` : ''));
+process.exit(proshlo === vsego ? 0 : (proshlo + slepyh === vsego ? 2 : 1));

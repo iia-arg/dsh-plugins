@@ -1,0 +1,8 @@
+[Unit]
+Description=Срок сессий сайта Варвары — раз в сутки
+[Timer]
+OnCalendar=*-*-* 02:20:00 UTC
+RandomizedDelaySec=10m
+Persistent=yes
+[Install]
+WantedBy=timers.target

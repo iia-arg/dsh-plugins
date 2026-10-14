@@ -1,0 +1,10 @@
+[Unit]
+Description=Суточный читатель отказов · Daily refusal reader
+
+[Timer]
+OnCalendar=*-*-* 06:53:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

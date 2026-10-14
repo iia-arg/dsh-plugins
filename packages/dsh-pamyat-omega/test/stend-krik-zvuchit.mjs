@@ -1,10 +1,6 @@
 /**
- * Стенд звука: отказ провайдера должен быть СЛЫШЕН, а не только «доложен».
- *
- * Мерится конечный результат — строка в `stderr` отдельного процесса под
- * настоящим Context, а не факт вызова функции вывода. Причина в README,
- * раздел «Знаемое про вывод»: `ctx.logger` cordis 4.0.1 существует и вызов
- * проходит, но его сообщения ложатся в буфер, который никто не читает.
+ * RU: Стенд проверяет слышимый отказ по stderr отдельного процесса с настоящим Context, не по вызову логгера. ctx.logger cordis 4.0.1 существует, но без экспортёра DSH его буфер не служит свидетельством вывода.
+ * EN: Check an observable failure in stderr from a separate process with a real Context, not by observing a logger call. cordis 4.0.1 supplies ctx.logger, but without a DSH exporter its buffer is not evidence of output.
  */
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -12,9 +8,10 @@ import { dirname, join } from 'node:path';
 
 const zdes = dirname(fileURLToPath(import.meta.url));
 let vsego = 0, proshlo = 0;
+const sud = (v) => { if (v !== undefined && v !== true) throw new Error('тело пробы ВЕРНУЛО «' + String(v).slice(0, 60) + '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы. Проверка ПО УСТРОЙСТВУ, а не по перечню значений (06.09.2026)'); };
 const proba = (imya, f) => {
   vsego++;
-  try { f(); proshlo++; console.log('  ✅ ' + imya); }
+  try { sud(f()); proshlo++; console.log('  ✅ ' + imya); }
   catch (e) { console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 200)); }
 };
 
@@ -25,10 +22,8 @@ function podnyat(kod) {
   return { stderr: r.stderr ?? '', stdout: r.stdout ?? '' };
 }
 
-// 🔴 СЛЕПОТА, А НЕ РАСХОЖДЕНИЕ (03.09.2026). Без установленных зависимостей
-// дочерний процесс не поднимется вовсе, и первая же проба сообщила бы
-// «не поднялся» — код 1, то есть «предмет сломан». Это неправда: проверить
-// не удалось. Спрашиваем ОДИН раз и отвечаем словами с кодом 2.
+// RU: Отсутствие зависимостей проверяется один раз и даёт код 2: предмет не удалось проверить, а не доказана его поломка кодом 1.
+// EN: Check missing dependencies once and return code 2: the subject could not be tested, rather than claiming it broken with code 1.
 {
   const rProba = podnyat("import '@deepseek-ai/cordis';")
   if (/ERR_MODULE_NOT_FOUND/.test(rProba.stderr)) {

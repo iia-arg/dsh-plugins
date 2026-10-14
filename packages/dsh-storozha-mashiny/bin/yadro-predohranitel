@@ -1,0 +1,49 @@
+#!/bin/bash
+# RU: Предохранитель первой загрузки нового ядра.
+# RU: Защищает: загрузились в целевое ядро, но сеть/mesh не поднялись -> перезагрузка в saved_entry GRUB (рабочее ядро).
+# RU: НЕ применяется: метки нет ИЛИ uname != ядро из метки ИЛИ не задан YP_TARGET_IP. Останавливается: один прогон, <=10 мин, метка снимается ДО перезагрузки.
+# RU: НЕ ловит: зависание до userspace без паники (на это panic=10 в cmdline лишь частично), порчу GPU/служб при живой сети.
+# EN: First-boot fuse for a new kernel.
+# EN: Protects: booted into the target kernel but network/mesh did not come up -> reboot into GRUB saved_entry (the working kernel).
+# EN: Does NOT apply: no marker OR uname != kernel in the marker OR YP_TARGET_IP unset. Stops: one run, <=10 min, the marker is removed BEFORE rebooting.
+# EN: Does NOT catch: a hang before userspace without a panic (panic=10 on the cmdline helps only partly), broken GPU/services while the network is alive.
+# RU: Взвод: записать имя целевого ядра (как в uname -r) в файл метки до перезагрузки в него.
+# EN: Arming: write the target kernel name (as in uname -r) into the marker file before rebooting into it.
+M=/var/lib/yadro-predohranitel/armed
+# RU: YP_TARGET_IP — адрес, который обязан отвечать на ping после подъёма туннеля (например, mesh-сосед).
+# RU: Без него судить о сети нечем: предохранитель НЕ действует и говорит об этом (код 2 — юнит виден упавшим).
+# EN: YP_TARGET_IP — an address that must answer ping once the tunnel is up (e.g. a mesh peer).
+# EN: Without it there is nothing to judge the network by: the fuse does NOT act and says so (exit 2 — the unit shows failed).
+T=${YP_TARGET_IP:-}
+[ -n "$T" ] || { echo "YP_TARGET_IP не задан — предохранитель не действует, перезагрузки не будет"; exit 2; }
+[ -f "$M" ] || { echo "метки нет — не взведён"; exit 0; }
+K=$(cat "$M")
+# RU: 1.0.1: метку пишут ПЕРЕД перезагрузкой в целевое ядро. Пустая метка — негодный взвод: снять и сказать
+# RU: (код 2). Ядро не совпало, а метка СТАРШЕ текущей загрузки — загрузились не туда, взвод протух: снять громко (код 2).
+# RU: Метка МОЛОЖЕ загрузки — взвели в этой загрузке, перезагрузка впереди: не трогать. Было: «не моё» навсегда.
+# EN: 1.0.1: the marker is written BEFORE rebooting into the target kernel. Empty marker — a broken arming: remove and say
+# EN: so (exit 2). Kernel differs and the marker is OLDER than this boot — booted elsewhere, arming is stale: remove loudly
+# EN: (exit 2). Marker YOUNGER than this boot — armed in this boot, reboot still ahead: leave it. Was: "not mine" forever.
+if [ -z "$K" ]; then
+  rm -f "$M"; echo "🔴 метка пуста — взвод негоден, метка снята; на этой загрузке предохранитель не действовал"; exit 2
+fi
+if [ "$(uname -r)" != "$K" ]; then
+  boot=$(date -d "$(uptime -s 2>/dev/null)" +%s 2>/dev/null); mt=$(stat -c %Y "$M" 2>/dev/null)
+  [ -n "$boot" ] && [ -n "$mt" ] || { echo "ядро $(uname -r) != метка $K; время загрузки или метки не добыто — метку не трогаю"; exit 2; }
+  if [ "$mt" -lt "$boot" ]; then
+    rm -f "$M"; echo "🔴 загрузились в $(uname -r), а метка взведена на $K ДО этой загрузки — взвод протух, метка снята"; exit 2
+  fi
+  echo "ядро $(uname -r) != метка $K — взведено в этой загрузке, жду перезагрузки в $K"; exit 0
+fi
+for i in $(seq 1 60); do
+  if lsmod | grep -q '^amneziawg ' && ping -c1 -W3 "$T" >/dev/null 2>&1; then
+    rm -f "$M"; echo "ЗЕЛЕНО: $K, amneziawg загружен, $T отвечает (попытка $i) — метка снята"; exit 0
+  fi
+  sleep 10
+done
+rm -f "$M"
+echo "КРАСНО: $K, за 10 мин нет amneziawg/$T — перезагрузка в saved_entry"
+# RU: YP_DRY — пробный прогон: всё, кроме самой перезагрузки (код 1).
+# EN: YP_DRY — dry run: everything except the reboot itself (exit 1).
+[ -n "$YP_DRY" ] && { echo "(YP_DRY: перезагрузку не делаю)"; exit 1; }
+sync; systemctl reboot

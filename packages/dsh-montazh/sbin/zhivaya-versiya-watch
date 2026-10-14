@@ -1,0 +1,282 @@
+#!/usr/bin/env python3
+"""zhivaya-versiya-watch — версия в журнале ЖИВОГО процесса против версии на диске (25.09.2026, Михалыч;
+находка Главной 15:23Z при монтаже шлюза 0.4.9, пачка «бой без учёта», к B-N-612).
+
+ЗАЧЕМ. Общий носитель — один файл на много служб: /opt/claude-oauth/gateway.mjs у восьми шлюзов,
+копии моста (dsh-tool-bridge) и адаптера подписки (dsh-subscription-adapter) — у восьми агентов.
+Файл на диске сменили, а службы не подняли: процесс живёт на старом коде. 25.09 шлюз 0.4.7 и 0.4.8
+монтировались, а avrora/spartak/iskra жили на 0.4.6 — поднимали только zarya. Диск это не видит
+по построению: vypusk-okno-watch сверяет диск с меткой, sadik-watch — жива ли служба.
+Различает только журнал ЖИВОГО pid: какую версию процесс сам назвал после старта.
+
+ЧТО ДЕЛАЕТ. Раз в час. Службы находит ПО УСТРОЙСТВУ, а не по списку имён:
+  - шлюз: работающая служба, в argv которой есть /opt/claude-oauth/gateway.mjs; диск —
+    /opt/claude-oauth/package.json; живая версия — последняя «(dsh-)subscription-gateway X.Y.Z» (обе формы, A-N-1948);
+  - мост и адаптер: работающая служба агента DSH (argv: …/@deepseek-ai/dsh/lib/bin.js web или …/.bin/dsh web);
+    дом — HOME из окружения службы, иначе дом учётки; диск — <дом>/plugins/<пакет>/package.json;
+    живая версия — последняя «[<пакет> X.Y.Z]».
+  Живая = в журнале _PID=MainPID начиная с момента старта службы (--since старт: pid с прошлой
+  загрузки не спутается).
+ВИДЫ: сошлось · РАЗОШЛОСЬ (живая ≠ диск) · СЛЕПОТА (в журнале живого pid нет строки версии —
+  «не знаю», а не «сошлось»; или диск не читается) · ИНСТРУМЕНТ (B-N-1979, см. ниже).
+ИНСТРУМЕНТ (B-N-1979, 10.10.2026, Аврора; замысел — ворота Вениамина): мост при негодной настройке ostrovApi не
+  ставит инструмент ostrov_api, работает дальше и пишет в журнал своего процесса одну строку
+  «[dsh-tool-bridge] ostrovApi НЕ установлен: <причина>» (dsh-tool-bridge src/index.js:1270; причина — сообщение
+  installOstrovApi, src/ostrov-api.js:166–167: «<поле> обязателен при enabled — умолчаний нет» для baseUrl|keyFile|botId,
+  «реестр инструментов недоступен» или иное исключение). Читателя у строки не было: у гостевого агента инструмент
+  пропадал молча. Теперь тот же срез журнала живого pid, что даёт версию моста, ищет эту строку. Считается строка
+  ПОСЛЕДНЕЙ апликации плагина: она печатается перед «[dsh-tool-bridge <версия>] подъём» (index.js:1276; форма «версия
+  НЕ ПРОЧИТАНА» :1279 — так же), поэтому берётся только между предпоследней и последней строкой подъёма (строк подъёма
+  нет — весь срез). Переаплицирован без беды — вид гаснет. В картину: «ИНСТРУМЕНТ <служба> · dsh-tool-bridge · ostrov_api
+  не поставлен: <причина>» (причина — до 200 знаков, без управляющих); исход 1, как РАЗОШЛОСЬ.
+ТРЕВОГА: agent-alert (с «--»), при СМЕНЕ картины (набор расхождений и слепот) — сразу; та же картина —
+  повтор раз в сутки; картина опустела — одна строка «сошлось снова». Состояние пишется при КАЖДОМ
+  прогоне, если доставка не сорвалась; тревога не ушла — состояние прежнее, повтор на следующем прогоне.
+ОСТАНОВКА (условие Вениамина): каждый вызов systemctl/journalctl/getent/date — не дольше SH_PREDEL_S (20 с);
+  зависший вызов — СЛЕПОТА с названием в картине, а не тишина. Юнит — TimeoutStartSec=10min.
+  🔴 B-N-928 (26.09.2026, Аврора; ворота Вениамина 25.09): предел на вызов НЕ ограничивал прогон — вызовов по одному на
+  каждую работающую службу и по паре на носитель, 60 с × десятки ≫ 10 мин: systemd убил бы прогон РАНЬШЕ тревоги
+  «зависло» (упавший юнит без текста). Теперь ОБЩИЙ СРОК OBSHCHIJ_SROK_S = 420 с (= 10 мин юнита − 120 с на канал − запас):
+  после него вызовы не делаются, в картину — «СЛЕПОТА: общий срок исчерпан, пропущено вызовов N». Итог считает ПАРЫ
+  отдельно от строк «зависло» (прежде зависшая пара давала две строки: знаменатель 48 при 24 парах).
+ИСХОД: 0 всё сошлось · 1 есть расхождение · 2 слепота или отказ канала · 3 неверный вызов.
+  --avto-montazh: код 4 — адресная отсрочка окна, не зелёный результат.
+ЧЕГО НЕ ЛОВИТ:
+  - при --avto-montazh настоящая ошибка версии внутри окна может быть отложена до 1800с;
+    без ключа проверка строгая; ошибки инструмента/слепота/чужие предметы не откладываются.
+  - службу, которая НЕ РАБОТАЕТ (inactive): живой версии нет — это предмет sadik-watch;
+  - версию, одинаковую по номеру при разном коде (номер не различает) — это предмет vypusk-okno-watch;
+  - носители, не перечисленные здесь (только шлюз, мост, адаптер); новый носитель — правка SHLYUZ_*/PLAGINY;
+  - строку версии, вытесненную из журнала ротацией при давнем старте, — выйдет СЛЕПОТОЙ, не ложью.
+  - ИНСТРУМЕНТ: блок ostrovApi пропал или enabled: false — мост выходит молча, строки нет; инструмент поставлен, но
+    вызов падает (ключ не читается, API недоступен, неверный botId); мост не поднялся вовсе (тогда СЛЕПОТА версии);
+    строки другого pid (дочерние процессы, bash агента) — срез _PID=MainPID их не берёт намеренно; задержка до часа.
+    Служба остановлена — её пары нет, вид уходит и придёт «снова в порядке»: остановку ловит sadik-watch.
+Намеренное расхождение (Искра-шлюз ждёт подъёма) краснеет честно: исключений нет, повтор раз в сутки.
+"""
+import argparse, json, os, re, subprocess, sys, time
+
+SHLYUZ_FAJL = '/opt/claude-oauth/gateway.mjs'
+SHLYUZ_DISK = '/opt/claude-oauth/package.json'
+PLAGINY = ('dsh-tool-bridge', 'dsh-subscription-adapter')
+SOST = '/var/lib/zhivaya-versiya-watch/kartina.json'
+ALERT = '/usr/local/bin/agent-alert'
+TEG = 'zhivaya-versiya-watch'
+POVTOR_S = 86400
+RX_AGENT = re.compile(r'(/@deepseek-ai/dsh/lib/bin\.js|/\.bin/dsh) web\b')
+# Номер с суффиксом рабочей сборки (1.3.33-b1700, 2.5.106-b1734): без него строка «[dsh-tool-bridge 1.3.33-b1700]»
+# не совпадала с ...\d+\] и выходила СЛЕПОТОЙ, а «subscription-gateway 1.4.49-b1739/…» давала ложное РАЗОШЛОСЬ
+# (1.4.49 ≠ 1.4.49-b1739). Суффикс сравнивается целиком: -b1699 и -b1700 — разные сборки.
+VER = r'(\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?)'
+# A-N-1948 шаг 0: приставка шлюза в ОБЕИХ формах — «subscription-gateway X.Y.Z» и «dsh-subscription-gateway X.Y.Z», по договору.
+# Прежде регулярка была без левой границы: новую форму ловила СЛУЧАЙНО (подстрока), и так же «xsubscription-gateway».
+# Слева — не буква/цифра/дефис. Уборочный выпуск после смены приставки снимет «(?:dsh-)?» → только новая форма.
+RX_SHLYUZ = re.compile(r'(?<![\w-])(?:dsh-)?subscription-gateway ' + VER)
+# B-N-1979: строка моста при негодной настройке ostrovApi и строка подъёма той же апликации (граница «последней апликации»).
+RX_OSTROV = re.compile(r'^\[dsh-tool-bridge\] ostrovApi НЕ установлен: (.*)$')
+RX_OSTROV_POLE = re.compile(r'^(baseUrl|keyFile|botId) обязателен')
+RX_PODYOM_MOSTA = re.compile(r'^\[dsh-tool-bridge (?:' + VER[1:-1] + r'|версия НЕ ПРОЧИТАНА)\] подъём')
+
+
+SH_PREDEL_S = 20
+OBSHCHIJ_SROK_S = 420
+SROK_DO = time.monotonic() + OBSHCHIJ_SROK_S
+ZAVISLO = []
+PROPUSHCHENO = [0]
+
+
+def sh(*a):
+    ost = SROK_DO - time.monotonic()
+    if ost <= 0:
+        PROPUSHCHENO[0] += 1
+        return ''
+    try:
+        return subprocess.run(list(a), capture_output=True, text=True, timeout=min(SH_PREDEL_S, ost)).stdout
+    except subprocess.TimeoutExpired:
+        ZAVISLO.append(' '.join(a[:4])[:80])
+        return ''
+
+
+def versiya_diska(put):
+    try:
+        with open(put) as f:
+            return json.load(f).get('version') or None
+    except (OSError, ValueError):
+        return None
+
+
+def zhivaya(unit, rx):
+    pid = sh('systemctl', 'show', '-p', 'MainPID', '--value', unit).strip()
+    st_real = sh('systemctl', 'show', '-p', 'ActiveEnterTimestamp', '--value', unit).strip()
+    if not pid or pid == '0':
+        return None, None, ''
+    since = []
+    if st_real:
+        e = sh('date', '-u', '-d', st_real, '+%s').strip()
+        if e.isdigit():
+            since = ['--since', '@' + e]
+    out = sh('journalctl', f'_PID={pid}', '--no-pager', '-o', 'cat', *since)
+    naj = rx.findall(out)
+    return pid, (naj[-1] if naj else None), out
+
+
+def ostrov_beda(out):
+    """B-N-1979: причина «ostrovApi НЕ установлен» последней апликации моста в срезе живого pid, иначе None."""
+    stroki = out.splitlines()
+    podyomy = [i for i, l in enumerate(stroki) if RX_PODYOM_MOSTA.match(l)]
+    okno = stroki[podyomy[-2] + 1:podyomy[-1]] if len(podyomy) >= 2 else stroki[:podyomy[-1]] if podyomy else stroki
+    naj = [m.group(1) for m in map(RX_OSTROV.match, okno) if m]
+    if not naj:
+        return None
+    hvost = naj[-1]
+    pole = RX_OSTROV_POLE.match(hvost)
+    if pole:
+        return f'{pole.group(1)} обязателен при enabled — умолчаний нет'
+    return ''.join(c if c.isprintable() else '?' for c in hvost)[:200] or '(причина не названа)'
+
+
+def montazh(subject, enabled, started):
+    if not enabled:
+        return 0, ''
+    helper = os.environ.get('MONTAZH_OKNO_BIN', '/usr/local/sbin/montazh-okno')
+    try:
+        p = subprocess.run([helper, 'otlozheno', '--avto-montazh', '--since-ns', str(started), subject],
+                           capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return 0, ''  # Отсрочка не доказана, остаётся строгая сверка.
+    return (p.returncode, p.stdout.strip()) if p.returncode in (4, 6) else (0, '')
+
+
+def main():
+    ap = argparse.ArgumentParser(description='живая версия против диска (общие носители)', allow_abbrev=False)
+    ap.add_argument('--sost', default=SOST)
+    ap.add_argument('--kanal', default=ALERT)
+    ap.add_argument('--tolko-pechat', action='store_true')
+    ap.add_argument('--avto-montazh', action='store_true')
+    try:
+        a = ap.parse_args()
+    except SystemExit:
+        return 3
+
+    started = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+    edinicy = sh('systemctl', 'list-units', '--type=service', '--state=running', '--no-legend', '--no-pager', '--plain')
+    edinicy = [l.split()[0] for l in edinicy.splitlines() if l.strip()]
+    stroki, problemy, instr, deferred = [], [], [], []
+    for u in edinicy:
+        argv = sh('systemctl', 'show', '-p', 'ExecStart', '--value', u)
+        pary = []
+        if SHLYUZ_FAJL in argv:
+            pary.append(('шлюз', SHLYUZ_DISK, RX_SHLYUZ))
+        elif RX_AGENT.search(argv):
+            env = sh('systemctl', 'show', '-p', 'Environment', '--value', u).split()
+            dom = next((e[5:] for e in env if e.startswith('HOME=')), None)
+            if not dom:
+                uch = sh('systemctl', 'show', '-p', 'User', '--value', u).strip() or 'root'
+                p = sh('getent', 'passwd', uch).split(':')
+                dom = p[5] if len(p) > 5 else None
+            for pk in PLAGINY:
+                d = os.path.join(dom or '/nonexistent', 'plugins', pk, 'package.json')
+                if os.path.exists(d):
+                    pary.append((pk, d, re.compile(r'\[' + re.escape(pk) + ' ' + VER + r'\]')))
+        for imya, disk, rx in pary:
+            vd = versiya_diska(disk)
+            pid, vz, srez = zhivaya(u, rx)
+            if vd is not None and vz is not None and vz != vd:
+                package = 'gateway' if imya == 'шлюз' else imya
+                result, detail = montazh('unit:' + u + ':' + package, a.avto_montazh, started)
+                if result == 6:
+                    # Окно закрыли во время проверки: один свежий срез пары.
+                    vd = versiya_diska(disk)
+                    pid, vz, srez = zhivaya(u, rx)
+                elif result == 4:
+                    deferred.append((u, imya))
+                    stroki.append(detail)
+            if imya == 'dsh-tool-bridge':
+                beda = ostrov_beda(srez)
+                if beda:
+                    instr.append(f'ИНСТРУМЕНТ {u} · dsh-tool-bridge · ostrov_api не поставлен: {beda}')
+            if vd is None:
+                vid = 'СЛЕПОТА'; pr = f'диск не читается ({disk})'
+            elif vz is None:
+                vid = 'СЛЕПОТА'; pr = f'в журнале живого pid {pid} нет строки версии'
+            elif vz != vd:
+                if (u, imya) in deferred:
+                    continue
+                vid = 'РАЗОШЛОСЬ'; pr = f'живая {vz} ≠ диск {vd}'
+            else:
+                vid = 'сошлось'; pr = f'{vz}'
+            stroki.append(f'{vid:9} {u} · {imya} · {pr}')
+            if vid != 'сошлось':
+                problemy.append(f'{vid} {u} · {imya} · {pr}')
+    raz = sum(p.startswith('РАЗОШЛОСЬ') for p in problemy); sl = sum(p.startswith('СЛЕПОТА') for p in problemy)
+    for u, imya in deferred:
+        package = 'gateway' if imya == 'шлюз' else imya
+        subject = 'unit:' + u + ':' + package
+        result, detail = montazh(subject, a.avto_montazh, started)
+        previous = next((line for line in stroki if line.startswith('ОТЛОЖЕНО ') and line.endswith(' ' + subject)), '')
+        if result != 4 or not previous or detail.split()[1] != previous.split()[1]:
+            if os.environ.get('ZHW_MO_RESCAN') != '1':
+                os.environ['ZHW_MO_RESCAN'] = '1'
+                print('ПЕРЕСНИМАЮ: срок/поколение окна изменились перед итогом')
+                return main()
+            print('СЛЕПОТА: повторная смена предмета после пересъёма'); return 2
+    pary_n = len(stroki); soshlos = pary_n - len(problemy) - len(deferred)   # Отсрочка не считается совпадением.
+    problemy += instr   # B-N-1979: вид ИНСТРУМЕНТ — в ту же картину (уже подано / повтор раз в сутки / «снова»); ПОСЛЕ счёта пар
+    zav = [f'СЛЕПОТА   зависло дольше {SH_PREDEL_S} с: {z}' for z in ZAVISLO]
+    if PROPUSHCHENO[0]:
+        zav.append(f'СЛЕПОТА   общий срок прогона {OBSHCHIJ_SROK_S} с исчерпан — пропущено вызовов {PROPUSHCHENO[0]}, часть пар не проверена')
+    # В тревогу — СВОДКОЙ, а не по строке на вызов: 20+ одинаковых «зависло» вытесняли за kartina[:12] строку «срок исчерпан».
+    svod = ([f'СЛЕПОТА общий срок прогона {OBSHCHIJ_SROK_S} с исчерпан — пропущено вызовов {PROPUSHCHENO[0]}, часть пар не проверена']
+            if PROPUSHCHENO[0] else [])
+    if ZAVISLO:
+        svod.append(f'СЛЕПОТА зависло дольше {SH_PREDEL_S} с: вызовов {len(ZAVISLO)}, первые: ' + '; '.join(ZAVISLO[:3]))
+    problemy += svod
+    itog = (f'пар служба×носитель {pary_n} · сошлось {soshlos} · разошлось {raz} · слепота {sl}'
+            + (f' · отложено {len(deferred)}' if deferred else '')
+            + (f' · зависло/не успело {len(zav)}' if zav else '')
+            + (f' · инструмент не поставлен {len(instr)}' if instr else ''))
+    for s in sorted(stroki) + instr + zav: print(s)
+    print(itog)
+    ishod = 2 if sl or zav or not stroki else 1 if raz or instr else 4 if deferred else 0
+    if not stroki:
+        problemy = ['СЛЕПОТА: ни одной пары служба×носитель не найдено — искать было не в чем'] + svod
+    if a.tolko_pechat or ishod == 4:
+        # Не стирать прежние проблемы и не объявлять «снова в порядке».
+        return ishod
+
+    try:
+        with open(a.sost) as f:
+            prezhde = json.load(f)
+    except (OSError, ValueError):
+        prezhde = {'kartina': [], 'kogda': 0}
+    pending = [p for p in prezhde.get('kartina', []) if any(
+        p.startswith('РАЗОШЛОСЬ ' + u + ' · ' + imya + ' · ')
+        for u, imya in deferred)]
+    kartina = sorted(set(problemy + pending))   # Сохраняем прежние адресные проблемы, но не шлём их как свежие.
+    seyc = int(time.time()); tekst = None
+    pokaz = svod + [p for p in sorted(problemy) if p not in svod]   # В тревогу только действительно проверенные проблемы.
+    if kartina and (kartina != prezhde.get('kartina') or seyc - prezhde.get('kogda', 0) >= POVTOR_S):
+        tekst = ('🔴 sadik: живой процесс общего носителя не в порядке:\n'
+                 + '\n'.join(pokaz[:12]) + ('\n…' if len(pokaz) > 12 else '')
+                 + f'\n{itog}\nчинить: РАЗОШЛОСЬ — поднять перечисленные службы (или подтвердить, что ждут подъёма намеренно);'
+                 + ' ИНСТРУМЕНТ — поле в ostrovApi профиля (через реестр), затем перезапуск службы')
+    elif not kartina and prezhde.get('kartina'):
+        tekst = f'✅ sadik: живые процессы общих носителей снова в порядке · {itog}'
+    ushlo = True
+    if tekst:
+        try:
+            ushlo = subprocess.run([a.kanal, '--', tekst[:3500]], capture_output=True, timeout=120).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            ushlo = False
+    if ushlo:
+        os.makedirs(os.path.dirname(a.sost), exist_ok=True)
+        novoe = {'kartina': kartina, 'kogda': seyc if tekst else prezhde.get('kogda', 0)}
+        with open(a.sost + '.chast', 'w') as f:
+            json.dump(novoe, f, ensure_ascii=False)
+        os.replace(a.sost + '.chast', a.sost)
+    subprocess.run(['logger', '-t', TEG, '--', itog + (' · тревога ушла' if tekst and ushlo else ' · тревога НЕ УШЛА' if tekst else '')], capture_output=True)
+    return 2 if not ushlo else ishod
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -1,0 +1,13 @@
+[Unit]
+Description=Сторож доступа шлюзов к токенам подписок: svesti-dostup-podpisok --proverit (B-N-1621 k2; читатель правила 1в)
+Documentation=file:///usr/local/sbin/svesti-dostup-watch
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/svesti-dostup-watch
+# 1 — красное (тревога ушла или подавлена повтором): юнит не failed, канал — agent-alert. 2 слепота, 3 тревога не доставлена — failed.
+SuccessExitStatus=1
+TimeoutStartSec=120
+StandardOutput=journal
+StandardError=journal

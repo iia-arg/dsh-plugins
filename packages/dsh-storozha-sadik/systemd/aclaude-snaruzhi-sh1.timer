@@ -1,0 +1,9 @@
+[Unit]
+Description=Такт внешнего прибора aclaude sh1 (C-H-088), каждую минуту
+
+[Timer]
+OnCalendar=*:*:00
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

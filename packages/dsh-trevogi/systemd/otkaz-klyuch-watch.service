@@ -1,0 +1,13 @@
+[Unit]
+Description=Читатель отказов ключей · Option refusal reader
+
+[Service]
+User=root
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+SyslogIdentifier=otkaz-klyuch-watch-vyvod
+Type=oneshot
+ExecStart=/usr/local/sbin/otkaz-klyuch-watch
+Nice=10

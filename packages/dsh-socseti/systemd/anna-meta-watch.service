@@ -1,0 +1,13 @@
+[Unit]
+Description=Anna Meta intake and token health
+After=socseti-anna.service
+[Service]
+Type=oneshot
+User=anna
+Group=anna
+ExecStart=/usr/local/bin/node /opt/socseti-anna/src/meta-watch.mjs /opt/anna/.config/socseti/config.json
+TimeoutStartSec=90
+Restart=no
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/socseti-anna

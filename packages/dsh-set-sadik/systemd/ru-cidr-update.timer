@@ -1,0 +1,8 @@
+[Unit]
+Description=Weekly RU-CIDR set refresh
+[Timer]
+OnCalendar=Sun *-*-* 04:17:00
+Persistent=true
+RandomizedDelaySec=600
+[Install]
+WantedBy=timers.target

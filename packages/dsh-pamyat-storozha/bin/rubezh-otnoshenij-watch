@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# rubezh-otnoshenij-watch — сказать ОДИН раз, что рубеж отношений встал верно.
+#
+# 🔴 ЗАЧЕМ. Правка рубежа отношений смонтирована 21.09 15:26:08Z, но рубеж отношений ставится
+# НЕ при монтаже файла, а при ПЕРВОМ ОТКРЫТИИ базы новым кодом. База открыта
+# службой агента с 20.09 05:33:05Z — модуль загружен ДО правки, и в памяти
+# процесса старый код. Значит рубеж встанет только при перезапуске платформы,
+# а он случится неизвестно когда. Ждать «пока кто-нибудь посмотрит» нельзя:
+# механизм без зовущего — не защита, а её вид.
+#
+# ЧТО ПРОВЕРЯЕТ (перечень координатора, 21.09):
+#   · поля otnoshenie/otnositsya_k заведены
+#   · рубеж отношений поставлен ОДИН раз и равен max(id) на тот миг
+#   · рубеж происхождения ЦЕЛ (68) — прежний не сбит второй миграцией
+#
+# ГДЕ НЕ ПРИМЕНЯЕТСЯ: не судит о СОДЕРЖАНИИ записей, не проверяет писателя
+# (его нет) и не умеет отличить «рубеж верен» от «рубеж верен случайно».
+# Отвечает на один вопрос: встал ли рубеж и сошёлся ли он с max(id).
+#
+# КОДЫ: 0 ожидание либо уже сказано · 0 сказано впервые · 2 слепота · 1 тревога
+# EN: rubezh-otnoshenij-watch — say ONCE that the relations boundary was set correctly.
+#     🔴 WHY. The relations-boundary edit was deployed on 21.09 15:26:08Z, but the relations boundary is set NOT
+#     when the file is deployed but on the FIRST OPENING of the base by the new code. The base has been open by
+#     the agent service since 20.09 05:33:05Z — the module was loaded BEFORE the edit, and the old code is in
+#     the process memory. So the boundary will be set only when the platform restarts, and nobody knows when
+#     that will happen. Waiting "until someone looks" is not allowed: a mechanism without a caller is not
+#     protection, only its appearance.
+#     WHAT IT CHECKS (the coordinator's list, 21.09):
+#     · the otnoshenie/otnositsya_k fields exist
+#     · the relations boundary is set ONCE and equals max(id) at that moment
+#     · the provenance boundary is INTACT (68) — the previous one was not knocked off by the second migration
+#     WHERE IT DOES NOT APPLY: it does not judge the CONTENT of records, does not check the writer (there is
+#     none) and cannot tell "the boundary is right" from "the boundary is right by chance". It answers one
+#     question: was the boundary set and does it match max(id).
+#     CODES: 0 waiting or already said · 0 said for the first time · 2 blindness · 1 alarm
+set -uo pipefail
+
+# Файл настройки пакета dsh-pamyat-storozha: строки «КЛЮЧ=значение», «#» — комментарий; берётся последнее вхождение.
+# Путь меняет DSH_PAMYAT_STOROZHA_CONF. Порядок: переменная → файл → нейтральное умолчание; нет ничего — СЛЕПОТА, код 2.
+# EN: Settings file of the dsh-pamyat-storozha package: "KEY=value" lines, a line starting with "#" is a
+#     comment; the last occurrence wins.
+#     DSH_PAMYAT_STOROZHA_CONF changes the path. Order: variable → file → neutral default; nothing at all —
+#     BLINDNESS, code 2.
+DSH_PAMYAT_STOROZHA_CONF="${DSH_PAMYAT_STOROZHA_CONF:-/etc/dsh-pamyat-storozha/dsh-pamyat-storozha.conf}"
+# « #» в значении — громкий отказ (stderr, код 2), а не склеивание пояснения со значением; зовущий обязан выйти: X=$(konf …) || exit 2.
+# EN: " #" in a value is a loud refusal (stderr, code 2), not gluing the note into the value; the caller must exit: X=$(konf …) || exit 2.
+konf() { local v; v=$(sed -n "s/^[[:space:]]*$1[[:space:]]*=//p" "$DSH_PAMYAT_STOROZHA_CONF" 2>/dev/null | tail -n 1) || true; case "$v" in *[[:space:]]#*) echo "ОТКАЗ: значение ключа $1 в $DSH_PAMYAT_STOROZHA_CONF содержит « #» — комментарий допускается только с начала строки" >&2; return 2;; esac; v=$(printf '%s' "$v" | sed "s/^[[:space:]]*//;s/[[:space:]]*$//"); printf '%s' "${v:-$2}"; }
+BAZA="${RUBEZH_BAZA:-$(konf PAMYAT_BAZA "")}" || NEGODNA_STROKA=PAMYAT_BAZA   # отказ разборщика — в канал ниже, как прочие слепоты · EN: a parser refusal goes to the channel below, like other blindnesses
+SOST="${RUBEZH_SOST:-/var/lib/rubezh-otnoshenij-watch/skazano}"
+ALERT="${RUBEZH_ALERT:-$(command -v agent-alert || echo /nonexistent)}"
+MONTAZH_MAXID="${RUBEZH_MONTAZH_MAXID:-2912}"   # max(id) на 15:26:08Z 21.09, снято приёмщиком и исполнителем · EN: max(id) at 15:26:08Z 21.09, taken by the acceptor and the executor
+# 🔴 НОСИТЕЛЬ ДЛЯ СВЕРКИ КОНСТАНТЫ: 2912 — замер момента, после перезапуска не
+# восстановимый НИЧЕМ. Вывести из факта нельзя по построению, поэтому константа
+# законна — но у неё обязан быть внешний носитель, иначе при расхождении сверять
+# будет не с чем: OMEGA mem-ec4edfb78149 (положил координатор, бессрочно).
+# EN: 🔴 A CARRIER FOR CHECKING THE CONSTANT: 2912 is a measurement of a moment, recoverable by NOTHING after a
+#     restart. It cannot be derived from facts by construction, so the constant is legitimate — but it must have
+#     an external carrier, otherwise on a divergence there is nothing to compare with: OMEGA mem-ec4edfb78149
+#     (put there by the coordinator, without expiry).
+MONTAZH_TS="${RUBEZH_MONTAZH_TS:-1790004368}"   # 2026-09-21T15:26:08Z, момент монтажа · EN: 2026-09-21T15:26:08Z, the moment of deployment
+PREDEL_SUTOK="${RUBEZH_PREDEL_SUTOK:-7}"        # предел ожидания, число (Н2 ворот) · EN: waiting limit, a number (gate N2)
+
+skazat() { echo "$*"; }
+trevoga() {
+  skazat "🔴 $*"
+  [ -x "$ALERT" ] && "$ALERT" "рубеж отношений: $*" >/dev/null 2>&1
+  exit 1
+}
+# 🔴 СЛЕПОТА ТОЖЕ ИДЁТ В КАНАЛ (находка координатора 22.09). Прежде обе слепоты звали
+# skazat — то есть печатали в stdout и никуда больше: «прибор ослеп» узнавал только
+# тот, кто сам откроет журнал. Третий сторож с этим устройством за смену, у всех
+# одинаково: тревога зовёт канал, слепота — нет, как будто слепота не беда.
+# Код остаётся 2: слепота — не тревога, это ДРУГОЙ разряд, и различать их надо.
+# EN: 🔴 BLINDNESS ALSO GOES TO THE CHANNEL (coordinator's finding of 22.09). Previously both blindnesses called
+#     skazat — i.e. printed to stdout and nowhere else: "the tool went blind" was learned only by whoever opened
+#     the journal themselves. The third watcher with this design in one shift, all alike: an alarm calls the
+#     channel, blindness does not, as if blindness were no trouble.
+#     The code stays 2: blindness is not an alarm, it is a DIFFERENT class, and they must be told apart.
+slepota() {
+  skazat "⚠️ СЛЕПОТА: $*"
+  [ -x "$ALERT" ] && "$ALERT" "рубеж отношений, СЛЕПОТА: $*" >/dev/null 2>&1
+  exit 2
+}
+
+[ -z "${NEGODNA_STROKA:-}" ] || slepota "значение ключа $NEGODNA_STROKA в $DSH_PAMYAT_STOROZHA_CONF содержит « #» — комментарий допускается только с начала строки"
+[ -n "$BAZA" ] || slepota "база памяти не задана — RUBEZH_BAZA или ключ PAMYAT_BAZA в $DSH_PAMYAT_STOROZHA_CONF"
+[ -r "$BAZA" ] || slepota "база недоступна: $BAZA"
+command -v sqlite3 >/dev/null || slepota "нет sqlite3 — читать базу нечем"
+
+DB="file:${BAZA}?mode=ro"
+SPROS() { sqlite3 "$DB" "$1" 2>/dev/null; }
+
+# 🔴 ПУСТОЙ ОТВЕТ — ЭТО ОТВЕТ ПРО ЗАПРОС, А НЕ ПРО ДАННЫЕ. Прежняя редакция брала
+# znachenie и считала любую пустоту за «рубежа ещё нет». Замер 22.09 (находка соседнего агента,
+# перечень мой) дал ПЯТЬ разных состояний под одним исходом «ждём, код 0»:
+#   таблица есть, строки нет (код 0) · таблицы НЕТ (код 1) · файл не SQLite (код 26)
+#   значение '' (код 0)              · значение NULL (код 0)
+# Код возврата отсекает только два из четырёх негодных: '' и NULL дают КОД 0.
+# Поэтому спрашиваем quote(): он различает «строки нет» (пусто), NULL, '' и значение.
+# И код проверяем ОТДЕЛЬНОЙ строкой: exit внутри $( ) убивает подоболочку, а не
+# скрипт — замерено, скрипт шёл бы дальше с пустой переменной.
+# EN: 🔴 AN EMPTY ANSWER IS AN ANSWER ABOUT THE QUERY, NOT ABOUT THE DATA. The previous edition took znachenie
+#     and treated any emptiness as "no boundary yet". The measurement of 22.09 (a neighbouring agent's finding,
+#     my list) gave FIVE different states under one outcome "waiting, code 0":
+#     table present, no row (code 0) · NO table (code 1) · file is not SQLite (code 26) · value '' (code 0) ·
+#     value NULL (code 0)
+#     The exit code cuts off only two of the four invalid ones: '' and NULL give CODE 0. So we ask quote(): it
+#     distinguishes "no row" (empty), NULL, '' and a value. And we check the code on a SEPARATE line: exit
+#     inside $( ) kills the subshell, not the script — measured, the script would go on with an empty variable.
+RUBQ=$(SPROS "SELECT quote(znachenie) FROM nastrojki WHERE kluch='rubezh_otnosheniya'"); SQLK=$?
+[ "$SQLK" -eq 0 ] || slepota "база не ответила на запрос рубежа (код sqlite3 $SQLK) — это НЕ «ждём перезапуска», прочитать рубеж НЕВОЗМОЖНО"
+case "$RUBQ" in
+  NULL) trevoga "строка рубежа ЕСТЬ, а значение NULL — рубеж не поставлен, но место занято: миграция прошла наполовину" ;;
+  "''") trevoga "строка рубежа ЕСТЬ, а значение ПУСТОЕ — рубеж не поставлен, но место занято: миграция прошла наполовину" ;;
+esac
+RUB=${RUBQ#\'}; RUB=${RUB%\'}
+if [ -z "$RUB" ]; then
+  # 🔴 У ОЖИДАНИЯ ЕСТЬ ПРЕДЕЛ, И ОН ЧИСЛОМ (Н2 ворот 21.09). Без него сторож ждёт
+  # вечно и молчит дисциплинированно — то есть делает ровно то, против чего заведён:
+  # «предмет завис» становится неотличимо от «всё идёт как надо».
+  # EN: 🔴 WAITING HAS A LIMIT, AND IT IS A NUMBER (gate N2, 21.09). Without it the watcher waits forever and
+  #     stays dutifully silent — i.e. does exactly what it was set up against: "the subject is stuck" becomes
+  #     indistinguishable from "all is going as it should".
+  SUTOK=$(( ( $(date -u +%s) - MONTAZH_TS ) / 86400 ))
+  if [ "$SUTOK" -ge "$PREDEL_SUTOK" ]; then
+    if [ ! -f "$SOST.zhdyom" ]; then
+      skazat "⚠️ ОЖИДАНИЕ ЗАТЯНУЛОСЬ: $SUTOK суток без перезапуска платформы, рубеж не встал. Предмет #114-А завис."
+      KATZ=$(dirname "$SOST"); mkdir -p "$KATZ" 2>/dev/null
+      VZ="$SOST.zhdyom.tmp-$$"
+      printf '%s' "$SUTOK" > "$VZ" 2>/dev/null && mv -f "$VZ" "$SOST.zhdyom" 2>/dev/null || rm -f "$VZ" 2>/dev/null
+    fi
+    exit 0
+  fi
+  skazat "рубеж отношений ещё не ставился — ждём перезапуска платформы ($SUTOK из $PREDEL_SUTOK суток, это НЕ беда)"
+  exit 0
+fi
+
+# рубеж есть: проверяем всё разом и говорим ОДИН раз
+# EN: the boundary exists: check everything at once and say it ONCE
+SKOLKO=$(SPROS "SELECT COUNT(*) FROM nastrojki WHERE kluch='rubezh_otnosheniya'"); SQLK=$?
+[ "$SQLK" -eq 0 ] || slepota "база не ответила на счёт записей рубежа (код sqlite3 $SQLK)"
+POLYA=$(SPROS "SELECT COUNT(*) FROM pragma_table_info('zapisi') WHERE name IN ('otnoshenie','otnositsya_k')"); SQLK=$?
+[ "$SQLK" -eq 0 ] || slepota "база не ответила на проверку полей (код sqlite3 $SQLK)"
+RUB_PR=$(SPROS "SELECT znachenie FROM nastrojki WHERE kluch='rubezh_proishozhdeniya'"); SQLK=$?
+[ "$SQLK" -eq 0 ] || slepota "база не ответила на рубеж происхождения (код sqlite3 $SQLK)"
+
+[ "$SKOLKO" = "1" ] || trevoga "ставился НЕ ОДИН раз: записей в nastrojki $SKOLKO (ждали 1)"
+[ "$POLYA" = "2" ] || trevoga "поля заведены не полностью: найдено $POLYA из 2 (otnoshenie, otnositsya_k)"
+[ "$RUB_PR" = "68" ] || trevoga "рубеж ПРОИСХОЖДЕНИЯ сбит: $RUB_PR (ждали 68) — вторая миграция тронула первый"
+MAXID_NOW=$(SPROS "SELECT MAX(id) FROM zapisi"); SQLK=$?
+[ "$SQLK" -eq 0 ] || slepota "база не ответила на max(id) (код sqlite3 $SQLK)"
+ZAPISEJ=$(SPROS "SELECT COUNT(*) FROM zapisi"); SQLK=$?
+[ "$SQLK" -eq 0 ] || slepota "база не ответила на число записей (код sqlite3 $SQLK)"
+# 🔴 ПОРОГ — ДИАПАЗОН, А НЕ ОДНО ЧИСЛО (Н1 ворот 21.09). Снизу защищает от «встал
+# раньше правки», сверху — от зеркальной беды: рубеж ВЫШЕ max(id) делает ВСЮ память
+# «id ≤ рубежа», то есть молча переводит её в «до протокола». Это ровно то, от чего
+# заводился сам рубеж (hranilishche.js:371), и без верхней границы сторож ОДОБРИЛ БЫ
+# это зелёным. Зелёное на порче хуже отсутствия сторожа: оно закрывает вопрос.
+# EN: 🔴 THE THRESHOLD IS A RANGE, NOT ONE NUMBER (gate N1, 21.09). From below it protects against "set before
+#     the edit", from above against the mirror trouble: a boundary ABOVE max(id) makes ALL memory "id ≤
+#     boundary", i.e. silently moves it to "before the protocol". This is exactly what the boundary itself was
+#     set up against (hranilishche.js:371), and without an upper bound the watcher WOULD APPROVE it as green.
+#     Green on corruption is worse than no watcher: it closes the question.
+[ "$RUB" -ge "$MONTAZH_MAXID" ] 2>/dev/null || trevoga "рубеж $RUB МЕНЬШЕ max(id) на момент монтажа ($MONTAZH_MAXID) — встал раньше правки"
+[ -n "$MAXID_NOW" ] || trevoga "max(id) не читается — сверить верхнюю границу нечем"
+# 🔴 ДВЕ ПРИЧИНЫ, НЕ ОДНА (находка ворот 21.09). У состояния «рубеж > max(id)»
+# причин ДВЕ: либо рубеж порчен, либо база усечена/восстановлена из копии, снятой
+# раньше последних записей. DELETE FROM zapisi в ядре нет (проверено воротами: 0),
+# то есть штатной работой max(id) не падает — но падает при восстановлении из копии,
+# а этим мы занимаемся часто. Тревога, называющая ОДНУ причину из двух, посылает
+# чинить не то.
+# EN: 🔴 TWO CAUSES, NOT ONE (gate finding, 21.09). The state "boundary > max(id)" has TWO causes: either the
+#     boundary is corrupted, or the base was truncated/restored from a copy taken before the last records. There
+#     is no DELETE FROM zapisi in the core (checked by the gate: 0), so max(id) does not drop in normal work —
+#     but it drops on a restore from a copy, and we do that often. An alarm naming ONE cause of the two sends
+#     people to fix the wrong thing.
+[ "$RUB" -le "$MAXID_NOW" ] 2>/dev/null || trevoga "рубеж $RUB БОЛЬШЕ max(id) $MAXID_NOW · ПРИЧИН ДВЕ: (1) рубеж порчен — вся память попала бы в «до протокола»; (2) база усечена либо восстановлена из старой копии — тогда рубеж законен, а записей меньше, чем было. Различить: сверить число записей ($ZAPISEJ) с ожидаемым"
+
+# сказать один раз: состояние пишем через временный файл + переименование (#287)
+# EN: say it once: the state is written via a temporary file + rename (#287)
+if [ -f "$SOST" ] && [ "$(cat "$SOST" 2>/dev/null)" = "$RUB" ]; then exit 0; fi
+skazat "✅ рубеж отношений встал: $RUB (max(id) на монтаже был $MONTAZH_MAXID) · поставлен 1 раз · поля 2 из 2 · рубеж происхождения 68 ЦЕЛ"
+KAT=$(dirname "$SOST"); mkdir -p "$KAT" 2>/dev/null
+VREM="$SOST.tmp-$$"
+if printf '%s' "$RUB" > "$VREM" 2>/dev/null && mv -f "$VREM" "$SOST" 2>/dev/null; then :; else
+  rm -f "$VREM" 2>/dev/null
+  skazat "⚠️ сказано, но состояние не записано — повторю в следующий прогон"
+fi
+exit 0

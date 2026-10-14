@@ -1,0 +1,48 @@
+#!/bin/bash
+# RU: bash-padenie-70 — запуск bash-сторожа так, чтобы ОШИБКА САМОГО bash не выглядела успехом.
+# RU: 🔴 ЗАЧЕМ. У сторожей код 1 значит «нашёл беду» (SuccessExitStatus=1), часто и 2. Но bash тем же кодом 1 выходит,
+# RU: когда скрипт с set -u наткнулся на неопределённую переменную, а кодом 2 — на синтаксической ошибке. Такой юнит
+# RU: «успешен» и слеп. Проверено: скрипт-файл с set -u и $НЕТ под SuccessExitStatus=1 → ExecMainStatus=1, Result=success.
+# RU: ПОЧЕМУ НЕ ловушка ERR: она не срабатывает ни на unbound variable, ни на синтаксис, зато сработала бы на каждой
+# RU: штатно падающей команде (set -e у сторожей нет: grep без совпадения — норма).
+# RU: ЧТО ДЕЛАЕТ: (1) bash -n до запуска — синтаксическая ошибка → код 70, скрипт не начинает работу; (2) запуск, stderr
+# RU: во временный файл, затем в журнал после выхода дочернего процесса и под наблюдением: строка самого bash с путём ЭТОГО скрипта «<путь>: line N: … unbound variable»
+# RU: или «bad substitution» → код 70; иначе — код скрипта как есть.
+# RU: Путь скрипта — первым доводом; без доводов — из BASH_PADENIE_SKRIPT (для цепочки «exec bash $OBERTKA»).
+# RU: ⚠️ НЕ ЛОВИТ: ошибку ДОЧЕРНЕГО скрипта (у неё другой путь); упавшую команду без set -e (скрипт идёт дальше);
+# RU: смерть от сигнала. stdout идёт сразу; stderr передаётся после выхода дочернего процесса, порядок строк в журнале меняется.
+# RU: Коды: как у скрипта; 70 — ошибка bash в скрипте; 71 — скрипта не дали, его нет или нет временного файла.
+# EN: bash-padenie-70 — run a bash watchdog so that an error of bash ITSELF does not look like success.
+# EN: WHY: exit 1 ("found a problem") is often a success for the unit, and 2 often too; bash also exits 1 on a set -u
+# EN: unbound variable and 2 on a syntax error. NOT an ERR trap: it fires on neither, but would fire on every normally
+# EN: failing command. WHAT: (1) bash -n first — syntax error → 70, the script does not start; (2) capture stderr in a
+# EN: temporary file, replay after the child exits and check bash's own "<this script path>: line N: … unbound variable|bad substitution" → 70; else the
+# EN: script's code. Script path is the first argument; with no arguments — from BASH_PADENIE_SKRIPT.
+# EN: DOES NOT CATCH: a CHILD script's error (other path); a failed command without set -e; death by signal.
+# EN: Exit codes: the script's own; 70 — a bash error in the script; 71 — no script, missing, or no temp file.
+if [ $# -ge 1 ]; then put=$1; shift
+elif [ -n "${BASH_PADENIE_SKRIPT:-}" ]; then put=$BASH_PADENIE_SKRIPT
+else echo "bash-padenie-70: ОТКАЗ — нужен путь скрипта (доводом или BASH_PADENIE_SKRIPT) · REFUSED: a script path is required" >&2; exit 71
+fi
+# RU: 1.0.6: путь без «/» — от текущего каталога (иначе запуск по пути ниже искал бы его в PATH).
+case $put in */*) ;; *) put=./$put ;; esac
+[ -f "$put" ] || { echo "bash-padenie-70: ОТКАЗ — скрипта нет: $put · REFUSED: no such script" >&2; exit 71; }
+if ! sint=$(bash -n "$put" 2>&1); then
+  printf '%s\n' "$sint" >&2
+  echo "bash-padenie-70: $put — синтаксическая ошибка, не запускаю — код 70 · syntax error, not started — exit 70" >&2
+  exit 70
+fi
+err=$(mktemp "${TMPDIR:-/tmp}/bash-padenie-70.XXXXXX") || { echo "bash-padenie-70: ОТКАЗ — нет временного файла · REFUSED: no temp file" >&2; exit 71; }
+trap 'rm -f "$err"' EXIT
+# RU: 1.0.6: исполняемый скрипт — по его пути (шебанг), как до запускателя: имя процесса = имя скрипта, и «звал=» в
+# RU: agent-alert (ps -o comm= от родителя) верный. Неисполняемый — через bash, как прежде: его имя процесса «bash» (граница).
+# EN: 1.0.6: an executable script runs by its path (shebang) so the process name is the script's; otherwise via bash.
+if [ -x "$put" ]; then "$put" "$@" 2> "$err"; kod=$?
+else bash "$put" "$@" 2> "$err"; kod=$?
+fi
+cat "$err" >&2
+if grep -F -- "$put: line " "$err" | grep -qE ': (unbound variable|bad substitution)$'; then
+  echo "bash-padenie-70: $put упал — ошибка bash (код скрипта $kod) — код 70 · bash error — exit 70" >&2
+  exit 70
+fi
+exit "$kod"

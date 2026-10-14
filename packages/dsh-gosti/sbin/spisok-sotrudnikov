@@ -1,0 +1,350 @@
+#!/usr/bin/python3 -I
+# spisok-sotrudnikov — читатель списка сотрудников сайта «Острова» (B-N-1640; слово владельца 05.10 11:37 МСК).
+#
+# ЧТО ДЕЛАЕТ. Раз в такт (таймер) — ОДИН запрос GET к выдаче сайта (договор Марка STAFF-DIRECTORY-HANDOFF.md, схема v1),
+# проверка ответа и:
+#   1) белый список маски ПДн Варвары /etc/varvara/belyj-spisok.txt — В ТОМ ЖЕ ФОРМАТЕ («имя:», «тел:», «почта:», «домен:»):
+#      строки сотрудников с сайта + постоянные строки владельца из belyj-spisok.ruchnoj.txt (домен ostrov.center и т.п.),
+#      МИНУС значения из zapret-spisok.txt (/etc/varvara/zapret-spisok.txt; что не пропускать — решение владельца, значения только в этом файле, в код не вписываются — слово владельца 05.10 08:54);
+#      имя — только из ДВУХ и более слов (Вениамин, B-N-1640 К1: однословное «Мария» пропускало бы любую гостью-тёзку);
+#      однословное не вносится, в журнал — «имя одним словом не внесено: <id сотрудника>» (без самого имени);
+#      запись атомарно (временный файл в том же каталоге + rename), root:varvara 0640; гостевой шлюз перечитывает его сам
+#      на каждый запрос — перезапуск не нужен;
+#   2) адресаты тревог для свёртки (B-N-1639, Заря) — /var/lib/spisok-sotrudnikov/adresaty-trevog.json: alerts=true И
+#      числовой telegramUserId (username — не основа, договор), без повторов id. Читателя у файла пока нет — это её такт.
+#
+# ОТКАЗ — В ЗАКРЫТУЮ. Нет ответа, не 200, не JSON, schemaVersion≠1, ready≠true, пустой список, битый сотрудник ⇒ оба файла
+# НЕ трогаются (последний годный остаётся) + тревога agent-alert. Исторический список вместо выдачи не подставляется.
+# Тревога: при смене вида отказа — сразу, тот же вид — не чаще раза в сутки; отметка «ушла» — ТОЛЬКО после доставки
+# (отказ канала не прячет сам себя); возврат в норму — одно сообщение «снова в порядке».
+#
+# КЛЮЧ. Bearer только для чтения списка. Берётся из файла учётных данных systemd ($CREDENTIALS_DIRECTORY/ostrov-staff,
+# LoadCredential= от root-файла 0600). Не печатается, не идёт в argv, не пишется в журнал. Переадресации НЕ выполняются:
+# ответ 3xx — отказ (иначе заголовок с ключом ушёл бы по чужому адресу).
+#
+# ЧЕГО НЕ ЛОВИТ: верный по схеме, но ошибочный по смыслу список (контакт не того человека) — его отвечает сайт/руководитель;
+# смерть самого таймера (это — сторож над сторожами, отдельный пункт); устаревание при живом таймере, если сайт отдаёт ту же
+# старую ревизию (свежесть меряется только успехом чтения).
+#
+# Коды: 0 — прочитано и сведено (изменилось или нет); 1 — отказ чтения/проверки (файлы не тронуты, тревога); 2 — неверный
+# вызов или настройка (неизвестный аргумент, нет ключа) — тоже с тревогой.
+import json, os, re, sys, time, tempfile, subprocess, hashlib, grp, urllib.request, urllib.error
+
+URL = os.environ.get('SPISOK_URL', 'http://192.168.99.3:4214/internal/v1/staff')
+KLYUCH = os.environ.get('SPISOK_KLYUCH') or os.path.join(os.environ.get('CREDENTIALS_DIRECTORY', '/nonexistent'), 'ostrov-staff')
+VYHOD = os.environ.get('SPISOK_VYHOD', '/etc/varvara/belyj-spisok.txt')
+RUCHNOJ = os.environ.get('SPISOK_RUCHNOJ', '/etc/varvara/belyj-spisok.ruchnoj.txt')
+ZAPRET = os.environ.get('SPISOK_ZAPRET', '/etc/varvara/zapret-spisok.txt')
+SOST = os.environ.get('SPISOK_SOST', '/var/lib/spisok-sotrudnikov')
+ALERT = os.environ.get('SPISOK_ALERT', '/usr/local/bin/agent-alert')
+GRUPPA = os.environ.get('SPISOK_GRUPPA', 'varvara')
+# B-N-1640 (Заря): копия адресатов тревог для читателя — плагина Марка (настройка adresatyTrevogFile): только числовые id.
+KAT_TREVOG = os.environ.get('SPISOK_TREVOGI', '/var/lib/adresaty-trevog')
+GRUPPA_TREVOG = os.environ.get('SPISOK_GRUPPA_TREVOG', 'marc')
+TAJMAUT = 5            # договор: предел ожидания одного чтения 5 с
+PREDEL_OTVETA = 1 << 20  # 1 МиБ — больше списку сотрудников не бывать
+OSTYVANIE = 86400       # тот же вид отказа — тревога не чаще раза в сутки
+
+STROKA = re.compile(r'^(имя|тел|почта|домен)\s*:\s*(.+)$')
+
+
+def log(s):
+    print(s, flush=True)
+
+
+def norm_tel(v):
+    """Как normTel маски: +7/8 и 10 цифр без кода → 7XXXXXXXXXX; иное — цифры как есть."""
+    d = re.sub(r'\D', '', v)
+    if len(d) == 11 and d[0] in '78':
+        return '7' + d[1:]
+    if len(d) == 10:
+        return '7' + d
+    return d
+
+
+def kluch_znacheniya(vid, v):
+    v = v.strip()
+    if vid == 'тел':
+        return ('тел', norm_tel(v))
+    if vid in ('почта', 'домен', 'имя'):
+        return (vid, v.lower())
+    return (vid, v)
+
+
+def prochest_stroki(put, obyazatelen=False):
+    """Строки формата белого списка из файла владельца; # — комментарий. Нет файла: [] (или отказ, если обязателен)."""
+    try:
+        with open(put, encoding='utf-8') as f:
+            tekst = f.read()
+    except FileNotFoundError:
+        if obyazatelen:
+            raise
+        return [], []
+    stroki, bitye = [], []
+    for n, s in enumerate(tekst.splitlines(), 1):
+        t = s.strip()
+        if not t or t.startswith('#'):
+            continue
+        m = STROKA.match(t)
+        (stroki if m else bitye).append((m.group(1), m.group(2).strip()) if m else n)
+    return stroki, bitye
+
+
+class BezPereadresacii(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, 'переадресация не выполняется', headers, fp)
+
+
+def zaprosit(kluch):
+    op = urllib.request.build_opener(BezPereadresacii)
+    req = urllib.request.Request(URL, headers={'Authorization': 'Bearer ' + kluch, 'Accept': 'application/json'})
+    try:
+        with op.open(req, timeout=TAJMAUT) as r:
+            telo = r.read(PREDEL_OTVETA + 1)
+            if len(telo) > PREDEL_OTVETA:
+                return None, 'ответ больше 1 МиБ'
+            return telo, None
+    except urllib.error.HTTPError as e:
+        return None, f'HTTP {e.code}'
+    except Exception as e:  # сеть, тайм-аут, отказ соединения
+        return None, f'сеть: {type(e).__name__}'
+
+
+def proverit(telo):
+    """Схема v1. Возвращает (данные, None) или (None, причина). Причина — без значений из ответа."""
+    try:
+        d = json.loads(telo)
+    except Exception:
+        return None, 'ответ не JSON'
+    if not isinstance(d, dict) or d.get('schemaVersion') != 1:
+        return None, 'schemaVersion ≠ 1'
+    if d.get('ready') is not True:
+        return None, 'ready ≠ true'
+    if not isinstance(d.get('revision'), int):
+        return None, 'revision не целое'
+    sp = d.get('employees')
+    if not isinstance(sp, list) or not sp:
+        return None, 'список сотрудников пуст или не список'
+    for i, e in enumerate(sp):
+        if not isinstance(e, dict) or not isinstance(e.get('name'), str) or not isinstance(e.get('phones', []), list):
+            return None, f'сотрудник №{i + 1}: нет имени или phones не список'
+        for p in ('email', 'telegram'):
+            if e.get(p) is not None and not isinstance(e.get(p), str):
+                return None, f'сотрудник №{i + 1}: {p} не строка'
+        if not all(isinstance(t, str) for t in e.get('phones', [])):
+            return None, f'сотрудник №{i + 1}: телефон не строка'
+        tid = e.get('telegramUserId')
+        if tid is not None and not (isinstance(tid, (int, str)) and re.fullmatch(r'[1-9][0-9]{0,19}', str(tid))):
+            return None, f'сотрудник №{i + 1}: telegramUserId не число и не null'
+        for f in ('notifications', 'alerts'):
+            if not isinstance(e.get(f, False), bool):
+                return None, f'сотрудник №{i + 1}: {f} не логическое'
+    return d, None
+
+
+def sobrat_spisok(d, ruchnye, zaprety):
+    zapret = {kluch_znacheniya(v, z) for v, z in zaprety}
+    vse, vidno, otbrosheno, nepriemlemo, odnoslovnye = [], set(), [], [], []
+
+    def dobavit(vid, znach, otkuda):
+        znach = re.sub(r'[\r\n]', ' ', znach).strip()
+        k = kluch_znacheniya(vid, znach)
+        if k in zapret:
+            otbrosheno.append(f'{vid} ({otkuda})')
+            return
+        if vid == 'тел' and not (10 <= len(re.sub(r'\D', '', znach)) <= 15):
+            nepriemlemo.append(f'тел ({otkuda})')
+            return
+        if vid == 'почта' and not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', znach):
+            nepriemlemo.append(f'почта ({otkuda})')
+            return
+        if vid == 'имя' and len(znach.split()) < 2:
+            odnoslovnye.append(otkuda)
+            return
+        if k not in vidno:
+            vidno.add(k)
+            vse.append(f'{vid}: {znach}')
+
+    for vid, znach in ruchnye:
+        dobavit(vid, znach, 'ручной')
+    for i, e in enumerate(d['employees'], 1):
+        ident = re.sub(r'[^0-9A-Za-z._-]', '_', str(e['id']))[:40] if e.get('id') is not None else f'№{i}'
+        dobavit('имя', e['name'], ident)
+        for t in e.get('phones', []):
+            dobavit('тел', t, f'сотрудник №{i}')
+        if e.get('email'):
+            dobavit('почта', e['email'], f'сотрудник №{i}')
+    shapka = ['# СОБРАНО читателем списка сотрудников сайта (spisok-sotrudnikov, B-N-1640) — РУКАМИ НЕ ПРАВИТЬ: следующий',
+              '# такт перезапишет. Постоянные строки владельца — ' + RUCHNOJ + '; запреты — ' + ZAPRET + '.',
+              f'# Источник: выдача сайта, revision {d["revision"]}.', '']
+    return '\n'.join(shapka + vse) + '\n', otbrosheno, nepriemlemo, odnoslovnye, len(vse)
+
+
+def adresaty(d):
+    vidno, out = set(), []
+    for e in d['employees']:
+        tid = e.get('telegramUserId')
+        if e.get('alerts') is True and tid is not None and str(tid) not in vidno:
+            vidno.add(str(tid))
+            out.append({'id': e.get('id'), 'name': e['name'], 'telegramUserId': str(tid)})
+    return out
+
+
+def zapisat_atomarno(put, tekst, gid, rezhim):
+    kat = os.path.dirname(put)
+    fd, tmp = tempfile.mkstemp(prefix='.' + os.path.basename(put) + '.', dir=kat)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(tekst)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chown(tmp, 0, gid)
+        os.chmod(tmp, rezhim)
+        os.rename(tmp, put)
+        dfd = os.open(kat, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def sostoyanie():
+    try:
+        with open(os.path.join(SOST, 'sost.json'), encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def zapisat_sostoyanie(s):
+    zapisat_atomarno(os.path.join(SOST, 'sost.json'), json.dumps(s, ensure_ascii=False) + '\n', 0, 0o600)
+
+
+def trevoga(tekst):
+    try:
+        r = subprocess.run([ALERT, tekst], timeout=60, capture_output=True)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def otkaz(vid, kod):
+    """Отказ: файлы не тронуты; тревога по правилу остывания; отметка — только после доставки."""
+    s, seychas = sostoyanie(), int(time.time())
+    log(f'🔴 ОТКАЗ: {vid} — {VYHOD} и адресаты НЕ тронуты (последний годный остаётся)')
+    if s.get('otkaz') != vid or seychas - int(s.get('trevoga_ts', 0)) >= OSTYVANIE:
+        if trevoga(f'Список сотрудников сайта (B-N-1640): {vid}. Белый список Варвары не обновлён, действует последний годный.'):
+            s.update(otkaz=vid, trevoga_ts=seychas)
+            log('тревога ушла')
+        else:
+            s['otkaz'] = vid
+            s.pop('trevoga_ts', None)
+            log('🔴 тревога НЕ ушла (канал отказал) — отметка не поставлена, повтор в следующий такт')
+        zapisat_sostoyanie(s)
+    else:
+        log('тот же отказ — тревога уже уходила менее суток назад')
+    return kod
+
+
+def main():
+    # №4 A-N-1948 (10.10, решение Забавы 09:45Z): --help/-h — справка, код 0, без тревоги (ручной --help от root не будит владельца).
+    if sys.argv[1:] in (['--help'], ['-h']):
+        print('spisok-sotrudnikov — читатель списка сотрудников сайта (B-N-1640). Аргументов не принимает: настройка — окружением\n'
+              'юнита (SPISOK_*), ключ — учётными данными systemd. Коды: 0 сведено · 1 отказ чтения/проверки (тревога) · 2 неверный\n'
+              'вызов или настройка (тревога, кроме вызова не от root).')
+        return 0
+    if len(sys.argv) > 1:
+        # Находка Авроры к №4: права шапка — код 2 «тоже с тревогой». Зовёт только таймер от root, настройка — окружением юнита:
+        # аргумент от root значит сломанный юнит, без тревоги таймер отказывал бы молча, а белый список Варвары тихо устаревал.
+        # Не от root это не служба (ручной вызов) — чистый код 2 без тревоги: otkaz пишет отметку в SOST root-файлом, и не-root
+        # будил бы владельца, а затем падал на записи.
+        print('spisok-sotrudnikov: аргументы не принимаются (настройка — окружением юнита; справка — --help)', file=sys.stderr)
+        if os.geteuid() != 0:
+            return 2
+        os.makedirs(SOST, mode=0o700, exist_ok=True)
+        return otkaz('аргументы в командной строке не принимаются (настройка — окружением юнита)', 2)
+    os.makedirs(SOST, mode=0o700, exist_ok=True)
+    try:
+        with open(KLYUCH, encoding='utf-8') as f:
+            kluch = f.read().strip()
+    except Exception:
+        kluch = ''
+    if not re.fullmatch(r'[\x21-\x7e]{16,}', kluch):
+        return otkaz('ключ чтения не найден или негоден (учётные данные юнита)', 2)
+    telo, oshibka = zaprosit(kluch)
+    if oshibka:
+        return otkaz(f'выдача недоступна: {oshibka}', 1)
+    d, oshibka = proverit(telo)
+    if oshibka:
+        return otkaz(f'выдача не прошла проверку: {oshibka}', 1)
+    try:
+        ruchnye, bitye_r = prochest_stroki(RUCHNOJ)
+        zaprety, bitye_z = prochest_stroki(ZAPRET, obyazatelen=True)
+    except FileNotFoundError:
+        return otkaz(f'нет файла запретов {ZAPRET} — без него запрещённое владельцем могло бы пройти', 2)
+    if bitye_z:
+        return otkaz(f'в {ZAPRET} не разобраны строки {bitye_z}', 2)
+    tekst, otbrosheno, nepriemlemo, odnoslovnye, n = sobrat_spisok(d, ruchnye, zaprety)
+    gid = grp.getgrnam(GRUPPA).gr_gid
+    try:
+        with open(VYHOD, encoding='utf-8') as f:
+            bylo = f.read()
+    except FileNotFoundError:
+        bylo = None
+    if bylo != tekst:
+        zapisat_atomarno(VYHOD, tekst, gid, 0o640)
+        log(f'белый список ЗАПИСАН: {VYHOD} — строк {n}, revision {d["revision"]}, sha256 {hashlib.sha256(tekst.encode()).hexdigest()[:16]}')
+    else:
+        log(f'белый список без изменений: строк {n}, revision {d["revision"]}')
+    if otbrosheno:
+        log(f'отброшено по запретам владельца: {", ".join(otbrosheno)}')
+    for x in odnoslovnye:
+        log(f'⚠️ имя одним словом не внесено: {x}')
+    if nepriemlemo or bitye_r:
+        log(f'⚠️ не взято (неверный вид): {", ".join(nepriemlemo)}; ручной файл, строки не разобраны: {bitye_r}')
+    a = adresaty(d)
+    atekst = json.dumps({'istochnik': 'spisok-sotrudnikov B-N-1640', 'revision': d['revision'], 'adresaty': a},
+                        ensure_ascii=False, indent=1) + '\n'
+    put_a = os.path.join(SOST, 'adresaty-trevog.json')
+    try:
+        with open(put_a, encoding='utf-8') as f:
+            bylo_a = f.read()
+    except FileNotFoundError:
+        bylo_a = None
+    if bylo_a != atekst:
+        zapisat_atomarno(put_a, atekst, 0, 0o640)
+    log(f'адресаты тревог: {len(a)} (alerts=true и числовой telegramUserId)')
+    # Читателю (плагин Марка) — ТОЛЬКО числовые id без имён: ему имена не нужны. Каталог root:marc 0750 (tmpfiles), файл root:marc 0640.
+    # Сбой записи — исключение и юнит failed (громко); белый список Варвары и свой файл к этому мигу уже записаны.
+    mtekst = json.dumps({'istochnik': 'spisok-sotrudnikov B-N-1640', 'revision': d['revision'],
+                         'telegramUserIds': [x['telegramUserId'] for x in a]}, ensure_ascii=False) + '\n'
+    put_m = os.path.join(KAT_TREVOG, 'adresaty-trevog.json')
+    try:
+        with open(put_m, encoding='utf-8') as f:
+            bylo_m = f.read()
+    except FileNotFoundError:
+        bylo_m = None
+    if bylo_m != mtekst:
+        zapisat_atomarno(put_m, mtekst, grp.getgrnam(GRUPPA_TREVOG).gr_gid, 0o640)
+    s = sostoyanie()
+    if s.get('otkaz'):
+        if trevoga('Список сотрудников сайта (B-N-1640): снова в порядке, белый список Варвары обновлён (revision '
+                   f'{d["revision"]}).'):
+            s = {}
+            log('сообщение «снова в порядке» ушло')
+        else:
+            log('🔴 сообщение «снова в порядке» НЕ ушло — повтор в следующий такт')
+    s['uspeh_ts'] = int(time.time())
+    s['revision'] = d['revision']
+    zapisat_sostoyanie(s)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

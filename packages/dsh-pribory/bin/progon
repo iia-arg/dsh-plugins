@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# progon — прогнать команду и напечатать её КОД, не потеряв его в конвейере.
+#
+# 🔴 ЗАЧЕМ. За сутки 02.09.2026 семь раз подряд я мерила код возврата через
+# `команда | tail` или `| sed` и получала код ПОСЛЕДНЕЙ команды конвейера, а не
+# проверяемой. Дважды это дало неверный доклад: «стенды зелёные» при коде 2 и
+# «отказ не работает» при работающем отказе. Правило записано 22.08 и не
+# сработало ни разу: правило помнят, а команду набирают.
+# Лечение в форме, а не в памяти: короткая команда, которая печатает код сама.
+#
+#   progon node test/stend-X.mjs           весь вывод + строка с кодом
+#   progon -k 3 bash ./stend.sh            показать только последние 3 строки вывода
+#   progon -t node test/stend-X.mjs        только строку итога и код
+#   progon -g 5 ls -1                      первые 5 строк — ЗАМЕНА `| head`
+#
+# 🔴 ПОЧЕМУ ЭТО ЗАМЕНА head, А НЕ УДОБСТВО. Восемь раз за 02.09 обрезка вывода
+# заставила меня объявить неполное полным: «таких строк нет» вместо «в первых
+# десяти нет». head молчит о том, сколько осталось; progon печатает полное число
+# строк ВСЕГДА, поэтому обрезка перестаёт быть немой.
+#
+# 🔴 ЧЕГО ОНА НЕ ДЕЛАЕТ: не толкует код. 0/1/2 у наших стендов значат
+# «сошлось / расхождение / проверять нечем», но у чужой команды могут значить иное.
+# EN: progon — run a command and print its CODE without losing it in a pipeline.
+#     🔴 WHY. During one day, 02.09.2026, seven times in a row I measured the exit code through `command | tail`
+#     or `| sed` and got the code of the LAST command of the pipeline, not of the one checked. Twice this gave a
+#     wrong report: "the stands are green" with code 2 and "the refusal does not work" with a working refusal.
+#     The rule was written on 22.08 and never worked once: people remember rules, but they type commands.
+#     The cure is in form, not in memory: a short command that prints the code itself.
+#     progon node test/stend-X.mjs — all output + a line with the code
+#     progon -k 3 bash ./stend.sh — show only the last 3 lines of output
+#     progon -t node test/stend-X.mjs — only the result line and the code
+#     progon -g 5 ls -1 — the first 5 lines — a REPLACEMENT for `| head`
+#     🔴 WHY THIS IS A REPLACEMENT FOR head, NOT A CONVENIENCE. Eight times on 02.09 truncated output made me
+#     declare the incomplete complete: "there are no such lines" instead of "there are none in the first ten".
+#     head is silent about how much is left; progon ALWAYS prints the total number of lines, so truncation stops
+#     being mute.
+#     🔴 WHAT IT DOES NOT DO: it does not interpret the code. 0/1/2 of our stands mean "matches / divergence /
+#     nothing to check with", but for someone else's command they may mean something else.
+set -uo pipefail
+
+HVOST=0; GOLOVA=0; TOLKO_ITOG=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -k) HVOST="${2:?-k требует число строк}"; shift 2 ;;
+    -g) GOLOVA="${2:?-g требует число строк}"; shift 2 ;;
+    -t) TOLKO_ITOG=1; shift ;;
+    --) shift; break ;;
+    -*) echo "🔴 progon: неизвестный довод «$1». Только -k <N>, -g <N>, -t, --." >&2; exit 2 ;;
+    *) break ;;
+  esac
+done
+for n in "$HVOST" "$GOLOVA"; do
+  [[ "$n" =~ ^[0-9]+$ ]] && [ "${#n}" -le 9 ] || { echo "ОТКАЗ: -k/-g требуют неотрицательное целое до 999999999" >&2; exit 2; }
+done
+[ $# -gt 0 ] || { echo "использование: progon [-k N] [-g N] [-t] <команда> [доводы...]" >&2; exit 2; }
+
+VYVOD=$(mktemp /tmp/progon-XXXXXX)
+# 🔴 Код берётся ПРЯМО у команды: вывод уходит в файл, а не в конвейер.
+# 🔴 УЧЁТ ПРИМЕНЕНИЙ (03.09.2026, по предложению координатора). Существующий и
+# неприменяемый механизм НЕОТЛИЧИМ от отсутствующего — и хуже, потому что числится
+# сделанным: в любом обзоре он выглядит закрытым пунктом. За ночь 02→03.09 этот
+# инструмент существовал, был проверен и не позвался НИ РАЗУ, пока код возврата
+# затирался девять раз. Считать надо не наличие инструмента, а ЧИСЛО ПРИМЕНЕНИЙ.
+# ГДЕ НЕ ПРИМЕНЯЕТСЯ: считаются только вызовы ЧЕРЕЗ обёртку; прямой запуск команды
+# не виден и не должен быть виден — иначе «ноль» читалось бы как «класса не было».
+# Отказ записи (нет прав, нет каталога) НЕ ломает прогон: учёт не важнее замера.
+# 🔴 Отказ записи НЕ ломает прогон, но и НЕ МОЛЧИТ. 03.09.2026 файл учёта оказался
+# создан от root (мой же вызов под sudo) — и с тех пор мои обычные вызовы не писались
+# ВОВСЕ, тихо. Счёт применений при этом занижается, а занижение читается как
+# «механизм не применяют»: прибор, мерящий дисциплину, начинает на неё клеветать.
+# Отказ, объявленный безвредным, перестаёт быть видимым — поэтому называем его вслух.
+# EN: 🔴 The code is taken STRAIGHT from the command: the output goes to a file, not into a pipeline.
+#     🔴 USAGE ACCOUNTING (03.09.2026, on the coordinator's suggestion). An existing but unused mechanism is
+#     INDISTINGUISHABLE from an absent one — and worse, because it counts as done: in any review it looks like a
+#     closed item. Over the night 02→03.09 this tool existed, had been checked, and was called NOT ONCE, while
+#     the exit code was overwritten nine times. What must be counted is not the presence of the tool but the
+#     NUMBER OF USES.
+#     WHERE IT DOES NOT APPLY: only calls THROUGH the wrapper are counted; a direct run of a command is not
+#     visible and must not be — otherwise "zero" would read as "the class did not occur".
+#     A write failure (no rights, no directory) does NOT break the run: accounting is not more important than
+#     measurement.
+#     🔴 A write failure does NOT break the run, but it is NOT SILENT either. On 03.09.2026 the accounting file
+#     turned out to be created by root (my own call under sudo) — and since then my normal calls were not
+#     recorded AT ALL, quietly. The usage count is then understated, and understatement reads as "the mechanism
+#     is not used": a tool measuring discipline starts slandering it. A failure declared harmless stops being
+#     visible — so we name it aloud.
+UCHYOT="${PROGON_UCHYOT:-$HOME/workspace/.progon-primeneniya}"
+if ! { date -u +%Y-%m-%dT%H:%M:%SZ >> "$UCHYOT"; } 2>/dev/null; then
+  echo "progon: учёт применений НЕ записан в $UCHYOT (нет прав или каталога) —" >&2
+  echo "        замер идёт, но счёт применений занижается. Владелец файла: $(stat -c %U "$UCHYOT" 2>/dev/null || echo '—')" >&2
+fi
+
+# Никакого `| tail` между командой и $? — в этом весь смысл.
+# EN: No `| tail` between the command and $? — that is the whole point.
+"$@" > "$VYVOD" 2>&1
+KOD=$?
+
+if [ "$TOLKO_ITOG" -eq 1 ]; then
+  grep -iE 'ИТОГО|итог:|проверок|сошлось|ВЫПОЛНЕНО|passed|failed' "$VYVOD" | tail -3
+elif [ "$GOLOVA" -gt 0 ]; then
+  head -n "$GOLOVA" "$VYVOD"
+elif [ "$HVOST" -gt 0 ]; then
+  tail -n "$HVOST" "$VYVOD"
+else
+  cat "$VYVOD"
+fi
+
+STROK=$(wc -l < "$VYVOD")
+rm -f "$VYVOD"
+echo "── progon: код=$KOD (строк вывода $STROK) ──"
+exit "$KOD"

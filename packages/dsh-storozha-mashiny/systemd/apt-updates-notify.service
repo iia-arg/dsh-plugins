@@ -1,0 +1,37 @@
+[Unit]
+Description=Уведомление о наличии обновлений apt (ничего не ставит) · apt pending-updates notifier (installs nothing)
+Documentation=file:///usr/local/sbin/apt-updates-notify.sh
+After=multi-user.target
+
+[Service]
+Type=oneshot
+# RU: 🔴 Рукой НЕПРИВИЛЕГИРОВАННОЙ учётки, а не root, по двум причинам (обе проверены замером):
+# RU:   • чтение списков apt и подсчёт обновлений прав root не требуют — измерено
+# RU:     четырьмя руками (учётка агента, root, nobody, env -i): у всех «0;0», код 0;
+# RU:   • помощнику тревог нужна учётка, которой разрешено читать токен канала
+# RU:     (обычно через группу) — её задают drop-in'ом машины.
+# RU: Root здесь дал бы лишние права ради задачи, которая их не требует.
+# RU: Умолчание nobody/nogroup безвредно: читать списки оно может, а без доступа к
+# RU: каналу тревоги прогон кончится кодом 2 и юнит будет виден упавшим.
+# RU: Задайте User=/Group= своей учётки в drop-in (например, service.d/50-mashina.conf).
+# EN: 🔴 Runs as an UNPRIVILEGED account, not root, for two reasons (both measured):
+# EN:   • reading apt lists and counting updates needs no root — measured with four
+# EN:     hands (agent account, root, nobody, env -i): all gave "0;0", exit 0;
+# EN:   • the alert helper needs an account allowed to read the channel token
+# EN:     (usually via a group) — set it in a machine drop-in.
+# EN: Root would grant extra rights for a task that does not need them.
+# EN: The nobody/nogroup default is harmless: it can read the lists, and without access
+# EN: to the alert channel the run ends with exit 2 and the unit shows as failed.
+# EN: Set User=/Group= of your account in a drop-in (e.g. service.d/50-mashina.conf).
+User=nobody
+Group=nogroup
+# RU: Каталог состояния создаёт systemd, а не скрипт: непривилегированной учётке не дано
+# RU: писать в /var/lib, и её собственный mkdir там отказывает молча (измерено).
+# EN: systemd creates the state directory, not the script: an unprivileged account
+# EN: cannot write to /var/lib, and its own mkdir there fails silently (measured).
+StateDirectory=apt-updates-notify
+ExecStart=/usr/local/sbin/apt-updates-notify.sh
+# RU: Вывод в журнал: вердикт и сырьё рядом, чтобы разбор был возможен потом.
+# EN: Output to the journal: verdict and raw data side by side, for later analysis.
+StandardOutput=journal
+StandardError=journal

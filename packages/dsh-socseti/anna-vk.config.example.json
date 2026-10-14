@@ -1,0 +1,31 @@
+{
+  "profile": "anna",
+  "port": 8382,
+  "stateDir": "/var/lib/socseti-anna",
+  "keyFiles": {
+    "anna": "/opt/anna/.config/socseti/anna.key",
+    "monitor": "/opt/anna/.config/socseti/monitor.key",
+    "channel": "/opt/anna/.config/socseti/channel.key"
+  },
+  "targets": {
+    "vk": "127999849",
+    "telegram": "-1001925584120",
+    "instagram": "17841453053403067",
+    "threads": "26794519373575025"
+  },
+  "telegram": {
+    "enabled": false,
+    "tokenFile": "/opt/anna/.config/socseti/telegram.token",
+    "approvalChatId": -1001659691422,
+    "externalPoll": true,
+    "writerEnabled": false
+  },
+  "vk": {
+    "enabled": true,
+    "armed": true,
+    "idleAt": "2026-10-13T11:35:20Z",
+    "apiVersion": "5.199",
+    "groupToken": {"passRef": "vk/group-token"},
+    "wallToken": {"passRef": "vk/service-token"}
+  }
+}

@@ -1,15 +1,5 @@
-// Стенд очереди недоставленного и ночного повтора (Э3.2).
-//
-// 🔴 ГЛАВНОЕ ЗДЕСЬ — ЧТО ПОВТОР НЕ СОЗДАЁТ ДУБЛЬ ЗНАНИЯ. «Не удалось проверить» значит
-// «МОГЛО ДОЙТИ»: связь могла оборваться ПОСЛЕ того, как запись легла. Слепой повтор в этом
-// случае заводит второй экземпляр — и он хуже недоставки: недоставку видно по очереди и по
-// числу в отчёте, а дубль растворяется в поиске и выглядит знанием.
-// Поэтому природа отказа хранится в очереди и решает, что делать: повторять записью,
-// спрашивать чтением или ждать руки.
-// 🔴 ПЛАТФОРМЫ МОЖЕТ НЕ БЫТЬ У ПОЛУЧАТЕЛЯ — ЭТО СЛЕПОТА, А НЕ РАСХОЖДЕНИЕ (05.09.2026,
-// замечание приёмки). Статический импорт падал ДО входа в код, с кодом 1: получатель
-// чистой установки читал «стенды провалились, пакет сломан», хотя проверить было нечем.
-// Код 1 у нас важнее слепоты, поэтому весь `npm test` уходил в красное на исправном пакете.
+// RU: Проверяем очередь недоставленного и ночной повтор без дублей. Неподтверждённый вызов мог успеть записать знание: причина в очереди выбирает повтор записью, проверку чтением или ручной разбор. Отсутствие платформы — слепота, а не код дефекта 1.
+// EN: Test undelivered queue processing and nightly retries without duplicates. An unconfirmed call may already have stored the knowledge: its queue cause selects a write retry, read verification, or manual investigation. Missing platform means the subject is unobservable, not defect code 1.
 let Context, apply, name, Config;
 try {
   ;({ Context } = await import('@deepseek-ai/cordis'));
@@ -24,25 +14,34 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+// RU: Каждый mkdtemp создаём через vremennyj(): уборка выполняется при обычном выходе, исключении, process.exit и SIGTERM/SIGINT, включая timeout 120. SIGKILL не перехватывается; временные файлы дочернего процесса убирает сам дочерний процесс.
+// EN: Create every mkdtemp through vremennyj(): cleanup runs on normal exit, exceptions, process.exit, and SIGTERM/SIGINT, including timeout 120. SIGKILL cannot be intercepted; a child process must clean up its own temporary files.
+import { mkdtempSync as mkdtempSync_, rmSync as rmSync_ } from 'node:fs'
+const VREMENNYE = []
+const vremennyj = (...a) => { const k = mkdtempSync_(...a); VREMENNYE.push(k); return k }
+process.on('exit', () => { for (const k of VREMENNYE) rmSync_(k, { recursive: true, force: true }) })
+process.on('SIGTERM', () => process.exit(143)); process.on('SIGINT', () => process.exit(130))
 
 let ok = 0, bed = 0;
-// 🔴 ПРИРОДА ТЕЛА ПРОВЕРЯЕТСЯ, А НЕ ПОДРАЗУМЕВАЕТСЯ (05.09.2026). Прогонщик синхронный:
-// он ждать не умеет. Тело, написанное ожидающим, вернёт промис — try его НЕ поймает,
-// проба зачтётся мгновенно, а брошенное внутри уйдёт в никуда. Такая проба не может
-// покраснеть НИКОГДА, ни на каких данных: это не ложно-зелёное, это отсутствие проверки
-// под видом проверки. Замер 05.09: семь стендов ядра из десяти зеленели на подложенном
-// падении в ожидающем теле — действующих async-тел не было ни одного, беда была впереди.
-// Здесь она закрыта устройством: вернуло промис — это ОТКАЗ пробы, а не её успех.
+// RU: Прогонщик синхронный и не ждёт промис: async-тело могло бы зачесть успех до исключения внутри. Возвращённый промис означает отказ пробы.
+// EN: The runner is synchronous and does not await promises: an async body could record success before an inner exception. A returned promise fails the probe.
 const proba = (imya, f) => { try {
     const vernulos = f();
     if (vernulos && typeof vernulos.then === 'function') {
       throw new Error('тело пробы ОЖИДАЮЩЕЕ, а прогонщик синхронный — ждать не умеет. ' +
                       'Вынеси ожидание наружу либо сделай прогонщик ожидающим');
     }
+    // RU: Тело пробы должно бросить ошибку или вернуть undefined. Любое другое значение, включая строку, false, 0, null и объект, означает отказ: игнорирование возврата даёт ложный успех.
+    // EN: The probe body must throw an error or return undefined. Any other value, including a string, false, 0, null, or an object, means failure: ignoring returns produces false success.
+    if (vernulos !== undefined && vernulos !== true) {
+      throw new Error('тело пробы ВЕРНУЛО «' + String(vernulos).slice(0, 60) +
+                      '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы. ' +
+                      'Бросай ошибку либо ничего не возвращай');
+    }
     ok++; console.log('  ok   ' + imya) }
   catch (e) { bed++; console.log('  FAIL ' + imya + ' — ' + e.message) } };
 
-const kat = mkdtempSync(join(tmpdir(), 'stend-ocheredi-'));
+const kat = vremennyj(join(tmpdir(), 'stend-ocheredi-'));
 let putBazy = '';
 
 async function podnyat({ dolgo = null, nastrojka = {} } = {}) {
@@ -56,8 +55,8 @@ async function podnyat({ dolgo = null, nastrojka = {} } = {}) {
   return koren;
 }
 
-// Очередь читаем ПРЯМО ИЗ БАЗЫ, а не через ту же службу, которой писали: тем же путём туда
-// и обратно мы перенесли бы слепое пятно из работы в проверку.
+// RU: Читаем очередь прямо из базы независимо от службы записи.
+// EN: Read the queue directly from the database independently of the write service.
 const ocheredIzBazy = () => {
   const db = new DatabaseSync(putBazy, { readOnly: true });
   const r = db.prepare('SELECT * FROM ochered_dolgovremennogo ORDER BY zapis_id').all();
@@ -65,7 +64,8 @@ const ocheredIzBazy = () => {
   return r;
 };
 
-/** Подставной слой, считающий вызовы: он и есть свидетель дубля. */
+// RU: Подставной слой считает вызовы, чтобы обнаружить повторную запись.
+// EN: The fake layer counts calls to detect duplicate writes.
 function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }) {
   const schet = { sohranit: 0, proverit: 0 };
   return {
@@ -77,7 +77,8 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   };
 }
 
-// ─── [0] КОНТРОЛЬ НА ИСПРАВНОМ: доставилось — очередь пуста ───
+// RU: Исправный контроль: подтверждённая доставка оставляет очередь пустой.
+// EN: Healthy control: confirmed delivery leaves the queue empty.
 {
   const sloj = podstavnojSloj({ sohranitOtvet: { sostoyanie: 'dostavleno', id: 'mem-aaaa1111bbbb' } });
   const k = await podnyat({ dolgo: sloj });
@@ -87,11 +88,8 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
     const o = ocheredIzBazy();
     if (o.length !== 0) throw new Error('в очереди ' + o.length + ', ждали 0');
   });
-  // 🔴 БЕЗ `async` НАМЕРЕННО. Прогонщик `t` синхронный: он зовёт f() и не ждёт. Асинхронное
-  // тело возвращало бы промис, проба засчитывалась бы пройденной МГНОВЕННО, а брошенное
-  // внутри уходило в unhandled rejection — то есть проба была зелёной, что бы в ней ни
-  // случилось. Зелёное, которое не может покраснеть, хуже отсутствующей пробы: оно занимает
-  // её место в счёте.
+  // RU: Тело намеренно синхронное: t не ждёт промис, поэтому async мог бы зачесть успех до исключения внутри.
+  // EN: The body is deliberately synchronous: t does not await a promise, so async could record success before an inner exception.
   proba('[0] отчёт о пустой очереди — ЧИСЛО, а не молчание', () => {
     if (typeof k.pamyat.dostavitOtlozhennoe !== 'function') throw new Error('метода нет');
   });
@@ -102,7 +100,8 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   });
 }
 
-// ─── [A] связи нет → природа ne-otpravleno, попыток 0 ───
+// RU: Нет связи: ne-otpravleno и ноль попыток.
+// EN: No connection: ne-otpravleno and zero attempts.
 {
   const sloj = podstavnojSloj({ sohranitOtvet: null, dostupen: false });
   const k = await podnyat({ dolgo: sloj });
@@ -118,7 +117,8 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
     if (sloj.schet.sohranit !== 0) throw new Error('звали ' + sloj.schet.sohranit + ' раз');
   });
 
-  // ─── [B] проход при недоступном слое: попытки НЕ тратим ───
+  // RU: Недоступный слой не расходует попытки.
+  // EN: An unavailable layer does not consume attempts.
   const otchet = await k.pamyat.dostavitOtlozhennoe();
   proba('[B] проход при недоступном слое: попыток не прибавилось, причина названа', () => {
     const o = ocheredIzBazy();
@@ -129,13 +129,15 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   });
 }
 
-// ─── [C] проход при доступном слое: ne-otpravleno повторяется ЗАПИСЬЮ ───
+// RU: При доступном слое ne-otpravleno повторяется записью.
+// EN: With an available layer, retry ne-otpravleno by writing.
 {
   const sloj = podstavnojSloj({ sohranitOtvet: null, dostupen: false });
   const k = await podnyat({ dolgo: sloj });
   k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание C', istochnik: 's#1-2' });
   await new Promise((r) => setTimeout(r, 40));
-  // слой «поднялся»
+  // RU: Делаем слой доступным.
+  // EN: Make the layer available.
   const zhivoj = podstavnojSloj({ sohranitOtvet: { sostoyanie: 'dostavleno', id: 'mem-cccc2222dddd' } });
   k.pamyatDolgovremennaya = zhivoj;
   const otchet = await k.pamyat.dostavitOtlozhennoe();
@@ -147,7 +149,8 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   });
 }
 
-// ─── [G] moglo-dojti-id-est при «есть» → ТОЛЬКО снятие, записи НЕТ ───
+// RU: moglo-dojti-id-est при подтверждённом наличии снимается с очереди без повторной записи.
+// EN: When existence is confirmed, remove moglo-dojti-id-est from the queue without rewriting.
 {
   const sloj = podstavnojSloj({ sohranitOtvet: { sostoyanie: 'moglo-dojti-id-est', id: 'mem-eeee3333ffff' } });
   const k = await podnyat({ dolgo: sloj });
@@ -173,7 +176,8 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   });
 }
 
-// ─── [H] «не проверяли» → попытка НЕ засчитана, запись осталась ───
+// RU: Непроведённая проверка не расходует попытку и сохраняет запись в очереди.
+// EN: A skipped check does not consume an attempt and leaves the item queued.
 {
   const sloj = podstavnojSloj({ sohranitOtvet: { sostoyanie: 'moglo-dojti-id-est', id: 'mem-1111aaaa2222' } });
   const k = await podnyat({ dolgo: sloj });
@@ -193,7 +197,8 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   });
 }
 
-// ─── [F] moglo-dojti-bez-id повтором НЕ берётся и считается отдельно ───
+// RU: moglo-dojti-bez-id не повторяется автоматически и считается отдельно.
+// EN: moglo-dojti-bez-id is not retried automatically and is counted separately.
 {
   const sloj = podstavnojSloj({ sohranitOtvet: { sostoyanie: 'moglo-dojti-bez-id', id: null } });
   const k = await podnyat({ dolgo: sloj });
@@ -214,7 +219,8 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   });
 }
 
-// ─── [D] предел попыток: запись ОСТАЁТСЯ, крик ОДИН раз ───
+// RU: На пределе попыток запись остаётся, тревога звучит один раз.
+// EN: At the attempt limit, retain the item and alert once.
 {
   const sloj = podstavnojSloj({ sohranitOtvet: null, dostupen: false });
   const k = await podnyat({ dolgo: sloj });
@@ -241,19 +247,20 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   });
 }
 
-// ─── [I] СОСЕД СТАРШЕ НАС: слой без proverit → сказать, а не упасть ───
+// RU: Слой без proverit должен дать диагностику вместо падения.
+// EN: A layer without proverit must report diagnostics instead of crashing.
 {
   const sloj = podstavnojSloj({ sohranitOtvet: { sostoyanie: 'moglo-dojti-id-est', id: 'mem-3333cccc4444' } });
   const k = await podnyat({ dolgo: sloj });
   k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание I', istochnik: 's#1-2' });
   await new Promise((r) => setTimeout(r, 40));
-  // 🔴 Версии пакетов независимы: ядро новое, слой прежний — законное состояние узла,
-  // а не поломка. Без ветки вызов бросил бы TypeError, и механизм против тихой потери
-  // сам упал бы вместо того, чтобы назвать причину и лечение.
+  // RU: Версии ядра и слоя независимы. Отсутствующий proverit требует объяснения и лечения вместо TypeError механизма повтора.
+  // EN: Core and layer versions are independent. A missing proverit requires an explanation and remedy rather than a TypeError from the retry mechanism.
   const staryj = {
     dostupna: () => true, pochemuNedostupna: () => null,
     sohranit: async () => { throw new Error('не должны были писать вслепую'); },
-    // proverit НЕТ ВОВСЕ — так выглядит dsh-pamyat-omega до alpha.9
+    // RU: Имитируем старый слой без proverit.
+    // EN: Simulate an older layer without proverit.
   };
   k.pamyatDolgovremennaya = staryj;
   let brosil = null, otchet = null;
@@ -269,7 +276,8 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   });
 }
 
-// ─── [E] очередь пуста → это СОСТОЯНИЕ, а не тишина ───
+// RU: Пустая очередь должна называться состоянием, а не оставаться тишиной.
+// EN: An empty queue must be reported as a state rather than silence.
 {
   const sloj = podstavnojSloj({ sohranitOtvet: { sostoyanie: 'dostavleno', id: 'mem-0000' } });
   const k = await podnyat({ dolgo: sloj });
@@ -281,6 +289,100 @@ function podstavnojSloj({ sohranitOtvet, proveritOtvet = null, dostupen = true }
   });
   proba('[E] очередь видна снаружи отдельным вызовом', () => {
     if (!Array.isArray(k.pamyat.ocheredDostavki())) throw new Error('ocheredDostavki не отдаёт список');
+  });
+}
+
+// RU: A-N-1948 №3 (№1): исключение слоя на повторе не обрывает проход. Повторная запись бросила — знание могло дойти:
+//     строка → moglo-dojti-bez-id (как на первичном пути), остальные строки обрабатываются. Бросила проверка чтением —
+//     записи не было: строка остаётся, попытка не расходуется.
+// EN: A-N-1948 №3 (№1): a layer exception during a retry does not abort the pass.
+{
+  const sloj = podstavnojSloj({ sohranitOtvet: null, dostupen: false });
+  const k = await podnyat({ dolgo: sloj });
+  k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание I1', istochnik: 's#1-2' });
+  k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание I2', istochnik: 's#1-2' });
+  await new Promise((r) => setTimeout(r, 40));
+  const padayushchij = podstavnojSloj({ sohranitOtvet: (s) => {
+    if (s.sohranit === 1) throw new Error('обрыв сети (проба)');
+    return { sostoyanie: 'dostavleno', id: 'mem-1111aaaa2222' };
+  } });
+  k.pamyatDolgovremennaya = padayushchij;
+  let otchet = null, otkaz = null;
+  try { otchet = await k.pamyat.dostavitOtlozhennoe(); } catch (e) { otkaz = e; }
+  proba('[K] исключение sohranit на повторе: проход НЕ отвергнут', () => {
+    if (otkaz) throw new Error('проход отвергнут: ' + otkaz.message);
+  });
+  proba('[K] вторая строка очереди обработана после исключения первой', () => {
+    if (padayushchij.schet.sohranit !== 2) throw new Error('sohranit звали ' + padayushchij.schet.sohranit + ' раз, ждали 2');
+    if (otchet?.dostavleno !== 1) throw new Error('dostavleno ' + otchet?.dostavleno);
+  });
+  proba('[K] строка с исключением записи → moglo-dojti-bez-id, ждёт руки', () => {
+    const o = ocheredIzBazy();
+    if (o.length !== 1) throw new Error('в очереди ' + o.length + ', ждали 1');
+    if (o[0].priroda !== 'moglo-dojti-bez-id') throw new Error('природа ' + o[0].priroda);
+    if (otchet?.zhdutRuki !== 1) throw new Error('zhdutRuki ' + otchet?.zhdutRuki);
+  });
+}
+{
+  const sloj = podstavnojSloj({ sohranitOtvet: { sostoyanie: 'moglo-dojti-id-est', id: 'mem-3333cccc4444' } });
+  const k = await podnyat({ dolgo: sloj });
+  k.pamyat.zapisat({ klass: 'urok', soderzhim: 'знание J', istochnik: 's#1-2' });
+  await new Promise((r) => setTimeout(r, 40));
+  const zhivoj = podstavnojSloj({
+    sohranitOtvet: { sostoyanie: 'dostavleno', id: 'mem-dubl' },
+    proveritOtvet: () => { throw new Error('обрыв сети при чтении (проба)'); },
+  });
+  k.pamyatDolgovremennaya = zhivoj;
+  let otchet = null, otkaz = null;
+  try { otchet = await k.pamyat.dostavitOtlozhennoe(); } catch (e) { otkaz = e; }
+  proba('[L] исключение proverit: проход НЕ отвергнут, повторной записи нет', () => {
+    if (otkaz) throw new Error('проход отвергнут: ' + otkaz.message);
+    if (zhivoj.schet.sohranit !== 0) throw new Error('sohranit звали ' + zhivoj.schet.sohranit + ' раз — дубль');
+  });
+  proba('[L] строка осталась прежней природы, попытка не израсходована', () => {
+    const o = ocheredIzBazy();
+    if (o.length !== 1) throw new Error('в очереди ' + o.length);
+    if (o[0].priroda !== 'moglo-dojti-id-est') throw new Error('природа ' + o[0].priroda);
+    if (Number(o[0].popytok) !== 0) throw new Error('попыток ' + o[0].popytok);
+    if (otchet?.ostalos !== 1) throw new Error('ostalos ' + otchet?.ostalos);
+  });
+}
+// RU: A-N-1948 №3 (№1, условие Вениамина): исключение поиска по телу (poTelu) на строке moglo-dojti-bez-id — то же, что
+//     неудачный поиск: проход не отвергнут, строка не тронута, следующая строка разобрана. Тела длиннее порога (80 знаков).
+// EN: A-N-1948 №3 (№1, Veniamin's condition): a poTelu exception equals a failed body search; the pass goes on.
+{
+  const sloj = podstavnojSloj({ sohranitOtvet: { sostoyanie: 'moglo-dojti-bez-id', id: null, pochemu: 'обрыв (проба)' } });
+  const k = await podnyat({ dolgo: sloj });
+  const telo = (n) => 'знание M' + n + ': тело нарочно длиннее порога сверки по телу, чтобы поиск по телу был вызван на повторе';
+  k.pamyat.zapisat({ klass: 'urok', soderzhim: telo(1), istochnik: 's#1-2' });
+  k.pamyat.zapisat({ klass: 'urok', soderzhim: telo(2), istochnik: 's#1-2' });
+  await new Promise((r) => setTimeout(r, 40));
+  const do_ = ocheredIzBazy();
+  const iskatel = podstavnojSloj({ sohranitOtvet: { sostoyanie: 'dostavleno', id: 'mem-dubl' } });
+  iskatel.schet.poTelu = 0;
+  iskatel.poTelu = async () => {
+    iskatel.schet.poTelu += 1;
+    if (iskatel.schet.poTelu === 1) throw new Error('обрыв сети при поиске по телу (проба)');
+    return { ids: ['mem-5555eeee6666'] };
+  };
+  k.pamyatDolgovremennaya = iskatel;
+  let otchet = null, otkaz = null;
+  try { otchet = await k.pamyat.dostavitOtlozhennoe(); } catch (e) { otkaz = e; }
+  proba('[M] набор: в очереди 2 строки moglo-dojti-bez-id', () => {
+    if (do_.length !== 2 || do_.some((z) => z.priroda !== 'moglo-dojti-bez-id')) throw new Error(JSON.stringify(do_.map((z) => z.priroda)));
+  });
+  proba('[M] исключение poTelu: проход НЕ отвергнут, повторной записи нет', () => {
+    if (otkaz) throw new Error('проход отвергнут: ' + otkaz.message);
+    if (iskatel.schet.sohranit !== 0) throw new Error('sohranit звали ' + iskatel.schet.sohranit + ' раз — дубль');
+  });
+  proba('[M] строка с исключением поиска не тронута, вторая снята по телу', () => {
+    if (iskatel.schet.poTelu !== 2) throw new Error('poTelu звали ' + iskatel.schet.poTelu + ' раз, ждали 2');
+    const o = ocheredIzBazy();
+    if (o.length !== 1) throw new Error('в очереди ' + o.length + ', ждали 1');
+    const bylo = do_.find((z) => z.zapis_id === o[0].zapis_id);
+    if (!bylo || JSON.stringify(bylo) !== JSON.stringify(o[0])) throw new Error('строка изменилась: ' + JSON.stringify(o[0]));
+    if (otchet?.podtverzhdeno !== 1) throw new Error('podtverzhdeno ' + otchet?.podtverzhdeno);
+    if (otchet?.poTeluNeVyshlo !== 1) throw new Error('poTeluNeVyshlo ' + otchet?.poTeluNeVyshlo);
   });
 }
 

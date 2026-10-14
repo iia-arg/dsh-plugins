@@ -1,0 +1,12 @@
+import {installSensor,appendRow} from './turn-sensor.mjs';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {createHash} from 'node:crypto';
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'turn-sensor-'));
+try{
+ const dbPath=path.join(dir,'map.db');const db=new DatabaseSync(dbPath);db.exec('CREATE TABLE sessions(kluch TEXT,sessionId TEXT)');db.prepare('INSERT INTO sessions VALUES(?,?)').run(createHash('sha256').update('user\0probe').digest('hex').slice(0,32),'00000000-0000-0000-0000-000000000001');db.close();
+ const hooks={};let count=900000;const session={id:'s',header:{createdAt:1},events:[],requestHeader:()=>({config:{provider:'p',model:'m'}}),deriveMessages:()=>[{role:'user',content:'probe'}]};
+ const ctx={on:(n,f)=>hooks[n]=f,emit:(_,name,replies)=>{assert.equal(name,'our/compaction-status');replies.push({auto:true,thresholdRatio:.9})},get:n=>n==='tokenMeter'?{measure:s=>{assert.equal(s,session);return{totalTokens:count,baseline:{tokens:2,kind:'usage'}}}}:{resolveModelInfo:async()=>({context:{contextWindow:1000000}})}};
+ installSensor(ctx,{agent:'gamma',logDir:dir,gatewayDb:dbPath},(a,b)=>a);
+ await hooks['agent/pre-step']({agent:{session},turn:1},()=>{});hooks['session/event'](session,{type:'turn/end',seq:10,time:1000,data:{turn:1}});hooks['session/event'](session,{type:'turn/end',seq:10,time:1000,data:{turn:1}});
+ count=100000;session.events.push({type:'compaction/start',seq:15});await hooks['agent/pre-step']({agent:{session},turn:2},()=>{});hooks['session/event'](session,{type:'turn/end',seq:20,time:2000,data:{turn:2}});
+ const rows=fs.readFileSync(path.join(dir,'gamma.jsonl'),'utf8').trim().split('\n').map(JSON.parse);assert.equal(rows.length,2);assert.equal(rows[0].tokens,900000);assert.equal(rows[0].threshold,900000);assert.equal(rows[1].tokens,100000);assert.equal(rows[1].platform_seq,15);assert.equal(rows[0].uuid,'00000000-0000-0000-0000-000000000001');console.log('PASS sensor actual measure field, scoped ratio .90, window, UUID SQLite, 2 turns/2 lines, dedup');
+ const rotated=path.join(dir,'rotate.jsonl');for(let i=0;i<7;i++){fs.writeFileSync(rotated,'');fs.truncateSync(rotated,8*1024*1024);appendRow(rotated,{turn:i})}assert(fs.existsSync(rotated+'.5'));assert(!fs.existsSync(rotated+'.6'));console.log('PASS rotation: active + 5 archives');
+}finally{fs.rmSync(dir,{recursive:true,force:true})}

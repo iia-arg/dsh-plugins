@@ -1,0 +1,15 @@
+#!/usr/bin/python3 -B
+# dsh-limity-vydat — принудительная команда ssh учётки limity-vydacha на sadik (B-N-1776): страница lim.insmat.ru
+# (vps-ru) ЗАБИРАЕТ производный limity.json. Отдаёт ровно один файл; любая команда от клиента (SSH_ORIGINAL_COMMAND)
+# — отказ: неизвестный ввод ведёт в отказ, а не в действие. Ссылку вместо файла и файл больше 1 МБ не отдаёт.
+# ЧЕГО НЕ ЛОВИТ: свежесть файла — её говорит snyato_unix внутри; доступность самой страницы.
+import os, stat, sys
+VYDACHA = '/var/lib/dsh-limity/vydacha/limity.json'
+if os.environ.get('SSH_ORIGINAL_COMMAND') or len(sys.argv) > 1:
+    print('ОТКАЗ: команда не принимается, канал только отдаёт limity.json', file=sys.stderr); sys.exit(3)
+try:
+    fd = os.open(VYDACHA, os.O_RDONLY | os.O_NOFOLLOW)
+    if not stat.S_ISREG(os.fstat(fd).st_mode) or os.fstat(fd).st_size > 1024 * 1024: raise OSError('не обычный файл или больше 1 МБ')
+    sys.stdout.buffer.write(os.read(fd, 1024 * 1024 + 1)); os.close(fd)
+except OSError as e:
+    print(f'ОТКАЗ: выдача не прочитана: {e}', file=sys.stderr); sys.exit(2)

@@ -1,0 +1,1661 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""agent-plugins — реестр плагинов и расширений машины.
+
+  list     показать записанное
+  check    спросить ИСТОЧНИКИ, что вышло. Ничего не обновляет.
+           ЭТО НЕ СТОРОЖ: по расписанию не ходит, тревог не шлёт, состояния не помнит —
+           инструмент ручной сверки установленного. Сторож новых версий, если он нужен,
+           заводится отдельно и сам записывается в реестр, как любая другая служба.
+  verify   сверить записанное с МАШИНОЙ. Расхождение => 1; СЛЕПОТА => 2.
+           Расхождение и непроверяемая запись в одном прогоне => 2: слепота старше, по коду
+           расхождение не видно — его называет строка «РАСХОЖДЕНИЙ: N» в выводе.
+           Реестр не прочитан (нет, не YAML, пуст, не той формы, запись без id) => 2.
+           С B-N-1853 — и ОБРАТНО: у каждого агента реестра агентов (AGENTS_REGISTRY, иначе
+           /etc/agent-registry/agents.yaml) профиль A и каждая копия плагина в <дом>/plugins/
+           обязаны быть покрыты записью этого реестра; нет — «нет записи … для <агент>».
+  diff     сверить машинный файл с ОПУБЛИКОВАННЫМ и показать разницу списком
+  pravka   agent-plugins pravka <новый-файл> [--ustanovit --punkt <пункт>] — ЕДИНСТВЕННАЯ
+           подкоманда, которая пишет. Ставит новую редакцию САМОГО реестра:
+           разбор, счёт записей по разделам, копия до правки, временный файл
+           в том же каталоге, режим и владелец со старого, os.replace,
+           и отдельное чтение установленного. Без --ustanovit — сухой прогон.
+           С 25.09 (B-N-898): копия до правки — в /var/backups/montazh/<пункт>/, установка без
+           --punkt — отказ; установка пишет в журнал (logger -t agent-plugins) sha256 легшего файла.
+           С 02.10 (B-N-1437): после приёмки — коммит ТОЛЬКО реестра в его git («pravka --punkt <п>: <поля>»,
+           рука SUDO_USER по таблице / AGENT_PLUGINS_RUKA); чужие незафиксированные названы; сбой коммита — код 5, установка в силе.
+           С 26.09 (B-N-985): --osnova <sha256, 16–64 знака> — сумма реестра, С КОТОРОГО собран
+           кандидат; при установке ОБЯЗАТЕЛЬНА, бой ≠ основе — отказ, бой не тронут. Сухой и
+           установка печатают разницу по полям: «id · поле · было → стало».
+
+🔴 ГРАНИЦЫ ЭТОГО ИНСТРУМЕНТА — читать до того, как на него положиться:
+  * Он не меняет МАШИНУ. Ни одна подкоманда не ставит и не обновляет
+    ничего снаружи реестра, не трогает служб и не перезапускает их.
+    Поле update печатается, но никогда не выполняется.
+  * 🔴 Ровно одно исключение, заведено 24.08.2026: `pravka` пишет — и
+    только сам файл реестра. Прежде здесь стояло «он НИЧЕГО не меняет»;
+    формулировка устарела в тот час, когда появилась pravka, и заменена,
+    а не оставлена рядом. Все прочие подкоманды по-прежнему только читают,
+    и сторожа зовут именно их.
+  * pravka проверяет ФОРМУ и СОСТАВ новой редакции: разбирается ли, нет ли
+    повторённых ключей, не пропали ли разделы, не убыло ли записей молча.
+    Она НЕ судит, верно ли записанное: сходится ли запись с машиной —
+    это verify, и его надо звать отдельно ПОСЛЕ установки.
+  * pravka ставит файл ПОБАЙТНО тем, что вы проверили, а не пересобирает
+    YAML заново: пересборка потеряла бы все объяснения в комментариях,
+    ради которых реестр и ведётся руками.
+  * verify сверяет ТОЛЬКО то, для чего в записи есть installed_check
+    (и fingerprint_check, если он задан). Запись без installed_check
+    считается непроверяемой и попадает в вывод как таковая — verify не делает
+    вид, что проверил её.
+  * check требует сети. Без сети он говорит «источник недоступен», а НЕ
+    «всё свежее». Молчаливое «расхождений нет» из-за оборванной сети — ровно
+    тот вред, от которого этот инструмент защищает.
+  * Каждая команда обрывается по таймауту (check 30 с, verify 15 с). Зависший
+    источник задержит вывод, но не подвесит проверку навсегда.
+  * verify отвечает на вопрос «совпадает ли реестр с машиной», а НЕ «здорова ли
+    машина». Про здоровье — healthcheck, он вызывается только по `list --health`.
+  * 🔴 diff НЕ судит, законна ли разница. Он показывает, ЧТО разошлось; решает
+    человек. Разница между машинным и опубликованным — норма нашей схемы
+    (машина живая, публикация обезличенная), ненормальна лишь НЕОБЪЯСНЁННАЯ
+    разница. Поэтому наличие разницы кодом возврата не наказывается, а вот
+    несверенный файл — наказывается: «не смог сверить» это тоже повод вмешаться.
+  * diff требует сети и работает только с записями, где есть поле published.
+    Записи без него пропускаются молча только в сводке, но пересчитываются
+    явно — чтобы «сверять нечего» не читалось как «всё сходится».
+"""
+import base64
+import contextlib
+import datetime
+import hashlib
+import io
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+
+import yaml
+
+BOEVOJ_REGISTRY = "/etc/agent-registry/plugins.yaml"
+# Путь реестра переопределяется окружением ТОЛЬКО ради приёмки на
+# подставных данных: инструмент, которому нельзя подсунуть подставной
+# предмет, непроверяем в принципе — а значит и доверять ему не за что.
+# 🔴 Подмена не молчит: о ней говорится в stderr при каждом вызове,
+# иначе зелёный ответ про подставной реестр читался бы как ответ про
+# боевой. В боевых юнитах переменная не задана — там ничего не меняется.
+REGISTRY = os.environ.get("PLUGINS_REGISTRY", BOEVOJ_REGISTRY)
+# B-N-1853: реестр агентов для обратной сверки — та же переменная и умолчание, что у agent-registry (agent-registry:91).
+AGENTS_REGISTRY = os.environ.get("AGENTS_REGISTRY", "/etc/agent-registry/agents.yaml")
+
+RED = "\033[31m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+DIM = "\033[2m"
+BOLD = "\033[1m"
+OFF = "\033[0m"
+
+if not sys.stdout.isatty():
+    RED = GREEN = YELLOW = DIM = BOLD = OFF = ""
+
+
+# ── ПОВТОРЁННЫЕ КЛЮЧИ ──────────────────────────────────────────────────────
+#
+# YAML при повторе ключа в одном узле молча оставляет ПОСЛЕДНИЙ. Файл при этом
+# выглядит верным: обе строки видны глазами, ошибки нет, код возврата ноль.
+# Поймано 22.08.2026 на записи с двумя `note` подряд — предупреждение «процессы
+# не перезапущены, в памяти старый код» пропало из разобранного документа,
+# хотя в файле стояло. Файл говорит одно, разбор видит другое.
+#
+# ГДЕ ЭТО НЕ ПРИМЕНЯЕТСЯ: только к файлу реестра. Чужие YAML на машине
+# инструмент не обходит и не судит.
+# КОГДА ОСТАНАВЛИВАЕТСЯ: находка не мешает работе команд list/check/diff —
+# они печатают предупреждение и работают дальше на разобранных данных.
+# Ненулевой код даёт только verify: он и отвечает на вопрос «сходится ли».
+
+DUPLICATE_KEYS = []
+
+
+class _DupLoader(yaml.SafeLoader):
+    """SafeLoader, который ЗАМЕЧАЕТ повтор ключа вместо тихой замены."""
+
+
+def _mapping_with_dup_check(loader, node, deep=False):
+    seen = {}
+    for key_node, _ in node.value:
+        try:
+            key = loader.construct_object(key_node, deep=deep)
+        except Exception:
+            continue  # необычный ключ — не наше дело, разбор продолжается
+        if not isinstance(key, str):
+            continue
+        line = key_node.start_mark.line + 1
+        if key in seen:
+            DUPLICATE_KEYS.append((key, seen[key], line))
+        else:
+            seen[key] = line
+    return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
+
+
+_DupLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _mapping_with_dup_check
+)
+
+
+def report_duplicates():
+    """Громко назвать повторы. Возвращает их число."""
+    if not DUPLICATE_KEYS:
+        return 0
+    print(f"{RED}ПОВТОРЁННЫЕ КЛЮЧИ: {len(DUPLICATE_KEYS)}{OFF} в {REGISTRY}")
+    for key, first, second in DUPLICATE_KEYS:
+        print(f"            ключ {BOLD}{key}{OFF}: строка {first} и строка {second}"
+              f" — разбор оставит ТОЛЬКО строку {second}")
+    print("            то, что записано выше, в разобранный документ не попадает.")
+    return len(DUPLICATE_KEYS)
+
+
+def _reestr_ne_prochitan(prichina):
+    """№6–8 аудита 16 (10.10.2026): «реестр не прочитан» — СЛЕПОТА, код 2, а не 1 («расхождение»).
+    Прежде sys.exit(str) давал 1, а пустой файл и запись без id роняли разбор трассой Python."""
+    print(f"СЛЕПОТА: реестр не прочитан — {prichina}", file=sys.stderr)
+    sys.exit(2)
+
+
+def load():
+    DUPLICATE_KEYS.clear()
+    try:
+        with open(REGISTRY, encoding="utf-8") as f:
+            data = yaml.load(f, Loader=_DupLoader)
+    except FileNotFoundError:
+        _reestr_ne_prochitan(f"нет файла {REGISTRY} (другой путь — PLUGINS_REGISTRY)")
+    except OSError as e:
+        _reestr_ne_prochitan(f"{REGISTRY} не читается: {e}")
+    except yaml.YAMLError as e:
+        _reestr_ne_prochitan(f"{REGISTRY} не разбирается как YAML: {e}")
+    if not isinstance(data, dict):
+        _reestr_ne_prochitan(f"{REGISTRY}: верхний уровень — {type(data).__name__}, нужен словарь "
+                             f"с разделами plugins/services (пустой файл даёт None)")
+    entries = []
+    for section in ("plugins", "services"):
+        spisok = data.get(section) or []
+        if not isinstance(spisok, list):
+            _reestr_ne_prochitan(f"{REGISTRY}: раздел {section} — {type(spisok).__name__}, нужен список записей")
+        for nomer, item in enumerate(spisok, 1):
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"].strip():
+                _reestr_ne_prochitan(f"{REGISTRY}: раздел {section}, запись №{nomer} без строкового id "
+                                     f"(опечатка в ключе?) — list/verify по ней не сойдутся")
+            item["_section"] = section
+            entries.append(item)
+    if not entries:
+        _reestr_ne_prochitan(f"{REGISTRY}: ни одной записи в plugins/services")
+    return entries
+
+
+def run(cmd, timeout, verify=False):
+    """Выполнить команду. Возвращает (состояние, вывод/причина).
+
+    🔴 ЧЕТЫРЕ СОСТОЯНИЯ, А НЕ ДВА (03.09.2026). Прежде любой ненулевой код читался
+    как «НЕ ОТВЕЧАЕТ», то есть как смерть проверяемого. Для сторожа, чья работа —
+    кричать, это гибельно: чем исправнее он работает, тем мертвее выглядит, и
+    красное порождает красное. Замер, из-за которого правка: backup-coverage-watch
+    ежедневно докладывал находку кодом 1 и числился неотвечающим — при том, что в
+    ту же минуту его тревога уходила владельцу и читалась им.
+
+    Коды по нашей общей конвенции: 0 сошлось · 1 нашёл расхождение · 2 проверить нечем.
+    ГДЕ НЕ ПРИМЕНЯЕТСЯ: состояние «нашёл» НЕ говорит, что находка важна или что
+    предмет плох, — только что проверка отработала и ей есть что сказать.
+    """
+    try:
+        # Verify must not accept a count/hash after a failed producer. ERR writes
+        # to a separate descriptor: stderr may be suppressed, and printf "$(...)"
+        # can hide a substitution's nonzero status even with pipefail/errexit.
+        # Explicitly handled errors (if/||), nested shells resetting options,
+        # and commands silently omitting files remain outside this check.
+        failed_step = False
+        if verify:
+            with tempfile.TemporaryFile() as failures:
+                trap = f"trap 'printf 1 >&{failures.fileno()}' ERR\n"
+                args = ["bash", "-E", "-e", "-o", "pipefail", "-O", "inherit_errexit", "-c", trap + cmd]
+                p = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
+                                   pass_fds=(failures.fileno(),))
+                failures.seek(0)
+                failed_step = bool(failures.read(1))
+        else:
+            p = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return "molchit", f"таймаут {timeout} с"
+    except OSError as error:
+        if verify:
+            return "slepota", f"не запустить проверку/канал ошибок: {error}"
+        raise
+    vyvod = (p.stdout or "").strip()
+    denied = {line for line in (p.stderr or "").splitlines()
+              if re.search(r"Permission denied|Operation not permitted|Отказано в доступе", line, re.I)}
+    verify_failed = verify and (failed_step or p.returncode != 0 or bool(denied))
+    # Успешный запрос версии по-прежнему возвращает последнюю строку stdout.
+    # При отказе сохраняем оба потока: последняя строка может быть версией Node,
+    # а не причиной. repr не позволяет переносам из команды подделать строки отчёта.
+    if p.returncode == 0 and not verify_failed:
+        posl = vyvod.splitlines()[-1].strip() if vyvod else ""
+    else:
+        potoki = [(name, value.strip()) for name, value in
+                  (("stderr", p.stderr or ""), ("stdout", p.stdout or "")) if value.strip()]
+        # Пояснение может уйти во внешний канал тревог: это НЕ фильтр секретов.
+        # 500 символов Python после strip на КАЖДЫЙ поток, до repr; экранирование
+        # может удлинить печатную строку. Сохраняем голову и хвост; середина теряется.
+        predel_potoka = 500
+        chasti = []
+        for name, value in potoki:
+            ubrano = max(0, len(value) - predel_potoka)
+            if ubrano:
+                polovina = predel_potoka // 2
+                chasti.append(f"{name}={value[:polovina]!r} [обрезано {ubrano} символов] {value[-polovina:]!r}")
+            else:
+                chasti.append(f"{name}={value!r}")
+        posl = "; ".join(chasti) or f"код возврата {p.returncode}"
+    if verify_failed:
+        cause = (f"нет права читать (сообщений ОС: {len(denied)}); " if denied else
+                 "команда/шаг проверки отказал; скрытое число файлов неизвестно; ")
+        return "slepota", cause + posl
+    if p.returncode == 0:
+        # Пустой вывод при нулевом коде — не успех: проверка ничего не сказала.
+        return ("zhivoj", posl) if vyvod else ("molchit", "пустой вывод при коде 0")
+    # Node тоже завершает отказ загрузки кодом 1: это не находка проверки.
+    # Ищем поле code в stderr, а не произвольное упоминание в stdout.
+    if p.returncode != 0 and re.search(
+        r"(?m)^\s*code:\s*['\"](?:MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND)['\"]\s*,?\s*$",
+        p.stderr or "",
+    ):
+        return "molchit", f"КОМАНДА УПАЛА: Node не загрузил модуль; {posl}"
+    if p.returncode == 1:
+        return "nashel", posl
+    if p.returncode == 2:
+        return "slepota", posl
+    # 126/127 — не запустился вовсе; прочее — чужой код, не наша конвенция.
+    return "molchit", posl
+
+
+# B-N-856 (25.09.2026, Заря): свой предел проверки живости для записи — healthcheck_predel, секунды, целое 1..600.
+# Зачем: backup-coverage-watch гоняет в проверке ВЕСЬ stend-pokrytiya.sh (замер 25.09 под iskra: 12,15–12,21 с ×3 =
+# 81% прежних 15 с) — под нагрузкой «НЕ ОТВЕЧАЕТ» по вине предела, а не предмета. Облегчить проверку — значит оставить
+# стенд без живого зовущего (он один из двух в dorabotki, у кого зовущий есть). Умолчание — прежние 15 с; негодное
+# значение НЕ молчит: 15 с и слова в строке записи. ⚠️ НЕ ЛОВИТ: предел, поставленный слишком большим, прячет
+# настоящее зависание на его длину; поэтому потолок 600 с, а не «сколько угодно».
+PREDEL_ZHIVOSTI = 15
+def predel_zhivosti(e):
+    syroe = e.get("healthcheck_predel")
+    if syroe is None:
+        return PREDEL_ZHIVOSTI, ""
+    if isinstance(syroe, int) and not isinstance(syroe, bool) and 1 <= syroe <= 600:
+        return syroe, ""
+    return PREDEL_ZHIVOSTI, f"healthcheck_predel «{syroe}» негоден (нужно целое 1..600) — беру {PREDEL_ZHIVOSTI} с; "
+
+
+def nalichie_puti(declared):
+    """Есть ли на диске объявленный path: True — есть, False — нет, None — не знаю (не путь или нет прав).
+    B-N-1821 (08.10.2026, Заря): path бывает «путь + описание». Прежде описанием считалась только строка с «, » или « (»,
+    а «; » или « — » шли в stat ЦЕЛИКОМ → ложное «ПАКЕТ ОТСУТСТВУЕТ», и healthcheck не звался вовсе (golos-watch, B-N-1820).
+    Теперь: сначала вся строка (путь с пробелом внутри — тоже путь), затем префиксы до каждого пробела без «,;:» на конце.
+    Нашёлся любой — есть; хоть один «нет прав» (EACCES/EPERM) — не знаю; ни одного — нет. Прочие отказы stat (длинное
+    описание без «/» даёт ENAMETOOLONG, путь через файл — ENOTDIR) — «нет», а не «не знаю» (r2, замечание Вениамина).
+    ЧЕГО НЕ ЛОВИТ: префикс-описание, совпавшее с существующим путём (запись «/opt/x что-то», где /opt/x есть, а пакета нет)."""
+    if not isinstance(declared, str) or not os.path.isabs(declared):
+        return None
+    kandidaty = [declared] + [declared[:m.start()].rstrip(",;:") for m in re.finditer(r"\s", declared)]
+    neizvestno = False
+    for put in dict.fromkeys(kandidaty):
+        if len(put) < 2:
+            continue
+        try:
+            os.stat(put)
+            return True
+        except FileNotFoundError:
+            continue
+        except PermissionError:
+            neizvestno = True  # Нет прав (EACCES/EPERM) != отсутствует.
+        except OSError:
+            continue  # B-N-1821 r2 (замечание Вениамина): ENAMETOOLONG, ENOTDIR и прочие — пути нет.
+    return None if neizvestno else False
+
+
+def _pokrytie(entries):
+    """B-N-1853: realpath мест, за которые отвечают записи: найденный на диске path (тот же разбор, что nalichie_puti —
+    вся строка, затем префиксы до пробелов) и каждый derevo.files[].local."""
+    out = {}
+    for e in entries:
+        p = e.get("path")
+        if isinstance(p, str) and os.path.isabs(p):
+            for put in dict.fromkeys([p] + [p[:m.start()].rstrip(",;:") for m in re.finditer(r"\s", p)]):
+                if len(put) > 1 and os.path.exists(put):
+                    out.setdefault(os.path.realpath(put), []).append(e["id"])
+                    break
+        for f in ((e.get("derevo") or {}).get("files") or []):
+            if isinstance(f, dict) and isinstance(f.get("local"), str) and os.path.isabs(f["local"]):
+                out.setdefault(os.path.realpath(f["local"]), []).append(e["id"])
+    return out
+
+
+def obratnaya_sverka(entries):
+    """B-N-1853 (08.10.2026, Аврора; находка при заведении Анны B-N-1837): verify сверял только ОБЪЯВЛЕННЫЕ записи и не видел
+    ОТСУТСТВИЯ записи нового агента — профиль и копии моста/адаптера Анны жили без записей, verify был «совпадает».
+    Перечень агентов — реестр агентов (AGENTS_REGISTRY), места — С ДИСКА: профиль A <dom>/.dsh/profiles/web/cordis.patch.yml
+    (то же правило, что сборка A у agent-registry:1895) и каждый каталог <dom>/plugins/<имя>. Место покрыто, если путь записи
+    равен ему, содержит его или лежит внутри него (пакет, перечисляющий файлы, покрывает свой каталог).
+    Возвращает (нет_записи[], слепо[]). ЧЕГО НЕ ЛОВИТ: прочие профили (headless, *probe), домашний .dsh/cordis.patch.yml,
+    пресеты; каталог плагина, покрытый записью ОДНОГО файла внутри; агента, которого нет в реестре агентов; плагины вне
+    <dom>/plugins (общие в /opt/agent-plugins сверяются прямой сверкой записей)."""
+    try:
+        with open(AGENTS_REGISTRY, encoding="utf-8") as f:
+            agenty = (yaml.safe_load(f) or {}).get("agenty")
+        if not isinstance(agenty, list) or not agenty:
+            raise ValueError("нет списка agenty")
+    except (OSError, ValueError, yaml.YAMLError) as ex:
+        return [], [f"обратная сверка: реестр агентов {AGENTS_REGISTRY} не прочитан ({ex})"]
+    pokr = _pokrytie(entries)
+    def kem(obj):
+        r = os.path.realpath(obj)
+        return sorted({i for p, ids in pokr.items() if r == p or r.startswith(p.rstrip("/") + "/") or p.startswith(r + "/") for i in ids})
+    net, slepo = [], []
+    for a in agenty:
+        imya = a.get("imya") if isinstance(a, dict) else None
+        dom = ((a.get("namerenie") or {}).get("dom") if isinstance(a, dict) else None)
+        if not isinstance(imya, str) or not isinstance(dom, str) or not os.path.isabs(dom):
+            slepo.append(f"обратная сверка: запись агента без imya/dom — {str(a)[:60]}")
+            continue
+        mesta = []
+        prof = f"{dom}/.dsh/profiles/web/cordis.patch.yml"
+        try:
+            os.stat(prof)
+            mesta.append(("профиль A", prof))
+        except FileNotFoundError:
+            pass  # профиля нет — это вопрос agent-registry verify (сборка A), не записи
+        except OSError as ex:
+            slepo.append(f"{imya}: профиль {prof} не прочитан ({ex.strerror})")
+        pl = f"{dom}/plugins"
+        try:
+            for x in sorted(os.listdir(pl)):
+                put = os.path.join(pl, x)
+                if os.path.isdir(put) and not x.startswith("."):
+                    mesta.append((x, put))
+        except FileNotFoundError:
+            pass
+        except OSError as ex:
+            slepo.append(f"{imya}: {pl} не прочитан ({ex.strerror})")
+        for chto, put in mesta:
+            k = kem(put)
+            if k:
+                print(f"{GREEN}есть запись{OFF}  {BOLD}{imya}{OFF} {chto}: {put} — {', '.join(k)}")
+            else:
+                net.append(f"{chto} для {imya}")
+                print(f"{RED}НЕТ ЗАПИСИ{OFF}  {BOLD}{chto}{OFF} для {BOLD}{imya}{OFF}: {put} — ни одна запись реестра его не покрывает")
+    return net, slepo
+
+
+def montazh_result(subject, args, started):
+    """Единственный parser окна — montazh-okno. Без ключа сверка строгая.
+
+    Чего не ловит: настоящую ошибку в составе живого окна откладывает до 1800с.
+    Слепота/расхождения вне состава окна не откладываются.
+    """
+    if "--avto-montazh" not in args:
+        return 0, ""
+    helper = os.environ.get("MONTAZH_OKNO_BIN", "/usr/local/sbin/montazh-okno")
+    try:
+        p = subprocess.run([helper, "otlozheno", "--avto-montazh", "--since-ns", str(started), subject],
+                           capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return 0, ""  # Отсрочка не доказана: дальше прежняя строгая проверка.
+    if p.returncode == 4 and p.stdout.startswith("ОТЛОЖЕНО "):
+        return 4, p.stdout.strip()
+    return (6, p.stdout.strip()) if p.returncode == 6 else (0, "")
+
+
+def montazh_final(deferred, args, started):
+    for eid in sorted(set(deferred)):
+        result, detail = montazh_result("entry:" + eid, args, started)
+        if result != 4:
+            raise MontazhReread("срок/поколение окна изменились перед итогом " + eid)
+
+
+class MontazhReread(Exception):
+    pass
+
+
+def montazh_scan(scanner, entries, args):
+    if "--avto-montazh" not in args:
+        return scanner(entries, args)
+    note = ""
+    for repeated in (False, True):
+        output = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(output):
+                result = scanner(entries, args, repeated=repeated)
+        except MontazhReread as error:
+            note = str(error) + "; выполнен один свежий прогон"
+            entries = load()
+            continue
+        if note:
+            print(note)
+        print(output.getvalue(), end="")
+        return result
+
+    print("СЛЕПОТА: повторная смена предмета после одного свежего прогона")
+    return 2
+
+
+def cmd_list(entries, args):
+    return montazh_scan(_cmd_list, entries, args)
+
+
+def _cmd_list(entries, args, repeated=False):
+    health = "--health" in args
+    started = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+    width = max(len(e["id"]) for e in entries)
+    failed, deferred = [], []
+    section = None
+    for e in entries:
+        if e["_section"] != section:
+            section = e["_section"]
+            title = "ПЛАГИНЫ И РАСШИРЕНИЯ" if section == "plugins" else "СЛУЖЕБНОЕ"
+            print(f"\n{BOLD}{title}{OFF}")
+        origin = "наш" if e.get("origin") == "ours" else "чужой"
+        print(f"  {BOLD}{e['id']:<{width}}{OFF}  {e.get('version', '?'):<38} {DIM}{origin}{OFF}")
+        print(f"  {' ' * width}  {DIM}{e.get('used_by', '—')}{OFF}")
+        if health:
+            hc = e.get("healthcheck")
+            if not hc:
+                failed.append(e["id"])
+                print(f"  {' ' * width}  {YELLOW}живость не проверяется: команды нет{OFF}")
+            else:
+                # path бывает описанием или списком: путь отделяется от описания в nalichie_puti (B-N-1821).
+                declared = e.get("path")
+                installed = nalichie_puti(declared)
+                if installed is False:
+                    sost, out = "nashel", f"ПАКЕТ ОТСУТСТВУЕТ по объявленному пути {declared}; healthcheck не запускался"
+                else:
+                    predel, beda_predela = predel_zhivosti(e)
+                    sost, out = run(hc, predel)
+                    out = beda_predela + out
+                    if sost != "zhivoj":
+                        detail = "ПАКЕТ ЕСТЬ, ПРОВЕРКА ОТКАЗАЛА" if installed else "НАЛИЧИЕ ПАКЕТА НЕ УСТАНОВЛЕНО, ПРОВЕРКА ОТКАЗАЛА"
+                        out = f"{detail}: {out}"
+                if sost != "zhivoj":
+                    if e.get("montazh_consistency") is True and sost == "nashel":
+                        result, detail = montazh_result("entry:" + e["id"], args, started)
+                        if result == 4:
+                            deferred.append(e["id"])
+                            print(f"  {' ' * width}  {detail}")
+                            continue
+                        if result == 6:
+                            raise MontazhReread(detail)
+                    failed.append(e["id"])
+                mark = {
+                    "zhivoj":  f"{GREEN}живой{OFF}",
+                    "nashel":  f"{YELLOW}ДОЛОЖИЛ НАХОДКУ{OFF}",
+                    "slepota": f"{YELLOW}ПРОВЕРИТЬ НЕЧЕМ{OFF}",
+                    "molchit": f"{RED}НЕ ОТВЕЧАЕТ{OFF}",
+                }[sost]
+                print(f"  {' ' * width}  {mark}: {out}")
+    print(f"\n{DIM}всего записей: {len(entries)}   файл: {REGISTRY}{OFF}")
+    montazh_final(deferred, args, started)
+    return 1 if failed else 4 if deferred else 0
+
+
+def cmd_check(entries, args):
+    print(f"{DIM}Сверка с источниками. Ничего не обновляется — решение принимает человек.{OFF}\n")
+    asked = skipped = unreachable = 0
+    for e in entries:
+        print(f"{BOLD}{e['id']}{OFF}")
+        latest = e.get("latest_check")
+        if not latest:
+            skipped += 1
+            print(f"  стоит: {e.get('version', '?')}")
+            print(f"  {YELLOW}источник не опрашивается{OFF}: {e.get('channel', 'метка выпуска не указана')}")
+            print()
+            continue
+        asked += 1
+        # 🔴 Здесь спрашиваем ИСТОЧНИК ВЕРСИИ, а не проверяем живость: любой исход,
+        # кроме «ответил и сказал», означает «спросить не удалось». Своей конвенции
+        # кодов у источников нет — они чужие, поэтому сводим четыре состояния к двум.
+        sost, out = run(latest, 30)
+        ok = (sost == "zhivoj")
+        print(f"  стоит: {e.get('version', '?')}   метка выпуска: {e.get('channel', '—')}")
+        if not ok:
+            unreachable += 1
+            print(f"  {RED}источник недоступен{OFF}: {out}")
+            print(f"  {DIM}это НЕ значит «обновлений нет» — значит, спросить не удалось{OFF}")
+        else:
+            # 🔴 02.09.2026: вывод вида «alpha=X latest=Y next=Z» — это ВСЕ метки источника,
+            # а не одна. Прежде запись спрашивала только `dist-tags.next`, и новьё в третьей
+            # метке проходило мимо молча: 0.1.2-alpha.5 лежал в `alpha`, а мы смотрели `next`.
+            # Перечислять метки поимённо нельзя — перечень отстанет от источника так же, как
+            # отстал прежний. Берём все и сравниваем установленную с каждой.
+            ver = str(e.get("version", ""))
+            if "=" in out and " " in out or ("=" in out and out.count("=") == 1):
+                metki = dict(kv.split("=", 1) for kv in out.split() if "=" in kv)
+                same = ver in metki.values()
+                vidno = ", ".join(f"{k}={v}" for k, v in sorted(metki.items()))
+                novye = sorted({v for v in metki.values() if v != ver})
+            else:
+                metki, vidno, novye = {}, out, ([] if out == ver else [out])
+                same = out == ver
+            colour = GREEN if same else YELLOW
+            print(f"  вышло: {colour}{vidno}{OFF}" + (f" {DIM}(установленная среди меток){OFF}" if same else ""))
+            if novye:
+                print(f"  {YELLOW}не установлено: {', '.join(novye)}{OFF}")
+            if not same:
+                print(f"  {DIM}обновить: {e.get('update', 'команда обновления не записана')}{OFF}")
+        print()
+    print(f"{DIM}опрошено источников: {asked}, из них недоступны: {unreachable}; "
+          f"без источника: {skipped}{OFF}")
+    return 0
+
+
+def uchteno_v_prichina(e, entries):
+    """B-N-1918 (09.10.2026, Искра; наряд Забавы): запись без своего installed_check, учтённая ПАКЕТНОЙ записью
+    (поле uchteno_v: <id>). Пофайловая запись снимает version/installed_check, чтобы не вести один файл дважды,
+    и verify проверяет её ЧЕРЕЗ пакет: пакетная запись есть, сама проверяема, её файл стоит в
+    её derevo.files И в её installed_check — то есть содержимое файла сверяется версией пакета.
+    B-N-1931 (Аврора; Вениамин при B-N-1922): файл записи — ПЕРВЫЙ абсолютный путь её поля path («/usr/local/sbin/x,
+    юниты …» → /usr/local/sbin/x), НЕ source.address: source говорит, откуда ставится, path — что стоит на машине;
+    искать место в source заставляло переписывать source под проверку. Нет абсолютного пути в path — отказ, отката на source нет.
+    Свой fingerprint (например, необязательный файл настройки вне пакета) сверяется как прежде.
+    Возвращает None — годна, иначе причину словами (verify пишет РАСХОЖДЕНИЕ, код 1).
+    ЧЕГО НЕ ЛОВИТ: верность самой пакетной записи (её сверяет её же строка verify); запись, у которой файлов
+    больше одного, — проверяется только ПЕРВЫЙ абсолютный путь path; прочие пути path (юниты, состояние) не сверяются;
+    path, где первым стоит не файл записи, а иной путь, — даст отказ «не в derevo.files» (ложная тревога, не пропуск)."""
+    cel = str(e.get("uchteno_v"))
+    if e.get("version"):
+        return "двойной учёт: при uchteno_v в записи осталась version — снять её (свой fingerprint можно оставить)"
+    paket = next((x for x in entries if x.get("id") == cel), None)
+    if paket is None:
+        return f"записи «{cel}» в реестре нет"
+    if paket is e:
+        return "ссылается сама на себя"
+    if not paket.get("installed_check"):
+        return f"запись «{cel}» сама без installed_check — учесть через неё нечем"
+    m = re.search(r"(?<![^\s,;(])(/[^\s,;)'\"]+)", str(e.get("path") or ""))
+    put = m.group(1) if m else None
+    if not put:
+        return "в path записи нет абсолютного пути — какой файл учтён, не названо (source.address не берётся, B-N-1931)"
+    mesta = [f.get("local") for f in ((paket.get("derevo") or {}).get("files") or []) if isinstance(f, dict)]
+    if put not in mesta:
+        return f"{put} не в derevo.files записи «{cel}»"
+    # LOW Вениамина: целым токеном, не подстрокой — /a/kontekst-zamer не засчитывается внутри /a/kontekst-zamer-old
+    if not re.search(r"(?<![^\s'\"=])" + re.escape(put) + r"(?![^\s'\";|)&])", str(paket.get("installed_check"))):
+        return f"{put} не в installed_check записи «{cel}» — содержимое не сверяется"
+    return None
+
+
+def cmd_verify(entries, args):
+    return montazh_scan(_cmd_verify, entries, args)
+
+
+def _cmd_verify(entries, args, repeated=False):
+    started = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+    print(f"{DIM}Сверка реестра с машиной. Ничего не меняется.{OFF}\n")
+    dups = report_duplicates()
+    if dups:
+        print()
+    mismatched, unverifiable, checked, deferred = [], [], 0, []
+    cherez = 0  # B-N-1918: записи, учтённые через пакетную (uchteno_v)
+    for e in entries:
+        eid = e["id"]
+        pairs = [("version", "installed_check", "версия")]
+        if e.get("fingerprint"):
+            pairs.append(("fingerprint", "fingerprint_check", "отпечаток"))
+        if not e.get("installed_check") and e.get("uchteno_v"):
+            prichina = uchteno_v_prichina(e, entries)
+            if prichina is not None:
+                mismatched.append(f"{eid} (uchteno_v)")
+                print(f"{RED}РАСХОЖДЕНИЕ{OFF} {BOLD}{eid}{OFF} uchteno_v: {prichina}")
+                continue
+            cherez += 1
+            print(f"{GREEN}учтено{OFF}      {BOLD}{eid}{OFF}: через запись {e['uchteno_v']} (файл в её составе и в её installed_check)")
+            pairs = pairs[1:]  # B-N-1918: version ведёт пакетная запись; свой fingerprint (если задан) — как прежде
+        elif not e.get("installed_check"):
+            unverifiable.append(eid)
+            print(f"{YELLOW}НЕ ПРОВЕРЕНО{OFF} {BOLD}{eid}{OFF}: в записи нет installed_check")
+            continue
+        for expected_key, cmd_key, human in pairs:
+            expected = str(e.get(expected_key, ""))
+            cmd = e.get(cmd_key)
+            if not cmd:
+                unverifiable.append(f"{eid} ({human})")
+                print(f"{YELLOW}НЕ ПРОВЕРЕНО{OFF} {BOLD}{eid}{OFF}: записан {human}, но нет {cmd_key}")
+                continue
+            # Та же причина, что выше: проверка отпечатка либо отработала и назвала
+            # значение, либо нет. «Нашёл» и «нечем» здесь одинаково значат «не сверили».
+            sost, out = run(cmd, 15, verify=True)
+            ok = (sost == "zhivoj")
+            if not ok:
+                unverifiable.append(f"{eid} ({human})")
+                print(f"{YELLOW}СЛЕПОТА{OFF} {BOLD}{eid}{OFF} {human}: проверка не отработала — {out}")
+                continue
+            checked += 1
+            if out == expected:
+                print(f"{GREEN}совпадает{OFF}   {BOLD}{eid}{OFF} {human}: {out}")
+            else:
+                result, detail = montazh_result("entry:" + eid, args, started)
+                if result == 4:
+                    deferred.append(eid)
+                    print(detail)
+                    continue
+                if result == 6:
+                    raise MontazhReread(detail)
+                mismatched.append(f"{eid} ({human})")
+                print(f"{RED}РАСХОЖДЕНИЕ{OFF} {BOLD}{eid}{OFF} {human}:")
+                print(f"            в реестре: {expected}")
+                print(f"            на машине: {out}")
+    # B-N-1853: обратная сверка — места агентов на диске без записи
+    print(f"\n{DIM}Обратно: места агентов на диске → записи (реестр агентов {AGENTS_REGISTRY}){OFF}")
+    net_zapisi, slepo_obr = obratnaya_sverka(entries)
+    for s_ in slepo_obr:
+        unverifiable.append(s_)
+        print(f"{YELLOW}СЛЕПОТА{OFF} {s_}")
+    for n_ in net_zapisi:
+        mismatched.append(f"нет записи: {n_}")
+    print()
+    print(f"{DIM}сверено значений: {checked}{OFF}")
+    if cherez:
+        print(f"{DIM}учтено через пакетные записи: {cherez}{OFF}")
+    if mismatched:
+        print(f"{RED}РАСХОЖДЕНИЙ: {len(mismatched)}{OFF} — {', '.join(mismatched)}")
+        print("реестр разошёлся с машиной. Поправь его или верни машину к записанному.")
+    if unverifiable:
+        print(f"{YELLOW}НЕ УДАЛОСЬ ПРОВЕРИТЬ: {len(unverifiable)}{OFF} — {', '.join(unverifiable)}")
+        print("непроверенная запись не считается верной: это тоже повод вмешаться.")
+    if dups:
+        print(f"{RED}ПОВТОРЁННЫХ КЛЮЧЕЙ: {dups}{OFF} — часть записанного не читается разбором.")
+    montazh_final(deferred, args, started)
+    if not mismatched and not unverifiable and not dups and not deferred:
+        print(f"{GREEN}реестр совпадает с машиной{OFF}")
+        return 0
+    return 2 if unverifiable else 1 if mismatched or dups else 4
+
+
+# ── СВЕРКА С ОПУБЛИКОВАННЫМ ────────────────────────────────────────────────
+#
+# Источник правды — МАШИНА. Опубликованный пакет производен от неё: берётся
+# машинный файл, обезличивается, выпускается. Значит разница закономерна, и
+# вопрос не «есть ли она», а «состоит ли она ТОЛЬКО из обезличивания».
+# Ответить на это может лишь человек — инструмент показывает материал.
+
+def _npm_fetch(address, ref, workdir):
+    """Скачать пакет npm и вернуть каталог с распакованным содержимым."""
+    spec = f"{address}@{ref}" if ref else address
+    p = subprocess.run(["npm", "pack", spec, "--silent"],
+                       capture_output=True, text=True, cwd=workdir, timeout=90)
+    if p.returncode != 0:
+        err = (p.stderr or p.stdout or "").strip().splitlines()
+        return None, (err[-1] if err else "npm pack не отработал")
+    tgz = p.stdout.strip().splitlines()[-1].strip()
+    t = subprocess.run(["tar", "xzf", tgz], cwd=workdir,
+                       capture_output=True, text=True, timeout=60)
+    if t.returncode != 0:
+        return None, "архив не распаковался"
+    return os.path.join(workdir, "package"), None
+
+
+def _github_fetch(address, ref, subdir, remote, workdir):
+    """Скачать один файл из репозитория. Через API, а НЕ через raw:
+    raw.githubusercontent.com отдаёт кэш и показывает вчерашнее содержимое
+    как сегодняшнее — ложное «совпадает» хуже отсутствия проверки."""
+    path = f"{subdir}/{remote}".strip("/") if subdir else remote
+    url = f"https://api.github.com/repos/{address}/contents/{path}?ref={ref or 'HEAD'}"
+    p = subprocess.run(["curl", "-sS", "-H", "Accept: application/vnd.github+json", url],
+                       capture_output=True, text=True, timeout=60)
+    if p.returncode != 0:
+        return None, "сеть недоступна"
+    try:
+        d = json.loads(p.stdout)
+    except ValueError:
+        return None, "ответ GitHub не разбирается"
+    if isinstance(d, dict) and d.get("message"):
+        return None, f"GitHub: {d['message']}"
+    if not isinstance(d, dict) or "content" not in d:
+        return None, "в ответе GitHub нет содержимого файла"
+    dst = os.path.join(workdir, remote.replace("/", "_"))
+    with open(dst, "wb") as f:
+        f.write(base64.b64decode(d["content"]))
+    return dst, None
+
+
+def cmd_diff(entries, args):
+    only = [a for a in args if not a.startswith("-")]
+    full = "--full" in args
+    print(f"{DIM}Сверка машинных файлов с опубликованными. Ничего не меняется "
+          f"и никуда не публикуется.{OFF}\n")
+
+    published = [e for e in entries if e.get("published")]
+    skipped = [e["id"] for e in entries if not e.get("published")]
+    if only:
+        published = [e for e in published if e["id"] in only]
+        if not published:
+            print(f"нет записи с полем published и таким id: {', '.join(only)}")
+            return 2
+
+    same = differ = failed = 0
+    for e in published:
+        e_differ = 0
+        pub = e["published"]
+        ptype = pub.get("type")
+        print(f"{BOLD}{e['id']}{OFF} — {pub.get('type')}:{pub.get('address')}"
+              f"@{pub.get('ref') or 'HEAD'}")
+        workdir = tempfile.mkdtemp(prefix="agent-plugins-diff-")
+        try:
+            root, err = (None, None)
+            if ptype == "npm":
+                root, err = _npm_fetch(pub["address"], pub.get("ref"), workdir)
+                if err:
+                    failed += 1
+                    print(f"  {YELLOW}НЕ СВЕРЕНО{OFF}: {err}\n")
+                    continue
+            elif ptype != "github":
+                failed += 1
+                print(f"  {YELLOW}НЕ СВЕРЕНО{OFF}: неизвестный тип публикации "
+                      f"{ptype!r} (умею npm и github)\n")
+                continue
+
+            for pair in pub.get("files") or []:
+                if not (isinstance(pair, dict) and isinstance(pair.get("local"), str)
+                        and isinstance(pair.get("remote"), str)):
+                    failed += 1
+                    print(f"  {YELLOW}НЕ СВЕРЕНО{OFF}: published.files — пара без local/remote: {pair!r}\n")
+                    continue
+                local, remote = pair["local"], pair["remote"]
+                if ptype == "npm":
+                    rpath = os.path.join(root, remote)
+                    rerr = None if os.path.exists(rpath) else "в пакете такого файла нет"
+                else:
+                    rpath, rerr = _github_fetch(pub["address"], pub.get("ref"),
+                                                pub.get("subdir"), remote, workdir)
+                if rerr:
+                    failed += 1
+                    print(f"  {YELLOW}НЕ СВЕРЕНО{OFF} {remote}: {rerr}")
+                    continue
+                if not os.path.exists(local):
+                    failed += 1
+                    print(f"  {YELLOW}НЕ СВЕРЕНО{OFF} {remote}: на машине нет {local}")
+                    continue
+                d = subprocess.run(["diff", "-u", local, rpath],
+                                   capture_output=True, text=True, timeout=30)
+                if d.returncode == 0:
+                    same += 1
+                    print(f"  {GREEN}совпадает{OFF}  {remote}")
+                    continue
+                differ += 1
+                e_differ += 1
+                minus = sum(1 for l in d.stdout.splitlines()
+                            if l.startswith("-") and not l.startswith("---"))
+                plus = sum(1 for l in d.stdout.splitlines()
+                           if l.startswith("+") and not l.startswith("+++"))
+                print(f"  {YELLOW}различается{OFF} {remote}: "
+                      f"машина {os.path.getsize(local)} б / публикация "
+                      f"{os.path.getsize(rpath)} б, строк −{minus} +{plus}")
+                if full:
+                    for line in d.stdout.splitlines()[2:]:
+                        print(f"    {line}")
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+        # Заметку печатаем только когда разница ДЕЙСТВИТЕЛЬНО увидена: иначе
+        # объяснение несверенного расхождения читается как вывод проверки.
+        if e_differ and pub.get("expected_diff"):
+            print(f"  {DIM}чем разница объяснена: {pub['expected_diff'].strip()}{OFF}")
+        print()
+
+    print(f"{DIM}совпало: {same}, различается: {differ}, не сверено: {failed}{OFF}")
+    if skipped and not only:
+        print(f"{DIM}записей без поля published (сверять не с чем): "
+              f"{len(skipped)} — {', '.join(skipped)}{OFF}")
+    if differ:
+        print(f"{YELLOW}Разница есть.{OFF} Прочти её и убедись, что она состоит ТОЛЬКО "
+              f"из обезличивания.\n"
+              f"Строка сверх этого — либо забытая правка, которую надо взять в "
+              f"выпуск,\nлибо машинная особенность, которую надо назвать в описании "
+              f"выпуска.\nПолный текст разницы: agent-plugins diff <id> --full")
+    if failed:
+        print(f"{RED}НЕ СВЕРЕНО: {failed}{OFF} — несверенный файл не считается "
+              f"совпавшим.")
+        return 1
+    return 0
+
+
+def _razobrat(path):
+    """(данные, повторы, причина). Причина не None => разобрать не вышло.
+
+    Повторы ключей возвращаются отдельно от данных нарочно: yaml оставляет
+    последний и молчит, а молчаливая потеря строки — то, ради чего
+    _DupLoader и заведён."""
+    DUPLICATE_KEYS.clear()
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = yaml.load(f, Loader=_DupLoader)
+    except OSError as e:
+        return None, [], f"не читается: {e}"
+    except yaml.YAMLError as e:
+        return None, [], f"не разбирается как YAML: {e}"
+    return data, list(DUPLICATE_KEYS), None
+
+
+def _sostav(data):
+    """{корень: [опознаватель, ...]} — состав документа по корневым ключам.
+
+    Форму не навязываем: список записей считаем по id, словарь по ключам,
+    скаляр одной позицией. Так pravka годится и для plugins.yaml (списки
+    записей), и для agents.yaml (словари разделов), не зная о них ничего."""
+    out = {}
+    for koren, znach in data.items():
+        if isinstance(znach, list):
+            imena = []
+            for i, it in enumerate(znach):
+                if isinstance(it, dict) and isinstance(it.get("id"), str):
+                    imena.append(it["id"])
+                else:
+                    imena.append(f"<без id, место {i}>")
+            out[koren] = imena
+        elif isinstance(znach, dict):
+            out[koren] = sorted(str(k) for k in znach)
+        else:
+            out[koren] = ["<скаляр>"]
+    return out
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for kusok in iter(lambda: f.read(65536), b""):
+            h.update(kusok)
+    return h.hexdigest()
+
+
+# --- Конфликт разметки копии: один путь объявлен и «класть», и «не класть» ---
+# Замер 25.08.2026, из-за которого это здесь. Подставной реестр, где
+# workspace/dorabotki стоит в klast И в ne_klast_prichina:
+#   сторож покрытия — вывод ДО и ПОСЛЕ побайтно ОДИНАКОВ (он складывает оба
+#     списка в один и спрашивает «объявлено ли решение», а не «какое»);
+#   измеритель ожидаемого размера — молча выбрал klast: 17,2 МБ -> 659,6 МБ,
+#     код 0. То есть скрипт копии увёз бы в 38 раз больше объявленного, и ни
+#     один механизм не сказал бы ни слова.
+# Человек, заведший путь в оба списка, ошибся заведомо: нельзя хотеть
+# одновременно класть и не класть. Поэтому правило — НЕ приоритет одной из
+# сторон, а ОТКАЗ с именами. Молчаливый выбор любой стороны даёт правдоподобный
+# неверный результат, а это ровно то, от чего весь этот инструмент.
+#
+# ГРАНИЦА, названная здесь, чтобы её не пришлось выводить заново:
+# ловится БУКВАЛЬНОЕ совпадение образцов. Пересечение МАСОК (klast
+# «workspace/d*» против ne_klast «workspace/*ki» — обе накрывают
+# workspace/dorabotki) так не ловится: чтобы его увидеть, образцы надо
+# раскрыть по диску, а pravka судит форму текста и на диск не ходит.
+# Смысловое пересечение проверяет ozhidaemyj-razmer.py, он и так раскрывает
+# klast по диску.
+def _uzly_kopii(o, put=""):
+    """Все узлы kopiya в редакции, где бы они ни лежали. Не по имени файла и
+    не по жёсткому пути в дереве: место узла — свойство данных, а зашитый путь
+    протухнет молча при первой же перестановке разделов."""
+    najdeno = []
+    if isinstance(o, dict):
+        for k, v in o.items():
+            if k == "kopiya" and isinstance(v, dict):
+                najdeno.append((put + "/" + str(k), v))
+            najdeno += _uzly_kopii(v, put + "/" + str(k))
+    elif isinstance(o, list):
+        for i, v in enumerate(o):
+            najdeno += _uzly_kopii(v, put + "[%d]" % i)
+    return najdeno
+
+
+def _konflikty_razmetki(dan):
+    """[(путь узла, [спорные образцы])]. Пусто — конфликтов нет."""
+    itog = []
+    for put, uzel in _uzly_kopii(dan):
+        klast = uzel.get("klast") or []
+        ne_klast = uzel.get("ne_klast_prichina") or {}
+        if not isinstance(klast, list) or not isinstance(ne_klast, dict):
+            continue
+        spor = sorted(set(str(x) for x in klast) & set(str(x) for x in ne_klast))
+        if spor:
+            itog.append((put, spor))
+    return itog
+
+
+def _pokaz(v):
+    """Значение поля одной строкой, не длиннее 100 знаков — для печати разницы."""
+    if v is _NET:
+        return "∅"
+    s = json.dumps(v, ensure_ascii=False, default=str)
+    return s if len(s) <= 100 else s[:97] + "…"
+
+
+_NET = object()
+
+
+def _zapisi(znach):
+    """Записи корня как {опознаватель: запись}: список — по id (без id — по месту), словарь — по ключу."""
+    if isinstance(znach, list):
+        return {(it["id"] if isinstance(it, dict) and isinstance(it.get("id"), str) else f"<без id, место {i}>"): it
+                for i, it in enumerate(znach)}
+    if isinstance(znach, dict):
+        return {str(k): v for k, v in znach.items()}
+    return {"<скаляр>": znach}
+
+
+_RX_ZNACH_KOMM = re.compile(r'^    (version|fingerprint):\s*("[^"]*"|\'[^\']*\'|[^\s#]+)\s*(#.*)?$')
+
+
+def _znacheniya_s_kommentariem(put):
+    """B-N-1221: {(id записи, поле): (значение как в тексте, комментарий строки, номер строки)} — из СЫРОГО
+    текста: yaml комментарии теряет. Запись — строка «  - id: X», поле — «    version|fingerprint: …»."""
+    d, cur = {}, None
+    with open(put, encoding="utf-8") as f:
+        for n, l in enumerate(f.read().split("\n"), 1):
+            m = re.match(r"^  - id:\s*(\S+)", l)
+            if m:
+                cur = m.group(1)
+                continue
+            m = _RX_ZNACH_KOMM.match(l)
+            if m and cur:
+                d[(cur, m.group(1))] = (m.group(2), (m.group(3) or "").strip(), n)
+    return d
+
+
+def _lzhivye_kommentarii(boj, kand):
+    """B-N-1221 (30.09.2026): значение version/fingerprint сменилось, а комментарий строки — прежний.
+    Такой комментарий называет дату и пункт ПРЕЖНЕГО значения: за 30.09 найдено 30 из 106 (история git
+    /etc/agent-registry), три — руками, остальные — вшитой строкой сборщика окна. Писать комментарий
+    САМОЙ pravka нельзя: она ставит кандидата, прошедшего ворота, и менять его после ворот — ставить
+    не то, что приняли. Поэтому отказ: автор кандидата обновляет или снимает комментарий сам.
+    ЧЕГО НЕ ЛОВИТ: новый, но неверный комментарий; комментарий на других полях; строки вне формы
+    «    поле: значение  # …» (многострочные значения)."""
+    b, k = _znacheniya_s_kommentariem(boj), _znacheniya_s_kommentariem(kand)
+    return [(key, k[key][2], b[key][0], k[key][0], k[key][1])
+            for key in sorted(k, key=lambda x: k[x][2])
+            if key in b and k[key][1] and k[key][1] == b[key][1] and k[key][0] != b[key][0]]
+
+
+def _pechat_raznicy(t_dan, n_dan, predel=200):
+    """B-N-985: «корень · id · поле · было → стало» для записей, которые есть и в бою, и в кандидате.
+    Прибывшие и убывшие записи уже названы счётом состава выше — здесь только правка внутри записи."""
+    stroki = []
+    for koren in sorted(set(t_dan) & set(n_dan), key=str):
+        bylo_z, stalo_z = _zapisi(t_dan[koren]), _zapisi(n_dan[koren])
+        for zid in [z for z in bylo_z if z in stalo_z]:
+            b, s = bylo_z[zid], stalo_z[zid]
+            if b == s:
+                continue
+            if isinstance(b, dict) and isinstance(s, dict):
+                for pole in list(b) + [p for p in s if p not in b]:
+                    vb, vs = b.get(pole, _NET), s.get(pole, _NET)
+                    if vb != vs:
+                        stroki.append(f"{koren} · {zid} · {pole} · {_pokaz(vb)} → {_pokaz(vs)}")
+            else:
+                stroki.append(f"{koren} · {zid} · (вся запись) · {_pokaz(b)} → {_pokaz(s)}")
+    if not stroki:
+        print(f"\n{DIM}разница по полям (бой → кандидат): 0 — данные в общих записях совпадают "
+              f"(различие в тексте: комментарии/форма, либо только прибыль/убыль записей выше){OFF}")
+        return stroki
+    print(f"\n{YELLOW}разница по полям (бой → кандидат): {len(stroki)}{OFF}")
+    for s in stroki[:predel]:
+        print(f"   {s}")
+    if len(stroki) > predel:
+        print(f"   {YELLOW}… ещё {len(stroki) - predel} не показано (всего {len(stroki)}){OFF}")
+    return stroki   # B-N-1437: перечень идёт и в сообщение коммита учёта git
+
+
+# 🔴 B-N-1437 (02.10.2026): УЧЁТ GIT установленного реестра. До того pravka --ustanovit писала файл и НЕ коммитила:
+# git /etc/agent-registry висел « M plugins.yaml» с 02:07Z, 11 пунктов за день (находка Вениамина 08:28Z) — история
+# правок реестра жила только в страховках. Образец — smontirovat-fajly (B-N-923): коммит РОВНО своего файла
+# (git commit -- <путь>: чужое в индексе и рядом не берётся), чужие незафиксированные — счётом и поимённо, рука —
+# настоящий агент. Сбой коммита НЕ отменяет установку (файл уже лёг и сверен) — код 5, как у smontirovat-fajly.
+# ⚠️ ЧЕГО НЕ ДЕЛАЕТ: не коммитит чужое; не чинит репозиторий; корень с .git не под root — коммита нет (рука хозяина).
+RE_RUKA = re.compile(r"^[^<>]+ <[^<> ]+@[^<> ]+>$")
+# №30 аудита 16: таблица «учётка → рука» — свойство МАШИНЫ, в коде её нет. Файл: AGENT_PLUGINS_RUKI, иначе ruki.tsv
+# рядом с реестром; строка «учётка<TAB>Имя <почта>», # — комментарий. Нет файла — таблица пуста (рука = учётка с ⚠️).
+RUKI_FAJL = os.environ.get("AGENT_PLUGINS_RUKI", os.path.join(os.path.dirname(REGISTRY), "ruki.tsv"))
+
+
+def _tablica_ruk():
+    ruki, krivye = {}, []
+    try:
+        with open(RUKI_FAJL, encoding="utf-8") as f:
+            for n, stroka in enumerate(f, 1):
+                if not stroka.strip() or stroka.lstrip().startswith("#"):
+                    continue
+                uchyotka, _, ruka = stroka.rstrip("\n").partition("\t")
+                if uchyotka.strip() and RE_RUKA.match(ruka.strip()):
+                    ruki[uchyotka.strip()] = ruka.strip()
+                else:
+                    krivye.append(n)
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        krivye.append(f"не читается: {e}")
+    return ruki, krivye
+
+
+def _ruka():
+    """Рука коммита: AGENT_PLUGINS_RUKA «Имя <почта>» (проверена до установки) → SUDO_USER по таблице → учётка с ⚠️."""
+    if os.environ.get("AGENT_PLUGINS_RUKA"):
+        return os.environ["AGENT_PLUGINS_RUKA"], ""
+    u = os.environ.get("SUDO_USER") or os.environ.get("USER") or "root"
+    ruki, krivye = _tablica_ruk()
+    beda = f" · ⚠️ в {RUKI_FAJL} кривые строки: {krivye}" if krivye else ""
+    if u in ruki:
+        return ruki[u], beda
+    host = os.uname().nodename.split(".")[0]
+    return f"{u} <{u}@{host}>", (f" · ⚠️ рука не названа (учётки {u} нет в {RUKI_FAJL}; "
+                                 f"AGENT_PLUGINS_RUKA='Имя <почта>')" + beda)
+
+
+def _git_uchyot(punkt, raznica):
+    """Коммит установленного REGISTRY в его git. Возвращает 0 (коммит/нечего/не репозиторий) или 5 (сбой коммита)."""
+    katalog, imya = os.path.dirname(os.path.abspath(REGISTRY)), os.path.basename(REGISTRY)
+    git = ["git", "--no-optional-locks", "-C", katalog]
+    def g(*a, **k):
+        return subprocess.run(git + list(a), capture_output=True, text=True, env=dict(os.environ, GIT_LITERAL_PATHSPECS="1"), **k)
+    top = g("rev-parse", "--show-toplevel")
+    if top.returncode != 0:
+        print(f"учёт git: {katalog} — не репозиторий git, коммита не будет")
+        return 0
+    koren = top.stdout.strip()
+    try:
+        vladelec = os.stat(os.path.join(koren, ".git")).st_uid
+    except OSError:
+        vladelec = -1
+    if vladelec != 0:
+        print(f"учёт git: {koren} — .git не под root (uid {vladelec}), коммиты там — рука хозяина; коммита не будет")
+        return 0
+    otn = os.path.relpath(os.path.abspath(REGISTRY), koren)
+    # свой путь отсекаем по имени, а не «:(exclude)»: при GIT_LITERAL_PATHSPECS=1 git читает «:(exclude)…» как буквальное имя
+    # (стенд B-N-1437 поймал: свой plugins.yaml шёл в «чужих»)
+    chuzhie = [s for s in g("status", "--porcelain", "--untracked-files=all").stdout.splitlines() if s and s[3:] != otn]
+    ruka, zam = _ruka()
+    polya = [s.split(" · ", 2)[1] + "·" + s.split(" · ", 3)[2] for s in (raznica or []) if s.count(" · ") >= 3]
+    hvost = ", ".join(polya[:10]) + (f" … ещё {len(polya) - 10}" if len(polya) > 10 else "") if polya else "полей 0 (состав/комментарии)"
+    soobshchenie = f"pravka --punkt {punkt}: {hvost}"
+    a = g("add", "--", otn)
+    if a.returncode != 0:
+        print(f"{RED}🔴 учёт git {koren}: add отказал (установка В СИЛЕ) — {a.stderr.strip()[:200]}{OFF}")
+        _zhurnal_rotacii(f"pravka: git-NE-kommit punkt {punkt} shag add")
+        return 5
+    if g("diff", "--cached", "--quiet", "--", otn).returncode == 0:
+        print(f"учёт git {koren}: содержимое = закоммиченному — коммита нет")
+        kod = 0
+    else:
+        c = g("-c", f"user.name={ruka.split(' <')[0]}", "-c", f"user.email={ruka.split('<', 1)[1].rstrip('>')}",
+              "commit", "-q", "-m", soobshchenie, "--", otn)
+        if c.returncode != 0:
+            print(f"{RED}🔴 учёт git {koren}: коммит НЕ сделан (установка В СИЛЕ) — {(c.stderr or c.stdout).strip()[:200]}{OFF}")
+            _zhurnal_rotacii(f"pravka: git-NE-kommit punkt {punkt} shag commit")
+            return 5
+        h = g("rev-parse", "--short", "HEAD").stdout.strip()
+        ost = [s for s in g("status", "--porcelain", "--", otn).stdout.splitlines() if s]
+        print(f"коммит {h} в {koren} · «{soobshchenie[:120]}» · рука {ruka}{zam}"
+              + (f" · {RED}🔴 после коммита НЕ ЧИСТО: {otn}{OFF}" if ost else ""))
+        _zhurnal_rotacii(f"pravka: git-kommit punkt {punkt} hash {h} ruka {ruka} chuzhih {len(chuzhie)}")
+        kod = 5 if ost else 0
+    if chuzhie:
+        print(f"{YELLOW}⚠️ учёт git {koren}: чужих незафиксированных {len(chuzhie)} — не тронуты, не закоммичены: "
+              + ", ".join(s[3:] for s in chuzhie[:8]) + (" …" if len(chuzhie) > 8 else "") + OFF)
+    return kod
+
+
+def cmd_pravka(args):
+    """Установить новую редакцию реестра, проверив её ДО установки.
+
+    Заведено 24.08.2026 по числу, а не по неудобству: боевой plugins.yaml
+    был сломан правкой ТРИЖДЫ за трое суток одним и тем же способом —
+    отступ, приклеенное продолжение скаляра, чужой режим доступа. Запись
+    «собирай во временном файле, проверяй, потом ставь» лежала в процедуре
+    и все три раза не сработала. Защищает не запись, а проба, встроенная
+    в действие."""
+    # 🔴 B-N-898 (25.09.2026): КОПИЯ ДО ПРАВКИ — В /var/backups/montazh/<пункт>/ (решение B-H-407: единое место страховок
+    # sadik; новых .bak рядом с боевыми не заводить). Пункт pravka сама не знает — его называет зовущий: --punkt <имя>
+    # латиницей (как у strahovka с B-N-892). Установка без пункта — ОТКАЗ до любой записи: подставленный молча пункт
+    # положил бы копию туда, где её не станут искать. Сухой прогон пункта не требует — он ничего не пишет.
+    punkt = None
+    if "--punkt" in args:
+        i = args.index("--punkt")
+        punkt = args[i + 1] if i + 1 < len(args) else ""
+        args = args[:i] + args[i + 2:]
+    # 🔴 B-N-985 (26.09.2026, находка Вениамина): pravka ставит кандидата ЦЕЛИКОМ. Если реестр сдвинулся после сборки
+    # кандидата (25.09 — 43 установки за сутки, правят несколько рук), установка МОЛЧА откатывала чужие поля: число
+    # записей то же, «проверки пройдены». --osnova — сумма реестра, с которого кандидат собран; бой ≠ основе — отказ.
+    # Обязателен при установке: необязательная сверка не зовётся той рукой, которая забыла (принцип 24.08 выше).
+    # 🔴 ГРАНИЦА: сверка ловит «реестр ушёл ДО вызова» и «ушёл между копией и заменой» (перепроверка перед os.replace),
+    # но не запись, вклинившуюся в миллисекунды между перепроверкой и os.replace — блокировки у реестра нет.
+    # Основу снимать ДО сборки кандидата. Нынешнюю сумму боя, снятую перед установкой, основой называть НЕЛЬЗЯ:
+    # она совпадёт всегда, и сверка станет пустой.
+    osnova = None
+    if "--osnova" in args:
+        i = args.index("--osnova")
+        osnova = args[i + 1] if i + 1 < len(args) else ""
+        args = args[:i] + args[i + 2:]
+    fajly = [a for a in args if not a.startswith("-")]
+    ustanovit = "--ustanovit" in args
+    raznica = None   # B-N-1437: перечень полей для сообщения коммита (если текущий реестр не разобран — «полей 0»)
+    if ustanovit and os.environ.get("AGENT_PLUGINS_RUKA") and not RE_RUKA.match(os.environ["AGENT_PLUGINS_RUKA"]):
+        print(f"{RED}ОТКАЗ: AGENT_PLUGINS_RUKA «{os.environ['AGENT_PLUGINS_RUKA'][:60]}» — нужна форма «Имя <имя@машина>» "
+              f"(B-N-1437). Реестр не тронут.{OFF}", file=sys.stderr)
+        return 3
+    sloman_ok = "--tekushchij-sloman" in args
+    ubyl_ok = "--razreshit-ubyl" in args
+    neizvestnye = [a for a in args if a.startswith("-") and a not in (
+        "--ustanovit", "--tekushchij-sloman", "--razreshit-ubyl")]
+    if neizvestnye:
+        print(f"{RED}неизвестный ключ: {' '.join(neizvestnye)}{OFF}", file=sys.stderr)
+        return 3
+    if len(fajly) != 1:
+        print("agent-plugins pravka <новый-файл> [--ustanovit --punkt <пункт> --osnova <sha256>] "
+              "[--tekushchij-sloman] [--razreshit-ubyl]", file=sys.stderr)
+        return 3
+    if osnova is not None:
+        if not re.fullmatch(r"[0-9a-fA-F]{16,64}", osnova):
+            print(f"{RED}ОТКАЗ: --osnova «{osnova}» — нужна сумма sha256 реестра: 16–64 шестнадцатеричных "
+                  f"знака{OFF}", file=sys.stderr)
+            return 3
+        osnova = osnova.lower()
+    if ustanovit and osnova is None:
+        print(f"{RED}ОТКАЗ: установка без --osnova — не с чем сверить, не ушёл ли реестр после сборки "
+              f"кандидата.{OFF}\n"
+              f"Основу снимают ДО сборки: sha256sum {REGISTRY} | cut -c1-16\n"
+              f"Образец: sudo agent-plugins pravka <новый-файл> --ustanovit --punkt B-N-985 --osnova 6ffbb953750534b9\n"
+              f"Ничего не записано.", file=sys.stderr)
+        return 3
+    if punkt is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", punkt):
+        print(f"{RED}ОТКАЗ: --punkt «{punkt}» — нужно имя латиницей (буквы, цифры, . _ -), например B-N-898{OFF}",
+              file=sys.stderr)
+        return 3
+    if ustanovit and not punkt:
+        print(f"{RED}ОТКАЗ: установка без --punkt — копию до правки положить некуда.{OFF}\n"
+              f"Образец: sudo agent-plugins pravka <новый-файл> --ustanovit --punkt B-N-898\n"
+              f"Копия ляжет в {STRAHOVKI_KOREN}/<пункт>/ (B-H-407). Ничего не записано.", file=sys.stderr)
+        return 3
+    novyj = os.path.abspath(fajly[0])
+    if novyj == os.path.abspath(REGISTRY):
+        print(f"{RED}новый файл и реестр — один и тот же путь{OFF}\n"
+              "Собирайте новую редакцию ОТДЕЛЬНЫМ файлом: проверять предмет "
+              "самим собой нечем.", file=sys.stderr)
+        return 3
+
+    print(f"{DIM}реестр:      {REGISTRY}\nновая редакция: {novyj}{OFF}\n")
+
+    # --- 1. Новая редакция: читается, разбирается, без повторов ключей ---
+    if not os.path.exists(novyj):
+        print(f"{RED}СЛЕПОТА: новой редакции нет по этому пути{OFF}", file=sys.stderr)
+        return 2
+    if os.path.getsize(novyj) == 0:
+        print(f"{RED}ОТКАЗ: новая редакция пуста (0 байт){OFF}", file=sys.stderr)
+        return 1
+    n_dan, n_povtory, n_prichina = _razobrat(novyj)
+    if n_prichina:
+        print(f"{RED}ОТКАЗ: новая редакция {n_prichina}{OFF}", file=sys.stderr)
+        return 1
+    if not isinstance(n_dan, dict):
+        print(f"{RED}ОТКАЗ: верхний уровень новой редакции не словарь, "
+              f"а {type(n_dan).__name__}{OFF}", file=sys.stderr)
+        return 1
+    # 🔴 РЕДАКЦИЯ, ТОЖДЕСТВЕННАЯ РЕЕСТРУ, — ОТКАЗ (31.08.2026, требование главной).
+    # Случай, повторившийся дважды: сборка редакции падает (assert в python), а
+    # вызов установки идёт следом через `;` вместо `&&` — и pravka ставит файл,
+    # который остался копией реестра. Формально всё цело, по сути правки не было,
+    # и оба учёта потом сходятся на неверном состоянии.
+    # Чиним в ИНСТРУМЕНТЕ, а не во внимательности: падение подготовки обязано
+    # делать установку НЕВОЗМОЖНОЙ, а не нежелательной.
+    # ГРАНИЦА: это ловит «подготовка не состоялась», но не ловит «подготовка
+    # состоялась неверно» — форму и состав по-прежнему судят проверки ниже.
+    try:
+        with open(novyj, "rb") as _f1, open(REGISTRY, "rb") as _f2:
+            if _f1.read() == _f2.read():
+                print(f"{RED}ОТКАЗ: новая редакция ПОБАЙТНО РАВНА реестру — "
+                      f"менять нечего{OFF}\n"
+                      "Так выглядит несостоявшаяся подготовка: сборка редакции упала, "
+                      "а установка пошла следом. Свяжите шаги через && и повторите.",
+                      file=sys.stderr)
+                return 1
+    except OSError as e:
+        print(f"{RED}СЛЕПОТА: не сравнить редакцию с реестром: {e}{OFF}", file=sys.stderr)
+        return 2
+
+    if n_povtory:
+        print(f"{RED}ОТКАЗ: в новой редакции повторённые ключи: "
+              f"{len(n_povtory)}{OFF}", file=sys.stderr)
+        for key, first, second in n_povtory:
+            print(f"   ключ {key}: строка {first} и строка {second} — "
+                  f"разбор оставит только вторую", file=sys.stderr)
+        return 1
+    n_sostav = _sostav(n_dan)
+    n_vsego = sum(len(v) for v in n_sostav.values())
+    if n_vsego == 0:
+        print(f"{RED}ОТКАЗ: в новой редакции ноль записей{OFF}", file=sys.stderr)
+        return 1
+    # №7 аудита 16: запись plugins/services без строкового id ставилась, а потом list и verify падали на ней.
+    # Только эти два раздела: pravka общая (agents.yaml и др.), там записи без id законны.
+    bez_id = [f"{r} место {i}" for r in ("plugins", "services") if isinstance(n_dan.get(r), list)
+              for i, it in enumerate(n_dan[r], 1)
+              if not (isinstance(it, dict) and isinstance(it.get("id"), str) and it["id"].strip())]
+    if bez_id:
+        print(f"{RED}ОТКАЗ: в новой редакции записи без строкового id: {', '.join(bez_id)}{OFF}\n"
+              f"list и verify такой реестр не прочтут.", file=sys.stderr)
+        return 1
+
+    # --- 2. Текущий реестр: с чем сравнивать ---
+    t_dan, t_povtory, t_prichina = _razobrat(REGISTRY)
+    sravnenie = True
+    if t_prichina or not isinstance(t_dan, dict):
+        beda = t_prichina or "верхний уровень не словарь"
+        if not sloman_ok:
+            print(f"{RED}СЛЕПОТА: текущий реестр {beda}{OFF}\n"
+                  f"Сравнить состав не с чем, а установка без сравнения — это "
+                  f"установка вслепую.\nЕсли реестр сломан и вы его чините — "
+                  f"скажите это прямо: --tekushchij-sloman.", file=sys.stderr)
+            return 2
+        print(f"{YELLOW}текущий реестр {beda} — сравнение состава ПРОПУЩЕНО "
+              f"по вашему --tekushchij-sloman{OFF}")
+        sravnenie = False
+
+    ubylo_vsego = 0
+    if sravnenie:
+        t_sostav = _sostav(t_dan)
+        t_vsego = sum(len(v) for v in t_sostav.values())
+        poteryannye_korni = [k for k in t_sostav if k not in n_sostav]
+        if poteryannye_korni:
+            print(f"{RED}ОТКАЗ: в новой редакции пропали корневые разделы: "
+                  f"{', '.join(poteryannye_korni)}{OFF}", file=sys.stderr)
+            return 1
+        # Счёт, а не чтение: пропавшая запись выглядит как ничто, и глазами
+        # в сплошном списке не находится — каждая присутствующая строка
+        # выглядит правильной. Ловится только счётом.
+        for koren in sorted(set(t_sostav) | set(n_sostav)):
+            bylo = set(t_sostav.get(koren, []))
+            stalo = set(n_sostav.get(koren, []))
+            ubylo = sorted(bylo - stalo)
+            pribylo = sorted(stalo - bylo)
+            ubylo_vsego += len(ubylo)
+            znak = RED if ubylo else DIM
+            print(f"{znak}{koren}: было {len(bylo)}, стало {len(stalo)}{OFF}")
+            for i in pribylo:
+                print(f"   {GREEN}+ {i}{OFF}")
+            for i in ubylo:
+                print(f"   {RED}− {i}{OFF}")
+        print(f"\n{DIM}всего записей: было {t_vsego}, стало {n_vsego}{OFF}")
+        if ubylo_vsego and not ubyl_ok:
+            print(f"\n{RED}ОТКАЗ: записей убыло ({ubylo_vsego}), и это не "
+                  f"объявлено.{OFF}\nУбыль бывает законной — но она обязана "
+                  f"быть названной: --razreshit-ubyl.", file=sys.stderr)
+            return 1
+        if ubylo_vsego:
+            print(f"{YELLOW}убыль {ubylo_vsego} записей разрешена вашим "
+                  f"--razreshit-ubyl{OFF}")
+    else:
+        print(f"{DIM}состав новой редакции: "
+              f"{', '.join(f'{k} {len(v)}' for k, v in sorted(n_sostav.items()))}"
+              f" — всего {n_vsego}{OFF}")
+
+    # B-N-985 п.2: разница ПО ПОЛЯМ. Счёт записей выше не видит правки внутри записи — а откат чужого поля выглядит
+    # именно так. Печатается и в сухом, и при установке.
+    if sravnenie:
+        raznica = _pechat_raznicy(t_dan, n_dan)
+        lzh = _lzhivye_kommentarii(REGISTRY, novyj)
+        if lzh:
+            print(f"\n{RED}ОТКАЗ: у {len(lzh)} строк значение сменилось, а комментарий остался прежним "
+                  f"(B-N-1221){OFF}", file=sys.stderr)
+            for (zid, pole), n, bylo, stalo, komm in lzh[:20]:
+                print(f"   :{n} {zid} · {pole} · {bylo} → {stalo}  {komm[:90]}", file=sys.stderr)
+            if len(lzh) > 20:
+                print(f"   … ещё {len(lzh) - 20}", file=sys.stderr)
+            print("Комментарий называет дату/пункт ПРЕЖНЕГО значения. Обновите его (дата, пункт) или "
+                  "снимите — в кандидате. Реестр не тронут.", file=sys.stderr)
+            return 1
+    else:
+        print(f"{YELLOW}разница по полям НЕ снята: текущий реестр не разобран{OFF}")
+
+    # B-N-985 п.1: сверка основы. Сумма боя снимается ЗДЕСЬ и перепроверяется перед os.replace.
+    try:
+        tek_sha = _sha256(REGISTRY)
+    except OSError as e:
+        print(f"{RED}СЛЕПОТА: сумму текущего реестра не снять: {e}{OFF}", file=sys.stderr)
+        return 2
+    if osnova is None:
+        print(f"\n{DIM}сверка основы: НЕ ДЕЛАЛАСЬ (--osnova не назван; при установке обязателен){OFF}")
+    elif not tek_sha.startswith(osnova):
+        print(f"\n{RED}ОТКАЗ: реестр ушёл от основы кандидата{OFF}\n"
+              f"   основа (--osnova): {osnova}\n"
+              f"   бой сейчас:        {tek_sha[:len(osnova)]}\n"
+              f"Кандидат собран на другой редакции: установка откатила бы то, что легло после сборки "
+              f"(разница выше — вместе с этим откатом).\nПересоберите кандидат на нынешнем реестре. "
+              f"Реестр не тронут.", file=sys.stderr)
+        return 1
+    else:
+        print(f"\n{DIM}сверка основы: бой = основе {osnova}{OFF}")
+
+    if t_povtory and sravnenie:
+        print(f"{DIM}(в текущем реестре повторов: {len(t_povtory)}){OFF}")
+
+    # Конфликт разметки копии. Стоит ПЕРЕД сухим прогоном: спорная разметка
+    # не должна выглядеть «проверки пройдены».
+    konflikty = _konflikty_razmetki(n_dan)
+    if konflikty:
+        print(f"\n{RED}ОТКАЗ: в разметке копии путь объявлен И «класть», И «не класть»{OFF}",
+              file=sys.stderr)
+        for put, spor in konflikty:
+            print(f"   {RED}{put}{OFF}: {', '.join(spor)}", file=sys.stderr)
+        print(f"{DIM}Правила «кто сильнее» нет намеренно: одновременно класть и не "
+              f"класть нельзя, значит это ошибка ведения, а не выбор.\n"
+              f"Уберите путь из одного из двух списков и повторите.{OFF}",
+              file=sys.stderr)
+        return 1
+
+    if not ustanovit:
+        print(f"\n{GREEN}проверки пройдены. Ничего не установлено{OFF} — "
+              f"это сухой прогон.\nСтавить: тот же вызов с --ustanovit")
+        return 0
+
+    # --- 3. Установка. Права проверяем ДО, а не по ходу ---
+    katalog = os.path.dirname(os.path.abspath(REGISTRY))
+    if not os.access(katalog, os.W_OK | os.X_OK):
+        print(f"{RED}СЛЕПОТА: нет права записи в {katalog}{OFF}\n"
+              f"Установка не начата — частичной записи не будет.", file=sys.stderr)
+        return 2
+    try:
+        st = os.stat(REGISTRY)
+    except OSError as e:
+        print(f"{RED}СЛЕПОТА: не снять права текущего реестра: {e}{OFF}",
+              file=sys.stderr)
+        return 2
+
+    metka = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    katalog_kopij = os.path.join(STRAHOVKI_KOREN, punkt)
+    kopiya = os.path.join(katalog_kopij, f"{os.path.basename(REGISTRY)}.bak-pre-pravka-{metka}")
+    try:
+        os.makedirs(katalog_kopij, exist_ok=True)
+        shutil.copy2(REGISTRY, kopiya)
+        os.chown(kopiya, st.st_uid, st.st_gid)
+    except OSError as e:
+        # 🔴 25.08: отказ был верным по решению и лживым по следу. copy2
+        # успевает создать файл, и падает уже os.chown (EPERM: рука в группе
+        # agent-registry вправе писать в каталог, но не вправе назначить
+        # владельцем root). На диске оставался файл с именем
+        # `.bak-pre-pravka-<время>`, при том что правки в тот час НЕ БЫЛО —
+        # то есть ложный след ровно там, куда смотрят при разборе. Остаток
+        # убираем, и убираем только когда он побайтно равен реестру: иначе
+        # это чужой файл, и трогать его нельзя.
+        # Убираем РОВНО тот путь, который сами и создали строкой выше, — не по
+        # маске и не по имени «похоже на копию». Первая редакция сносила его
+        # только при побайтном равенстве реестру, «чтобы не тронуть чужое»;
+        # порча показала, что ветка недостижима: имя несёт секунду создания,
+        # и чужого файла под ним не бывает. Условие, которое не может
+        # сработать, — это не осторожность, а непроверяемая строка.
+        try:
+            if os.path.exists(kopiya):
+                os.unlink(kopiya)
+            ostatok = "недоделанная копия убрана"
+        except OSError as e2:
+            ostatok = f"🔴 остаток {kopiya} убрать не удалось: {e2}"
+        print(f"{RED}ОТКАЗ: копия до правки не годна: {e}{OFF}\n"
+              f"Без годной копии не ставим: откатываться было бы нечем.\n"
+              f"{ostatok}.\n"
+              f"Владельца копии сохранить может только root — зовите "
+              f"`sudo -n {sys.argv[0]} pravka ...`.", file=sys.stderr)
+        return 1
+    if _sha256(kopiya) != _sha256(REGISTRY):
+        print(f"{RED}ОТКАЗ: копия не совпала с оригиналом побайтно{OFF}",
+              file=sys.stderr)
+        return 1
+    print(f"\n{DIM}копия до правки: {kopiya}{OFF}")
+
+    # Временный файл — В ТОМ ЖЕ каталоге: os.replace атомарен только внутри
+    # одной файловой системы. Из /tmp это была бы копия с переименованием,
+    # то есть окно, в котором реестра нет.
+    fd, vremenno = tempfile.mkstemp(dir=katalog, prefix=".pravka-", suffix=".yaml")
+    try:
+        with open(novyj, "rb") as src, os.fdopen(fd, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+            dst.flush()
+            os.fsync(dst.fileno())
+        # Режим и владельца берём со СТАРОГО файла, а не с нового и не из
+        # умолчания: 22-24.08 реестр трижды приезжал с чужими правами, и
+        # каждый раз это замечалось потом, а не при установке.
+        os.chmod(vremenno, stat.S_IMODE(st.st_mode))
+        os.chown(vremenno, st.st_uid, st.st_gid)
+        # B-N-985: перепроверка основы вплотную к замене — реестр мог уйти за время копии и записи временного.
+        # Копию до правки при отказе убираем: она снята с редакции, которую мы НЕ заменяли (урок 25.08 выше —
+        # ложный след правки, которой не было).
+        seichas = _sha256(REGISTRY)
+        if not seichas.startswith(osnova):
+            os.unlink(vremenno)
+            try:
+                os.unlink(kopiya)
+                ostatok = "копия до правки убрана"
+            except OSError as e2:
+                ostatok = f"🔴 копию {kopiya} убрать не удалось: {e2}"
+            print(f"{RED}ОТКАЗ: реестр ушёл от основы ВО ВРЕМЯ установки{OFF}\n"
+                  f"   основа {osnova} · бой сейчас {seichas[:len(osnova)]}\n"
+                  f"Кто-то записал реестр между сверкой и заменой. Реестр не тронут; {ostatok}. "
+                  f"Пересоберите кандидат.", file=sys.stderr)
+            return 1
+        os.replace(vremenno, REGISTRY)
+    except OSError as e:
+        print(f"{RED}ОТКАЗ при установке: {e}{OFF}", file=sys.stderr)
+        try:
+            os.unlink(vremenno)
+        except OSError:
+            pass
+        return 1
+
+    # --- 4. Приёмка ОТДЕЛЬНЫМ действием: читаем то, что легло ---
+    hodok = _sha256(novyj)
+    leglo = _sha256(REGISTRY)
+    p_dan, p_povtory, p_prichina = _razobrat(REGISTRY)
+    st2 = os.stat(REGISTRY)
+    bedy = []
+    if leglo != hodok:
+        bedy.append("установленный файл не совпал с проверенным побайтно")
+    if p_prichina:
+        bedy.append(f"установленный файл {p_prichina}")
+    elif sum(len(v) for v in _sostav(p_dan).values()) != n_vsego:
+        bedy.append("в установленном файле другое число записей")
+    if stat.S_IMODE(st2.st_mode) != stat.S_IMODE(st.st_mode):
+        bedy.append(f"режим стал {oct(stat.S_IMODE(st2.st_mode))} "
+                    f"вместо {oct(stat.S_IMODE(st.st_mode))}")
+    if (st2.st_uid, st2.st_gid) != (st.st_uid, st.st_gid):
+        bedy.append(f"владелец стал {st2.st_uid}:{st2.st_gid} "
+                    f"вместо {st.st_uid}:{st.st_gid}")
+    if bedy:
+        print(f"{RED}ПОСЛЕ УСТАНОВКИ НЕ СОШЛОСЬ:{OFF}", file=sys.stderr)
+        for b in bedy:
+            print(f"   {b}", file=sys.stderr)
+        try:
+            shutil.copy2(kopiya, REGISTRY)
+            os.chown(REGISTRY, st.st_uid, st.st_gid)
+            print(f"{YELLOW}реестр возвращён из копии {kopiya}{OFF}", file=sys.stderr)
+        except OSError as e:
+            print(f"{RED}И ВЕРНУТЬ НЕ ВЫШЛО: {e} — чинить рукой из "
+                  f"{kopiya}{OFF}", file=sys.stderr)
+        return 1
+
+    print(f"{GREEN}установлено и проверено отдельным чтением{OFF}: "
+          f"sha256 {leglo[:16]}, записей {n_vsego}, "
+          f"режим {oct(stat.S_IMODE(st2.st_mode))}, "
+          f"владелец {st2.st_uid}:{st2.st_gid}")
+    print(f"{DIM}🔴 установка НЕ означает, что записанное верно: pravka "
+          f"проверяет форму и состав, а сходится ли запись с машиной — "
+          f"это agent-plugins verify.{OFF}")
+    # 🔴 B-N-898: СЛЕД УСТАНОВКИ — В ЖУРНАЛ: sha256 легшего файла. По нему сторож (sadik-watch) отличает реестр, поставленный
+    # pravka, от записанного мимо неё (25.09: 25 правок install+mv — ни копии, ни проверок формы и убыли, ни следа).
+    _zhurnal_rotacii(f"pravka: установлено {REGISTRY} sha256 {leglo} пункт {punkt} копия {kopiya}")
+    kod_git = _git_uchyot(punkt, raznica)   # B-N-1437: учёт git — после приёмки и следа в журнал
+    # Ротация — ПОСЛЕ приёмки: установка уже удалась, сбой ротации её не отменяет.
+    try:
+        _rotaciya_strahovok(kopiya)
+    except Exception as e:  # ротация не смеет ронять удавшуюся установку
+        print(f"{YELLOW}⚠️ ротация страховок сорвалась: {type(e).__name__}: {e}. "
+              f"Установка выше — в силе.{OFF}")
+        _zhurnal_rotacii(f"ротация страховок {REGISTRY} СОРВАЛАСЬ: {type(e).__name__}: {e}; удалённое до сбоя не названо")
+    return kod_git
+
+
+# 🔴 РОТАЦИЯ СВОИХ СТРАХОВОК (B-H-380, 24.09.2026, решение Забавы — вариант А).
+# ЗАЧЕМ. pravka кладёт копию на каждую установку: 534 копии, 147 МБ, рост 21 МБ/сутки
+# 24.09 при пороге возврата 10 (решение #321-Б 21.09). Уборки не было, потому что резать
+# вслепую нельзя: замер 24.09 — 457 из 534 копий ЕДИНСТВЕННЫЕ носители своей редакции
+# (git в /etc/agent-registry заведён 21.09, до того истории нет; и после — не каждая
+# установка попадает в коммит). Посылка «всё есть в git» оказалась ложной, и правило
+# «хранить N последних» уничтожило бы их.
+# ПРАВИЛО. Последние STRAHOVOK_HRANIT копий хранятся ВСЕГДА. Старше удаляется копия ТОЛЬКО
+# если её содержимое есть в истории git как редакция этого файла (git hash-object против
+# git log --raw) — то есть удаляется лишь дубль истории, потеря невозможна по построению.
+# ГДЕ НЕ ПРИМЕНЯЕТСЯ: чужие страховки — любые имена, кроме точной формы
+# «<реестр>.bak-pre-pravka-ГГГГММДД-ЧЧММСС» (ручные, agents.yaml, с суффиксами) — не трогаем.
+# git недоступен (нет репозитория, «dubious ownership» у не-root) — не удаляем НИЧЕГО и
+# говорим почему. Уникальные копии не удаляются никогда: их рост этим не останавливается.
+STRAHOVOK_HRANIT = 30
+# B-N-898: корень копий до правки (B-H-407). Переменная — для стенда; в бою не задаётся.
+STRAHOVKI_KOREN = os.environ.get("AGENT_PLUGINS_STRAHOVKI", "/var/backups/montazh")
+
+
+# 🔴 B-N-869 (25.09.2026): СЛЕД РОТАЦИИ — В ЖУРНАЛ, а не только в вывод pravka. Вывод видит лишь
+# тот, кто звал pravka, и он пропадает с его окном: «что удалено» 25.09 восстанавливалось только
+# СЧЁТОМ (B-N-866). Теперь имена удалённых, число пропущенных и отказ ротации — строкой
+# `logger -t agent-plugins`. Отказ самого журнала не ломает установку — печатается предупреждение.
+def _zhurnal_rotacii(stroka):
+    try:
+        r = subprocess.run(["logger", "-t", "agent-plugins", "--", stroka],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            return
+        prichina = (r.stderr.strip() or f"код {r.returncode}")
+    except (OSError, subprocess.SubprocessError) as e:
+        prichina = f"{type(e).__name__}: {e}"
+    print(f"{YELLOW}⚠️ журнал НЕ принял строку ротации ({prichina}): {stroka}{OFF}")
+
+
+def _rotaciya_strahovok(kopiya_svoya):
+    # 🔴 B-N-898: копии живут в STRAHOVKI_KOREN/<пункт>/ — ротация обходит ВСЕ пункты (имя несёт секунду, сортировка по имени
+    # = по времени). Старые копии РЯДОМ с реестром (598 на 25.09, B-N-897) ротация больше НЕ видит — решение по ним отдельное.
+    katalog = os.path.dirname(os.path.abspath(REGISTRY))
+    imya = os.path.basename(REGISTRY)
+    forma = re.compile(re.escape(imya) + r"\.bak-pre-pravka-\d{8}-\d{6}")
+    # Список ПОЛНЫХ путей, упорядоченный по имени (секунда) и пути: копии разных пунктов, снятые в одну секунду, носят одно
+    # имя — словарь по имени терял одну из них (стенд A4: «страховок 33» при 34).
+    vse = []
+    for d in (os.path.join(STRAHOVKI_KOREN, x) for x in sorted(os.listdir(STRAHOVKI_KOREN))):
+        if os.path.isdir(d):
+            vse += [os.path.join(d, f) for f in os.listdir(d) if forma.fullmatch(f)]
+    vse.sort(key=lambda put: (os.path.basename(put), put))
+    kandidaty = [put for put in vse[:-STRAHOVOK_HRANIT]
+                 if put != os.path.abspath(kopiya_svoya)]
+    if not kandidaty:
+        print(f"{DIM}страховок {len(vse)}, удалено 0, оставлено уникальных 0 "
+              f"(последние {STRAHOVOK_HRANIT} хранятся всегда){OFF}")
+        return
+    git = ["git", "--no-optional-locks", "-C", katalog]
+    try:
+        log = subprocess.run(git + ["log", "--format=", "--raw", "--no-abbrev", "--", imya],
+                             capture_output=True, text=True, timeout=120)
+        if log.returncode != 0:
+            raise RuntimeError(log.stderr.strip().splitlines()[-1] if log.stderr.strip() else f"код {log.returncode}")
+        istoriya = set()
+        for stroka in log.stdout.splitlines():
+            polya = stroka.split()
+            if stroka.startswith(":") and len(polya) >= 4:
+                istoriya.update(h for h in polya[2:4] if h.strip("0"))
+        if not istoriya:
+            raise RuntimeError(f"в истории git нет ни одной редакции {imya}")
+        hso = subprocess.run(git + ["hash-object", "--stdin-paths"], capture_output=True, text=True,
+                             input="\n".join(kandidaty) + "\n", timeout=120)
+        heshi = hso.stdout.split()
+        if hso.returncode != 0 or len(heshi) != len(kandidaty):
+            raise RuntimeError(f"hash-object: код {hso.returncode}, хешей {len(heshi)} из {len(kandidaty)}")
+    except (OSError, subprocess.SubprocessError, RuntimeError) as e:
+        print(f"{YELLOW}⚠️ ротация страховок НЕ сделана: git не ответил ({e}). "
+              f"Удалено 0 — без истории дубль от уникальной не отличить.{OFF}")
+        _zhurnal_rotacii(f"ротация страховок {REGISTRY} НЕ сделана: git не ответил ({e}); "
+                         f"страховок {len(vse)}, кандидатов {len(kandidaty)}, удалено 0")
+        return
+    udaleno, unik, ne_udalos, udalennye = 0, 0, [], []
+    for f, h in zip(kandidaty, heshi):
+        if h not in istoriya:
+            unik += 1
+            continue
+        try:
+            os.unlink(f)
+            udaleno += 1
+            udalennye.append(f)
+        except OSError as e:
+            ne_udalos.append(f"{f}: {e.strerror}")
+    print(f"{DIM}страховок {len(vse)}, удалено {udaleno}, оставлено уникальных {unik} "
+          f"(последние {STRAHOVOK_HRANIT} хранятся всегда; удаляются только редакции, "
+          f"которые есть в git){OFF}")
+    if ne_udalos:
+        print(f"{YELLOW}⚠️ не удалось удалить {len(ne_udalos)}: {'; '.join(ne_udalos[:3])}{OFF}")
+    _zhurnal_rotacii(f"ротация страховок {REGISTRY}: страховок {len(vse)}, удалено {udaleno}, "
+                     f"пропущено уникальных {unik}, не удалось {len(ne_udalos)}"
+                     + (f"; удалены: {' '.join(udalennye)}" if udalennye else "")
+                     + (f"; не удалось: {'; '.join(ne_udalos)}" if ne_udalos else ""))
+
+
+def main():
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__)
+        return 0
+    if REGISTRY != BOEVOJ_REGISTRY:
+        print(f"{YELLOW}ВНИМАНИЕ: реестр взят из PLUGINS_REGISTRY = "
+              f"{REGISTRY}{OFF}\n{DIM}это не путь по умолчанию "
+              f"({BOEVOJ_REGISTRY}); ответ относится к ЭТОМУ предмету, "
+              f"а не к тому{OFF}", file=sys.stderr)
+        # 🔴 Формулировка правлена 25.08. Стояло «это НЕ боевой путь» — и это
+        # стало неправдой в тот час, когда pravka впервые применили к боевому
+        # /etc/agent-registry/agents.yaml: реестров на машине ДВА, и второй
+        # тоже боевой. Слово «подставной» усыпляет ровно там, где предмет
+        # настоящий: прочитавший решит, что правит копию, и не станет
+        # проверять последствия.
+    # 🔴 pravka разбирается ДО load(): load() выходит на нечитаемом
+    # реестре, а починка сломанного реестра — ровно тот случай, ради
+    # которого pravka заведена. Пусти её через load(), и инструмент
+    # откажется чинить именно тогда, когда он нужен.
+    if argv[0] == "pravka":
+        return cmd_pravka(argv[1:])
+    cmds = {"list": cmd_list, "check": cmd_check, "verify": cmd_verify,
+            "diff": cmd_diff}
+    if argv[0] not in cmds:
+        print(f"неизвестная подкоманда: {argv[0]}\n")
+        print(__doc__)
+        return 2
+    # 🔴 B-N-1000 (26.09.2026, находка Искры 02:50Z, подтвердил Вениамин): НЕИЗВЕСТНЫЙ ДОВОД → ОТКАЗ, код 3.
+    # Было: `verify --reestr <файл>` молча проглатывал довод, сверял ЖИВОЙ реестр и отвечал «совпадает», код 0 —
+    # ответ про другой предмет с видом ответа (класс --dry-run). Проверка стоит ДО load(): отказ не должен
+    # зависеть от того, читается ли реестр. Перечень допустимого — по коду подкоманд, а не по справке.
+    # --reestr синонимом НЕ заведён намеренно: путь к предмету один — окружение PLUGINS_REGISTRY; второй способ
+    # указать тот же предмет — это две руки на одном месте, и отказ ниже называет правильный.
+    # pravka проверяет свои доводы сама (с 24.08) и сюда не доходит.
+    dopustimo = {"list": ({"--health", "--avto-montazh"}, False), "check": (set(), False),
+                 "verify": ({"--avto-montazh"}, False), "diff": ({"--full"}, True)}
+    klyuchi, pozicionnye = dopustimo[argv[0]]
+    chuzhie = [a for a in argv[1:] if (a not in klyuchi) if (a.startswith("-") or not pozicionnye)]
+    if argv[0] == "list" and "--avto-montazh" in argv and "--health" not in argv:
+        chuzhie.append("--avto-montazh требует --health")
+    if chuzhie:
+        print(f"{RED}ОТКАЗ: {argv[0]} — неизвестный довод: {' '.join(chuzhie)}{OFF}\n"
+              f"допустимо: {argv[0]} {' '.join(sorted(klyuchi)) or '(без доводов)'}"
+              f"{' [<id записи> …]' if pozicionnye else ''}\n"
+              f"реестр задаётся окружением: PLUGINS_REGISTRY=<файл> agent-plugins {argv[0]} "
+              f"(довода --reestr нет). Ничего не сверено.", file=sys.stderr)
+        return 3
+    entries = load()
+    # Повторы называем в любой команде — молчать о них нельзя нигде. Но
+    # ненулевой код за них даёт только verify: list/check/diff отвечают на
+    # другие вопросы и блокироваться на этом не должны.
+    if argv[0] != "verify":
+        report_duplicates()
+    return cmds[argv[0]](entries, argv[1:])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,1583 @@
+#!/usr/bin/env python3
+"""Сторож компакта на sadik. 06.09.2026, Михалыч, по поручению Александра.
+
+ЧТО ДЕЛАЕТ: каждый такт читает журнал служб iskra.service и petrovich.service ПОСЛЕ прошлого
+рубежа и шлёт в @arg_dsh_alert_bot (через /usr/local/bin/dsh-alert):
+  · каждое событие компакта (строка type=compaction/end) — отдельным сообщением,
+    с поводом «/compact» или «естественный»;
+  · пересечение порогов 78% / 82% окна из журнала — по ВОСХОДЯЩЕМУ фронту,
+    один раз на пересечение (число берётся из строки nudzh «занято N из M»).
+
+ПОЧЕМУ ЖУРНАЛ, А НЕ ФАЙЛ ТРАНСКРИПТА (как у образца на aclaude): на sadik jsonl сессии на
+диске нет, единственный источник события — вывод самой службы. Признаки сняты Вениамином
+из ЖИВЫХ журналов 06.09, не выведены из кода.
+
+🔴 ТРИ ГРАНИЦЫ, БЕЗ КОТОРЫХ СТОРОЖ ВРЁТ (все три — наши оплаченные уроки):
+ 1. РУБЕЖ ДВИГАЕТСЯ ТОЛЬКО ПРИ УСПЕШНОЙ ОТПРАВКЕ. Иначе отказ канала прячет сам себя:
+    сторож запишет «я сообщил» и о событии больше не вспомнит (случай sadik-watch, 06.09).
+ 2. ПУСТОЙ ЖУРНАЛ ЗА ТАКТ — ЭТО «НЕ ВИЖУ», А НЕ «СОБЫТИЙ НЕТ». Обе службы живые и
+    непрерывно пишут; полная тишина означает, что сломано наблюдение. Отдельная тревога,
+    рубеж НЕ двигается (ворото «ж» Вениамина).
+ 3. ПЕРВЫЙ ПРОГОН — ТОЛЬКО ОТМЕТКА, БЕЗ ТРЕВОГ. Иначе при заведении прилетит вся история.
+"""
+import json, os, re, subprocess, sys, time
+
+# Службы и имена собираются из одного проверенного состава ниже.
+SLUZHBY = []
+PRICHINA_ZAPASA = ""
+# 🔴 07.09.2026 ВЕТВЬ ОБРЫВОВ (решение Забавы 09:20: ДВА признака, не один).
+#    Область РАЗДЕЛЬНАЯ: шлюз своим запросом, службы агентов своим — иначе поехал бы
+#    счётчик слепоты и разметка «служба→агент».
+# B-N-1226 (30.09, Заря; находка Авроры при A-N-721): шлюзы — из РЕЕСТРА (namerenie.zavisit_ot каждого агента), как SLUZHBY,
+#   а не перечнем: перечень из 4 имён не читал coder-gateway@beta, @gamma, coder-gateway-marc и claude-oauth-gateway@spartak —
+#   «сбой вызова» у 4 шлюзов из 8 проходил без тревоги. Заполняется в karta_imen() ниже; карта не прочитана — пусто.
+#   ⚠️ НЕ ЛОВИТ: шлюз, не записанный агенту в zavisit_ot (реестр — единственный источник); службы из zavisit_ot, не являющиеся
+#   шлюзом, читаются зря, но ложного не дают — ветка берёт только строки «[subscription-gateway…] 🔴 сбой вызова».
+SHLYUZY = []
+# B-N-1228 (30.09, Заря; medium Вениамина): отказавшие вызовы ветки обрывов последнего такта — obryvy_za_okno() кладёт сюда,
+#   main() отдаёт тревогой «СЛЕПОТА» с остыванием. Пусто — ветка зрячая (None тогда значит «серии нет»).
+OBRYVY_SLEPO = []
+OBRYVY_FORMY = set()   # B-N-1716: формы причин последнего замера окна (для эпизода; заполняет obryvy_za_okno)
+# A-N-1948 шаг 0: приставку шлюза принимаем в ОБЕИХ формах — [subscription-gateway …] и [dsh-subscription-gateway …];
+# третья (иное имя, имя без пробела перед версией) — не совпадает. После переименования шлюза — уборочный выпуск снимает старую.
+RE_SBOJ_SHL = re.compile(r"\[(?:dsh-)?subscription-gateway(?:\s[^\]]*)?\]\s*🔴\s*сбой вызова:\s*(.*)")
+RE_OBRYV_SLU = re.compile(r"ход оборван ошибкой:\s*(.*)")
+# A-N-870 (25.09.2026, Заря; решение Забавы 12:39 МСК): шлюз 0.4.7 при GATEWAY_DAVLENIE=storozh пишет раз за ход
+# «давление: окно SDK N, запас B, порог SDK … · порог платформы P · занято Z» и «🔴 ДАВЛЕНИЕ: <причины>», если окно
+# SDK < окна платформы, порог SDK ≤ P, окно/запас сменились, P не прочитан; и на строке «сжатие SDK», если ниже P.
+# Строка в журнале шлюза сама не читатель — читатель здесь: тревога владельцу, по той же доставке с рубежом.
+RE_DAVLENIE = re.compile(r"\[(?:dsh-)?subscription-gateway(?:\s[^\]]*)?\].*🔴 ДАВЛЕНИЕ:\s*(.*)")
+# A-N-1099 (26.09.2026, Аврора; решение Забавы): kompakt-dsh при отказе НАШЕЙ сводки пишет в журнал службы агента
+# «[kompakt-dsh …] 🔴 наша сводка НЕ СОСТОЯЛАСЬ (<причина>) — отдаю родной» и сжимает родной сводкой платформы. Событие
+# compaction/summary при этом есть, и выше оно читается удачей — строка была без читателя: отказ сумматора у всех агентов
+# (снятая модель, ключ, HTTP) проходил молча. Читатель здесь; повтор на ту же строку исключён рубежом (курсор журнала).
+# ⚠️ НЕ ЛОВИТ: отказ, после которого kompakt-dsh строку не пишет (например, падение самого модуля до summarize), и агента
+#   вне agents.yaml; частые отказы не сливает — каждое сжатие со своей строкой даёт свою тревогу.
+RE_SVODKA_OTKAZ = re.compile(r"\[kompakt-dsh[^\]]*\]\s*🔴 наша сводка НЕ СОСТОЯЛАСЬ \((.*)\) — отдаю родной")
+# A-N-1099 (расширение): секретарь (дистилляция памяти) при отказе модели пишет на КАЖДОЕ окно захода «выбор тем не состоялся
+# [<исход>]: <причина>» (distill-shov.js:372) — тоже без читателя. Окон до 12 за заход ⇒ остывание по форме «исход + HTTP-код»
+# (в причине — случайный request_id поставщика, по полному тексту форма не повторилась бы никогда).
+RE_SEKRETAR_OTKAZ = re.compile(r"\[dsh-pamyat-secretary[^\]]*\]\s*выбор тем не состоялся \[([a-z-]+)\]:\s*(.*)")
+# B-N-1698 хвост (07.10.2026, Аврора; наряд Забавы, отметка Вениамина дважды: у крика нет читателя). Фильтр схем шлюза
+#   (subscription-gateway ≥1.4.47) пишет раз за ход «мост у модели: прислано N · собрано M · отброшено шлюзом K ("a", "b") ·
+#   пропущено движком X (c, d)». Читатель здесь: тревога «у <агент> шлюз отбросил K инструментов: имена» — по НОВЫМ именам в
+#   эпизоде (ключ — множество имён), не на каждый ход; движок, выкинувший имена мимо фильтра, — тем же сообщением (это ровно
+#   беда 1.4.44: «собрано 0 · пропущено 48»). «✅ снято» — когда у агента есть ходы с 0/0 и отброса не было OTBROS_SNYATO_S:
+#   гостевые и хозяйские ходы Варвары несут разные списки — без выдержки один и тот же набор мигал бы тревогой и «снято».
+#   Якорь — начало строки (урок B-N-1679: вывод инструмента в журнале службы не должен становиться «криком»).
+# ⚠️ НЕ ЛОВИТ: шлюз старее 1.4.47 (строки без «отброшено шлюзом» — форма 1.4.44 не читается); ветку openai (Codex): фильтра
+#   там нет по решению этапа 2; ход, на котором строка «мост у модели» не пишется (мост не подключён — это другая строка);
+#   имя, исчезнувшее и вернувшееся внутри одного эпизода (повтор того же имени молчит до «снято»).
+RE_MOST_U_MODELI = re.compile(r"^\[(?:dsh-)?subscription-gateway [^\]]*\] (?:🔴 )?мост у модели: прислано \d+ · собрано \d+ · "
+                              r"отброшено шлюзом (\d+)(?: \((.*?)\))? · пропущено движком (\d+)(?: \(([^)]*)\))?")
+OTBROS_SNYATO_S = int(os.environ.get("DSH_COMPACT_WATCH_OTBROS_SNYATO_S", "21600"))
+POROG_OBRYVOV = 5          # событий за окно -> тревога
+OBRYVY_KR = [""]           # 08.10: короткая сводка последнего окна обрывов для строки владельцу
+OKNO_OBRYVOV = "30 min ago"
+OKNO_MIN = int(re.match(r"\d+", OKNO_OBRYVOV).group(0))
+# 22.09.2026: канал берётся из среды. Прежде был жёсткой константой, и проверить
+# сторожа, НЕ ударив в боевой бот, было невозможно по построению — три пробы
+# (исправное / порча / возврат) для него не существовали.
+# Умолчание БОЕВОЕ: забыть переменную = работать как раньше, а не онеметь.
+KANAL = os.environ.get("DSH_COMPACT_WATCH_KANAL", "/usr/local/bin/dsh-alert")
+# A-N-870 (25.09.2026, Заря): каталог состояния — из среды, как KANAL выше и по той же причине: без подмены
+# стенд писал бы БОЕВОЕ состояние (рубеж, пороги). Умолчание боевое: забыть переменную = работать как раньше.
+KATALOG = os.environ.get("DSH_COMPACT_WATCH_KATALOG", "/var/lib/dsh-compact-watch")
+SOSTOYANIE = os.path.join(KATALOG, "sostoyanie.json")
+ISTORIYA = os.path.join(KATALOG, "istoriya.jsonl")
+# Пороги тревоги. Решение владельца 22.09.2026 20:07, дословно: «я ставлю 85 и 90».
+# Ключи состояния p85/p90 теперь СОВПАДАЮТ с числами — читать можно буквально.
+DOLYA_NIZ = 85
+DOLYA_VERH = 90
+# Остывание: повторная тревога по той же паре (агент, порог) не раньше этого срока.
+# Защита от ДРЕБЕЗГА у порога, а не от лавины: лавины нет, тревога идёт по фронту
+# (замер 22.09: настоящих тревог 14 за 14 суток, отправок этого юнита 19).
+OSTYVANIE_S = 3600
+
+
+# B-N-1063 (26.09.2026, Заря): прибор — из среды, как KANAL и KATALOG: без подмены стенд не может задать «сейчас по прибору».
+# Умолчание боевое: забыть переменную = работать как раньше.
+PRIBOR = os.environ.get("DSH_COMPACT_WATCH_PRIBOR", "/usr/local/sbin/kontekst-zamer")
+# B-N-1063: последний ответ прибора в ЭТОМ такте (агент прибора → (занято, окно, порог)); пусто — прибор числа не дал.
+PRIBOR_SEJCHAS = {}
+# Сжатие по Марку 07.10 (Михалыч, поручение владельца 14:41 МСК): занятость ПО СЕССИЯМ — (агент, сессия) → (занято, окно, порог).
+#   Флаги 85/90 стояли по агенту при максимуме по сессиям: сжатие одной сессии сбрасывало флаг агента, и следующий такт
+#   «перешагивал» по чужой спящей сессии (марк, групповой чат, 620 354 с 03.10) — ложное «растёт» 11:40Z.
+PRIBOR_SESSII = {}
+POSLE_SZHATIYA_PREDEL_S = 6 * 3600   # дольше не ждём свежего usage после сжатия: тревожим по кэшу, как раньше
+
+
+def zanyatost_iz_pribora():
+    """Занятость ВСЕХ агентов из кэша проекций. Возвращает (данные, беда).
+
+    Величина — projectedTokens по формуле самой платформы, а не накопительная
+    сумма по вызовам. Прибор читает <home>/.dsh/storages/session_projcache.json
+    БЕЗ вызова модели. Три исхода различаются явно (требование ворот 22.09):
+      код 0 + строки v=1  → величина получена
+      код 2               → ПРИБОР СЛЕП: отдельная беда, НЕ «порог не достигнут»
+      код 0 без v=1       → договор сломан (сменился формат) ⇒ тоже слепота
+    """
+    import subprocess
+    try:
+        r = subprocess.run([PRIBOR, "--mashinno"], capture_output=True,
+                           text=True, timeout=30)
+    except Exception as e:
+        return {}, f"прибор занятости не запустился: {e}"
+    if r.returncode == 2:
+        return {}, "ПРИБОР СЛЕП: кэш проекций не найден (это НЕ «порог не достигнут»)"
+    dannye, vidno_v1 = {}, False
+    PRIBOR_SESSII.clear()
+    for ln in r.stdout.splitlines():
+        if not ln.startswith("v=1 "):
+            continue
+        vidno_v1 = True
+        p = dict(kv.split("=", 1) for kv in ln.split() if "=" in kv)
+        if "projected" not in p or "okno" not in p:
+            continue          # ne_izmereno / tolko_pressure — НЕ ноль, просто нет числа
+        try:
+            zan, vsego = int(p["projected"]), int(p["okno"])
+        except ValueError:
+            continue
+        kto = p.get("agent", "?")
+        # B-N-857: порог сжатия из той же строки (porog=floor(okno×доля) или «slepo»). None — не прочитан.
+        porog_szh = int(p["porog"]) if p.get("porog", "").isdigit() else None
+        PRIBOR_SESSII[(kto, p.get("sessiya", "?"))] = (zan, vsego, porog_szh)
+        # По агенту берём сессию с НАИБОЛЬШЕЙ ДОЛЕЙ СВОЕЙ БАЗЫ (B-N-864, рекомендация Вениамина): база —
+        # порог сжатия сессии, не прочитан — окно (как в porogi_nezavisimo). По штукам нельзя: у сессий
+        # одного агента бывают разные окно/порог, и меньшая по штукам ближе к своему сжатию.
+        if kto not in dannye or dolya_bazy(zan, vsego, porog_szh) > dolya_bazy(*dannye[kto]):
+            dannye[kto] = (zan, vsego, porog_szh)
+    if not vidno_v1:
+        return {}, ("договор с прибором сломан: ни одной строки v=1 "
+                    f"(код {r.returncode}) — считаю это СЛЕПОТОЙ, а не нулём")
+    return dannye, None
+
+
+def porogi_nezavisimo(s):
+    """Пороги занятости — НЕЗАВИСИМО от журнала. Требование ворот 22.09.2026.
+
+    Зачем отдельно: журнальная часть имеет шесть ранних выходов, и молчащий агент
+    (0 строк за такт) до порогов не доходил ВООБЩЕ. Живой случай — Петрович:
+    за порогом, ходов нет с 21.09, и сторож его не видел по построению.
+
+    Свой путь записи состояния — тоже требование ворот: два ранних выхода
+    журнальной части состояние НЕ пишут, и отметка остывания терялась бы.
+
+    Возвращает число поданных тревог. Исключения НЕ выпускает наружу:
+    беда порогового блока не должна ронять наблюдение за журналом.
+    """
+    podano = 0
+    try:
+        dannye, beda = zanyatost_iz_pribora()
+        if beda:
+            poslat(f"🔴 dsh-compact-watch: {beda}", f"⚠️ Не вижу заполнение агентов: {str(beda)[:100]}")
+            return 1
+        if not dannye:
+            print("[dsh-compact-watch] пороги: прибор вернул 0 агентов при исправном "
+                  "вызове — это НЕ «все ниже порога», это НЕЧЕГО СРАВНИВАТЬ",
+                  file=sys.stderr)
+            return 0
+        PRIBOR_SEJCHAS.update(dannye)   # B-N-1063: для печати «сейчас по прибору» ниже; на пороги не влияет
+        s.setdefault("porogi", {})
+        ost = s.setdefault("ostyvanie", {})
+        teper = time.time()
+        kesh_doma = {}
+        for kto, ses in sorted(PRIBOR_SESSII):
+            zan, vsego, porog_szh = PRIBOR_SESSII[(kto, ses)]
+            kl = f"{kto}/{ses}"
+            if not godno_okno(zan, vsego):
+                continue
+            # После сжатия ЭТОЙ сессии кэш держит досжатое давление до свежего usage — правило в zhdu_posle_szhatiya (общее с немотой).
+            if kl in s.setdefault("posle_szhatiya", {}) and zhdu_posle_szhatiya(s, kto, ses, kesh_doma):
+                print(f"[dsh-compact-watch] {kl}: после сжатия давление НЕ ИЗМЕРЕНО (кэш {ru_chislo(zan)} — "
+                      f"досжатое, жду свежего usage) — порог не сужу", file=sys.stderr)
+                continue
+            # 🔴 B-N-857 (25.09.2026, Аврора; решение Забавы — вариант A): 85/90 — ДОЛИ ПОРОГА СЖАТИЯ, как в /cs
+            #   (compact-status.js: 100% = floor(окно × доля), слово владельца 22.09). От окна было: у Искры /cs 93,0%,
+            #   а сторож 82,8% и молчал; p90 окна (900 000) лежал ВЫШЕ порога сжатия 890 000 — штатно недостижим.
+            #   Порог не прочитан (slepo/негоден) ⇒ считаю от окна и ГОВОРЮ об этом в тексте тревоги, не молча.
+            if type(porog_szh) is int and 0 < porog_szh <= vsego:
+                baza, imya_bazy, pometka = porog_szh, f"порога {ru_chislo(porog_szh)}", ""
+            else:
+                baza, imya_bazy, pometka = vsego, f"ОКНА {ru_chislo(vsego)}", " ⚠️ порог сжатия НЕ ПРОЧИТАН — считаю от окна."
+            bylo = s["porogi"].get(kl) or s["porogi"].get(kto, {"p85": False, "p90": False})  # переход: флаг агента
+            stalo = {"p85": zan >= porog(baza, DOLYA_NIZ),
+                     "p90": zan >= porog(baza, DOLYA_VERH)}
+            for klyuch, dolya, znak in (("p85", DOLYA_NIZ, "🟡"), ("p90", DOLYA_VERH, "🟠")):
+                if not (stalo[klyuch] and not bylo.get(klyuch)):
+                    continue
+                kogda = ost.get(f"{kl}:{klyuch}", ost.get(f"{kto}:{klyuch}"))
+                if kogda is not None and (teper - kogda) < OSTYVANIE_S:
+                    print(f"[dsh-compact-watch] {kto}: {dolya}% перешагнут, но остывание "
+                          f"ещё идёт ({int(teper - kogda)} с из {OSTYVANIE_S}) — молчу",
+                          file=sys.stderr)
+                    continue
+                # A-N-1948 №5 (№10): остывание и флаг — ТОЛЬКО по доставке (граница 1 шапки). Прежде отметка ставилась до отправки,
+                #   а возврат не проверялся: канал отказал — флаг взведён, остывание 3600 с, тревога потеряна (при MOLCHAT без
+                #   zapolnenie). Не дошло — флаг не взводим и остывание не трогаем: следующий такт повторит. Проба: test/stend-porogov-kanal.py.
+                if poslat_ili_molchat("zapolnenie", f"{znak} {kto} · сессия {ses}: {ru_proc(zan, baza)} {imya_bazy} ({ru_proc(zan, vsego)} окна) — перешагнул "
+                       f"{dolya}% ({ru_chislo(porog(baza, dolya))}); занято {ru_chislo(zan)}.{pometka} "
+                       f"Источник: projectedTokens из кэша проекций.",
+                       f"{znak} {ru(kto)}: контекст {int(100 * zan // baza)}% {'порога' if baza != vsego else 'окна'} ({tys(zan)} из {tys(baza)})"):
+                    ost[f"{kl}:{klyuch}"] = teper
+                    podano += 1
+                else:
+                    stalo[klyuch] = False
+                    print(f"[dsh-compact-watch] 🔴 НЕ ОТПРАВЛЕНО: {kto} {dolya}% — флаг не взвожу, следующий такт повторит", file=sys.stderr)
+            s["porogi"][kl] = stalo
+        for k in [k for k in s["porogi"] if "/" not in k and any(a == k for a, _ in PRIBOR_SESSII)]:
+            s["porogi"].pop(k)   # переход на ключи «агент/сессия» завершён для агентов с сессиями
+        print(f"[dsh-compact-watch] пороги проверены НЕЗАВИСИМО от журнала: "
+              f"агентов {len(dannye)} ({', '.join(sorted(dannye))}), "
+              f"тревог {podano}, доли {DOLYA_NIZ}%/{DOLYA_VERH}% ОТ ПОРОГА СЖАТИЯ (B-N-857)", file=sys.stderr)
+        # СВОЙ путь записи: журнальная часть до нас может не дойти.
+        pisat_sostoyanie(s)
+    except Exception as e:
+        print(f"[dsh-compact-watch] пороговый блок упал: {e} — журнальная часть "
+              f"продолжает работу", file=sys.stderr)
+    return podano
+
+
+ROLI_FAJL = os.environ.get("DSH_COMPACT_WATCH_RAZMESCHENIE", "/etc/memory-compaction/deployment.json")
+ROLI_OBRAZEC = "только из стенограммы"
+
+
+def podstanovka_rolej(s):
+    """Живая подстановка ролей компакта — НЕЗАВИСИМО от журнала (B-N-1588, 05.10.2026, Михалыч; наряд Забавы).
+
+    Зачем: компакт всех агентов этой машины берёт promptSubstitutions.roleClarification из ROLI_FAJL
+    (KOMPAKT_RAZMESCHENIE не задан ни у одного из 9 агентов — замер 05.10); строка «кто есть кто — только
+    из стенограммы» уходит модели сводки. Стенд stend-ramki-i-otkaza с B-N-1588 этот файл больше не читает —
+    до этой проверки живую подстановку не стерёг никто.
+    Состояния: ok · net-klyucha (ключа нет: имена фермы потеряны, запрет — в умолчании модуля) ·
+    net (в ключе нет ROLI_OBRAZEC) · net-fajla (файла нет: без KOMPAKT_RAZMESCHENIE — умолчания модуля, с ней — отказ) ·
+    slepo (файл не читается / не JSON).
+    Тревога — ОДНА на переход (net-klyucha/net/net-fajla/slepo), «снова на месте» — одна на возврат; первый такт с ok молчит.
+    Не доставлено — состояние НЕ двигаю, следующий такт (5 мин) повторит. Свой путь записи, как у порогов.
+    ⚠️ ЧЕГО НЕ ЛОВИТ: подмену смысла при сохранённом образце (другое имя координатора, другая машина);
+    прочие promptSubstitutions; агента, которому позже зададут свой KOMPAKT_RAZMESCHENIE (сторож смотрит
+    ОДИН путь); порчу рамок и промта пакета (их стерегут стенды пакета); падение самого этого блока
+    («блок подстановки ролей упал») — только строка в stderr такта, без тревоги в канал.
+    """
+    try:
+        try:
+            with open(ROLI_FAJL, encoding="utf-8") as f:
+                d = json.load(f)
+            zn = (d.get("promptSubstitutions") or {}).get("roleClarification") if isinstance(d, dict) else None
+            if not isinstance(zn, str):
+                # Умолчание модуля (dsh-pamyat-kompakt/tekstovye-nastrojki.mjs:10) запрет «кто есть кто — только из
+                # стенограммы» содержит само: без ключа теряются ИМЕНА ФЕРМЫ, запрет остаётся (Вениамин, 05.10).
+                stalo, chto = "net-klyucha", ""
+            elif ROLI_OBRAZEC not in zn:
+                stalo, chto = "net", f"в roleClarification нет «{ROLI_OBRAZEC}»"
+            else:
+                stalo, chto = "ok", ""
+        except FileNotFoundError:
+            stalo, chto = "net-fajla", ""
+        except Exception as e:
+            stalo, chto = "slepo", f"файл не прочитан: {type(e).__name__}: {e}"
+        bylo = s.get("roli")
+        print(f"[dsh-compact-watch] подстановка ролей: {stalo} (было {bylo}) · {ROLI_FAJL}", file=sys.stderr)
+        if stalo == bylo:
+            return 0
+        if stalo == "ok" and bylo is None:
+            s["roli"] = "ok"
+            pisat_sostoyanie(s)
+            return 0
+        if stalo == "ok":
+            text = f"✅ dsh-compact-watch: подстановка ролей компакта снова на месте (roleClarification с «{ROLI_OBRAZEC}»). Файл {ROLI_FAJL}."
+        elif stalo == "net-klyucha":
+            text = (f"🔴 dsh-compact-watch: подстановка ролей компакта с именами фермы ПОТЕРЯНА — ключа "
+                    f"promptSubstitutions.roleClarification нет; работает обезличенное умолчание модуля (запрет "
+                    f"«кто есть кто — {ROLI_OBRAZEC}» в нём есть). Файл {ROLI_FAJL}.")
+        elif stalo == "net-fajla":
+            text = (f"🔴 dsh-compact-watch: файла размещения нет ({ROLI_FAJL}); компакт берёт умолчания модуля (запрет в них есть), "
+                    f"имена фермы потеряны; если агенту задана KOMPAKT_RAZMESCHENIE — отсутствие файла закрывает его компакт целиком "
+                    f"(такого агента сторож не видит, см. «не ловит»).")
+        elif stalo == "net":
+            text = (f"🔴 dsh-compact-watch: подстановка ролей компакта ПОТЕРЯНА — {chto}. Файл {ROLI_FAJL}. "
+                    f"Сводки компакта на этой машине пойдут без «кто есть кто — {ROLI_OBRAZEC}» (B-N-1588).")
+        else:
+            text = (f"🔴 dsh-compact-watch: СЛЕПОТА по подстановке ролей компакта — {chto}. Файл {ROLI_FAJL}. "
+                    f"Это НЕ «подстановка на месте».")
+        _kr = {"ok": "✅ Компакт: подстановка ролей снова на месте",
+               "slepo": f"⚠️ Компакт: подстановку ролей не вижу — {chto[:60]}"}.get(
+            stalo, "🔴 Компакт: подстановка ролей потеряна — сводки без «кто есть кто»")
+        if poslat(text, _kr):
+            s["roli"] = stalo
+            pisat_sostoyanie(s)
+        else:
+            print(f"[dsh-compact-watch] подстановка ролей: тревога НЕ ДОСТАВЛЕНА; состояние не двигаю", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"[dsh-compact-watch] блок подстановки ролей упал: {e} — журнальная часть продолжает работу", file=sys.stderr)
+        return 0
+
+
+def godno_okno(zan, vsego):
+    return type(zan) is int and type(vsego) is int and 0 <= zan <= vsego and vsego > 0
+
+
+def baza_poroga(vsego, porog_szh):
+    """B-N-857/864: знаменатель порогов — порог сжатия, если он годен; иначе окно."""
+    return porog_szh if (type(porog_szh) is int and 0 < porog_szh <= vsego) else vsego
+
+
+def dolya_bazy(zan, vsego, porog_szh):
+    b = baza_poroga(vsego, porog_szh)
+    return zan / b if b > 0 else -1.0   # негодное окно — в самый низ, его отсеет godno_okno
+
+
+def ru_chislo(n):
+    # B-N-857: как видит владелец в /cs (toLocaleString ru-RU): 890 000
+    return f"{n:,}".replace(",", " ")
+
+
+def ru_proc(chast, celoe):
+    return f"{100 * chast / celoe:.1f}%".replace(".", ",")
+
+
+def porog(vsego, procent):
+    # Округление вверх: тревога не раньше достижения доли; без погрешности float.
+    return (vsego * procent + 99) // 100
+
+
+def okna_takta(stroki):
+    """Последняя пара N/M каждого агента за такт, без подстановки старого окна.
+
+    Отсутствие/негодность — только журнал, не бот: новый агент не обязан уже иметь замер.
+    Граница: проверяем числа, но не доказываем истинность напечатанного поставщиком окна.
+    """
+    okna = {}
+    for sluzhba, _kogda, text, _ts in stroki:
+        z = RE_ZANYATO.search(text)
+        if z:
+            kto = imya_agenta(sluzhba)
+            zan, vsego = map(int, z.groups())
+            okna[kto] = (zan, vsego)
+            if not godno_okno(zan, vsego):
+                print(f"[dsh-compact-watch] {kto}: окно недостоверно: vsego={vsego} при zan={zan}")
+    for kto in sorted({imya_agenta(sl) for sl in SLUZHBY} | set(okna)):
+        if kto not in okna:
+            print(f"[dsh-compact-watch] {kto}: окно не измерено: строки «занято N из M» "
+                  "за окно наблюдения (текущий такт после рубежа; первый запуск — 2 мин) нет")
+    return okna
+
+RE_SOBYTIE = re.compile(r"type=compaction/(start|summary|end)")
+# B-H-522 (25.09.2026, Заря; решение Забавы): ПАРА start↔end. Учёт завершений у всех агентов был (строка end →
+# «🗜 КОМПАКТ ЗАВЕРШЁН»), а сжатие НАЧАТОЕ и не завершённое (сорвалось, зависло, служба упала посреди) не видел никто.
+# start кладёт отметку (агент, время события), end снимает; отметка старше NEZAVERSHENO_S ⇒ ОДНА тревога.
+# Отметка «тревога дана» ставится по ДОСТАВКЕ: не дошло — раздел откатывается к началу такта (класс B-H-105/B-N-901).
+# ⚠️ НЕ ЛОВИТ: сжатие, у которого не было строки start (служба не писала / юнит вне agents.yaml); start первого прогона
+# (он только снимает рубеж); два сжатия одного агента внахлёст — отметка одна, по последнему start.
+NEZAVERSHENO_S = 900
+# 🔴 09.09.2026: ВТОРОЙ механизм компакта (поручение владельца 10:29).
+# У Искры платформенных событий 0 за сутки — её сжимает ШЛЮЗ, и сторож этого не видел
+# ПО ПОСТРОЕНИЮ: журнал шлюза не читался вовсе. «отброшено» в шаблоне обязательно —
+# компакт с потерей 770821 зн. и компакт с 0 выглядят одинаково без этого числа.
+RE_KOMPAKT_SHL = re.compile(r"\[(?:dsh-)?subscription-gateway(?:\s[^\]]*)?\]\s*компакт:\s*занято\s+(\d+)\s*->\s*сводка\s+(\d+)\s*зн\.\s*\(вход\s+(\d+)\s+из\s+(\d+)[^,]*,\s*(\d+)\s+ходов,\s*отброшено\s+(\d+)")
+RE_KOMANDA = re.compile(r"\[команда\]\s*/compact(?![-\w])")
+    # 🔴 07.09.2026: без границы ловило /compact-status (24 ложных против 3 настоящих
+    #    за 36 ч) — почти каждый компакт уходил владельцу как «принудительный».
+RE_ZANYATO = re.compile(r"занято\s+(-?\d+)\s+из\s+(-?\d+)")
+
+# ── СЕРИЯ ОБРЫВОВ (п.109, 06.09.2026). Ворота Вениамина, стенд e7fdce99…6bdac.
+RE_OBRYV = re.compile(r"returned an error result")
+OKNO_SERII = 60      # с: соседние обрывы дальше — цепь рвётся
+POROG_SERII = 5      # обрывов в цепи: при достижении шлём ОДНУ тревогу на цепь
+
+
+def chitat_sostoyanie():
+    """Возвращает (состояние, беда). ТРИ исхода, а не два.
+
+    🔴 06.09.2026, НАШЛА ИСКРА ПРОГОНОМ (не чтением), дефект был спящий и настоящий.
+    Раньше здесь стояло `except Exception: return None`, а выше `pervyj = s is None`.
+    Значит ПОВРЕЖДЁННЫЙ, недоступный или обрезанный файл состояния уводил в ветку
+    «первый прогон: тревог НЕ шлю» — неотличимо от законного заведения. Её прогон на
+    копии: состояние «это не json» → та же строка «первый прогон», строк 7, тревог 0.
+    Семь строк журнала прочитаны, посчитаны и ОТБРОШЕНЫ, а сообщение говорит «меня
+    только что завели».
+    ⚠️ Цена, названная ею честно: проглатывается ОДИН такт, не навсегда — следом
+    пишется свежее состояние. Но если в те две минуты попал compaction/end или пятый
+    обрыв в цепи, он ушёл молча, и журнал уверял, что всё в порядке.
+    📌 Класс мой же, и я его в этот самый день применял к чужим механизмам: отсутствие
+    предмета и НЕВОЗМОЖНОСТЬ ЕГО ПРОЧЕСТЬ — разные вещи, а пустой ответ одинаков.
+    """
+    try:
+        with open(SOSTOYANIE) as f:
+            return json.load(f), None
+    except FileNotFoundError:
+        return None, None                       # заведение — законно, молчим по замыслу
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"  # авария наблюдения — кричать, не молчать
+
+
+def pisat_sostoyanie(s):
+    os.makedirs(KATALOG, exist_ok=True)
+    vrem = SOSTOYANIE + ".tmp"
+    with open(vrem, "w") as f:
+        json.dump(s, f, ensure_ascii=False, indent=1)
+    os.replace(vrem, SOSTOYANIE)
+
+
+def v_istoriyu(zapis):
+    os.makedirs(KATALOG, exist_ok=True)
+    with open(ISTORIYA, "a") as f:
+        f.write(json.dumps(zapis, ensure_ascii=False) + "\n")
+
+
+def zhurnal(kursor):
+    """Записи журнала обеих служб после рубежа: [(служба, время, текст)], новый рубеж.
+
+    🔴 ЧИТАЕМ JSON, А НЕ ТЕКСТ, РАДИ ОДНОГО ПОЛЯ — _SYSTEMD_UNIT. Имя агента берётся
+    из СЛУЖБЫ, а не из скобок в тексте: в строке nudzh скобки несут имя ПАКЕТА
+    («[dsh-pamyat-nudzh 0.1.0-alpha.13] … занято N из M»), и тревога о пороге сказала бы
+    «dsh-pamyat-nudzh перешагнул 85%» — про пакет, а не про того, чьё окно кончается.
+    Поймано пробой до боя. Служба же не меняется от версии пакета.
+    """
+    cmd = ["journalctl", "--no-pager", "-q", "-o", "json"]
+    for sl in SLUZHBY:
+        cmd += ["-u", sl]
+    cmd += ["--after-cursor", kursor] if kursor else ["--since", "-2min"]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if r.returncode != 0:
+        raise RuntimeError(f"journalctl код {r.returncode}: {r.stderr.strip()[:200]}")
+    zapisi, novyj = [], kursor
+    for ln in r.stdout.splitlines():
+        if not ln.strip():
+            continue
+        try:
+            d = json.loads(ln)
+        except Exception:
+            continue
+        novyj = d.get("__CURSOR", novyj)
+        ts = d.get("__REALTIME_TIMESTAMP")
+        kogda = (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(ts) / 1_000_000))
+                 if ts else "?")
+        # 🔴 B-N-1060 (26.09.2026, Заря): строку НЕ в UTF-8 journald хранит байтами, и `-o json` отдаёт MESSAGE
+        #   СПИСКОМ ЧИСЕЛ, а не строкой. Одна такая строка (запись sudo о `grep -cF '…рабо<обрезанный байт>'`
+        #   в шлюзе Искры, 08:18:51Z) роняла такт TypeError'ом в okna_takta ДО записи рубежа — и каждый следующий
+        #   такт перечитывал её снова: журнальная часть мертва с 08:20Z, 71 падение за 6 ч. Байты — с заменой.
+        msg = d.get("MESSAGE", "")
+        if not isinstance(msg, str):
+            try:
+                msg = bytes(msg).decode("utf-8", "replace")
+            except (TypeError, ValueError):
+                msg = str(msg)
+        zapisi.append((d.get("_SYSTEMD_UNIT", "?"), kogda, msg,
+                       int(ts) / 1_000_000 if ts else None))
+    return zapisi, novyj
+
+
+# 08.10.2026 (Аврора; наряд Забавы 00:26 МСК «один сторож — одно событие»): о ЗАПОЛНЕНИИ контекста и о ПЛАТФОРМЕННОМ сжатии
+#   владельцу говорит dsh-pamyat-storozha изнутри агента (охват — все 10 агентов, заполнение по ответу модели, у сжатия — вид,
+#   сводка, длительность, модель; здесь «чисел нет»). Этот сторож по ним МОЛЧИТ НА КАНАЛЕ: считает, ведёт эпизоды и пишет
+#   в журнал как прежде, а в канал не шлёт. Шлюзовое сжатие (с числами), немота, давление, обрывы — по-прежнему здесь.
+#   Вернуть голос — убрать вид из DSH_COMPACT_WATCH_MOLCHAT (пусто — говорит всё).
+MOLCHAT = set(filter(None, os.environ.get("DSH_COMPACT_WATCH_MOLCHAT", "zapolnenie,szhatie-platformy").split(",")))
+
+
+def poslat_ili_molchat(vid, text, kratko=None):
+    """Как poslat, но вид из MOLCHAT в канал не идёт — только в журнал, и считается сказанным (состояние — как при доставке)."""
+    if vid in MOLCHAT:
+        print(f"[dsh-compact-watch] молчу на канале ({vid} говорит dsh-pamyat-storozha): {text.splitlines()[0][:200]}", file=sys.stderr)
+        return True
+    return poslat(text, kratko)
+
+
+# 08.10.2026 (Аврора; слово владельца 00:46 МСК «минимум слов, максимум полезной информации»): владельцу — ОДНА строка
+#   (kratko: значок · кто по-человечески · число · что будет), полный текст тревоги — в журнал этого юнита. Без kratko — как прежде.
+def ru(kto):
+    return VIDIMOE.get(kto, kto)
+
+
+def tys(n):
+    n = int(n)
+    return (f"{n / 1e6:.1f}".rstrip("0").rstrip(".").replace(".", ",") + " млн") if n >= 1_000_000 else f"{round(n / 1000):,}".replace(",", " ") + " тыс."
+
+
+def msk(kogda):
+    """Время журнала (часы машины) → «ЧЧ:ММ МСК»; не разобралось — как есть."""
+    try:
+        return time.strftime("%H:%M МСК", time.gmtime(time.mktime(time.strptime(str(kogda)[:19], "%Y-%m-%d %H:%M:%S")) + 3 * 3600))
+    except (ValueError, OverflowError):
+        return str(kogda)
+
+
+def bez_metki(t):
+    """Строка журнала без «[пакет версия]» в начале — для причины в короткой строке."""
+    return re.sub(r"^\s*(\[[^\]]*\]\s*)+", "", str(t)).strip()
+
+
+def kr_davlenie(kto, prichina):
+    m = re.search(r"занял (\d+) ≥ порога платформы (\d+)(?: \(окно Codex (\d+))?", prichina)
+    if m:
+        return (f"🟠 {ru(kto)}: в ходе {tys(m[1])} ≥ порога {tys(m[2])}" + (f" (окно {tys(m[3])})" if m[3] else "")
+                + " — сожмёт Codex сам")
+    golova = re.sub(r"\s*·.*$", "", prichina)
+    return f"🟠 {ru(kto)}: давление — {golova[:110]}"
+
+
+def poslat(text, kratko=None):
+    """Отправка. True только при коде 0 — по этому признаку двигается рубеж. kratko — строка владельцу; полное — в журнал."""
+    if kratko:
+        print(f"[dsh-compact-watch] полностью: {text}", file=sys.stderr)
+    try:
+        r = subprocess.run([KANAL, kratko or text], capture_output=True, text=True, timeout=60)
+        return r.returncode == 0
+    except Exception as e:
+        print(f"[dsh-compact-watch] канал не отработал: {e}", file=sys.stderr)
+        return False
+
+
+# Только миграция подписей прежнего состояния; НЕ источник действующих агентов.
+STARYE_PODPISI = {"iskra.service": "Искра", "dsh.service": "Петрович (до переименования)", "petrovich.service": "Петрович",
+                    "alfa.service": "Альфа",
+                    "claude-oauth-gateway@iskra.service": "Искра",
+                    "claude-oauth-gateway@petrovich.service": "Петрович",
+                    "coder-gateway@alfa.service": "Альфа"}
+
+
+def karta_imen():
+    global OHVAT
+    OHVAT = {"vsego": 0, "imena": [], "propushcheny": []}
+    # Сторож не читает kopiya: это договор резервного копирования, не имён.
+    # Допустимо N-1 неполных записей из N; при 0 пригодных — полный отказ.
+    # Коллизия ID/службы и сломанный корень реестра — полный отказ, не угадывание.
+    karta = {}
+    shlyuzy = []
+    try:
+        import yaml
+        put = os.environ.get("AGENTS_REGISTRY", "/etc/agent-registry/agents.yaml")
+        with open(put, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        entries = data.get("agenty") if isinstance(data, dict) else None
+        if not isinstance(entries, list) or not entries:
+            raise ValueError("agenty: нужен непустой список")
+        OHVAT["vsego"] = len(entries)
+        OHVAT["imena"] = [str(e.get("imya") or "#" + str(i)) if isinstance(e, dict) else "#" + str(i) for i, e in enumerate(entries, 1)]
+        seen = set()
+        for number, entry in enumerate(entries, 1):
+            name = entry.get("imya") if isinstance(entry, dict) else None
+            if isinstance(name, str) and name in seen:
+                raise ValueError(f"повтор ID {name}")
+            if isinstance(name, str):
+                seen.add(name)
+            try:
+                if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", name):
+                    raise ValueError("imya: нужен машинный ID")
+                n = entry.get("namerenie")
+                if not isinstance(n, dict):
+                    raise ValueError("namerenie: нужен объект")
+                service, deps = n.get("sluzhba"), n.get("zavisit_ot")
+                if not isinstance(deps, list):
+                    raise ValueError("zavisit_ot: нужен список (пустой допустим)")
+                units = [service] + deps
+                if any(not isinstance(u, str) or not re.fullmatch(r"[A-Za-z0-9_@.:-]+\.service", u) for u in units):
+                    raise ValueError("sluzhba/zavisit_ot: негодное имя службы")
+            except ValueError as e:
+                OHVAT["propushcheny"].append(OHVAT["imena"][number-1])
+                print(f"[dsh-compact-watch] ПРОПУЩЕН {name or '#' + str(number)}: {e}; этот агент не наблюдается", file=sys.stderr)
+                continue
+            for unit in units:
+                if unit in karta and karta[unit] != name:
+                    raise ValueError(f"{unit}: принадлежит нескольким агентам")
+            karta.update({unit: name for unit in units})
+            VIDIMOE[name] = n.get("imya_vidimoe") or name   # 08.10: имя владельцу — «Гамма», не «gamma»
+            shlyuzy.extend(u for u in deps if u not in shlyuzy)   # B-N-1226: шлюзы агента — его zavisit_ot
+        if not karta:
+            raise ValueError(f"пригодных агентов 0 из {len(entries)}")
+    except Exception as e:
+        print(f"[dsh-compact-watch] карта имён НЕ ПРОЧИТАНА: {e}; имена не угадываю", file=sys.stderr)
+        return {}
+    SHLYUZY[:] = shlyuzy
+    return karta
+
+
+VIDIMOE = {}
+AGENT_PO_SLUZHBE = karta_imen()
+SLUZHBY = list(AGENT_PO_SLUZHBE)
+SHLYUZY = [u for u in SHLYUZY if u in AGENT_PO_SLUZHBE]
+
+
+def perenesti_imena(s):
+    # Смена подписи не должна забыть уже отправленную тревогу или /compact.
+    aliases = {}
+    for unit, imya in AGENT_PO_SLUZHBE.items():
+        aliases[f"неизвестный агент ({unit})"] = imya
+        if unit in STARYE_PODPISI:
+            aliases[STARYE_PODPISI[unit]] = imya
+    for razdel in ("porogi", "zanyato", "zanyato_kogda", "max_zan", "komanda"):
+        old = s.get(razdel, {})
+        new = {}
+        for key, value in old.items():
+            key = aliases.get(key, key)
+            if key in new and new[key] != value:
+                raise ValueError(f"{razdel}/{key}: конфликт старых подписей; состояние не записано")
+            new[key] = value
+        if razdel in s:
+            s[razdel] = new
+
+
+def imya_agenta(sluzhba):
+    return AGENT_PO_SLUZHBE.get(sluzhba, f"неизвестный агент ({sluzhba})")
+
+
+def serii(stroki, s):
+    """Серии обрывов хода. Возвращает список тревог (по одной на цепь).
+
+    🔴 ЧТО ЛОВИТ И ЧЕГО НЕ ЛОВИТ — ГРАНИЦА ПО ФАКТУ, НЕ ПО ЗАМЫСЛУ (проверено на стенде
+    e7fdce99…6bdac и на синтетике 06.09.2026):
+      ЛОВИТ любую полосу, где между СОСЕДНИМИ обрывами меньше 60 с — в том числе медленную,
+      3–4 обрыва в минуту часами (20 минут по 3/мин → цепь 60, ОДНА тревога).
+      НЕ ЛОВИТ редкую полосу с промежутками больше 60 с: 4 обрыва в час дают ноль. Цепь
+      рвётся на каждом промежутке, длина 1, порога не достигает никогда.
+    ⚠️ Первая редакция ворот говорила «≥5 за 60 с скользящим окном» — это ДРУГОЙ предикат:
+    на том же стенде он даёт 4 тревоги вместо 2 и медленную полосу НЕ ловит. Разошлись проза
+    и эталон-скрипт; в силе цепочка, эталон сильнее прозы. Не переписывать обратно.
+
+    🔴 ЦЕПЬ ЖИВЁТ В СОСТОЯНИИ МЕЖДУ ТАКТАМИ, И ЭТО НЕ УДОБСТВО, А УСЛОВИЕ ПРАВИЛЬНОСТИ.
+    Такт 5 минут, серия длиннее такта. Без памяти серия из 41 обрыва рвётся границей такта
+    на [28,13] и даёт ДВЕ тревоги вместо одной, а общее число плавает от того, куда лёг такт:
+    при сдвигах 0/60/120/180/240 с выходит 3/2/2/2/3. То есть сторож без состояния
+    НЕДЕТЕРМИНИРОВАННЫЙ. С состоянием — 2 при всех пяти сдвигах (п.10 ворот).
+    ⚠️ Стенд на цельном файле этого НЕ ПОКАЖЕТ: он зелёный при обоих устройствах.
+
+    Тревога шлётся в момент ДОСТИЖЕНИЯ порога, а не при закрытии цепи: серия может длиться
+    часами, и ждать её конца значит молчать всё это время. Поэтому в тревоге стоит длина на
+    момент срабатывания (5), а не итоговая — итог виден в журнале прогонов.
+    """
+    tr = []
+    cep = s.get("seriya")
+    for _sluzhba, kogda, text, ts in stroki:
+        if ts is None or not RE_OBRYV.search(text):
+            continue
+        if cep and ts - cep["posl"] < OKNO_SERII:
+            cep["dlina"] += 1
+            cep["posl"] = ts
+            cep["posl_kogda"] = kogda
+        else:
+            cep = {"pervyj_kogda": kogda, "posl": ts, "posl_kogda": kogda,
+                   "dlina": 1, "poslana": False, "prichina": text[:80]}
+        if cep["dlina"] >= POROG_SERII and not cep["poslana"]:
+            cep["poslana"] = True
+            tr.append((f"🔴 СЕРИЯ ОБРЫВОВ ХОДА — {POROG_SERII} подряд, идёт\n"
+                      f"первый: {cep['pervyj_kogda']}\nпоследний: {cep['posl_kogda']}\n"
+                      f"причина: {cep['prichina']}\nмашина: sadik\n"
+                      f"⚠️ ЗАМЕЧАЮ серию, НЕ ЛЕЧУ. Лечение — отдельный предмет (п.300).",
+                      f"🔴 Обрывы ходов: {POROG_SERII} подряд с {msk(cep['pervyj_kogda'])} — {bez_metki(cep['prichina'])[:90]}"))
+    s["seriya"] = cep
+    return tr
+
+
+# ── НЕМОТА ПЛАТФОРМЕННОГО СЖАТИЯ (A-N-774, 24.09.2026, Аврора, наряд Забавы).
+# Живой случай A-N-746: у Зари ходы 25–27 начались при давлении 892 026–961 974 ≥ порога
+# 890 000, а compaction/* не было ни одного — платформа выходила МОЛЧА (selectCompactableRange
+# → null), и никто этого не слышал до края окна SDK.
+# ПРИЗНАК: NEMOTA_HODOV ходов (turn/start) одной сессии подряд начаты, когда давление по
+# кэшу проекций было ≥ порога платформы, и между ними нет compaction/start.
+# ⚠️ ЧЕГО НЕ ЛОВИТ: давление берётся с ПРОШЛОГО такта (5 мин) — ход, начатый после
+# пересечения, но до такта, не считается. Счёт — ОЦЕНКА СНИЗУ: тревога опаздывает, ложной
+# от этого не бывает. Сессия «не измерено» в кэше считается ниже порога (то же направление).
+# Сжатие, начатое и упавшее (start без end), серию снимает — это другой предмет.
+# Не видит агента, у которого журнал не печатает строки «[event] type=…» (их пишет канал).
+NEMOTA_HODOV = 2
+# Исключены ЯВНО, с причиной: блок их не считает и НИЧЕГО их не читает (ни юнитов, ни дома).
+# Пусто с 24.09.2026 (A-N-780): marc был исключён словом владельца 18.09 («с Марком работаю я
+# напрямую»); слово владельца 24.09 16:25 МСК передало его обслуживание нам — исключение снято.
+# Механизм оставлен: строка такта называет «исключены: нет», а не молчит о том, что их нет.
+NEMOTA_ISKLYUCHENY = {}
+RE_SOB_SESSII = re.compile(r"\[event\] type=(turn/start|compaction/start) session\.id=(\S+)")
+
+
+def dsh_home(sluzhba):
+    r = subprocess.run(["systemctl", "show", sluzhba, "-p", "Environment", "--value"],
+                       capture_output=True, text=True, timeout=20)
+    m = re.search(r"(?:^|\s)DSH_HOME=(\S+)", r.stdout)
+    return m.group(1) if m else None
+
+
+# ── B-N-738 (29.09.2026, Аврора; условие Вениамина 13:03Z): КЭШ ПРОЕКЦИЙ В ДВУХ ФОРМАХ И ДОЛЯ ИЗ РЕЕСТРА ────────────
+# Тот же текст — в kontekst-zamer и dsh-compact-watch (два читателя кэша).
+# DSH 0.1.1: один файл <home>/storages/session_projcache.json {unit{version 3}, tables.sessions[sid].rows.<ключ>.val}.
+# DSH 0.2.0: домен session_projcache v7 раскладкой per-record — документ на сессию
+#   <home>/storages/session_projcache/sessions/<sid>.json = {version: 7, record: {identity, rows}}: dsh-storage-json 0.2.0
+#   README «per-record» и lib :411–420 (ключ = имя файла без .json), dsh-session-projection-cache 0.2.0 spec (rows: ключ →
+#   {ver, seq, val}). Выбор — ПО ФАКТУ, не по номеру версии: есть каталог — читаем его, а прежний файл (хранилище оставляет
+#   его после переноса) НЕ читаем: иначе старые числа давления выдаются как текущие. Нет каталога — прежний файл. Нет ни
+#   того ни другого — слепота с причиной. Незнакомая версия документа — отказ, не угадывание.
+# ⚠️ ГРАНИЦА: форма документа 0.2.0 снята с кода пакетов 0.2.0-rc.2 — живую 0.2.0 не поднимали; форму val contextPressure
+#   считаю прежней (pressureTokens/surfaceTokens/sampledSurfaceTokens/contextWindow) — сверить на первом живом подъёме.
+KESH_VERSII_ZAPISI = {7}
+
+
+def kesh_proekcij(home):
+    """(форма, {сессия: val contextPressure}, причина). Форма: 'zapisi' (0.2.0) | 'fajl' (0.1.1) | None (нет кэша)."""
+    kat = os.path.join(home, "storages", "session_projcache", "sessions")
+    fajl = os.path.join(home, "storages", "session_projcache.json")
+    if os.path.isdir(kat):
+        itog = {}
+        for imya in sorted(os.listdir(kat)):
+            if not imya.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(kat, imya), encoding="utf-8") as f:
+                    doc = json.load(f)
+            except (OSError, ValueError) as e:
+                return "zapisi", None, f"документ {imya} не прочитан ({type(e).__name__})"
+            if not isinstance(doc, dict) or doc.get("version") not in KESH_VERSII_ZAPISI:
+                ver = doc.get("version") if isinstance(doc, dict) else None
+                return "zapisi", None, f"документ {imya}: версия {ver!r} незнакома (знаю {sorted(KESH_VERSII_ZAPISI)})"
+            itog[imya[:-5]] = ((doc.get("record") or {}).get("rows") or {}).get("contextPressure", {}).get("val", {})
+        return "zapisi", itog, None
+    if os.path.isfile(fajl):
+        try:
+            with open(fajl) as f:
+                d = json.load(f)
+        except Exception as e:
+            return "fajl", None, f"файл не прочитан ({e})"
+        return "fajl", {s: v.get("rows", {}).get("contextPressure", {}).get("val", {})
+                        for s, v in d.get("tables", {}).get("sessions", {}).items()}, None
+    return None, None, "кэша проекций нет ни в одной форме (ни каталога session_projcache/sessions, ни session_projcache.json)"
+
+
+# B-H-081: F нужен только для home -> kompakt_agent; числа — только готовые porogi D.
+REESTR_PRIBOR = os.environ.get("KONTEKST_REESTR_PRIBOR", "/usr/local/bin/agent-registry")
+_REESTR = []
+
+
+def _gotovy_porog(home):
+    if not _REESTR:
+        import importlib.machinery, importlib.util
+        sys.dont_write_bytecode = True
+        loader = importlib.machinery.SourceFileLoader("agent_registry_porogi", REESTR_PRIBOR)
+        module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        try:
+            loader.exec_module(module)
+            data = module.zagruzit()
+        except SystemExit as e:
+            raise ValueError(f"реестр не загружен (код {e.code})") from e
+        _REESTR.extend([module, data])
+    module, registry = _REESTR
+    dom = home.rstrip("/")
+    if dom.endswith("/.dsh"):
+        dom = dom[:-len("/.dsh")]
+    agents = [a for a in registry["agenty"] if a.get("namerenie", {}).get("dom") == dom]
+    if len(agents) != 1:
+        raise ValueError(f"реестр: для дома {dom} найдено {len(agents)} агентов")
+    # В contextPressure и в журнале немоты нет надёжной пары запроса: ЯВНО defaultRoute.
+    return module.chitat_porog_d(agents[0]["namerenie"].get("kompakt_agent"),
+                                katalog=os.environ.get("KOMPAKT_NASTROJKI_KATALOG"))
+
+
+def pressure_iz_kesha(kto, ses, kesh_doma):
+    """pressureTokens сессии из кэша проекций (меняется только со свежим usage провайдера). None — не прочитано."""
+    if kto not in kesh_doma:
+        doma = {dsh_home(u) for u, a in AGENT_PO_SLUZHBE.items() if a == kto} - {None}
+        try:
+            kesh_doma[kto] = kesh_proekcij(next(iter(doma)))[1] if len(doma) == 1 else None
+        except Exception:
+            kesh_doma[kto] = None
+    v = ((kesh_doma[kto] or {}).get(ses) or {}).get("pressureTokens")
+    return v if type(v) is int else None
+
+
+def zhdu_posle_szhatiya(s, kto, ses, kesh_doma):
+    """True — после сжатия ЭТОЙ сессии давление ещё не измерено: кэш проекций держит досжатое, пока провайдер не
+    отчитается (kompakt-dsh: «давление после сжатия НЕИЗВЕСТНО до свежего usage»). Признак свежести — pressureTokens
+    кэша сменился с первого замера после сжатия. Кэш не прочитан — тоже ждём. Дольше POSLE_SZHATIYA_PREDEL_S — сужу по
+    кэшу, как до правила. ОДИН помощник на пороги (B-N-1758) и немоту (07.10, ложная «немота» Искры 12:40Z): правило в
+    двух копиях однажды уже дошло только до одной ветки. Отметку ставят compaction/start (немота) и compaction/end."""
+    kl = f"{kto}/{ses}"
+    ps = s.setdefault("posle_szhatiya", {}).get(kl)
+    if ps is None:
+        return False
+    tek = pressure_iz_kesha(kto, ses, kesh_doma)
+    if time.time() - ps.get("ts", 0) > POSLE_SZHATIYA_PREDEL_S:
+        print(f"[dsh-compact-watch] {kl}: свежего usage после сжатия нет дольше "
+              f"{POSLE_SZHATIYA_PREDEL_S // 3600} ч — сужу по кэшу", file=sys.stderr)
+        s["posle_szhatiya"].pop(kl, None)
+        return False
+    if tek is None or ps.get("pressure") is None or ps["pressure"] == tek:
+        if ps.get("pressure") is None and tek is not None:
+            ps["pressure"] = tek
+        return True
+    s["posle_szhatiya"].pop(kl, None)
+    return False
+
+
+def davlenie_sessij(home, policy=None):
+    """{сессия: давление, окно} из кэша проекций. Формула — та же, что у платформы и
+    kontekst-zamer: projected = max(0, pressure + surface − sampledSurface)."""
+    forma, sessii, prichina = kesh_proekcij(home)   # B-N-738: 0.1.1 файл | 0.2.0 запись на сессию, по факту
+    if sessii is None:
+        raise ValueError(prichina)
+    policy = policy if policy is not None else _gotovy_porog(home)
+    okno_p = policy["window"]
+    itog = {}
+    for ses, cp in sessii.items():
+        cp = cp or {}
+        p, w = cp.get("pressureTokens"), cp.get("contextWindow")
+        if okno_p is not None and type(w) is int: w = okno_p
+        if type(p) is int and type(w) is int and w > 0:
+            itog[ses] = (max(0, p + (cp.get("surfaceTokens") or 0)
+                             - (cp.get("sampledSurfaceTokens") or 0)), w)
+    return itog
+
+
+def nemota(stroki, s, pervyj):
+    """Возвращает [(ключ, текст тревоги)]. Состояние — s["nemota"][агент/сессия]."""
+    st = s.setdefault("nemota", {})
+    tr = []
+    kesh = {}   # кэш проекций по агентам — на этот такт (для zhdu_posle_szhatiya)
+    # 1. Ходы и сжатия такта, по порядку журнала. Первый прогон не считает: окно 2 мин.
+    for sluzhba, kogda, text, _ts in ([] if pervyj else stroki):
+        m = RE_SOB_SESSII.search(text)
+        kto = imya_agenta(sluzhba)
+        if not m or kto.startswith("неизвестный агент") or kto in NEMOTA_ISKLYUCHENY:
+            continue
+        k = f"{kto}/{m.group(2)}"
+        z = st.setdefault(k, {"nad": False, "podryad": 0, "poslana": False})
+        if m.group(1) == "compaction/start":
+            z.update(podryad=0, poslana=False, nad=False)
+            # 07.10: ждать свежего usage — уже со start, не с end: end бывает в следующем такте вместе с ходами,
+            # а nad к ним посчитан по досжатому кэшу (ложная «немота» Искры 12:40Z).
+            s.setdefault("posle_szhatiya", {})[k] = {"pressure": None, "ts": time.time()}
+        elif z["nad"] and not (k in s.setdefault("posle_szhatiya", {}) and zhdu_posle_szhatiya(s, kto, m.group(2), kesh)):
+            z["podryad"] += 1
+            z["posl_kogda"] = kogda
+        # Проверка В МОМЕНТ счёта: сжатие позже в том же такте не отменяет уже бывшую немоту.
+        if z["podryad"] >= NEMOTA_HODOV and not z["poslana"]:
+            z["poslana"] = True
+            tr.append((k, (f"🔴 НЕМОТА СЖАТИЯ — {k}: ходов подряд {z['podryad']} начато при "
+                          f"давлении ≥ порога платформы, compaction/start НЕТ\n"
+                          f"последний ход: {z['posl_kogda']}\n"
+                          f"давление {z.get('davlenie', 0):,} ≥ порога {z.get('porog', 0):,} "
+                          f"(доля {z.get('dolya')} × окно {z.get('okno', 0):,}; кэш проекций, "
+                          f"замер прошлого такта)\nмашина: sadik\n"
+                          f"⚠️ Счёт — оценка снизу. ЗАМЕЧАЮ, НЕ ЛЕЧУ.",
+                          f"🔴 {ru(kto)}: контекст за порогом ({tys(z.get('davlenie', 0))} ≥ {tys(z.get('porog', 0))}), "
+                          f"а сжатие не началось — {z['podryad']} хода подряд")))
+    # 2. Давление СЕЙЧАС — оно будет «до хода» для ходов следующего такта.
+    doma, slepo = {}, []
+    for unit, kto in AGENT_PO_SLUZHBE.items():
+        if kto in NEMOTA_ISKLYUCHENY:
+            continue
+        h = dsh_home(unit)
+        if h:
+            doma.setdefault(kto, set()).add(h)
+    for kto in sorted(set(AGENT_PO_SLUZHBE.values()) - set(NEMOTA_ISKLYUCHENY)):
+        try:
+            if len(doma.get(kto, ())) != 1:
+                raise ValueError(f"DSH_HOME в юнитах: {sorted(doma.get(kto, ()))}, нужен 1")
+            home = next(iter(doma[kto]))
+            policy = _gotovy_porog(home)
+            dolya = policy["ratio"]
+            sessii = davlenie_sessij(home, policy)
+        except Exception as e:
+            slepo.append(f"{kto} ({e})")
+            continue
+        for k, z in st.items():
+            if k.startswith(kto + "/") and k[len(kto) + 1:] not in sessii:
+                z["nad"] = False          # сессии нет в кэше: не измерено ⇒ ниже (оценка снизу)
+        for ses, (dav, okno) in sessii.items():
+            porog_pl = policy["nominalThreshold"]  # готовый nominal, defaultRoute; не effective запроса
+            z = st.setdefault(f"{kto}/{ses}", {"nad": False, "podryad": 0, "poslana": False})
+            k2 = f"{kto}/{ses}"
+            zhdu = k2 in s.setdefault("posle_szhatiya", {}) and zhdu_posle_szhatiya(s, kto, ses, kesh)
+            z.update(nad=dav >= porog_pl and not zhdu, davlenie=dav, porog=porog_pl, dolya=dolya, okno=okno)
+            if not z["nad"]:
+                z.update(podryad=0, poslana=False)   # ушло ниже порога — серия кончилась
+    # 3. Слепота — по ИЗМЕНЕНИЮ состава, иначе хроническая слепота шумит каждый такт.
+    # Первый прогон тревог не шлёт вовсе — отметку не ставим, скажет следующий такт.
+    if slepo and slepo != s.get("nemota_slepo") and not pervyj:
+        tr.append(("slepo", ("🔴 dsh-compact-watch, НЕМОТА СЖАТИЯ: не вижу давления/порога — "
+                            "эти агенты НЕ наблюдаются:\n" + "\n".join(slepo),
+                            "⚠️ Не вижу заполнение: " + ", ".join(ru(x.split(" (")[0]) for x in slepo))))
+    # B-N-1852: и на первом прогоне — его слепоту называет сообщение заведения (main), второй такт её не повторяет.
+    s["nemota_slepo"] = slepo
+    iskl = sorted(set(AGENT_PO_SLUZHBE.values()) & set(NEMOTA_ISKLYUCHENY))
+    vsego = len(set(AGENT_PO_SLUZHBE.values())) - len(iskl)
+    idut = ", ".join(f"{k}={z['podryad']}" for k, z in sorted(st.items()) if z["podryad"])
+    print(f"[dsh-compact-watch] немота сжатия: наблюдаю {vsego - len(slepo)} из {vsego}, "
+          f"исключены: {', '.join(f'{k} ({NEMOTA_ISKLYUCHENY[k]})' for k in iskl) or 'нет'}; "
+          f"слепо: {', '.join(slepo) or 'нет'}; серии без сжатия: {idut or 'нет'}; "
+          f"тревог {len(tr)}", file=sys.stderr)
+    return tr
+
+
+def obryvy_za_okno():
+    """Обрывы ходов, сведённые ПО МОМЕНТАМ (секундам), а не сложением.
+    🔴 Сложение дало бы ДВОЕНИЕ 1.9x: замер 07.09 — 96 событий, а строк 191, потому что
+       одно событие видно с ДВУХ сторон (Искра и Вениамин независимо: 40 из 40 посекундно).
+    ⚠️ ГРАНИЦА, называется в самой тревоге: область — отказ ВЫЗОВА (шлюз, перехват
+       обработчика) и обрыв ХОДА (служба). Обрывы иной природы сюда не входят."""
+    def momenty(sluzhby, rx):
+        if not sluzhby:
+            return set(), {}  # Не вызывать journalctl без -u: это вся машина.
+        cmd = ["journalctl", "--no-pager", "-q", "-o", "short-unix", "--since", OKNO_OBRYVOV]
+        for sl in sluzhby:
+            cmd += ["-u", sl]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            return None, None
+        mom, formy = set(), {}
+        for l in r.stdout.splitlines():
+            m = rx.search(l)
+            if not m:
+                continue
+            mom.add(l.split()[0].split(".")[0])
+            f = re.sub(r"^Claude Code returned an error result:\s*", "", m.group(1))
+            f = re.sub(r"\s*\(лимит ходов исключён.*$", "", f)
+            f = re.sub(r"\s*—\s*причина не установлена.*$", "", f)
+            f = re.sub(r"resets\s+\d{1,2}(am|pm)", "resets <время>", f)   # иначе формы плодятся
+            f = re.sub(r"\d{3,}", "<N>", f)
+            f = f.strip()[:70] or "ПРИЧИНА ПУСТА"
+            formy[f] = formy.get(f, 0) + 1
+        return mom, formy
+
+    # B-N-1226-2 (30.09, Заря; low Вениамина): шлюзы — ВЫЗОВОМ НА СЛУЖБУ, чтобы тревога называла, какие дали отказы.
+    #   Один вызов на все -u не даёт привязки строки к службе; разбор строк прежний (short-unix — его стережёт стенд B-N-1060).
+    #   Любой вызов отказал — ветка слепа целиком (как прежде при отказе единого вызова).
+    m_shl, f_shl, po_shl, _slepo = set(), {}, {}, []
+    for _u in SHLYUZY:
+        _m, _f = momenty([_u], RE_SBOJ_SHL)
+        if _m is None:
+            _slepo.append(_u)   # B-N-1228: не обрываем — назвать надо ВСЕ отказавшие
+            continue
+        if _m:
+            po_shl[_u] = len(_m)
+        m_shl |= _m
+        for _k, _v in _f.items():
+            f_shl[_k] = f_shl.get(_k, 0) + _v
+    m_slu, f_slu = momenty(SLUZHBY, RE_OBRYV_SLU)
+    if m_slu is None:
+        _slepo.append(f"службы агентов ({len(SLUZHBY)} юнитов одним вызовом)")
+    OBRYVY_SLEPO[:] = _slepo
+    if _slepo:
+        return None   # слепа: main() скажет «СЛЕПОТА» по OBRYVY_SLEPO, а не промолчит
+    vsego = m_shl | m_slu
+    OBRYVY_FORMY.clear()
+    if len(vsego) < POROG_OBRYVOV:
+        return None
+    formy = dict(f_slu)
+    for k, v in (f_shl or {}).items():
+        formy[k] = formy.get(k, 0) + v
+    OBRYVY_FORMY.update(formy)
+    pary = sorted(formy.items(), key=lambda kv: -kv[1])
+    _kto = ", ".join(f"{ru(AGENT_PO_SLUZHBE.get(u, u))} ×{n}" for u, n in sorted(po_shl.items(), key=lambda kv: (-kv[1], kv[0])))
+    OBRYVY_KR[:] = [f"{len(vsego)} за {OKNO_MIN} мин" + (f" · {_kto}" if _kto else "") + (f" · {pary[0][0][:60]}" if pary else "")]
+    POKAZ = 3
+    return (f"🔴 СЕРИЯ ОБРЫВОВ ХОДА — {len(vsego)} событий за {OKNO_OBRYVOV} "
+            f"(порог {POROG_OBRYVOV}; обеими сторонами {len(m_shl & m_slu)}, "
+            f"только шлюзом {len(m_shl - m_slu)}, только службой {len(m_slu - m_shl)})\n"
+            + (f"шлюзы с отказом вызова: {', '.join(f'{u} ×{n}' for u, n in sorted(po_shl.items(), key=lambda kv: (-kv[1], kv[0])))}\n"
+               if po_shl else "")
+            + f"область: отказ ВЫЗОВА и обрыв ХОДА; обрывы иной природы НЕ входят\n"
+            f"формы — показаны {min(POKAZ, len(pary))} из {len(pary)}:\n"
+            + "\n".join(f"  {n}× {p}" for p, n in pary[:POKAZ]))
+
+
+def klyuch_obryvov(formy):
+    """B-N-1716: ключ эпизода серии обрывов — НАБОР ФОРМ причин (числа и время в формах уже сведены к <N>/<время>).
+    Тот же набор = тот же эпизод (молчим); форма, которой в эпизоде не было, — НОВЫЙ вид обрыва (тревога)."""
+    return set(formy)
+
+
+def main():
+    # Каждый такт с пробелом: тот же канал, что у компактов, без подавления повторов.
+    # Отказ доставки удерживает рубеж; после восстановления следующий такт повторит.
+    if OHVAT["propushcheny"]:
+        missing = OHVAT["propushcheny"] if AGENT_PO_SLUZHBE else OHVAT["imena"]
+        observed = len(set(AGENT_PO_SLUZHBE.values()))
+        message = f"наблюдаю {observed} из {OHVAT['vsego']}, не наблюдаю: {', '.join(missing)}"
+        if not poslat(message, f"⚠️ Сторож сжатий видит {observed} из {OHVAT['vsego']} агентов; нет: " + ", ".join(ru(x) for x in missing)):
+            print(f"[dsh-compact-watch] охват НЕ ДОСТАВЛЕН: {message}; рубеж не двигаю", file=sys.stderr)
+            return 1
+    if not AGENT_PO_SLUZHBE:
+        print("[dsh-compact-watch] нет достоверной карты имён; рубеж не двигаю", file=sys.stderr)
+        return 2
+    s, beda_sostoyaniya = chitat_sostoyanie()
+    # 🔴 «Состояния НЕТ» и «состояние НЕ ЧИТАЕТСЯ» разведены: первое — заведение, второе — авария.
+    if beda_sostoyaniya:
+        msg = (f"🔴 dsh-compact-watch: НЕ МОГУ ПРОЧЕСТЬ СВОЁ СОСТОЯНИЕ — наблюдение не работает.\n"
+               f"Файл: {SOSTOYANIE}\nПричина: {beda_sostoyaniya}\n"
+               f"Это НЕ «первый прогон» и НЕ «событий нет»: рубеж не сдвинут, ничего не отброшено "
+               f"молча. Нужна рука: почините или удалите файл — при ОТСУТСТВИИ файла сторож "
+               f"законно заводится заново.\n"
+               f"⚠️ Пока не почините, эта тревога придёт каждый такт (5 мин). Цена принята "
+               f"намеренно: молчащая авария наблюдения дороже шумной.")
+        print(msg, file=sys.stderr)
+        poslat(msg, "🔴 Сторож сжатий: своё состояние не читается — нужна рука (повтор каждые 5 мин)")
+        return 2      # состояние НЕ перезаписываем — иначе затрём то, что можно ещё спасти
+    # B-N-1852: заведение состоялось только после ДОСТАВЛЕННОГО сообщения о нём. Наличия файла мало: пороги и подстановка
+    #   ролей пишут состояние сами, ДО журнальной части (свой путь записи), — недоставленное заведение иначе потерялось бы.
+    pervyj = s is None or s.get("zavedenie_ne_skazano") is True
+    if s is None:
+        s = {"kursor": None, "porogi": {}, "zanyato": {}, "komanda": {}, "zavedenie_ne_skazano": True}
+    try:
+        perenesti_imena(s)
+    except ValueError as e:
+        print(f"[dsh-compact-watch] перенос имён НЕ ВЫПОЛНЕН: {e}", file=sys.stderr)
+        return 2
+    s.setdefault("komanda", {})
+
+    # 🔴 ПОРОГИ — ЗДЕСЬ, до чтения журнала и до всех его ранних выходов.
+    porogi_nezavisimo(s)
+    podstanovka_rolej(s)   # B-N-1588: тоже до ранних выходов журнальной части
+
+    # 🔴 (г) ГОВОРЯЩЕЕ МОЛЧАНИЕ ПОРОГОВ. Печатаем ЗДЕСЬ, а не в итоге такта: у функции
+    #    ПЯТЬ точек выхода раньше (простой, слепота, подавление журнала), и вставка в
+    #    итог была недостижима в большинстве прогонов. Поймано СВОЕЙ ЖЕ порчей, не чтением.
+    # ⚠️ ГРАНИЦА: наблюдение короткое (двое суток), максимум 826131 = 82,6% при p85=850000 —
+    #    платформа сжимает РАНЬШЕ порога. Если строка ниже начнёт показывать приближение
+    #    к порогу, это СОБЫТИЕ (диапазон сдвинулся), а не шум. Теперь пороги — доли окна.
+    # 🔴 B-N-1161 (28.09.2026, Искра): «занято N из M» в журнал агента пишут ДВОЕ — nudzh от ОКНА, шлюз от СВОЕГО порога
+    #   (у кодеров шлюзовой компакт выключен, его порог не действует), в одну секунду. max_zan брал первую строку, zanyato —
+    #   последнюю: у beta одно число 617 809 печаталось как 83,8% и 67,0%, а «ДОСТИГНУТ» зависел от порядка строк.
+    #   Теперь знаменатель — ПРИБОР (окно и порог сжатия, тот же, что у тревог): % ОТ ПОРОГА (решение владельца 25.09,
+    #   B-N-857), окно — в скобках. Прибор числа не дал — знаменатель из строки журнала, и это сказано в тексте.
+    _sejchas = {(AGENT_PO_SLUZHBE.get(f"{_a}.service") or _a): _v for _a, _v in PRIBOR_SEJCHAS.items()}
+
+    def _podpis(_kto, _zan, _tv):
+        _p = _sejchas.get(_kto)
+        if _p and godno_okno(_zan, _p[1]):
+            _b = baza_poroga(_p[1], _p[2])
+            if _b != _p[1]:
+                return _b, f"{_zan:,} = {_zan * 100.0 / _b:.1f}% порога {_b:,} ({_zan * 100.0 / _p[1]:.1f}% окна {_p[1]:,})"
+            return _b, f"{_zan:,} = {_zan * 100.0 / _b:.1f}% ОКНА {_b:,} (порог сжатия прибор не дал)"
+        return _tv, (f"{_zan:,} из {_tv:,} ({_zan * 100.0 / _tv:.1f}% — знаменатель из строки журнала: у nudzh это окно, "
+                     f"у шлюза его порог; прибор числа не дал)")
+
+    if not s.get("max_zan"):
+        print(f"[dsh-compact-watch] пороги: наблюдений занятости за окно НЕ БЫЛО — "
+              f"сказать о нижнем пороге={DOLYA_NIZ}% нечего (это НЕ «превышений не было»)")
+    else:
+        for _kto, _v in sorted(s["max_zan"].items()):
+            _zan, _kogda, _vsego = _v
+            if not godno_okno(_zan, _vsego):
+                print(f"[dsh-compact-watch] {_kto}: сохранённый максимум недостоверен: "
+                      f"vsego={_vsego} при zan={_zan}; не использую")
+                continue
+            _baza, _txt = _podpis(_kto, _zan, _vsego)
+            # 🔴 B-N-1162 (28.09.2026, Искра): max_zan заменяется ТОЛЬКО новым наблюдением (:967) — у того, кто строк «занято»
+            #   не пишет (Петрович, Спартак, кодеры на квоте), «максимум за сутки» держался неделями: petrovich 894 135 от 23.09
+            #   печатался 28.09 как суточный и «ДОСТИГНУТ». Старше суток — печатаем С ВОЗРАСТОМ и БЕЗ «ДОСТИГНУТ/не достигнут»:
+            #   это утверждение о настоящем, а наблюдению N суток. Молча не выкидываем: пропуск неотличим от «агента нет».
+            _vozr = time.time() - _kogda
+            if _vozr > 86400:
+                print(f"[dsh-compact-watch] порог НЕ ОЦЕНЁН за сутки: {_kto} последний максимум {_txt} — "
+                      f"от {time.strftime('%d.%m %H:%MZ', time.gmtime(_kogda))}, {_vozr / 86400:.1f} сут назад "
+                      f"(свежих строк «занято» нет; максимум заменяется только новым наблюдением)")
+                continue
+            _sost = "ДОСТИГНУТ" if _zan >= porog(_baza, DOLYA_NIZ) else "не достигнут"
+            print(f"[dsh-compact-watch] порог {_sost}: {_kto} НАИБОЛЬШЕЕ ЗА СУТКИ {_txt} "
+                  f"при нижнем={DOLYA_NIZ}% верхнем={DOLYA_VERH}% (сутки скользящие)")
+        # 🔴 09.09.2026: ТЕКУЩЕЕ и МАКСИМУМ — разные величины, раньше слитые в одно
+        # слово «наибольшее». После компакта 06:52 занятость упала до 74 748, а сторож
+        # показывал 727 604 — по такому числу нельзя сказать ни «близко ли к порогу
+        # СЕЙЧАС», ни «был ли компакт». Порог сравнивается с ТЕКУЩИМ.
+        # 🔴 B-N-1063 (26.09.2026, Заря): строку «занято» nudzh и шлюз пишут ТОЛЬКО при пересечении отметки пути (50…95%) или
+        #   порога — не каждый ход. Кто не растёт (кодеры на квоте, Петрович, Спартак: ходов 0–4 за трое суток), тот её не пишет,
+        #   и возраст «последнего из журнала» — время с последнего пересечения, а не свежесть. Признака «не пишет» в настройке нет:
+        #   nudzh у всех девяти. Поэтому рядом — СВЕЖЕЕ число прибора этого такта; печать, не тревога.
+        _zhurn = s.get("zanyato") or {}
+        if _zhurn or _sejchas:
+            for _k in sorted(set(_zhurn) | set(_sejchas)):
+                _vv = _zhurn.get(_k)
+                if _vv and godno_okno(*_vv):
+                    _tz, _tv = _vv
+                    _vozr = time.time() - s.get("zanyato_kogda", {}).get(_k, 0)
+                    _kak = (f"{_vozr/60:.0f} мин назад" if _vozr < 86400*365 else "возраст неизвестен")
+                    _zh = (f"из журнала {_podpis(_k, _tz, _tv)[1]}, строка {_kak} — строка «занято» пишется "
+                           f"только при пересечении отметки или порога: возраст = время с пересечения, НЕ свежесть")
+                else:
+                    _zh = ("с последнего сжатия строки «занято» не было (сжатие сбрасывает число; строка пишется только при пересечении "
+                           "отметки или порога)")
+                if _k in _sejchas:
+                    _pz, _pv, _pp = _sejchas[_k]
+                    _baza = _pp if type(_pp) is int and 0 < _pp <= _pv else _pv
+                    _pr = f"сейчас по прибору {_pz:,} из {_pv:,} ({_pz * 100.0 / _baza:.1f}% {'порога' if _baza != _pv else 'ОКНА'} {_baza:,})"
+                else:
+                    _pr = "прибор числа не дал"
+                # B-N-1060: порог с журнальным числом НЕ сравнивается — только с прибором (porogi_nezavisimo).
+                print(f"[dsh-compact-watch] ЗАНЯТОСТЬ {_k}: {_zh}; {_pr}. ПОРОГ С НИМ НЕ СРАВНИВАЕТСЯ — только с прибором {PRIBOR}")
+        else:
+            print("[dsh-compact-watch] ТЕКУЩЕЕ: наблюдений в этом такте нет — "
+                  "это НЕ «занятость нулевая», это «в такт не попало ни одной строки»")
+
+    try:
+        stroki, novyj_kursor = zhurnal(s.get("kursor"))
+    except Exception as e:
+        msg = (f"🔴 dsh-compact-watch: НЕ ВИЖУ ЖУРНАЛ — наблюдение за компактом не работает.\n"
+               f"Причина: {e}\nЭто НЕ «событий нет»: рубеж не сдвинут, следующий такт повторит.")
+        print(msg, file=sys.stderr)
+        poslat(msg, f"🔴 Сторож сжатий не видит журнал: {str(e)[:80]}")
+        return 2
+
+    # До ранних выходов: пустой такт тоже обязан назвать отсутствие измерения окна.
+    izmereno = okna_takta(stroki)
+
+    # ── ЗРЯЧЕСТЬ. Обе службы пишут непрерывно; полная тишина = сломано наблюдение.
+    # Первый прогон исключён: там окно всего 2 минуты и пустота законна.
+    if not stroki and not pervyj:
+        # 07.09.2026: ТИШИНА ПРИ ЖИВОМ ОПРОСЕ — ЭТО ПРОСТОЙ, А НЕ СЛЕПОТА.
+        #   Посылка "обе службы пишут непрерывно" была верна днём и перестала быть верной,
+        #   когда ферма НАМЕРЕННО прекратила поток писем, чтобы у Искры появилась пауза для
+        #   подъёма. Ряд строк за такты: 35 / 17 / 40 / 6 / 2 / 0 — иссякший источник ходов,
+        #   а не обрыв наблюдения. Сторож был исправен; неверна стала посылка под ним.
+        #   Различаем признаком, который службы подтверждают САМИ:
+        #     обе active И за 15 мин есть строка "опрос жив" -> простой, молчим
+        #     иначе                                          -> слепота, тревога как была
+        _zhivy = []
+        for _sl in SLUZHBY:
+            try:
+                _r = subprocess.run(["systemctl", "is-active", _sl], capture_output=True, text=True, timeout=20)
+                _zhivy.append(_r.stdout.strip() == "active")
+            except Exception:
+                _zhivy.append(False)
+        _opros = False
+        try:
+            _args = ["journalctl"]
+            for _u in SLUZHBY:
+                _args += ["-u", _u]
+            _r = subprocess.run(_args + [
+                                 "--since", "-15min", "--no-pager", "-o", "cat"],
+                                capture_output=True, text=True, timeout=60)
+            _opros = "опрос жив" in _r.stdout
+        except Exception:
+            _opros = False
+        if all(_zhivy) and _opros:
+            print("[dsh-compact-watch] строк за такт 0, "
+                  f"но все {len(SLUZHBY)} служб реестра active и "
+                  "опрос жив — ПРОСТОЙ, "
+                  "не слепота. "
+                  "Тревогу не шлю.", file=sys.stderr)
+            return 0
+        msg = (f"🔴 dsh-compact-watch: за такт в журнале {len(SLUZHBY)} служб реестра НИ ОДНОЙ "
+               "строки. Обе службы пишут постоянно — это признак, что я ослеп, а не что "
+               "ничего не происходило. Рубеж не сдвинут.")
+        print(msg, file=sys.stderr)
+        poslat(msg, "🔴 Сторож сжатий ослеп: за такт ни одной строки журнала агентов")
+        return 2
+
+    # 🔴 ж2, 06.09.2026, НАШЁЛ ВЕНИАМИН ЗАМЕРОМ ПОТОКА: petrovich.service печатает каждый чанк ответа
+    # модели отдельным событием — 236 334 строки в сутки, пик 1 965 за 30 с. Предел journald по
+    # умолчанию 10 000 сообщений за 30 с на службу; при длинном ответе Петровича хвост будет
+    # ВЫБРОШЕН МОЛЧА, и в выброшенное может попасть compaction/end. Для сторожа это неотличимо
+    # от «событий не было»: строку «Suppressed N messages» пишет journald ОТ СВОЕГО ИМЕНИ, её
+    # нет в журнале службы. Значит спрашивать надо не службу, а журнальный демон.
+    try:
+        r = subprocess.run(["journalctl", "--no-pager", "-q", "-o", "cat", "_COMM=systemd-journald",
+                            "--since", "-6min"], capture_output=True, text=True, timeout=60)
+        # A-N-1948 №5 (№24): перечень — наблюдаемые службы из реестра (SLUZHBY), а не четыре зашитых имени: подавление у
+        #   alfa/beta/gamma/marc/anna/spartak… прежде не замечалось, и их compaction/end терялся как «событий не было».
+        podavleno = [ln for ln in r.stdout.splitlines()
+                     if "uppressed" in ln and any(s in ln for s in SLUZHBY)]
+    except Exception:
+        podavleno = []
+    if podavleno and not pervyj:
+        msg = ("🔴 dsh-compact-watch: journald ПОДАВЛЯЛ сообщения наблюдаемых служб за этот такт.\n"
+               + "\n".join(podavleno[:3])
+               + "\nЧасть строк выброшена демоном журнала — в них мог быть compaction/end. "
+                 "Это слепота, а не «событий не было»: рубеж не двигаю, следующий такт перечитает.")
+        print(msg, file=sys.stderr)
+        poslat(msg, "⚠️ Сторож сжатий: журнал выбросил строки агентов — такт перечитаю")
+        pisat_sostoyanie(s)   # рубеж НЕ трогаем: сохраняем прежний курсор
+        return 2
+
+    sobytiya, trevogi = [], []
+
+    # 🔴 22.09.2026: источник занятости ПОДМЕНЁН на прибор. Журнальная строка
+    # «занято N из M» накопительная и видна только у тех, кто много ходит
+    # (замер 22.09: печатали 4 агента из 7 — dsh, spartak, marc молчали,
+    # и сторож их НЕ ВИДЕЛ ВОВСЕ). Прибор читает кэш проекций и видит всех.
+    # ⚠️ Стоит ПОСЛЕ объявления trevogi намеренно: при слепоте прибора ветка
+    # тревоги обязана работать, а не падать с NameError.
+    # Занятость от прибора берёт НЕЗАВИСИМЫЙ пороговый блок, см. porogi_nezavisimo().
+    # ВЕТВЬ ОБРЫВОВ. Стоит ЗДЕСЬ (после ранних выходов 195/226/260/266/289) намеренно:
+    # при слепоте и простое агентских служб журнал не читается, и обрывы проверять не по чему.
+    _obr = obryvy_za_okno()
+    # 🔴 B-N-1716 (07.10.2026, Михалыч; наряд Забавы, находка Зари): окно 30 мин пересчитывается каждые 5 мин, и прежде
+    #   ОДИН эпизод (напр. «session limit» шлюза) давал тревогу НА КАЖДОМ такте: 24 тревоги на 4 эпизода 05–06.10.
+    #   Теперь ЭПИЗОД (s["obryvy_epizod"]): первая тревога открывает его; тот же набор форм — молчим; форма, которой в
+    #   эпизоде не было, — тревога «новый вид»; напоминание не чаще OSTYVANIE_S; окно ниже порога — ОДНО «кончилась».
+    #   Слепота ветки эпизод НЕ закрывает (не измерено ≠ кончилось). Недоставка — откат эпизода (ниже, ep_do).
+    # ⚠️ НЕ ЛОВИТ: рост числа событий внутри эпизода при тех же формах (виден в напоминании и в «кончилась»).
+    ep_do = json.loads(json.dumps(s.get("obryvy_epizod")))
+    _ep = s.get("obryvy_epizod")
+    _sejchas = time.time()
+    if _obr:
+        _tek = klyuch_obryvov(OBRYVY_FORMY)
+        if not _ep:
+            trevogi.append((_obr + "\nэпизод открыт: повтор того же вида — молча; новый вид — тревогой; «кончилась» — одним сообщением",
+                            f"🔴 Обрывы ходов: {OBRYVY_KR[0]}"))
+            s["obryvy_epizod"] = {"formy": sorted(_tek), "nachalo": _sejchas, "posl": _sejchas}
+        else:
+            _novye = _tek - set(_ep["formy"])
+            if _novye:
+                trevogi.append(("🔴 НОВЫЙ ВИД ОБРЫВА внутри идущей серии: " + "; ".join(sorted(_novye))[:300] + "\n" + _obr,
+                                "🔴 Обрывы ходов: новый вид — " + "; ".join(sorted(_novye))[:100]))
+                _ep["formy"] = sorted(set(_ep["formy"]) | _tek); _ep["posl"] = _sejchas
+            elif _sejchas - _ep["posl"] >= OSTYVANIE_S:
+                trevogi.append((_obr + f"\nсерия идёт {int((_sejchas - _ep['nachalo']) // 60)} мин — напоминание не чаще раза в {OSTYVANIE_S // 60} мин",
+                                f"🔴 Обрывы ходов идут {int((_sejchas - _ep['nachalo']) // 60)} мин: {OBRYVY_KR[0]}"))
+                _ep["posl"] = _sejchas
+            else:
+                print(f"[dsh-compact-watch] серия обрывов идёт ({int((_sejchas - _ep['nachalo']) // 60)} мин), тот же вид — не шлю", file=sys.stderr)
+    elif _ep and not OBRYVY_SLEPO:
+        trevogi.append((f"✅ СЕРИЯ ОБРЫВОВ ХОДА КОНЧИЛАСЬ — шла {int((_sejchas - _ep['nachalo']) // 60)} мин "
+                       f"(с {time.strftime('%H:%M', time.localtime(_ep['nachalo']))}); за {OKNO_OBRYVOV} событий меньше порога {POROG_OBRYVOV}\n"
+                       f"виды за эпизод: " + "; ".join(_ep["formy"])[:400] + "\nмашина: sadik",
+                       f"✅ Обрывы ходов кончились (шли {int((_sejchas - _ep['nachalo']) // 60)} мин)"))
+        s.pop("obryvy_epizod", None)
+    # B-N-1228: СЛЕПОТА ветки обрывов — тревогой, а не тишиной. Форма — набор отказавших; повтор той же формы не чаще
+    #   OSTYVANIE_S (как давление/секретарь); отметка откатывается, если доставка не удалась (ниже, obr_do). Первый прогон — молчит.
+    # ⚠️ НЕ ЛОВИТ: journalctl, ответивший кодом 0 пустым выводом при живом шлюзе (это тишина по построению ветки).
+    obr_do = json.loads(json.dumps(s.get("obryvy_slepo", {})))
+    if OBRYVY_SLEPO and not pervyj:
+        forma = ", ".join(sorted(OBRYVY_SLEPO))
+        otm = s.setdefault("obryvy_slepo", {})
+        if time.time() - otm.get(forma, 0) >= OSTYVANIE_S:
+            otm[forma] = time.time()
+            trevogi.append((f"🔴 СЛЕПОТА: ветка обрывов — journalctl -u {forma} отказал\n"
+                           f"отказы вызова и обрывы хода за {OKNO_OBRYVOV} НЕ проверены — это не «обрывов нет»\n"
+                           f"повтор той же формы — не раньше чем через {OSTYVANIE_S // 60} мин\nмашина: sadik",
+                           f"⚠️ Не вижу обрывы ходов: журнал не читается ({forma[:80]})"))
+        else:
+            print(f"[dsh-compact-watch] слепота ветки обрывов ({forma}) в остывании — не шлю", file=sys.stderr)
+
+    # 🔴 06.09.2026, НАШЁЛ ВЕНИАМИН СВОИМ СТЕНДОМ, ДЕФЕКТ БЫЛ НАСТОЯЩИЙ.
+    # Память о команде /compact жила ТОЛЬКО ВНУТРИ ТАКТА. Компакт длится 50–90 с, такт 5 мин —
+    # значит команда и compaction/start попадают в такт N, а compaction/end в N+1, и повод
+    # печатался «естественный» у принудительного. По его счёту — примерно каждый третий-
+    # четвёртый. Теперь память о команде живёт В СОСТОЯНИИ и снимается при end того же агента.
+    # ⚠️ Отметка не истекает по времени намеренно: лучше назвать принудительным тот, что шёл
+    # следом за командой через час, чем потерять повод у настоящего. Ложный «естественный»
+    # молчалив, ложный «принудительный» виден в переписке и поправим.
+    # A-N-870: отметки остывания ДАВЛЕНИЯ — снимок до такта; не дошло — вернуть (отметка по УСПЕХУ, не по попытке).
+    dav_do = json.loads(json.dumps(s.get("davlenie", {})))
+    sek_do = json.loads(json.dumps(s.get("sekretar", {})))   # A-N-1099: остывание секретаря — откат при недоставке, как davlenie
+    nach_do = json.loads(json.dumps(s.get("nachato", {})))   # B-H-522: откат отметок сжатий, если доставка не удалась
+    otb_do = json.loads(json.dumps(s.get("otbros", {})))   # B-N-1698 хвост: откат эпизодов отброса при недоставке
+    otb_takt = {}
+    for sluzhba, kogda, text, _ts in stroki:
+        kto = imya_agenta(sluzhba)
+        mu = RE_MOST_U_MODELI.match(text)
+        if mu and not pervyj and not kto.startswith("неизвестный агент"):
+            try:
+                _g = json.loads("[" + mu.group(2) + "]") if mu.group(2) else []
+            except ValueError:
+                _g = [x.strip().strip('"') for x in mu.group(2).split(",")]
+            _e = [x.strip() for x in (mu.group(4) or "").split(",") if x.strip()]
+            t = otb_takt.setdefault(kto, {"g": set(), "e": set(), "chisto": False, "kogda": kogda, "ts": _ts})
+            t["g"] |= {str(x) for x in _g}; t["e"] |= set(_e)
+            if int(mu.group(1)) == 0 and int(mu.group(3)) == 0:
+                t["chisto"] = True
+            if _g or _e:
+                t["kogda"], t["ts"] = kogda, _ts
+        # A-N-870: 🔴 ДАВЛЕНИЕ из шлюза. Повтор той же ФОРМЫ (числа -> <N>) у того же агента — не чаще OSTYVANIE_S:
+        # при стойкой причине (например, окно SDK 200 000) шлюз пишет её КАЖДЫЙ ход, а шум учит не читать.
+        # ⚠️ НЕ ЛОВИТ: давление у шлюза с выключенным storozh (строки нет) и у юнита вне agents.yaml.
+        dv = RE_DAVLENIE.search(text)
+        if dv and not pervyj and not kto.startswith("неизвестный агент"):
+            forma = re.sub(r"\d+", "<N>", dv.group(1))[:200]
+            otm = s.setdefault("davlenie", {}).setdefault(kto, {})
+            if time.time() - otm.get(forma, 0) >= OSTYVANIE_S:
+                otm[forma] = time.time()
+                trevogi.append((f"🔴 ДАВЛЕНИЕ ВНУТРИ ХОДА — {kto}\nкогда: {kogda}\nпричина: {dv.group(1)[:400]}\n"
+                               f"строка шлюза: {text[:500]}\n"
+                               f"повтор той же формы — не раньше чем через {OSTYVANIE_S // 60} мин\nмашина: sadik",
+                               kr_davlenie(kto, dv.group(1))))
+            else:
+                print(f"[dsh-compact-watch] давление {kto} {kogda}: та же форма в остывании — не шлю", file=sys.stderr)
+        sk = RE_SEKRETAR_OTKAZ.search(text)
+        if sk and not pervyj and not kto.startswith("неизвестный агент"):
+            _h = re.match(r"HTTP \d+", sk.group(2))
+            forma = sk.group(1) + " " + (_h.group(0) if _h else re.sub(r"[0-9a-f-]{8,}|\d+", "<N>", sk.group(2))[:60])
+            otm = s.setdefault("sekretar", {}).setdefault(kto, {})
+            if time.time() - otm.get(forma, 0) >= OSTYVANIE_S:
+                otm[forma] = time.time()
+                trevogi.append((f"🔴 СЕКРЕТАРЬ НЕ СПРОСИЛ МОДЕЛЬ — {kto}\nкогда: {kogda}\nисход: {sk.group(1)}\nпричина: {sk.group(2)[:400]}\n"
+                               f"знания этого окна НЕ извлечены (дистилляция памяти)\n"
+                               f"повтор той же формы ({forma}) — не раньше чем через {OSTYVANIE_S // 60} мин\nмашина: sadik",
+                               f"🔴 {ru(kto)}: знания не извлечены — секретарь: {sk.group(1)} ({sk.group(2)[:70]})"))
+            else:
+                print(f"[dsh-compact-watch] секретарь {kto} {kogda}: {forma} в остывании — не шлю", file=sys.stderr)
+        # A-N-1099: отказ НАШЕЙ сводки — тревога по каждой строке (рубеж не даёт повторить); первый прогон — только отметка.
+        so = RE_SVODKA_OTKAZ.search(text)
+        if so and not pervyj and not kto.startswith("неизвестный агент"):
+            trevogi.append((f"🔴 НАША СВОДКА НЕ СОСТОЯЛАСЬ — {kto}\nкогда: {kogda}\nпричина: {so.group(1)[:400]}\n"
+                           f"сжатие ушло в РОДНУЮ сводку платформы (не наша: без хвоста и нашего формата)\n"
+                           f"строка kompakt-dsh: {text[:500]}\nмашина: sadik",
+                           f"⚠️ {ru(kto)}: своя сводка не вышла ({so.group(1)[:60]}) — сжато штатной"))
+        if RE_KOMANDA.search(text):
+            s["komanda"][kto] = kogda
+        m = RE_SOBYTIE.search(text)
+        if m and m.group(1) == "start" and not pervyj and not kto.startswith("неизвестный агент"):
+            s.setdefault("nachato", {})[kto] = {"kogda": kogda, "ts": _ts if _ts else time.time(), "trevoga": False}
+        if m and m.group(1) == "end":
+            s.setdefault("nachato", {}).pop(kto, None)   # B-H-522: пара закрыта
+            povod = "/compact (принудительный)" if s["komanda"].pop(kto, None) else "естественный"
+            sobytiya.append((kto, kogda, povod, text))
+            # ⚠️ Д4, замечание Вениамина: после компакта окно НОВОЕ, и подъём до 85% в нём —
+            # новое пересечение. Без этого сброса флаг остаётся взведённым с прошлого окна
+            # и вторая тревога не прозвучит никогда. Сброс по СОБЫТИЮ, а не по числу.
+            # 07.10 (Марк): сброс — только СЖАТОЙ сессии (session.id события), и до свежего usage её порог не судим.
+            s["porogi"].pop(kto, None)
+            _ses = re.search(r"session\.id=(\S+)", text)
+            if _ses:
+                s["porogi"].pop(f"{kto}/{_ses.group(1)}", None)
+                s.setdefault("posle_szhatiya", {})[f"{kto}/{_ses.group(1)}"] = {"pressure": None, "ts": time.time()}
+            else:
+                for _k in [k for k in s["porogi"] if k.startswith(kto + "/")]:
+                    s["porogi"].pop(_k)
+            s["zanyato"].pop(kto, None)
+        sh = RE_KOMPAKT_SHL.search(text)
+        # ⚠️ Тревога только по ИЗВЕСТНОМУ агенту: journalctl -u <юнит> отдаёт и строки
+        # самого systemd (_SYSTEMD_UNIT=init.scope) — поймано пробой 09.09, стенд дал
+        # ДВЕ тревоги вместо одной. Неизвестного печатаем в журнал, владельцу не шлём.
+        if sh and kto.startswith("неизвестный агент"):
+            print(f"[dsh-compact-watch] строка компакта от {kto} — не шлю, "
+                  f"это строка systemd, а не агента", file=sys.stderr)
+            sh = None
+        if sh:
+            sobytiya.append((kto, kogda, "шлюз (subscription-gateway)", text))
+            s["porogi"].pop(kto, None)
+            for _k in [k for k in s["porogi"] if k.startswith(kto + "/")]:
+                s["porogi"].pop(_k)   # у строки шлюза нет session.id — сбрасываем все сессии агента, как прежде агента
+            s["zanyato"].pop(kto, None)
+        z = RE_ZANYATO.search(text)
+        if z:
+            s["zanyato"][kto] = [int(z.group(1)), int(z.group(2))]
+            # 🔴 без ВОЗРАСТА наблюдения «текущее» читается как «сейчас»: у Искры после
+            # компакта 06:52 занятость упала до 74 748, а последнее наблюдение осталось
+            # 727 604 — и число выглядело свежим. Возраст делает несвежесть видимой.
+            s.setdefault("zanyato_kogda", {})[kto] = time.time()
+            # 🔴 07.09.2026 (г): копим НАИБОЛЬШЕЕ наблюдённое, окно суток скользящее.
+            #    Зачем: пороги 85/90 за двое суток НЕ достигались ни разу (максимум 826131 =
+            #    82,6%): платформа сжимает раньше. Молчание порогов было неотличимо от
+            #    «превышений не бывает». Теперь итог такта это НАЗЫВАЕТ.
+            _m = s.setdefault("max_zan", {})
+            _p = _m.get(kto)
+            _z = int(z.group(1))
+            if godno_okno(_z, int(z.group(2))) and (
+                    _p is None or not godno_okno(_p[0], _p[2]) or
+                    _z > _p[0] or time.time() - _p[1] > 86400):
+                _m[kto] = [_z, time.time(), int(z.group(2))]
+
+    # ── ПОРОГИ здесь БОЛЬШЕ НЕ СЧИТАЮТСЯ. 22.09.2026, требование ворот Вениамина:
+    # проверка вынесена в НЕЗАВИСИМЫЙ блок porogi_nezavisimo() и зовётся ДО чтения
+    # журнала. Причина: здесь она наследовала ШЕСТЬ чужих ранних выходов, два из
+    # которых не пишут состояние — отметка остывания терялась бы, и при аварии
+    # состояния вышла бы лавина. Перенести «выше» было недостаточно: блок обязан
+    # иметь СВОЙ путь записи, а не чужой.
+
+    # B-H-522: начатое и не завершённое дольше NEZAVERSHENO_S — одна тревога на отметку.
+    for _kto, _z in sorted(s.get("nachato", {}).items()):
+        _vozr = time.time() - float(_z.get("ts") or time.time())
+        if not _z.get("trevoga") and _vozr > NEZAVERSHENO_S:
+            _z["trevoga"] = True
+            trevogi.append((f"🔴 СЖАТИЕ НАЧАТО И НЕ ЗАВЕРШЕНО — {_kto}\nначато: {_z.get('kogda')} ({int(_vozr // 60)} мин назад)\n"
+                           f"строки compaction/end с тех пор нет; предел {NEZAVERSHENO_S // 60} мин. Сжатие сорвалось, зависло "
+                           f"или служба упала посреди — смотреть журнал службы агента.\nмашина: sadik",
+                           f"🔴 {ru(_kto)}: сжатие начато в {msk(_z.get('kogda'))} и не завершено ({int(_vozr // 60)} мин)"))
+
+    # СЕРИИ считаем ДО записи в журнал прогонов, чтобы их число туда попало.
+    trevogi += serii(stroki, s)
+    # Отказ доставки держит рубеж, и следующий такт ПЕРЕЧИТАЕТ те же строки: без отката
+    # к началу такта ходы посчитались бы дважды. Потому снимок, а не сброс отметок.
+    nem_do = json.loads(json.dumps({k: s.get(k) for k in ("nemota", "nemota_slepo")}))
+    # B-N-1698 хвост: отброс схем шлюзом / пропуск движком — по эпизоду на агента.
+    for kto, t in sorted(otb_takt.items()):
+        ep = s.setdefault("otbros", {}).get(kto)
+        if t["g"] or t["e"]:
+            novye_g = t["g"] - set(ep["g"] if ep else []); novye_e = t["e"] - set(ep["e"] if ep else [])
+            if novye_g or novye_e:
+                _kr = (f"🔴 {ru(kto)}: до модели не дошли"
+                       + (f" {len(t['g'])} инстр. (шлюз): " + ", ".join(sorted(t["g"]))[:120] if t["g"] else "")
+                       + (";" if t["g"] and t["e"] else "")
+                       + (f" движок пропустил {len(t['e'])}: " + ", ".join(sorted(t["e"]))[:80] if t["e"] else "")
+                       + (" · новые: " + ", ".join(sorted(novye_g | novye_e))[:80] if ep else ""))
+                trevogi.append((f"🔴 ИНСТРУМЕНТЫ НЕ ДОШЛИ ДО МОДЕЛИ — {kto}\nкогда: {t['kogda']}\n"
+                               + (f"у {kto} шлюз отбросил {len(t['g'])} инструментов: " + ", ".join(sorted(t["g"]))[:600] + "\n" if t["g"] else "")
+                               + (f"движок пропустил {len(t['e'])}: " + ", ".join(sorted(t["e"]))[:600] + "\n" if t["e"] else "")
+                               + ("новые в эпизоде: " + ", ".join(sorted(novye_g | novye_e))[:300] + "\n" if ep else "")
+                               + "повтор того же набора — молча; «снято» — когда отброса нет "
+                               + f"{OTBROS_SNYATO_S // 3600} ч и ходы чистые\nмашина: sadik", _kr))
+            ep = {"g": sorted(set(ep["g"] if ep else []) | t["g"]), "e": sorted(set(ep["e"] if ep else []) | t["e"]),
+                  "posl": t["ts"] or time.time()}
+            s["otbros"][kto] = ep
+        elif ep and t["chisto"] and time.time() - (ep.get("posl") or 0) >= OTBROS_SNYATO_S:
+            trevogi.append((f"✅ СНЯТО — {kto}: ходы с полным списком инструментов (отброшено шлюзом 0, пропущено движком 0)\n"
+                           f"в эпизоде были: " + ", ".join(ep["g"] + ep["e"])[:600] + "\nмашина: sadik",
+                           f"✅ {ru(kto)}: инструменты снова доходят до модели"))
+            s["otbros"].pop(kto, None)
+    nem = nemota(stroki, s, pervyj)
+    trevogi += [t for _k, t in nem]
+
+    v_istoriyu({"kogda": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "strok": len(stroki),
+                "sobytij": len(sobytiya), "trevog": len(trevogi),
+                "zanyato": s["zanyato"], "pervyj": pervyj})
+
+    if pervyj:
+        # B-N-1852 (08.10, Заря; находка Авроры, скилл install-dsh-harness r6): первый прогон МОЛЧАЛ по построению — на новой
+        #   машине, после потери файла состояния и в пробе на свежем каталоге «тихо» не отличалось от «проверил, всё хорошо».
+        #   Теперь он говорит ОДИН раз: точки отсчёта нет, история не проверялась, и что из ТЕКУЩЕГО состояния слепо (это не
+        #   история — её отбрасывать незачем). Тревоги истории по-прежнему не шлёт (граница 3 шапки). Не доставлено —
+        #   состояние не пишу: следующий такт заведётся заново и повторит (граница 1).
+        #   ⚠️ НЕ ЛОВИТ: события журнала до заведения (их нет по построению); слепоту ветки обрывов на втором такте повторит
+        #   (её остывание отмечается только тревогой).
+        sejchas = []
+        if s.get("nemota_slepo"):
+            sejchas.append("не вижу заполнение: " + "; ".join(s["nemota_slepo"]))
+        if OBRYVY_SLEPO:
+            sejchas.append("ветка обрывов слепа: journalctl -u " + ", ".join(sorted(OBRYVY_SLEPO)) + " отказал")
+        if podavleno:
+            sejchas.append(f"journald подавлял строки служб ({len(podavleno)})")
+        msg = (f"⚠️ dsh-compact-watch: ПЕРВЫЙ ПРОГОН — точки отсчёта нет (сторож заводится: {SOSTOYANIE} не было "
+               f"или заведение ещё не доставлено).\n"
+               f"История журнала НЕ проверялась: строк {len(stroki)} (окно --since -2min) отброшено без рассмотрения.\n"
+               + ("СЕЙЧАС: " + "\n".join(sejchas) if sejchas else "Сейчас слепоты не вижу.")
+               + "\nСобытия и пороги — со следующего такта (5 мин).\nмашина: sadik")
+        ne_vizhu = [ru(x.split(" (")[0]) for x in s.get("nemota_slepo", [])]
+        hvost = "; слепа ветка обрывов" if OBRYVY_SLEPO else ""
+        kratko = "⚠️ Сторож сжатий заведён заново: история не проверена"
+        if ne_vizhu:   # владельцу — одна строка ≤ 130 знаков (стенд Д3); не влезли имена — число, полный перечень в журнале
+            imena = "; не вижу: " + ", ".join(ne_vizhu)
+            kratko += imena if len(kratko + imena + hvost) <= 130 else f"; не вижу заполнение у {len(ne_vizhu)}"
+        kratko += hvost
+        if not poslat(msg, kratko):
+            print("[dsh-compact-watch] первый прогон: сообщение заведения НЕ ДОСТАВЛЕНО; состояние не пишу — "
+                  "следующий такт заведётся заново", file=sys.stderr)
+            return 1
+        s.pop("zavedenie_ne_skazano", None)
+        s["kursor"] = novyj_kursor
+        pisat_sostoyanie(s)
+        print(f"[dsh-compact-watch] первый прогон: отметка снята, строк {len(stroki)} "
+              f"ОТБРОШЕНО без проверки (окно --since -2min), тревог НЕ шлю — иначе прилетела "
+              f"бы вся история. ⚠️ Это НЕ «посмотрел и промолчал»: события в этом окне, включая "
+              f"compaction/end и обрывы, не рассматривались вовсе.")
+        return 0
+
+    vse_doshli = True
+    for kto, kogda, povod, syrye in sobytiya:
+        # 🔴 числа берём ИЗ САМОЙ строки шлюза: без «отброшено» тревога не отличит
+        #    компакт, сохранивший всё, от потерявшего три четверти захода.
+        _sh = RE_KOMPAKT_SHL.search(syrye or "")
+        if _sh:
+            _zan, _svod, _vh, _iz, _hod, _otbr = (int(x) for x in _sh.groups())
+            _chisla = (f"\nзанято ДО: {_zan:,}\nсводка: {_svod:,} зн."
+                       f"\nвход: {_vh:,} из {_iz:,} зн. прозы, ходов {_hod}"
+                       f"\nОТБРОШЕНО: {_otbr:,} зн."
+                       + ("  ⚠️ не вошло в сводку" if _otbr > 0 else "  ✅ вошло всё")
+                       + "\nжурнал хода СОХРАНЁН ЦЕЛИКОМ (страховка .bak-pre-kompakt рядом); "
+                         "«отброшено» = не вошло в сводку из-за предела входа, НЕ потеряно")
+        else:
+            _chisla = "\nчисел нет: событие платформенное (в нём их не бывает)"
+        text = (f"🗜 КОМПАКТ ЗАВЕРШЁН — {kto}\nкогда: {kogda}\nчем сжато: {povod}{_chisla}\n"
+                f"машина: sadik")
+        _kr = (f"🗜 {ru(kto)}: сжатие шлюзом {tys(_zan)} → сводка {_svod:,} зн.".replace(",", " ") + f" · отброшено {_otbr:,} зн.".replace(",", " ")
+               if _sh else f"🗜 {ru(kto)}: сжатие ({povod})")
+        if poslat_ili_molchat("szhatie-shlyuza" if _sh else "szhatie-platformy", text, _kr):
+            print(f"[dsh-compact-watch] отправлено: компакт {kto} {kogda} ({povod})")
+        else:
+            vse_doshli = False
+            print(f"[dsh-compact-watch] 🔴 НЕ ОТПРАВЛЕНО: компакт {kto} {kogda} — "
+                  f"рубеж не двигаю, следующий такт повторит", file=sys.stderr)
+    for t in trevogi:
+        polnyj, kratko = t if isinstance(t, tuple) else (t, None)
+        if poslat(polnyj, kratko):
+            print(f"[dsh-compact-watch] отправлено: {kratko or polnyj}")
+        else:
+            vse_doshli = False
+            print(f"[dsh-compact-watch] 🔴 НЕ ОТПРАВЛЕНО: {kratko or polnyj}", file=sys.stderr)
+
+    # 🔴 Рубеж — только если ВСЁ дошло. Иначе повтор: лучше два сообщения, чем ни одного.
+    if vse_doshli:
+        s["kursor"] = novyj_kursor
+    else:
+        # не дошло — забываем, что тревожили: следующий такт повторит и событие, и порог
+        s["porogi"] = {k: {"p85": False, "p90": False} for k in s["porogi"]}
+        # ⚠️ То же для серии: отметка «послана» ставится ДО подтверждения доставки, и без
+        # этого сброса неудачная отправка проглотила бы серию навсегда — цепь продолжится,
+        # флаг останется взведённым, повторной тревоги не будет НИКОГДА. Тот же дефект,
+        # что 06.09 нашёлся в sadik-watch: отметка по факту ПОПЫТКИ, а не успеха.
+        if s.get("seriya"):
+            s["seriya"]["poslana"] = False
+        # Немота — к началу такта: перечитка тех же строк даст тот же счёт и ту же тревогу.
+        s.update(nem_do)
+        s["davlenie"] = dav_do
+        s["sekretar"] = sek_do
+        s["otbros"] = otb_do   # B-N-1698 хвост
+        s["obryvy_slepo"] = obr_do   # B-N-1228
+        if ep_do is None:   # B-N-1716: эпизод — к началу такта (иначе недоставка проглотила бы первую тревогу/«кончилась»)
+            s.pop("obryvy_epizod", None)
+        else:
+            s["obryvy_epizod"] = ep_do
+        s["nachato"] = nach_do
+        for kto, _kogda, povod, _t in sobytiya:
+            if povod.startswith("/compact"):
+                s["komanda"][kto] = _kogda
+    pisat_sostoyanie(s)
+
+    _cep = s.get("seriya")
+    # 🔴 (г) МОЛЧАНИЕ ПОРОГОВ ДЕЛАЕМ ГОВОРЯЩИМ. Границу называем прямо: наблюдение
+    #    короткое, и если строка ниже начнёт показывать приближение к p85 — это СОБЫТИЕ
+    #    (диапазон сдвинулся), а не шум. Пороги считаются долями измеренного окна.
+    print(f"[dsh-compact-watch] строк {len(stroki)}, событий {len(sobytiya)}, "
+          f"тревог всего {len(trevogi)}, "
+          f"цепь обрывов: {_cep['dlina'] if _cep else 0} "
+          f"(послана: {'да' if _cep and _cep['poslana'] else 'нет'}), "
+          f"всё доставлено: {'да' if vse_doshli else 'НЕТ'}")
+    return 0 if vse_doshli else 1
+
+
+PADENIE = os.path.join(KATALOG, "padenie.json")
+
+
+def golos_padeniya(oshibka):
+    """B-N-1060: исключение, вылетевшее из main, — ОДНА тревога в час, пока такт падает.
+
+    Было: необработанное исключение давало только «failed» юнита; читателя у него нет (юнит вне сторожей
+    sadik-watch, OnFailure нет) — журнальная часть молчала 6 ч, и молчание читалось как «событий нет».
+    Отметка ставится ПО ДОСТАВКЕ; снимается первым тактом, дошедшим до конца без исключения.
+    НЕ ЛОВИТ: зависание (его режет systemd), падение до этой строки (синтаксис, импорт), таймер, который не сработал.
+    """
+    try:
+        with open(PADENIE) as f:
+            bylo = float(json.load(f).get("kogda", 0))
+    except Exception:
+        bylo = 0.0
+    if time.time() - bylo < OSTYVANIE_S:
+        print(f"[dsh-compact-watch] такт упал снова; тревога о падении была {int(time.time() - bylo)} с назад — молчу",
+              file=sys.stderr)
+        return
+    if poslat("🔴 dsh-compact-watch: ТАКТ ПАДАЕТ — журнальная часть не работает: сжатия (завершённые и начатые без "
+              "завершения), обрывы, давление шлюза и немота НЕ наблюдаются. Рубеж не сдвинут — каждый такт перечитывает "
+              f"журнал от него. Пороги 85/90 — отдельный блок, до падения.\nОшибка: {oshibka}\n"
+              f"Повтор не раньше чем через {OSTYVANIE_S // 60} мин, пока падает.\nмашина: sadik",
+              f"🔴 Сторож сжатий падает: {oshibka[:100]}"):
+        try:
+            os.makedirs(KATALOG, exist_ok=True)
+            with open(PADENIE, "w") as f:
+                json.dump({"kogda": time.time(), "oshibka": oshibka}, f, ensure_ascii=False)
+        except Exception as e:
+            print(f"[dsh-compact-watch] отметку падения не записала: {e}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    try:
+        _kod = main()
+    except Exception as _e:
+        import traceback
+        traceback.print_exc()
+        golos_padeniya(f"{type(_e).__name__}: {str(_e)[:300]}")
+        sys.exit(1)
+    try:
+        os.remove(PADENIE)
+    except FileNotFoundError:
+        pass
+    except Exception as _e:
+        print(f"[dsh-compact-watch] отметку падения не сняла: {_e}", file=sys.stderr)
+    sys.exit(_kod)

@@ -1,0 +1,815 @@
+#!/usr/bin/env bash
+# smontirovat-fajly — пофайловый монтаж модуля со страховкой, которую делает инструмент, а не рука
+# (B-H-080, 25.09.2026, Михалыч; поручение владельца 12.09 «механизм резервных копий модулей — до автомата»).
+#
+# ЗАЧЕМ. С 23.09 все 49 монтажей модулей на sadik шли рукой: mkdir montazh/<пункт> → cp -a/tar старого
+# → install .new → mv. Страховка была 49 из 49, но держалась на привычке одной руки: её не требовал ни
+# один инструмент, и её отсутствие не заметил бы никто. smontirovat-vypusk страхует сам, но ставит по
+# метке выпуска и составу публикации — пофайловому монтажу из кандидата он не годится (звали 0 раз).
+#
+# ВЫЗОВ:  smontirovat-fajly --punkt <пункт> [--progon | --v-boj] [--osnova <файл>=<sha256[:16]|sha256|net> …] [--novyj [--mode=NNN] [--owner=uid:gid]] <каталог кандидата> <боевой каталог> [файлы…]
+# 🔴 B-N-1424 (02.10.2026, Михалыч): ПО УМОЛЧАНИЮ — ПРОГОН. В бой пишет ТОЛЬКО явный --v-boj (как B-N-1401 у
+#   smontirovat-vypusk). Было: без ключа писал — строка монтажа, взятая для перепрогона, монтировала мимо ворот
+#   (Искра 02.10 06:12:41Z). Оба ключа сразу — отказ 2; незнакомый ключ — отказ 2 (как и прежде).
+#   файлы — пути ОТНОСИТЕЛЬНО каталога кандидата; они же пути относительно боевого. Не заданы — все
+#   обычные файлы кандидата (find -type f). Прогон (без ключа или --progon) — всё, кроме записи: план и выход.
+#         smontirovat-fajly --punkt <пункт> --snyat [--progon | --v-boj] <боевой каталог> <файлы…>   (СНЯТИЕ, B-N-1026)
+#
+# B-N-1693: имя назначения — относительный путь кандидата. Нет такого имени в бою → отказ до записи.
+#   Новый файл допускается ТОЛЬКО явным --novyj (для всего вызова); ключ не обходит пары/ссылки/профили/учёт.
+#   --novyj не применяется к --snyat. В --progon действует тот же допуск новых имён.
+#   Граница: проверка в предполёте, не защита от конкурентной замены/удаления цели другой рукой.
+# ПОРЯДОК (всё-или-ничего):
+#   0. проверки ДО первой записи — любая не прошла → ОТКАЗ, код 2, в бой и в montazh не записано ничего:
+#      нет/негодный пункт; кандидат не читается или файл кандидата не обычный; путь с «..» или абсолютный;
+#      боевого каталога нет; боевое имя — каталог; битая ссылка; две записи в одну цель; не root (кроме
+#      --progon); страховка с таким именем уже есть;
+#   1. страховка существующих боевых файлов: tar (члены — пути от /) → частичный файл → проверка
+#      распаковкой (суммы = бою) → ln в итоговое имя (занято — отказ). Права 600.
+#      /var/backups/montazh/<пункт>/<боевой каталог через %>.<UTC>.tar; если СРЕДИ страхуемых есть
+#      закрытый файл (нет o+r) — весь tar в /var/backups/montazh-s-klyuchom/<пункт>/ (правило B-N-892).
+#      Все файлы новые — страховать нечего, так и печатается (откат = удалить перечисленные).
+#   2. каждый файл → временное имя .<имя>.smf-XXXXXX РЯДОМ с целью (та же ФС, mv атомарен), install с
+#      владельцем/правами (правило ниже), сумма временного = кандидату. Сбой любого → все временные и
+#      созданные каталоги удаляются, в бою НЕ ЗАМЕНЕНО НИЧЕГО, код 1.
+#   3. mv временных в цели. Сбой на k-м → откат переложенных: существовавшие — из страховки (tar -xp),
+#      новые — удалить; остальные временные удалить; код 1.
+#   4. сверка: сумма каждого боевого = кандидату, И режим И uid:gid = плану (B-N-1817). Не сошлось → красное с откатом, код 1.
+#
+# ВЛАДЕЛЕЦ И ПРАВА: существующий файл — как у БОЕВОГО (uid:gid и режим боевого, не кандидата).
+#   Новый файл (B-N-1817, 08.10.2026; находка Искры: stend-zakryt-prervannyj.mjs 600 → в бою 600, обходчик под iskra
+#   не читал бы): режим и uid:gid — ПО СОСЕДЯМ в целевом каталоге (обычные файлы, без ссылок, скрытых, *.bak*,
+#   *.SNYATO*, *.new, *~). Режим — среди соседей того же рода, что кандидат, по битам владельца u+w и u+x (замороженные
+#   444/555 не смешиваются с 644/755); владелец — по всем соседям.
+#   Ровно одно значение — берётся; нет соседей / каталога ещё нет / значения разные — ОТКАЗ с перечнем, если не задан
+#   явный --mode=NNN / --owner=uid:gid (только с --novyj, только для новых). Режим нового с битами 022 или 6000 — ОТКАЗ,
+#   откуда бы он ни пришёл (соседи или --mode; условие Вениамина 03:07Z). В плане — основание.
+#   Новые подкаталоги — владелец нового файла, 755.
+# ССЫЛКИ (A-H-179, 23.09: tell-komu был ссылкой — рука заменила ссылку файлом, пришлось возвращать):
+#   боевое имя — ссылка на файл → монтирую В ЦЕЛЬ, ссылку не трогаю; план называет «ссылка → цель».
+#   Битая ссылка или ссылка не на обычный файл — отказ. Сам боевой каталог-ссылка раскрывается (realpath).
+#
+# ЧЕГО НЕ ДЕЛАЕТ И НЕ ЛОВИТ: не удаляет из боя файлы, которых нет в кандидате; не перезапускает службы;
+#   открытый файл с секретом по правам не отличить — уедет в montazh (в копию); страхует только
+#   затрагиваемые файлы, не весь пакет; монтаж в обход инструмента (рука install+mv) не видит — это
+#   предмет сторожа (вариант Б).
+# ИСХОД: 0 положено и сверено (или --progon без замечаний) · 1 отказ на записи / сверка не сошлась ·
+#   2 отказ до записи · 4 положено и сверено, но письмо хозяйке dorabotki НЕ легло (B-N-922) ·
+#   5 положено и сверено, но коммит учёта git НЕ сделан (B-N-923; 4 старше 5, если не легло и письмо) ·
+#   3 монтировать нечего: все файлы кандидата равны бою (B-N-1576; и в --progon) — страховки, записи, коммита, письма нет.
+#     Для сценария окна 3 = «уже стоит», если его предполётная сама ждала «уже = кандидату»; ждала монтажа — это отказ
+#     (кандидат собран равным бою). Сценарий, не знающий 3, отказывает (как на любой незнакомый код) — громко, не молча.
+#   Итог — строкой в журнал: logger -t smontirovat-fajly.
+# 🔴 B-N-971 (26.09.2026, находка Зари 25.09): СВЕРКА С ИСХОДНИКОМ ПАРЫ ДО ЗАПИСИ. Учёт Искры pary-boj.txt
+#   («исходник|бой», его сверяет nashi-dorabotki.sh --check) инструмент прежде не читал: 25.09 20:15Z
+#   vypusk-okno-watch.sh смонтирован мимо пакета dsh-vypusk-watch — обходчик красный, тревога владельцу.
+#   Теперь: цель стоит «боем» в паре → кандидат обязан побайтно равняться ИСХОДНИКУ пары; нет — ОТКАЗ (2)
+#   «сначала выпуск/правка исходника». Исходника нет или учёт не читается — тоже отказ: не знаю ≠ можно.
+#   Цель не в парах — как прежде. НЕ ЛОВИТ: пару, не вписанную в учёт; исходник, сам не выпущенный.
+# 🔴 B-N-922 (26.09.2026, привычка Забавы трижды 25.09 и 26.09 05:09Z): МОНТАЖ В dorabotki → ПИСЬМО ХОЗЯЙКЕ.
+#   После удачной сверки, если хоть одна цель лежит в dorabotki Искры, инструмент сам кладёт ей письмо в
+#   её ящик (тот же формат, что iskra-tell: конверт первой строкой, .part → chown → mv): пункт, файлы,
+#   суммы до/после, страховка, «за тобой --save/--check». Не легло — код 4 и журнал (монтаж при этом В СИЛЕ).
+# 🔴 B-N-1014 (26.09.2026, монтаж 06:09:44Z: 4 письма Искры и Зари закрыты interrupted/canceled): ПРОФИЛЬ ЗАНЯТОГО АГЕНТА.
+#   Правка профиля применяется СРАЗУ (загрузчик сверяет записи по id) и снимает волокно изменённой записи; у telegram-multiagent —
+#   с ходом и очередью писем. Цель вида …/.dsh/profiles/<имя>/cordis.patch.yml или …/.dsh/cordis.patch.yml (оба под наблюдением
+#   загрузчика — замер inotify 26.09 06:3xZ, spartak/iskra/alfa) → служба с тем же DSH_HOME → признак «занят» из
+#   ДВУХ срезов: (а) ОБЩИЙ прибор хода /usr/local/libexec/agent-hod/hod-sluzhby — тот же, что у podyom-uzla (условие Вениамина:
+#   один признак, не копия); (б) receipts.sqlite агента (ro):
+#   письма без finished_at (в ходе / в очереди). B-N-1816 (08.10): в очереди — только blocked IS NULL; удержанные
+#   (blocked=channel_interrupted и др., claimed_turn пуст) сами не пойдут — печатаются числом, занятостью НЕ считаются.
+#   В ходе (claimed_turn не пуст) — занятость при любом blocked. Служба агента — совпавшая по DSH_HOME И с непустым WorkingDirectory (у кодеров по
+#   DSH_HOME ещё и шлюз coder-gateway@<имя> без WD — он не агент; без этого фильтра отказ был бы вечным). Занят → ОТКАЗ (2) с именем и числами; не установить (журнал живого процесса пуст,
+#   база не читается, служб с этим DSH_HOME > 1) → тоже ОТКАЗ. Обход — --profil-na-hodu='почему' (причина в журнал).
+#   Службы с этим DSH_HOME нет → ходу идти негде, ставлю. НЕ ЛОВИТ: письмо, пришедшее между проверкой и записью (секунды);
+#   правку профиля не через этот инструмент; ПРЕСЕТЫ .agent-presets/*/agent.cordis.yml — загрузчик за ними НЕ следит (замер inotify
+#   на 3 из 3 процессов), их правка действует только с подъёма — отказ не нужен; .env и cordis.yml профиля под наблюдением, но
+#   применяется ли их правка на ходу — не мерила. Любой профиль под DSH_HOME службы считается живым (безопасная сторона).
+# 🔴 B-N-1026 (26.09.2026, находка Искры при B-N-950: Забава сняла 2 файла dorabotki рукой `sudo mv -n` + chmod — страховки
+#   инструментом нет, письма хозяйке нет, след только в журнале sudo). РЕЖИМ СНЯТИЯ --snyat: файлы ОБЯЗАТЕЛЬНЫ («снять всё» не
+#   бывает); до записи — отказ (2), если: путь абсолютный/с «..»; ссылка; не обычный файл; файла нет («уже снят», если рядом
+#   <имя>.SNYATO-*); профиль агента (правка применяется сразу, B-N-1014); цель — БОЙ или ИСХОДНИК пары pary-boj (сначала снять
+#   пару в учёте); одно имя дважды; имя снятия занято. Затем: страховка (та же, что у монтажа) → mv -n в <имя>.SNYATO-<ГГГГММДД>
+#   рядом → права = прежние & 644 (снимается исполнение; ЗАКРЫТОЕ не открывается — «ровно 644» открыло бы секрет) → сверка
+#   (прежнего имени нет, сумма снятого = прежней, права) → журнал → письмо хозяйке dorabotki. Сбой на k-м — переименованные
+#   возвращаются с прежними правами, код 1. НЕ ДЕЛАЕТ: не удаляет (снятое лежит рядом до руки); не правит учёт пар/манифест
+#   (за хозяйкой — письмо); не снимает ссылки и каталоги; службу, исполнявшую файл, не останавливает.
+# 🔴 B-N-1098 (26.09.2026, Михалыч): НОВЫЙ файл в dorabotki без строки «|путь|» в nashi-dorabotki.sh (бой или кандидат этого
+#   же вызова) — теперь ОТКАЗ до записи «сначала строка учёта: <путь>» (было предупреждение B-N-1028, см. ниже). Существующие — как было.
+# ⚠️ B-N-1027/B-N-1028 (26.09.2026; Вениамин, Забава): ПРЕДУПРЕЖДЕНИЯ УЧЁТА — не отказ (строку учёта ставят тем же окном).
+#   Снятие: путь стоит в /etc/agent-registry/plugins.yaml, в dorabotki/manifest.txt или в списке nashi-dorabotki.sh →
+#   «⚠️ стоит в учёте …» в плане и «за тобой: запись реестра/учёта» (иначе покраснеет следующий verify/--check).
+#   Монтаж НОВОГО файла в dorabotki без строки «|путь|» в списке nashi-dorabotki.sh (--save собирает из него manifest,
+#   --check ищет там) → «⚠️ новый файл БЕЗ строки учёта: ночной --check даст 1» в плане и в письме хозяйке. Пропускаются
+#   те же имена, что пропускает --check (скрытые, __pycache__, *.bak-*, SNYATO, peredacha-*, manifest.txt, nashi-dorabotki.sh)
+#   и исходники пар. НЕ ЛОВИТ: учёт в иных местах (реестр агентов agents.yaml, eталоны пакетов), путь, записанный иначе
+#   (через ссылку, относительный); plugins.yaml ищется подстрокой с границей имени — упоминание в тексте note тоже засчитается.
+# 🔴 B-N-923 (26.09.2026; Вениамин/Михалыч, остаток B-H-487): УЧЁТ GIT — КОММИТ САМ. Учёты sadik (/usr/local, /etc/systemd/system,
+#   /opt/agent-plugins, /etc/agent-registry) коммитились рукой после окна и разминулись с монтажом по секундам. Теперь после
+#   сверки: корень git — по КАЖДОЙ цели (rev-parse --show-toplevel от её каталога); цели одного корня — ОДИН коммит ровно их
+#   путей (git add + git commit -- <пути>: чужое в индексе и рядом не берётся), сообщение
+#   «<пункт>: <пути> (smontirovat-fajly)», строка «коммит <hash>»; чужие незафиксированные — предупреждением, не трогаются.
+#   Пропуск строкой: неотслеживаемое под .gitignore («вне учёта»); цель в dorabotki (учёт Искры, свой порядок — по пути, git под root её и не читает); корень, чей .git не
+#   root (дерево агента: коммиты там — его рука; safe.directory открывает root дерево Искры); не под git — как прежде.
+#   Содержимое = закоммиченному — «коммита нет». Сбой коммита — монтаж В СИЛЕ, код 5. --progon — план «будет коммит в <корень>».
+#   РУКА (решение владельца 23.09: автор = настоящий агент, «Имя <имя@машина>»): SMF_RUKA='Имя <почта>' (приоритет; иная форма —
+#   отказ до записи) → таблица учёток (claude — ssh-учётка координатора → Zabava <zabava@aclaude>; iskra/zarya/avrora → <…@sadik>)
+#   → иначе SUDO_USER/id -un с «⚠️ рука не названа».
+# 🔴 B-N-1564 (04.10.2026, Михалыч; наряд Забавы, условие Вениамина): --snyat ПРОФИЛЯ .dsh/profiles/<имя>/cordis.patch.yml —
+#   только МЁРТВОГО. Лаунчер dsh = слово, оканчивающееся на «bin.js» или «/dsh», либо слово «dsh» (r2: node_modules/.bin/dsh
+#   у petrovich.service, находка Вениамина). Мёртв = (а) ни один загруженный юнит не запускает лаунчер с этим профилем («bin.js <имя>», «--profile <имя>»,
+#   «--profile=<имя>») при DSH_HOME = этому .dsh ИЛИ без DSH_HOME; (б) ни один файл юнита на диске (SMF_UNIT_DIRS, в т.ч.
+#   не загруженный и шаблон @) не упоминает этот .dsh вместе с именем профиля словом; (в) ни один процесс bin.js не запущен с
+#   этим профилем при DSH_HOME = этому .dsh или без него (cmdline и environ из /proc, SMF_PROC); (г) рядом нет cordis.yml.
+#   Иначе — ОТКАЗ (2) с названной причиной; не прочиталось (список служб, show, environ процесса) — тоже отказ: не знаю ≠ можно.
+#   Домашний профиль .dsh/cordis.patch.yml не снимается никогда. План печатает основания «мёртв».
+#   ⚠️ НЕ ЛОВИТ: запуск профиля после снятия (новый юнит); лаунчер под иным именем (своя обёртка, не «dsh»/«bin.js»);
+#   профиль, выбранный не словом/ключом при лаунчере (обёртка со своим
+#   именем профиля в переменной — тогда имени нет ни в юните, ни в cmdline); EnvironmentFile вне SMF_UNIT_DIRS.
+# 🔴 B-N-1551 (04.10.2026, Михалыч; наряд Забавы): ключ --ruka 'Имя <имя@машина>' (или --ruka=…) — старше SMF_RUKA и таблицы.
+#   Учётки НЕТ в таблице и рука не задана → ОТКАЗ (2) до записи (было: «имя <имя@host>» с ⚠️ — коммит под выдуманной рукой).
+#   Отказ только когда коммит учёта БУДЕТ (есть цель под git); без git-целей рука не нужна — монтаж идёт.
+#   План печатает источник руки: «из --ruka» / «из SMF_RUKA» / «по таблице: учётка <u>».
+#   ⚠️ НЕ ЛОВИТ: учётка claude ОБЩАЯ (Забава, Михалыч, все сессии с aclaude) — по таблице она всегда «Zabava»; кто монтирует
+#   не Забава — обязан дать --ruka. Так же «sudo -u iskra» из-под claude: SUDO_USER=claude → Zabava. СНЯТИЕ --snyat коммитится тем же блоком: add -A старого пути и .SNYATO (rename).
+#   НЕ ДЕЛАЕТ: не коммитит чужое; не чинит «грязный» учёт. Незакоммиченное стережёт nezafiksirovano-watch.
+# 🔴 B-N-1576 (04.10.2026, Заря; наряд Забавы, находка Искры 20:28Z: B-N-1550-sreda e4d25a8d → e4d25a8d напечатал «ПОЛОЖЕНО
+#   И СВЕРЕНО 1 из 1», снял страховку и положил письмо — пустой монтаж выглядел сделанным). Существующий файл, побайтно равный
+#   кандидату, НЕ монтируется: план и итог называют «БЕЗ ИЗМЕНЕНИЙ: k из M (имена)». Равны ВСЕ → код 3 «монтировать нечего»
+#   (и в --progon) без страховки, записи, коммита и письма. Смешанный — монтируются изменённые, страховка и письмо только о них.
+#   Равенство судится ПОСЛЕ прежних проверок до записи: отказы по паре, профилю, учёту для равного файла остаются как были.
+#   НЕ ЛОВИТ: равенство содержимого при иных владельце/правах (у существующего файла монтаж их и так берёт с боевого);
+#   кандидат, равный бою, но не тот, что задумывали (вопрос к руке, а не к инструменту).
+# 🔴 B-N-1848 (08.10.2026, Аврора; наряд Забавы; класс «письмо старее диска»: окно Анны 13:23Z затёрло правку Марка 13:21:44Z
+#   кандидатом от старой основы). Ключ --osnova <файл>=<сумма> (или --osnova=<файл>=<сумма>) — сумма БОЯ, от которого собран
+#   кандидат; файл — тот же относительный путь, что в списке файлов; сумма — sha256 ровно 16 или 64 hex строчными (сверяется
+#   префикс), либо «net» — файла в бою НЕТ (новый, --novyj). Карта, а не одна сумма: вызов монтирует несколько файлов.
+#   ОТКАЗ (2), и не заменён НИ ОДИН файл вызова: бой ≠ основе (имя файла и обе суммы); основа-сумма, а файла нет; основа «net», а
+#   файл есть (чужой новый не затирается); ключ на файл не из вызова; ключ не у каждого монтируемого (кроме равных бою, B-N-1576);
+#   иная форма значения; с --snyat. Без ключа — как прежде, строка «⚠️ основа не сверена».
+#   ДВЕ сверки: (а) в предполёте — ранний отказ, до страховки (и в --progon); (б) ПОД ЗАМКОМ $ZAMOK (flock, его держат шаги 2б–4
+#   каждого монтажа этим инструментом) — сразу перед mv, по ВСЕМ файлам, затем mv всех. Окно гонки (б)→mv файла i: sha256 остальных
+#   файлов сверки (б) и mv файлов 0..i−1 — без внешних вызовов и ожиданий; другой монтаж этим инструментом в окно не войдёт (замок).
+#   НЕ ЛОВИТ: правку рукой мимо инструмента внутри этого окна; основу, снятую неверно (сверяет с тем, что сказали).
+# Подмена путей — ТОЛЬКО для стенда: SMF_PARY, SMF_DORABOTKI, SMF_ISKRA_IN, SMF_SYSTEMCTL, SMF_JOURNALCTL, SMF_HOD (B-N-1014). Хвост B-N-971 (low Вениамина 26.09):
+#   под sudo их задаст любой, и сверка пар тихо ушла бы на подставной учёт. Поэтому КАЖДАЯ заданная SMF_*
+#   печатается строкой «ПОДМЕНА: <имя>=<путь>» сразу после разбора доводов (видна в плане, --progon и отказе)
+#   и пишется в журнал. Без SMF_* — ни одной такой строки.
+set -uo pipefail
+MONTAZH=/var/backups/montazh
+MONTAZH_KLYUCH=/var/backups/montazh-s-klyuchom
+TEG=smontirovat-fajly
+PARY=${SMF_PARY:-/opt/iskra/workspace/dorabotki/pary-boj.txt}
+DORAB=$(realpath -m -- "${SMF_DORABOTKI:-/opt/iskra/workspace/dorabotki}")
+ISKRA_IN=${SMF_ISKRA_IN:-/opt/iskra/a2a/in}
+SYSTEMCTL=${SMF_SYSTEMCTL:-systemctl}
+JOURNALCTL=${SMF_JOURNALCTL:-journalctl}
+HOD=${SMF_HOD:-/usr/local/libexec/agent-hod/hod-sluzhby}
+REESTR_PL=${SMF_REESTR_PL:-/etc/agent-registry/plugins.yaml}
+MANIF=${SMF_MANIFEST:-/opt/iskra/workspace/dorabotki/manifest.txt}
+NASHI=${SMF_NASHI:-/opt/iskra/workspace/dorabotki/nashi-dorabotki.sh}
+PROC=${SMF_PROC:-/proc}                                   # B-N-1564
+UNIT_DIRS=${SMF_UNIT_DIRS:-/etc/systemd/system /run/systemd/system /usr/lib/systemd/system /lib/systemd/system}   # B-N-1564
+ZAMOK=${SMF_ZAMOK:-/run/lock/smontirovat-fajly.lock}   # B-N-1848: замок шагов 2б–4 (сверка основы под замком → mv → сверка)
+
+zhurnal() { logger -t "$TEG" -- "$*" 2>/dev/null || echo "⚠️ журнал не принял строку" >&2; }
+otkaz() { echo "🔴 ОТКАЗ: $* — в бой ничего не записано" >&2; zhurnal "otkaz-do-zapisi punkt=${PUNKT:-} prichina=$*"; exit 2; }
+# Нет файла → «net:<путь>», а не пусто: пустое = пустому сравнилось бы как «суммы равны».
+sha() { local r; r=$(sha256sum -- "$1" 2>/dev/null) && echo "${r:0:64}" || echo "net:$1"; }
+
+# B-N-1817: режим и владелец НОВОГО файла по соседям. Ставит S_REZH S_VLAD (пусто — не установлен) и S_OSN_R S_OSN_V (основание/причина).
+sosedi() {
+  local c=$1 s=$2 d kx sp m o mods=() owns=() um uo
+  S_REZH=""; S_VLAD=""; d=$(dirname -- "$c")
+  if [ ! -d "$d" ]; then S_OSN_R="каталога $d ещё нет — соседей нет"; S_OSN_V=$S_OSN_R; return; fi
+  kx=$(( 8#$(stat -c '%a' -- "$s") & 8#300 ))   # род: биты владельца запись+исполнение — замороженные 444/555 не мешают обычным 644/755
+  sp=$(find "$d" -mindepth 1 -maxdepth 1 -type f ! -name '.*' ! -name '*.bak*' ! -name '*.SNYATO*' ! -name '*.new' ! -name '*~' -printf '%m %U:%G\n' 2>/dev/null) \
+    || { S_OSN_R="соседи в $d не прочитаны"; S_OSN_V=$S_OSN_R; return; }
+  while read -r m o; do [ -n "$m" ] || continue; owns+=("$o"); [ $(( 8#$m & 8#300 )) = "$kx" ] && mods+=("$m"); done <<< "$sp"
+  if [ ${#owns[@]} = 0 ]; then S_OSN_R="в $d нет соседних файлов"; S_OSN_V=$S_OSN_R; return; fi
+  uo=$(printf '%s\n' "${owns[@]}" | sort | uniq -c | awk '{printf "%s×%s ", $2, $1}')
+  if [ "$(printf '%s\n' "${owns[@]}" | sort -u | grep -c .)" = 1 ]; then S_VLAD=${owns[0]}; S_OSN_V="по соседям: $uo(в $d)"
+  else S_OSN_V="соседи в $d с разными владельцами: $uo"; fi
+  local rod rodd rodi ro=""; (( kx & 8#200 )) || ro=" только для чтения"
+  if (( kx & 8#100 )); then rod="исполняемых$ro"; rodd="исполняемым$ro"; rodi="исполняемые$ro"; else rod="неисполняемых$ro"; rodd="неисполняемым$ro"; rodi="неисполняемые$ro"; fi
+  if [ ${#mods[@]} = 0 ]; then S_OSN_R="в $d нет $rod соседей (кандидат $(stat -c '%a' -- "$s"))"; return; fi
+  um=$(printf '%s\n' "${mods[@]}" | sort | uniq -c | awk '{printf "%s×%s ", $2, $1}')
+  if [ "$(printf '%s\n' "${mods[@]}" | sort -u | grep -c .)" = 1 ]; then S_REZH=${mods[0]}; S_OSN_R="по $rodd соседям: $um(в $d)"
+  else S_OSN_R="$rodi соседи в $d с разными режимами: $um"; fi
+}
+
+MODE_KL=""; OWNER_KL=""; PUNKT=""; PROGON=0; VBOJ=0; SNYAT=0; NOVYJ=0; POZ=(); NA_HODU=""; NA_HODU_ZADAN=0; RUKA_KLYUCH=""; RUKA_KLYUCH_ZADAN=0
+OKNO_ID=""; OKNO_PLAN=""
+declare -A OSN=()   # B-N-1848: файл → сумма основы
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --okno-id|--okno-plan) [ $# -ge 2 ] || otkaz "$1 без значения"; if [ "$1" = --okno-id ]; then OKNO_ID=$2; else OKNO_PLAN=$2; fi; shift 2 ;;
+    --punkt) [ $# -ge 2 ] || otkaz "--punkt без значения"; PUNKT=$2; shift 2 ;;
+    --progon) PROGON=1; shift ;;
+    --v-boj) VBOJ=1; shift ;;
+    --snyat) SNYAT=1; shift ;;
+    --novyj) NOVYJ=1; shift ;;
+    --mode=*) MODE_KL=${1#*=}; shift ;;     # B-N-1817: режим НОВЫХ файлов явно
+    --owner=*) OWNER_KL=${1#*=}; shift ;;   # B-N-1817: владелец НОВЫХ файлов явно (uid:gid или имя:группа)
+    --mode|--owner) otkaz "$1 пишется со значением: $1=… (B-N-1817)" ;;
+    --ruka) [ $# -ge 2 ] || otkaz "--ruka без значения"; RUKA_KLYUCH=$2; RUKA_KLYUCH_ZADAN=1; shift 2 ;;   # B-N-1551
+    --ruka=*) RUKA_KLYUCH=${1#*=}; RUKA_KLYUCH_ZADAN=1; shift ;;
+    --osnova|--osnova=*)   # B-N-1848
+      if [ "$1" = --osnova ]; then [ $# -ge 2 ] || otkaz "--osnova без значения: --osnova <файл>=<sha256> (B-N-1848)"; ov=$2; shift 2; else ov=${1#--osnova=}; shift; fi
+      [[ "$ov" =~ ^([^=]+)=([0-9a-f]{16}|[0-9a-f]{64}|net)$ ]] || otkaz "--osnova «${ov:0:80}» — нужно <файл>=<sha256: 16 или 64 hex строчными | net> (B-N-1848)"
+      [ -z "${OSN[${BASH_REMATCH[1]}]+x}" ] || otkaz "--osnova для «${BASH_REMATCH[1]}» задана дважды (B-N-1848)"
+      OSN[${BASH_REMATCH[1]}]=${BASH_REMATCH[2]} ;;
+    --profil-na-hodu=*) NA_HODU=${1#*=}; NA_HODU_ZADAN=1; shift ;;
+    --profil-na-hodu) otkaz "--profil-na-hodu ТРЕБУЕТ причины: --profil-na-hodu='почему правлю профиль на ходу' (B-N-1014)" ;;
+    --) shift; POZ+=("$@"); break ;;
+    -*) otkaz "неизвестный ключ «${1:0:40}»" ;;
+    *) POZ+=("$1"); shift ;;
+  esac
+done
+[ "$PROGON$VBOJ" != 11 ] || otkaz "режим задан дважды: --progon и --v-boj"
+if [ "$VBOJ" = 1 ]; then PROGON=0; else   # B-N-1424: без --v-boj — прогон, и об этом первой строкой
+  [ "$PROGON" = 1 ] || echo "ПРОГОН (ключ записи — --v-boj): без него в бой ничего не пишется"; PROGON=1; fi
+for v in SMF_PARY SMF_DORABOTKI SMF_ISKRA_IN SMF_SYSTEMCTL SMF_JOURNALCTL SMF_HOD SMF_REESTR_PL SMF_MANIFEST SMF_NASHI SMF_RUKA SMF_PROC SMF_UNIT_DIRS SMF_ZAMOK; do
+  if [ -n "${!v+x}" ]; then echo "⚠️ ПОДМЕНА: $v=${!v}"; zhurnal "PODMENA punkt=$PUNKT $v=${!v}"; fi
+done
+RE_RUKA='^[^<>]+ <[^<> ]+@[^<> ]+>$'
+[ -z "${SMF_RUKA+x}" ] || [[ "$SMF_RUKA" =~ $RE_RUKA ]] || otkaz "SMF_RUKA «${SMF_RUKA:0:60}» — нужна форма «Имя <имя@машина>» (B-N-923)"
+[ "$RUKA_KLYUCH_ZADAN" = 0 ] || [[ "$RUKA_KLYUCH" =~ $RE_RUKA ]] || otkaz "--ruka «${RUKA_KLYUCH:0:60}» — нужна форма «Имя <имя@машина>» (B-N-1551)"
+[ "$NA_HODU_ZADAN" = 0 ] || [ -n "${NA_HODU//[[:space:]]/}" ] || otkaz "--profil-na-hodu= с ПУСТОЙ причиной — назовите её словами (B-N-1014)"
+[[ "$PUNKT" =~ ^[A-Za-z0-9-]+$ ]] || otkaz "пункт «$PUNKT» обязателен: латиница, цифры, дефис"
+# B-N-1817: --mode/--owner — только с --novyj и только для новых файлов; неизвестная форма — отказ.
+if [ -n "$MODE_KL$OWNER_KL" ]; then
+  [ "$NOVYJ" = 1 ] || otkaz "--mode/--owner задают права НОВЫХ файлов и действуют только вместе с --novyj (B-N-1817)"
+  if [ -n "$MODE_KL" ]; then
+    [[ "$MODE_KL" =~ ^0?[0-7]{3}$ ]] || otkaz "--mode=«${MODE_KL:0:20}» — нужно три восьмеричные цифры, например --mode=644 (B-N-1817)"
+    MODE_KL=$(printf '%o' $(( 8#$MODE_KL )))
+    (( 8#$MODE_KL & 8#6022 )) && otkaz "--mode=$MODE_KL даёт запись группе/прочим или suid/sgid — не ставлю (B-N-1817)"
+  fi
+  if [ -n "$OWNER_KL" ]; then
+    [[ "$OWNER_KL" =~ ^([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)$ ]] || otkaz "--owner=«${OWNER_KL:0:40}» — нужно uid:gid или имя:группа (B-N-1817)"
+    ou=$(id -u -- "${BASH_REMATCH[1]}" 2>/dev/null) || otkaz "--owner: учётки «${BASH_REMATCH[1]}» нет (B-N-1817)"
+    og=$(getent group "${BASH_REMATCH[2]}" | cut -d: -f3); [ -n "$og" ] || otkaz "--owner: группы «${BASH_REMATCH[2]}» нет (B-N-1817)"
+    OWNER_KL="$ou:$og"
+  fi
+fi
+if [ "$SNYAT" = 1 ]; then
+  [ "$NOVYJ" = 0 ] || otkaz "--novyj при --snyat не применяется"
+  [ ${#OSN[@]} = 0 ] || otkaz "--osnova при --snyat не применяется (B-N-1848)"
+  [ "$NA_HODU_ZADAN" = 0 ] || otkaz "--profil-na-hodu при --snyat не применяется: профиль этим режимом не снимается"
+  [ ${#POZ[@]} -ge 2 ] || otkaz "--snyat: нужны <боевой каталог> <файлы…> — файлы обязательны, «снять всё» не бывает"
+  BOJ=${POZ[0]}; FAJLY=("${POZ[@]:1}")
+  [ -d "$BOJ" ] || otkaz "боевой каталог не существует: $BOJ"
+  BOJ=$(realpath -e -- "$BOJ")
+  [ "$PROGON" = 1 ] || [ "$(id -u)" = 0 ] || otkaz "снятие только от root (sudo)"
+else
+[ ${#POZ[@]} -ge 2 ] || otkaz "нужны <каталог кандидата> <боевой каталог> [файлы…]"
+KAND=${POZ[0]}; BOJ=${POZ[1]}; FAJLY=("${POZ[@]:2}")
+[ -d "$KAND" ] && [ -r "$KAND" ] && [ -x "$KAND" ] || otkaz "каталог кандидата не читается: $KAND"
+[ -d "$BOJ" ] || otkaz "боевой каталог не существует: $BOJ"
+KAND=$(realpath -e -- "$KAND"); BOJ=$(realpath -e -- "$BOJ")
+[ "$PROGON" = 1 ] || [ "$(id -u)" = 0 ] || otkaz "запись в бой только от root (sudo): владелец ставится install -o/-g"
+if [ ${#FAJLY[@]} -eq 0 ]; then mapfile -t FAJLY < <(cd "$KAND" && find . -type f -printf '%P\n' | sort); fi
+# B-N-1848: каждый ключ --osnova — на файл этого вызова; без ключей — предупреждение (обратная совместимость)
+for o in "${!OSN[@]}"; do
+  ok_o=0; for rel in "${FAJLY[@]}"; do [ "$rel" = "$o" ] && ok_o=1; done
+  [ "$ok_o" = 1 ] || otkaz "--osnova для «$o»: такого файла в вызове нет (файлы: $(printf '%s ' "${FAJLY[@]}" | cut -c1-200)) (B-N-1848)"
+done
+[ ${#OSN[@]} -gt 0 ] || echo "⚠️ основа не сверена: ключа --osnova нет — правка боя после снятия кандидата будет затёрта (B-N-1848)"
+[ ${#FAJLY[@]} -gt 0 ] || otkaz "в кандидате нет файлов"
+fi
+
+# B-N-1014: занят ли агент, чей профиль правим. Печатает различитель; код 0 свободен · 1 занят · 2 не установить.
+profil_zanyat() {
+  local dh=$1 ids bloki n pid wd unit hod hk posl db chisla vh vo vu
+  ids=$("$SYSTEMCTL" list-units --type=service --all --plain --no-legend 2>/dev/null | awk '{print $1}') || { echo "список служб не получен"; return 2; }
+  [ -n "$ids" ] || { echo "список служб пуст — слепота"; return 2; }
+  bloki=$("$SYSTEMCTL" show $ids -p Id -p Environment -p MainPID -p WorkingDirectory --no-pager 2>/dev/null \
+    | awk -v dh="DSH_HOME=$dh" 'BEGIN{RS=""; FS="\n"} { id=""; pid=""; wd=""; e=0
+        for (i = 1; i <= NF; i++) { if ($i ~ /^Id=/) id = substr($i, 4); else if ($i ~ /^MainPID=/) pid = substr($i, 9)
+          else if ($i ~ /^WorkingDirectory=/) wd = substr($i, 18)
+          else if ($i ~ /^Environment=/) { m = split(substr($i, 13), a, " "); for (k = 1; k <= m; k++) if (a[k] == dh) e = 1 } }
+        if (e && wd != "") print id "|" pid "|" wd }')   # B-N-1014/Вениамин: без WorkingDirectory — не агент (шлюз coder-gateway@<имя>): базы квитанций там нет
+  n=$(printf '%s' "$bloki" | grep -c .)
+  [ "$n" = 0 ] && { echo "службы с DSH_HOME=$dh нет — ходу идти негде"; return 0; }
+  [ "$n" -gt 1 ] && { echo "служб с DSH_HOME=$dh: $n — какая живая, не знаю"; return 2; }
+  IFS='|' read -r unit pid wd <<< "$bloki"
+  [ -n "$pid" ] && [ "$pid" != 0 ] || { echo "$unit не запущена — ходу идти негде"; return 0; }
+  hod=$(HOD_SYSTEMCTL="$SYSTEMCTL" HOD_JOURNALCTL="$JOURNALCTL" "$HOD" "$unit" 2>/dev/null); hk=$?
+  [ "$hk" = 2 ] && { echo "$unit (pid $pid): журнал главного процесса пуст — идёт ли ход, не знаю ($hod)"; return 2; }
+  [ "$hk" -le 1 ] && [[ "$hod" == *zhurnal=* ]] || { echo "$unit: прибор хода $HOD не ответил (код $hk) — идёт ли ход, не знаю"; return 2; }
+  [[ "$hod" == *zhurnal=net-processa* ]] && { echo "$unit не запущена (прибор хода) — ходу идти негде"; return 0; }
+  posl=$(printf '%s\n' "$hod" | tr ' ' '\n' | sed -n 's/^poslednee=//p')
+  db="$wd/.message-receipts/receipts.sqlite"
+  [ -r "$db" ] || { echo "$unit: база квитанций $db не читается — очередь писем не знаю"; return 2; }
+  chisla=$(sqlite3 -readonly "$db" "select count(*) filter (where claimed_turn is not null), count(*) filter (where claimed_turn is null and blocked is null), count(*) filter (where claimed_turn is null and blocked is not null) from receipts where finished_at is null;" 2>/dev/null) \
+    || { echo "$unit: база квитанций $db не отвечает"; return 2; }
+  IFS='|' read -r vh vo vu <<< "$chisla"
+  [[ "$vh" =~ ^[0-9]+$ && "$vo" =~ ^[0-9]+$ && "$vu" =~ ^[0-9]+$ ]] || { echo "$unit: база квитанций дала «$chisla»"; return 2; }
+  echo "$unit (pid $pid): последнее turn/* «${posl:-нет с запуска}» · писем в ходе $vh, в очереди $vo, удержано $vu (не занятость)"
+  [ "$posl" = turn/start ] || [ "$vh" -gt 0 ] || [ "$vo" -gt 0 ] && return 1
+  return 0
+}
+
+# B-N-1564: мёртв ли профиль <файл> <DSH_HOME> <имя>. Печатает основание; код 0 — мёртв · 1 — жив (кем) · 2 — не установить.
+# «Профиль p выбран» в строке запуска: слово сразу после лаунчера (…bin.js, …/dsh, dsh) равно p, либо «--profile p», либо «--profile=p».
+vybran_profil() { awk -v p="$1" '{ n = split($0, w, " "); for (k = 1; k <= n; k++) if (w[k] ~ /(bin\.js|(^|\/)dsh)$/) {
+    if (w[k+1] == p || (w[k+1] == "--profile" && w[k+2] == p) || w[k+1] == "--profile=" p) { print "da"; exit } ; exit } }'; }
+profil_myortv() {
+  local f=$1 dh=$2 p=$3 pdir ids s zhivye d fl pd cl en hd nproc=0 nunit
+  pdir=$(dirname -- "$f")
+  [ -e "$pdir/cordis.yml" ] && { echo "рядом лежит $pdir/cordis.yml — профиль собран для запуска"; return 1; }
+  ids=$("$SYSTEMCTL" list-units --type=service --all --plain --no-legend 2>/dev/null | awk '{print $1}') || { echo "список служб не получен"; return 2; }
+  [ -n "$ids" ] || { echo "список служб пуст — слепота"; return 2; }
+  nunit=$(printf '%s\n' "$ids" | grep -c .)
+  s=$("$SYSTEMCTL" show $ids -p Id -p Environment -p ExecStart --no-pager 2>/dev/null) || { echo "systemctl show не ответил"; return 2; }
+  zhivye=$(printf '%s\n' "$s" | awk -v dh="$dh" 'BEGIN{RS=""; FS="\n"} { id=""; env=""; ex=""
+      for (i = 1; i <= NF; i++) { if ($i ~ /^Id=/) id = substr($i, 4); else if ($i ~ /^Environment=/) env = substr($i, 13)
+        else if ($i ~ /^ExecStart=/) { if (match($i, /argv\[\]=[^;]*/)) ex = ex " " substr($i, RSTART + 7, RLENGTH - 7) } }
+      if (ex !~ /(bin\.js|(^|[ \/])dsh)( |$)/) next
+      if (env ~ /(^| )DSH_HOME=/ && index(" " env " ", " DSH_HOME=" dh " ") == 0) next
+      print id "\t" ex }' | while IFS=$'\t' read -r id ex; do [ "$(printf '%s\n' "$ex" | vybran_profil "$p")" = da ] && echo "$id"; done)
+  [ -n "$zhivye" ] && { echo "профиль грузит юнит: $(echo $zhivye)"; return 1; }
+  for d in $UNIT_DIRS; do
+    [ -d "$d" ] || continue
+    fl=$(grep -rlsF -- "$dh" "$d" 2>/dev/null | xargs -r grep -lsw -- "$p" 2>/dev/null)
+    [ -n "$fl" ] && { echo "файл юнита упоминает $dh и «$p»: $(echo $fl)"; return 1; }
+  done
+  for pd in "$PROC"/[0-9]*; do
+    cl=$(tr '\0' ' ' < "$pd/cmdline" 2>/dev/null) || continue
+    [[ "$cl" == *bin.js* || " $cl" == *"/dsh "* || " $cl" == *" dsh "* ]] || continue
+    nproc=$((nproc + 1))
+    [ "$(printf '%s\n' "$cl" | vybran_profil "$p")" = da ] || continue
+    en=$(tr '\0' '\n' < "$pd/environ" 2>/dev/null) || { echo "процесс ${pd##*/} с профилем «$p»: среда не читается — чей DSH_HOME, не знаю"; return 2; }
+    hd=$(printf '%s\n' "$en" | sed -n 's/^DSH_HOME=//p' | head -1)
+    [ -z "$hd" ] || [ "$hd" = "$dh" ] || continue
+    echo "профиль грузит процесс ${pd##*/}: ${cl:0:120}"; return 1
+  done
+  echo "юнитов с ним 0 из $nunit загруженных · файлов юнитов с $dh и «$p» 0 · процессов dsh с ним 0 из $nproc · cordis.yml рядом нет"
+  return 0
+}
+
+# B-N-1027: где путь стоит в учёте. Печатает «plugins.yaml:N; manifest.txt:N; nashi:N» (пусто — нигде); нечитаемый — назван.
+gde_v_uchyote() {
+  local c=$1 re out="" n
+  re=$(printf '%s' "$c" | sed 's/[][\.*^$()+?{}|/]/\\&/g')
+  if [ -r "$REESTR_PL" ]; then
+    n=$(grep -nE -- "${re}([^A-Za-z0-9._/-]|$)" "$REESTR_PL" 2>/dev/null | head -3 | cut -d: -f1 | paste -sd, -)
+    [ -n "$n" ] && out="${out:+$out; }plugins.yaml:$n"
+  else out="${out:+$out; }plugins.yaml НЕ ПРОЧИТАН"; fi
+  for pr in "manifest.txt:$MANIF" "nashi:$NASHI"; do
+    if [ -r "${pr#*:}" ]; then
+      n=$(grep -nF -- "|$c|" "${pr#*:}" 2>/dev/null | head -3 | cut -d: -f1 | paste -sd, -)
+      [ -n "$n" ] && out="${out:+$out; }${pr%%:*}:$n"
+    else out="${out:+$out; }${pr%%:*} НЕ ПРОЧИТАН"; fi
+  done
+  printf '%s' "$out"
+}
+# B-N-1028: новый файл в dorabotki — есть ли строка «|путь|» в списке nashi. 0 есть/не считается --check · 1 нет · 2 список не прочитан.
+v_spiske_nashi() {
+  local c=$1 rel=${1#"$DORAB"/}
+  case "/$rel" in */.*|*/__pycache__/*|*.bak-*|*SNYATO*|/peredacha-*|/manifest.txt|/nashi-dorabotki.sh) return 0 ;; esac
+  [ -n "${ISH[$c]:-}" ] && return 0
+  [ -r "$NASHI_EFF" ] || return 2
+  grep -qF -- "|$c|" "$NASHI_EFF" && return 0
+  return 1
+}
+# Страховка затрагиваемых файлов (монтаж и снятие — ОДНА, B-N-1026): CLENY — пути без «/», STR и KOR заданы.
+strahovat() {
+  mkdir -p -- "$KOR/$PUNKT" || otkaz "нет каталога $KOR/$PUNKT"
+  CH=$(umask 077; mktemp -- "$KOR/$PUNKT/.chast-XXXXXX") || otkaz "не создан частичный файл"
+  tar -cf "$CH" -C / -- "${CLENY[@]}" || { rm -f -- "$CH"; otkaz "tar страховки отказал"; }
+  PR=$(mktemp -d) || { rm -f -- "$CH"; otkaz "нет временного каталога проверки"; }
+  tar -xf "$CH" -C "$PR" || { rm -rf -- "$CH" "$PR"; otkaz "страховка не распаковывается"; }
+  for m in "${CLENY[@]}"; do
+    [ "$(sha "$PR/$m")" = "$(sha "/$m")" ] || { rm -rf -- "$CH" "$PR"; otkaz "страховка ≠ бою: /$m"; }
+  done
+  rm -rf -- "$PR"
+  ln -- "$CH" "$STR" 2>/dev/null || { rm -f -- "$CH"; otkaz "страховка $STR уже есть — не затираю"; }
+  rm -f -- "$CH"
+  echo "страховка легла: $STR · sha256[:16] $(sha "$STR" | cut -c1-16) · членов ${#CLENY[@]}"
+}
+# Письмо хозяйке dorabotki (B-N-922; монтаж и снятие — одно). $1 — тело, $2 — что сделано (для отказа). Выходит 0 или 4.
+pismo_iskre() {
+  local TELO=$1 KID PIS OWN
+  KID=$(printf 'iskra\n%s' "$TELO" | sha256sum | cut -c1-64)
+  PIS="$ISKRA_IN/smontirovat-fajly-$(date +%s%N).txt"
+  if [ -d "$ISKRA_IN" ] && OWN=$(stat -c '%u:%g' -- "$ISKRA_IN") \
+     && printf '[delivery-v1 id=%s reply=no]\n%s\n' "$KID" "$TELO" > "$PIS.part" \
+     && chown "$OWN" "$PIS.part" && chmod 644 "$PIS.part" && mv -f -- "$PIS.part" "$PIS"; then
+    echo "✉️ письмо хозяйке dorabotki легло: $PIS · sha256[:16] $(sha "$PIS" | cut -c1-16)"
+    zhurnal "pismo-iskre punkt=$PUNKT fajl=$PIS"
+    exit "${KOD_GIT:-0}"
+  fi
+  rm -f -- "$PIS.part"
+  echo "🔴 $2 В СИЛЕ, но письмо хозяйке dorabotki НЕ легло в $ISKRA_IN — сообщи ей рукой (B-N-922)"
+  zhurnal "pismo-iskre-NE-leglo punkt=$PUNKT in=$ISKRA_IN"
+  exit 4
+}
+# B-N-923: рука коммита учёта — RUKA «Имя <почта>» и RUKA_ZAM (пусто или «⚠️ рука не названа»).
+# B-N-1551: --ruka старше SMF_RUKA, оба старше таблицы; учётки нет в таблице → RUKA пусто (отказ — в git_plan, если коммит будет).
+ruka_git() {
+  local u=${SUDO_USER:-$(id -un)}; RUKA_ZAM=""
+  if [ "$RUKA_KLYUCH_ZADAN" = 1 ]; then RUKA=$RUKA_KLYUCH; RUKA_ZAM=" · из --ruka"; return; fi
+  if [ -n "${SMF_RUKA:-}" ]; then RUKA=$SMF_RUKA; RUKA_ZAM=" · из SMF_RUKA"; return; fi
+  case "$u" in
+    claude) RUKA='Zabava <zabava@aclaude>' ;;   # ssh-учётка координатора на sadik (общая — см. шапку B-N-1551)
+    iskra) RUKA='Iskra <iskra@sadik>' ;;
+    zarya) RUKA='Zarya <zarya@sadik>' ;;
+    avrora) RUKA='Avrora <avrora@sadik>' ;;
+    *) RUKA=""; RUKA_ZAM="учётки «$u» нет в таблице (claude, iskra, zarya, avrora)"; return ;;
+  esac
+  RUKA_ZAM=" · по таблице: учётка $u"
+}
+# B-N-923: учёт git по путям (аргументы) → GIT_KORNI, GIT_PUTI[корень] (пути от корня, по строке); пропуски и план — строкой.
+git_plan() {
+  local c d t vg ch p GP ISKL
+  declare -gA GIT_PUTI=(); GIT_KORNI=()
+  for c in "$@"; do
+    [[ "$c" == "$DORAB"/* ]] && { echo "учёт git: $c — dorabotki, учёт Искры (свой порядок) — коммита не будет"; continue; }
+    d=$(dirname -- "$c"); while [ ! -d "$d" ]; do d=$(dirname -- "$d"); done
+    t=$(git -C "$d" rev-parse --show-toplevel 2>/dev/null) || {
+      [[ "$(git -C "$d" rev-parse --show-toplevel 2>&1)" == *dubious* ]] \
+        && echo "учёт git: $c — git под чужим владельцем, не читается — коммита не будет"; continue; }
+    vg=$(stat -c '%U' -- "$t/.git" 2>/dev/null)
+    [ "$vg" = root ] || { echo "учёт git: $c — корень $t чужой (.git: ${vg:-?}), коммиты там — рука хозяина — коммита не будет"; continue; }
+    # Вениамин 11:1xZ: неотслеживаемое под .gitignore add отверг бы («paths are ignored») — ложный код 5. Отслеживаемое check-ignore
+    # игнорируемым не считает — такое коммитится.
+    git -C "$t" check-ignore -q -- "${c#"$t"/}" 2>/dev/null && { echo "учёт git: $c — вне учёта (.gitignore), коммита не будет"; continue; }
+    [ -n "${GIT_PUTI[$t]+x}" ] || GIT_KORNI+=("$t")
+    GIT_PUTI[$t]+="${c#"$t"/}"$'\n'
+  done
+  ruka_git
+  [ ${#GIT_KORNI[@]} -eq 0 ] || [ -n "$RUKA" ] || otkaz "рука коммита учёта не установлена: $RUKA_ZAM — задайте --ruka 'Имя <имя@машина>' (B-N-1551)"
+  for t in "${GIT_KORNI[@]}"; do
+    mapfile -t GP < <(printf '%s' "${GIT_PUTI[$t]}")
+    ISKL=(); for p in "${GP[@]}"; do ISKL+=(":(exclude,literal)$p"); done
+    ch=$(git --no-optional-locks -C "$t" status --porcelain --untracked-files=all -- . "${ISKL[@]}" 2>/dev/null | wc -l)
+    echo "учёт git: будет коммит в $t — путей ${#GP[@]} · рука $RUKA$RUKA_ZAM$([ "$ch" -gt 0 ] && echo " · ⚠️ чужих незафиксированных рядом $ch — не тронутся")"
+  done
+}
+# B-N-923: коммит по корням из git_plan. $1 — что в силе (монтаж|снятие), $2 — хвост сообщения. Ставит KOD_GIT (0 или 5).
+git_kommit() {
+  local t GP ISKL p ch osh h ost
+  KOD_GIT=0
+  for t in "${GIT_KORNI[@]}"; do
+    mapfile -t GP < <(printf '%s' "${GIT_PUTI[$t]}")
+    ISKL=(); for p in "${GP[@]}"; do ISKL+=(":(exclude,literal)$p"); done
+    ch=$(git --no-optional-locks -C "$t" status --porcelain --untracked-files=all -- . "${ISKL[@]}" 2>/dev/null | wc -l)
+    # -f: ОТСЛЕЖИВАЕМЫЙ файл в каталоге под .gitignore (node_modules/@*/) add ставит, но выходит 1 («paths are ignored») — замер
+    # 26.09. Неотслеживаемое под игнором git_plan уже отсеял (check-ignore), так что -f касается только наших отслеживаемых путей.
+    if ! osh=$(GIT_LITERAL_PATHSPECS=1 git -C "$t" add -f -A -- "${GP[@]}" 2>&1); then
+      echo "🔴 учёт git $t: add отказал ($1 В СИЛЕ) — ${osh:0:200}"; zhurnal "git-NE-kommit punkt=$PUNKT koren=$t shag=add"; KOD_GIT=5; continue
+    fi
+    if GIT_LITERAL_PATHSPECS=1 git -C "$t" diff --cached --quiet -- "${GP[@]}"; then
+      echo "учёт git $t: содержимое = закоммиченному — коммита нет"
+    elif osh=$(GIT_LITERAL_PATHSPECS=1 git -C "$t" -c user.name="${RUKA% <*}" -c user.email="$(p=${RUKA##*<}; echo "${p%>}")" \
+          commit -q -m "$PUNKT: ${GP[*]} (smontirovat-fajly$2)" -- "${GP[@]}" 2>&1); then
+      h=$(git -C "$t" rev-parse --short HEAD 2>/dev/null)
+      ost=$(GIT_LITERAL_PATHSPECS=1 git --no-optional-locks -C "$t" status --porcelain -- "${GP[@]}" 2>/dev/null | wc -l)
+      echo "коммит $h в $t · путей ${#GP[@]} · рука $RUKA$RUKA_ZAM$([ "$ost" -gt 0 ] && echo " · 🔴 после коммита НЕ ЧИСТО своих: $ost")"
+      zhurnal "git-kommit punkt=$PUNKT koren=$t hash=$h putej=${#GP[@]} ruka=$RUKA chuzhih=$ch"
+      [ "$ost" -gt 0 ] && KOD_GIT=5
+    else
+      echo "🔴 учёт git $t: коммит НЕ сделан ($1 В СИЛЕ) — ${osh:0:200}"; zhurnal "git-NE-kommit punkt=$PUNKT koren=$t shag=commit"; KOD_GIT=5
+    fi
+    [ "$ch" -gt 0 ] && echo "⚠️ учёт git $t: чужих незафиксированных $ch — не тронуты, не закоммичены"
+  done
+}
+
+# ── 0. проверки и план ─────────────────────────────────────────────────────────────────────────
+# B-N-971: учёт пар «исходник|бой». Бой — ключ (realpath), исходник — значение. Нечитаем — отказ (слепота).
+[ -r "$PARY" ] || otkaz "учёт пар $PARY не читается — сверить кандидата с исходником нечем (B-N-971)"
+declare -A PARA=() ISH=()   # B-N-2036: «=()» — без него пустой массив под set -u даёт «unbound variable» и проверка ниже ПРОПУСКАЕТСЯ целиком (монтаж шёл дальше с кодом 0). ISH — исходник (realpath) → его бой: снимать исходник пары тоже нельзя (B-N-1026)
+while IFS= read -r l || [ -n "$l" ]; do
+  case "$l" in ''|'#'*) continue ;; esac
+  ish=${l%%|*}; bj=${l#*|}; [ "$ish" != "$l" ] && [ -n "$ish" ] && [ -n "$bj" ] || continue
+  PARA[$(realpath -m -- "$bj")]=$ish; ISH[$(realpath -m -- "$ish")]=$bj
+done < "$PARY"
+[ ${#PARA[@]} -gt 0 ] || otkaz "в учёте пар $PARY ни одной пары — слепота, не «пар нет» (B-N-971)"
+# ── СНЯТИЕ (B-N-1026): свой путь целиком, до цикла монтажа; выходит сам ─────────────────────────────
+if [ "$SNYAT" = 1 ]; then
+  DATA=$(date -u +%Y%m%d) || otkaz "не добыта дата"
+  CEL=(); NOV=(); RDO=(); RPO=(); SH=(); UCH=(); declare -A VIDEL; KLYUCH=0
+  for rel in "${FAJLY[@]}"; do
+    [[ "$rel" == /* || "/$rel/" == */../* || -z "$rel" ]] && otkaz "путь «$rel» — абсолютный или с «..»"
+    c0="$BOJ/$rel"
+    [ -L "$c0" ] && otkaz "снимаемое — ссылка: $c0 (ссылки этим режимом не снимаются)"
+    c=$(realpath -m -- "$c0")
+    if [ ! -e "$c" ]; then
+      b=$(compgen -G "$c.SNYATO-*" | head -1)
+      [ -n "$b" ] && otkaz "уже снят: $c (лежит $b)"
+      otkaz "снимать нечего: $c нет"
+    fi
+    [ -f "$c" ] || otkaz "снимаемое не обычный файл: $c"
+    # B-N-1564: профиль .dsh/profiles/<имя> — только мёртвый; домашний .dsh/cordis.patch.yml — никогда (правка профиля применяется сразу, B-N-1014)
+    if [[ "$c" =~ ^(.*/\.dsh)/profiles/([^/]+)/cordis\.patch\.yml$ ]]; then
+      pdh=${BASH_REMATCH[1]}; pimya=${BASH_REMATCH[2]}
+      pm=$(profil_myortv "$c" "$pdh" "$pimya"); pk=$?
+      [ "$pk" = 0 ] || otkaz "профиль агента $c этим режимом не снимается: $pm (B-N-1014/B-N-1564: снимается только мёртвый профиль)"
+      echo "профиль мёртв: $c — $pm"; zhurnal "profil-myortv punkt=$PUNKT cel=$c osnovanie=$pm"
+    elif [[ "$c" =~ /\.dsh/cordis\.patch\.yml$ ]]; then
+      otkaz "домашний профиль агента $c этим режимом не снимается: правка профиля применяется сразу (B-N-1014)"
+    fi
+    [ -n "${PARA[$c]:-}" ] && otkaz "$c стоит БОЕМ в паре (исходник ${PARA[$c]}) — сначала снять пару в учёте $PARY, иначе сверка пар покраснеет"
+    [ -n "${ISH[$c]:-}" ] && otkaz "$c — ИСХОДНИК пары (бой ${ISH[$c]}) — сначала снять пару в учёте $PARY, иначе сверка пар покраснеет"
+    [ -n "${VIDEL[$c]:-}" ] && otkaz "одно имя дважды: $c"
+    VIDEL[$c]=1
+    n="$c.SNYATO-$DATA"
+    { [ -e "$n" ] || [ -L "$n" ]; } && otkaz "имя снятия занято: $n"
+    rz=$(stat -c '%a' -- "$c")
+    (( ${rz: -1} & 4 )) || KLYUCH=1
+    UCH+=("$(gde_v_uchyote "$c")")
+    CEL+=("$c"); NOV+=("$n"); RDO+=("$rz"); RPO+=("$(printf '%o' $(( 8#$rz & 8#644 )))"); SH+=("$(sha "$c")")
+  done
+  N=${#CEL[@]}
+  STAMP=$(date -u +%Y%m%dT%H%M%SZ) || otkaz "не добыта дата"
+  KOR=$MONTAZH; [ "$KLYUCH" = 1 ] && KOR=$MONTAZH_KLYUCH
+  STR="$KOR/$PUNKT/$(printf '%s' "$BOJ" | sed 's|^/||; s|/|%|g').$STAMP.tar"
+  [ -e "$STR" ] && otkaz "страховка $STR уже есть — не затираю"
+  echo "план СНЯТИЯ: пункт $PUNKT · бой $BOJ · файлов $N"
+  for ((i = 0; i < N; i++)); do
+    printf '  %s → %s · права %s → %s · sha256[:16] %s%s\n' "${CEL[$i]}" "${NOV[$i]##*/}" "${RDO[$i]}" "${RPO[$i]}" "${SH[$i]:0:16}" \
+      "${UCH[$i]:+ · ⚠️ стоит в учёте: ${UCH[$i]}}"
+  done
+  NU=0; for u in "${UCH[@]}"; do [ -n "$u" ] && NU=$((NU + 1)); done
+  [ "$NU" -gt 0 ] && echo "⚠️ за тобой: запись реестра/учёта у $NU из $N снимаемых — иначе покраснеет следующий verify/--check (B-N-1027)"
+  echo "страховка: $STR$([ "$KLYUCH" = 1 ] && echo ' · 🔒 среди снимаемых есть закрытый — ВНЕ копии: montazh-s-klyuchom')"
+  git_plan "${CEL[@]}" "${NOV[@]}"
+  if [ "$PROGON" = 1 ]; then echo "⇒ ПРОГОН: ничего не записано (запись — ключ --v-boj)"; exit 0; fi
+  CLENY=(); for c in "${CEL[@]}"; do CLENY+=("${c#/}"); done
+  strahovat
+  vernut() {   # вернуть снятые 0..$1 с прежними правами
+    for ((j = 0; j <= $1; j++)); do
+      [ -e "${NOV[$j]}" ] && [ ! -e "${CEL[$j]}" ] && mv -n -- "${NOV[$j]}" "${CEL[$j]}" && chmod "${RDO[$j]}" -- "${CEL[$j]}" \
+        && echo "   возвращён: ${CEL[$j]} (права ${RDO[$j]})"
+    done
+  }
+  for ((i = 0; i < N; i++)); do
+    # mv -n при занятом имени молча не переносит и отвечает 0 — поэтому исход проверяется по диску, а не по коду
+    mv -n -- "${CEL[$i]}" "${NOV[$i]}"; [ ! -e "${CEL[$i]}" ] && [ -f "${NOV[$i]}" ] && chmod "${RPO[$i]}" -- "${NOV[$i]}" || {
+      echo "🔴 снятие ${CEL[$i]} не состоялось — возвращаю снятые ($i)"; vernut "$i"
+      zhurnal "snyatie-otkat punkt=$PUNKT boj=$BOJ na=$i iz=$N strahovka=$STR"; exit 1; }
+  done
+  RZ=0
+  for ((i = 0; i < N; i++)); do
+    { [ ! -e "${CEL[$i]}" ] && [ "$(sha "${NOV[$i]}")" = "${SH[$i]}" ] && [ "$(stat -c '%a' -- "${NOV[$i]}")" = "${RPO[$i]}" ]; } \
+      || { echo "   🔴 ${CEL[$i]}: снятие не сошлось (прежнее имя есть, сумма или права другие)"; RZ=$((RZ + 1)); }
+  done
+  if [ "$RZ" -gt 0 ]; then
+    echo "🔴 СВЕРКА СНЯТИЯ НЕ СОШЛАСЬ: $RZ из $N. Возврат: tar -xpf $STR -C / ; снятые .SNYATO-$DATA удалить"
+    zhurnal "snyatie-sverka-ne-soshlas punkt=$PUNKT boj=$BOJ rashozhdenij=$RZ iz=$N strahovka=$STR"; exit 1
+  fi
+  echo "✅ СНЯТО И СВЕРЕНО: $N из $N · страховка $STR"
+  zhurnal "snyato punkt=$PUNKT boj=$BOJ fajlov=$N strahovka=$STR v_uchyote=$NU"
+  git_kommit снятие " --snyat"
+  V_DORAB=(); for ((i = 0; i < N; i++)); do [[ "${CEL[$i]}" == "$DORAB"/* ]] && V_DORAB+=("$i"); done
+  [ ${#V_DORAB[@]} -gt 0 ] || exit "$KOD_GIT"
+  TELO=$(
+    echo "smontirovat-fajly → Искре: СНЯТО в твоих dorabotki (пункт $PUNKT, рука ${SUDO_USER:-$(id -un)})"
+    echo
+    for i in "${V_DORAB[@]}"; do echo "  ${CEL[$i]} → ${NOV[$i]##*/} · sha256[:16] ${SH[$i]:0:16} · права ${RDO[$i]} → ${RPO[$i]}${UCH[$i]:+ · ⚠️ стоит в учёте: ${UCH[$i]}}"; done
+    echo "страховка: $STR"
+    echo "за тобой: строки учёта снятых (manifest/pary) и nashi-dorabotki.sh --save, затем --check"
+    echo "(письмо положил сам инструмент после сверки снятия, B-N-1026)"
+  )
+  pismo_iskre "$TELO" снятие
+fi
+# B-N-1028б (26.09, находка Искры 10:41Z): список nashi, едущий ЭТИМ ЖЕ вызовом, — сверять с ним, а не с боевым, прочитанным
+# до записи: «файл и строка одним окном» давал ложное «БЕЗ строки учёта» (монтаж 10:39:04Z, nashi + stend-ucheta.sh).
+# НЕ ЛОВИТ: строку, которая едет СЛЕДУЮЩИМ вызовом того же окна, — на миг вызова её правда нет, предупреждение верно.
+NASHI_EFF=$NASHI
+for rel in "${FAJLY[@]}"; do
+  [ "$(realpath -m -- "$BOJ/$rel")" = "$(realpath -m -- "$NASHI")" ] && { NASHI_EFF="$KAND/$rel"; echo "список учёта nashi — из кандидата этого вызова ($rel едет тем же окном)"; }
+done
+OSNI=(); BEZ_UCH=(); SRC=(); CEL=(); SUSH=(); VLAD=(); REZH=(); ZAKR=(); PRIM=(); DO=(); RAVNY=(); declare -A VIDEL
+for rel in "${FAJLY[@]}"; do
+  [[ "$rel" == /* || "/$rel/" == */../* || -z "$rel" ]] && otkaz "путь «$rel» — абсолютный или с «..»"
+  s="$KAND/$rel"
+  { [ -f "$s" ] && [ ! -L "$s" ] && [ -r "$s" ]; } || otkaz "файл кандидата не обычный или не читается: $rel"
+  c0="$BOJ/$rel"; prim=""
+  if [ ! -e "$c0" ] && [ ! -L "$c0" ] && [ "$NOVYJ" = 0 ]; then
+    otkaz "в бою нет имени $c0 (путь кандидата: $rel): проверьте имя; новый файл разрешается только явным --novyj (B-N-1693)"
+  fi
+  if [ -L "$c0" ]; then
+    c=$(realpath -e -- "$c0" 2>/dev/null) || otkaz "битая ссылка в бою: $c0"
+    [ -f "$c" ] || otkaz "ссылка в бою не на обычный файл: $c0 → $c"
+    prim="ссылка → монтирую в цель $c (A-H-179)"
+  elif [ -e "$c0" ] && [ ! -f "$c0" ]; then
+    otkaz "боевое имя не файл: $c0"
+  else
+    c=$(realpath -m -- "$c0")
+  fi
+  [ -n "${VIDEL[$c]:-}" ] && otkaz "две записи в одну цель: $c"
+  VIDEL[$c]=1
+  if [[ "$c" =~ ^(.*/\.dsh)/(profiles/[^/]+/)?cordis\.patch\.yml$ ]]; then
+    zs=$(profil_zanyat "${BASH_REMATCH[1]}"); zk=$?
+    if [ "$zk" = 0 ]; then prim="${prim:+$prim; }профиль агента: $zs"
+    elif [ "$NA_HODU_ZADAN" = 1 ]; then
+      prim="${prim:+$prim; }⚠️ ПРОФИЛЬ НА ХОДУ по ключу: $zs"
+      echo "⚠️ ПРОФИЛЬ НА ХОДУ по ключу (B-N-1014): $c — $zs · причина «$NA_HODU»"
+      zhurnal "profil-na-hodu punkt=$PUNKT cel=$c sostoyanie=$zs prichina=$NA_HODU"
+    elif [ "$zk" = 1 ]; then
+      otkaz "профиль ЗАНЯТОГО агента: $c — $zs. Правка профиля применяется СРАЗУ и снимает волокно изменённой записи (у telegram-multiagent — с ходом и очередью писем): дождитесь пустого хода или --profil-na-hodu='почему' (B-N-1014)"
+    else
+      otkaz "занятость агента для $c не установить: $zs — не знаю ≠ можно; --profil-na-hodu='почему' (B-N-1014)"
+    fi
+  fi
+  if [ -n "${PARA[$c]:-}" ]; then
+    ish=${PARA[$c]}
+    [ -f "$ish" ] && [ -r "$ish" ] || otkaz "$c стоит боем в паре, а исходника $ish нет/не читается — сначала выпуск/правка исходника $ish (B-N-971)"
+    [ "$(sha "$ish")" = "$(sha "$s")" ] || otkaz "кандидат $rel ≠ исходнику пары $ish (кандидат $(sha "$s" | cut -c1-16), исходник $(sha "$ish" | cut -c1-16)) — сначала выпуск/правка исходника $ish (B-N-971)"
+    prim="${prim:+$prim; }= исходнику пары $ish"
+  fi
+  if [ -f "$c" ] && [ "$(sha "$c")" = "$(sha "$s")" ]; then RAVNY+=("$rel"); continue; fi   # B-N-1576: равный бою не монтируется
+  if [ ${#OSN[@]} -gt 0 ]; then   # B-N-1848: бой обязан равняться основе, от которой собран кандидат
+    [ -n "${OSN[$rel]+x}" ] || otkaz "--osnova задана не всем монтируемым файлам: нет для «$rel» (B-N-1848)"
+    ob=${OSN[$rel]}
+    if [ "$ob" = net ]; then
+      { [ -e "$c" ] || [ -L "$c" ]; } && otkaz "основа $rel — «файла нет», а в бою он есть: $c (сумма $(sha "$c" | cut -c1-16)) — чужой новый не затираю (B-N-1848)"
+    else
+      [ -f "$c" ] || otkaz "основа $rel задана ($ob), а в бою файла $c нет (B-N-1848)"
+      bs=$(sha "$c")
+      [ "${bs:0:${#ob}}" = "$ob" ] || otkaz "бой ≠ основе: $c — основа $ob, бой ${bs:0:${#ob}} — бой изменён после снятия кандидата; пересобери кандидат от текущего боя (B-N-1848)"
+    fi
+    prim="${prim:+$prim; }основа сверена ${ob:0:16}"
+  fi
+  OSNI+=("${OSN[$rel]:-}")   # B-N-1848: основа по индексу цели — для сверки под замком (2б)
+  if [ -f "$c" ]; then
+    su=1; vl=$(stat -c '%u:%g' -- "$c"); rz=$(stat -c '%a' -- "$c"); DO+=("$(sha "$c" | cut -c1-16)")
+  else
+    su=0; DO+=("новый"); p=$(dirname -- "$c"); while [ ! -d "$p" ]; do p=$(dirname -- "$p"); done
+    sosedi "$c" "$s"   # B-N-1817: было «режим кандидата & 0755, владелец ближайшего каталога» — 600 кандидата уезжало в бой 600
+    if [ -n "$MODE_KL" ]; then rz=$MODE_KL; osr="ключ --mode"; elif [ -n "$S_REZH" ]; then rz=$S_REZH; osr=$S_OSN_R
+    else otkaz "режим нового $c не установить: $S_OSN_R — задайте --mode=NNN (B-N-1817)"; fi
+    # Вениамин 03:07Z: одно правило на обе ветки — прежняя маска & 0755 срезала g+w/o+w/suid/sgid всегда; от соседей режим не маскируется, поэтому отказ
+    (( 8#$rz & 8#6022 )) && otkaz "режим нового $c = $rz ($osr) даёт запись группе/прочим или suid/sgid — не ставлю; задайте --mode=NNN без них (B-N-1817)"
+    if [ -n "$OWNER_KL" ]; then vl=$OWNER_KL; osv="ключ --owner"; elif [ -n "$S_VLAD" ]; then vl=$S_VLAD; osv=$S_OSN_V
+    else otkaz "владельца нового $c не установить: $S_OSN_V — задайте --owner=uid:gid (B-N-1817)"; fi
+    prim="${prim:+$prim; }новый · режим $rz — $osr · владелец $vl — $osv"
+    if [[ "$c" == "$DORAB"/* ]]; then
+      v_spiske_nashi "$c"; vk=$?
+      # 🔴 B-N-1098 (26.09.2026, Михалыч; наряд Забавы): было ПРЕДУПРЕЖДЕНИЕ (B-N-1028), стало ОТКАЗ до записи.
+      # За 26.09 четыре раза новый файл в dorabotki ставили без строки учёта, и ночной --check Искры краснел;
+      # предупреждение читала память монтирующей — это не защита. Строка может ехать ЭТИМ ЖЕ вызовом (NASHI_EFF, B-N-1028б).
+      [ "$vk" = 1 ] && otkaz "сначала строка учёта: $c — впиши «|$c|» в список $NASHI (или привези кандидат nashi-dorabotki.sh этим же вызовом) (B-N-1098)"
+      [ "$vk" = 2 ] && otkaz "список учёта $NASHI_EFF не прочитан — строку учёта для нового $c не проверить (B-N-1098)"
+    fi
+  fi
+  (( ${rz: -1} & 4 )) && zk=0 || zk=1
+  SRC+=("$s"); CEL+=("$c"); SUSH+=("$su"); VLAD+=("$vl"); REZH+=("$rz"); ZAKR+=("$zk"); PRIM+=("$prim")
+done
+N=${#CEL[@]}; SUSHCH=0; KLYUCH=0; M=$((N + ${#RAVNY[@]}))
+RAVNY_STR=""; [ ${#RAVNY[@]} -gt 0 ] && RAVNY_STR="БЕЗ ИЗМЕНЕНИЙ: ${#RAVNY[@]} из $M ($(printf '%s, ' "${RAVNY[@]}" | sed 's/, $//')) — равны бою, не монтируются"
+if [ "$N" = 0 ]; then   # B-N-1576
+  echo "$RAVNY_STR"
+  echo "🔴 ОТКАЗ: монтировать нечего — кандидат $KAND равен бою $BOJ во всех $M файлах; страховки, записи, коммита и письма нет (код 3)" >&2
+  zhurnal "montirovat-nechego punkt=$PUNKT boj=$BOJ fajlov=$M"
+  exit 3
+fi
+for ((i = 0; i < N; i++)); do
+  [ "${SUSH[$i]}" = 1 ] && { SUSHCH=$((SUSHCH + 1)); [ "${ZAKR[$i]}" = 1 ] && KLYUCH=1; }
+done
+STAMP=$(date -u +%Y%m%dT%H%M%SZ) || otkaz "не добыта дата"
+KOR=$MONTAZH; [ "$KLYUCH" = 1 ] && KOR=$MONTAZH_KLYUCH
+STR=""; [ "$SUSHCH" -gt 0 ] && STR="$KOR/$PUNKT/$(printf '%s' "$BOJ" | sed 's|^/||; s|/|%|g').$STAMP.tar"
+[ -n "$STR" ] && [ -e "$STR" ] && otkaz "страховка $STR уже есть — не затираю"
+
+[ "$NOVYJ" = 0 ] || echo "новые имена разрешены явным --novyj"
+echo "план: пункт $PUNKT · кандидат $KAND · бой $BOJ · файлов $N (существующих $SUSHCH, новых $((N - SUSHCH)))"
+for ((i = 0; i < N; i++)); do
+  printf '  %s → %s · %s %s%s%s\n' "${SRC[$i]#$KAND/}" "${CEL[$i]}" "${VLAD[$i]}" "${REZH[$i]}" \
+    "$([ "${ZAKR[$i]}" = 1 ] && echo ' · закрыт')" "${PRIM[$i]:+ · ${PRIM[$i]}}"
+done
+[ -n "$RAVNY_STR" ] && echo "$RAVNY_STR"
+if [ -n "$STR" ]; then
+  echo "страховка: $STR$([ "$KLYUCH" = 1 ] && echo ' · 🔒 среди страхуемых есть закрытый — ВНЕ копии: montazh-s-klyuchom')"
+else
+  echo "страховка: нечего — все $N файлов новые; откат = удалить их"
+fi
+git_plan "${CEL[@]}"   # B-N-923
+if [ "$PROGON" = 1 ]; then echo "⇒ ПРОГОН: ничего не записано (запись — ключ --v-boj)"; exit 0; fi
+
+# ── 1. страховка ───────────────────────────────────────────────────────────────────────────────
+if [ -n "$STR" ]; then
+  CLENY=(); for ((i = 0; i < N; i++)); do [ "${SUSH[$i]}" = 1 ] && CLENY+=("${CEL[$i]#/}"); done
+  strahovat; STR_MOYA=1   # B-N-2036: положена ЭТИМ вызовом (чужую strahovat не затирает — отказ выше)
+fi
+
+# ── 2. временные имена рядом с целями ──────────────────────────────────────────────────────────
+VREM=(); SOZD=()
+ubrat_vrem() { for t in "${VREM[@]}"; do [ -n "$t" ] && rm -f -- "$t"; done
+               # B-N-2036: зовётся только до первой замены — своя страховка не нужна; иначе повтор в ту же секунду: «страховка уже есть»
+               if [ "${STR_MOYA:-0}" = 1 ] && rm -f -- "$STR"; then STR_MOYA=0; echo "страховка снята (в бою ничего не заменено): $STR"; fi
+               for ((j = ${#SOZD[@]} - 1; j >= 0; j--)); do rmdir -- "${SOZD[$j]}" 2>/dev/null; done; }
+for ((i = 0; i < N; i++)); do
+  c=${CEL[$i]}; d=$(dirname -- "$c")
+  if [ ! -d "$d" ]; then
+    p=$d; nov=(); while [ ! -d "$p" ]; do nov=("$p" "${nov[@]}"); p=$(dirname -- "$p"); done
+    for k in "${nov[@]}"; do
+      install -d -o "${VLAD[$i]%:*}" -g "${VLAD[$i]#*:}" -m 755 -- "$k" || { ubrat_vrem; echo "🔴 не создан каталог $k — в бою ничего не заменено"; exit 1; }
+      SOZD+=("$k")
+    done
+  fi
+  t=$(mktemp -- "$d/.$(basename -- "$c").smf-XXXXXX") || { ubrat_vrem; echo "🔴 не создано временное имя в $d — в бою ничего не заменено"; exit 1; }
+  VREM+=("$t")
+  install -o "${VLAD[$i]%:*}" -g "${VLAD[$i]#*:}" -m "${REZH[$i]}" -- "${SRC[$i]}" "$t" \
+    || { ubrat_vrem; echo "🔴 install ${SRC[$i]#$KAND/} отказал — в бою ничего не заменено"; exit 1; }
+  [ "$(sha "$t")" = "$(sha "${SRC[$i]}")" ] \
+    || { ubrat_vrem; echo "🔴 временная копия ${SRC[$i]#$KAND/} ≠ кандидату — в бою ничего не заменено"; exit 1; }
+done
+
+# ── 2б. B-N-1848: замок монтажа и сверка основы ПОД НИМ — по ВСЕМ файлам, затем mv всех ───────────
+if ! exec 8>>"$ZAMOK"; then ubrat_vrem; echo "🔴 ОТКАЗ: замок $ZAMOK не открыт — в бою ничего не заменено (B-N-1848)" >&2; zhurnal "otkaz-zamok punkt=$PUNKT"; exit 2; fi
+if ! flock -w 300 8; then ubrat_vrem; echo "🔴 ОТКАЗ: замок $ZAMOK занят дольше 300 с (другой монтаж) — в бою ничего не заменено (B-N-1848)" >&2; zhurnal "otkaz-zamok-zanyat punkt=$PUNKT"; exit 2; fi
+RO=()
+for ((i = 0; i < N; i++)); do
+  o=${OSNI[$i]}; [ -n "$o" ] || continue; c=${CEL[$i]}
+  if [ "$o" = net ]; then { [ -e "$c" ] || [ -L "$c" ]; } && RO+=("$c — основа «файла нет», а он появился ($(sha "$c" | cut -c1-16))")
+  else bs=$(sha "$c"); [ "${bs:0:${#o}}" = "$o" ] || RO+=("$c — основа $o, бой ${bs:0:${#o}}"); fi
+done
+if [ ${#RO[@]} -gt 0 ]; then
+  ubrat_vrem
+  printf '   бой ≠ основе ПОД ЗАМКОМ: %s\n' "${RO[@]}" >&2
+  echo "🔴 ОТКАЗ: бой изменён после предполётной сверки — ${#RO[@]} из $N; не заменён ни один файл вызова, временные убраны (B-N-1848)" >&2
+  zhurnal "otkaz-osnova-pod-zamkom punkt=$PUNKT boj=$BOJ rashozhdenij=${#RO[@]} iz=$N strahovka=${STR:-net}"; exit 2
+fi
+
+# B-N-2025: до первой замены, под монтажным замком. Успех не закрывает окно.
+OKNO_ROWS=$(mktemp) || { ubrat_vrem; exit 2; }
+for ((i = 0; i < N; i++)); do
+  printf '%s\t%s\t%s\t%s\t%s\n' "${CEL[$i]}" "$(sha "${VREM[$i]}")" "${VLAD[$i]%:*}" "${VLAD[$i]#*:}" "${REZH[$i]}" >> "$OKNO_ROWS"
+done
+OKNO_CMD=("${MONTAZH_OKNO_BIN:-/usr/local/sbin/montazh-okno}" podgotovit --task "$PUNKT" --actor "$RUKA" --rows "$OKNO_ROWS" --registry "$REESTR_PL")
+[ -z "$OKNO_ID" ] || OKNO_CMD+=(--id "$OKNO_ID")
+[ -z "$OKNO_PLAN" ] || OKNO_CMD+=(--plan "$OKNO_PLAN")
+if ! OKNO_ID=$("${OKNO_CMD[@]}"); then rm -f "$OKNO_ROWS"; ubrat_vrem; echo 'ОТКАЗ: окно не опубликовано, файлы не заменены' >&2; exit 2; fi
+rm -f "$OKNO_ROWS"
+# B-N-2039: подсказку --okno-id — только если в окне есть entry: (запись derevo в живом реестре); иначе (новый пакет,
+# файлы вне derevo) join невозможен по устройству — каждый каталог своим окном. Запись окна — тот же каталог, что у montazh-okno.
+OKNO_ZAP="${MO_STATE_DIR:-/var/lib/montazh-okna}/$OKNO_ID.json"
+if [ -r "$OKNO_ZAP" ] && grep -qF '"entry:' -- "$OKNO_ZAP"; then
+  # B-N-2042 (У2 ворот): entry: закрывается только после pravka реестра; срок окна 1800 с, просрочка — тревога владельцу.
+  echo "ОКНО МОНТАЖА: $OKNO_ID; другие каталоги той же записи derevo — с --okno-id $OKNO_ID; pravka реестра тем же тактом, до 1800 с (иначе просрочка — тревога); закрыть после последнего каталога и pravka: montazh-okno zakryt $OKNO_ID"
+elif [ -r "$OKNO_ZAP" ]; then
+  echo "ОКНО МОНТАЖА: $OKNO_ID; записи derevo в окне нет (новый пакет или файлы вне derevo) — каждый каталог своим окном, без --okno-id; закрыть сразу: montazh-okno zakryt $OKNO_ID"
+else
+  echo "ОКНО МОНТАЖА: $OKNO_ID; запись окна не прочитана — есть entry: в окне ⇒ другие каталоги с --okno-id, нет ⇒ каждый своим окном; закрыть: montazh-okno zakryt $OKNO_ID"
+fi
+okno_ishod() {
+  local code=$?
+  if [ "$code" -ne 0 ]; then
+    "${MONTAZH_OKNO_BIN:-/usr/local/sbin/montazh-okno}" otkaz "$OKNO_ID" || echo "СЛЕПОТА: окно $OKNO_ID не переведено в failed" >&2
+  fi
+  return "$code"
+}
+trap okno_ishod EXIT
+
+# ── 3. mv; сбой → откат переложенных ───────────────────────────────────────────────────────────
+for ((i = 0; i < N; i++)); do
+  if ! mv -f -- "${VREM[$i]}" "${CEL[$i]}"; then
+    echo "🔴 mv в ${CEL[$i]} отказал — откатываю переложенные ($i)"
+    for ((j = 0; j < i; j++)); do
+      if [ "${SUSH[$j]}" = 1 ]; then tar -xpf "$STR" -C / -- "${CEL[$j]#/}" && echo "   возвращён из страховки: ${CEL[$j]}"
+      else rm -f -- "${CEL[$j]}" && echo "   удалён новый: ${CEL[$j]}"; fi
+    done
+    for ((j = i; j < N; j++)); do rm -f -- "${VREM[$j]}"; done
+    for ((j = ${#SOZD[@]} - 1; j >= 0; j--)); do rmdir -- "${SOZD[$j]}" 2>/dev/null; done
+    zhurnal "otkat punkt=$PUNKT boj=$BOJ na=$i iz=$N strahovka=${STR:-net}"
+    exit 1
+  fi
+done
+
+# ── 4. сверка ─────────────────────────────────────────────────────────────────────────────────
+RZ=0
+for ((i = 0; i < N; i++)); do
+  [ "$(sha "${CEL[$i]}")" = "$(sha "${SRC[$i]}")" ] || { echo "   🔴 ${CEL[$i]} ≠ кандидату"; RZ=$((RZ + 1)); }
+  fv=$(stat -c '%u:%g' -- "${CEL[$i]}" 2>/dev/null); fr=$(stat -c '%a' -- "${CEL[$i]}" 2>/dev/null)   # B-N-1817: права — тоже предмет сверки
+  [ "$fv" = "${VLAD[$i]}" ] || { echo "   🔴 ${CEL[$i]}: владелец $fv ≠ плану ${VLAD[$i]}"; RZ=$((RZ + 1)); }
+  [ -n "$fr" ] && [ $(( 8#$fr )) = $(( 8#${REZH[$i]} )) ] || { echo "   🔴 ${CEL[$i]}: режим ${fr:-?} ≠ плану ${REZH[$i]}"; RZ=$((RZ + 1)); }
+done
+if [ "$RZ" -gt 0 ]; then
+  echo "🔴 СВЕРКА НЕ СОШЛАСЬ: $RZ из $N. Откат: ${STR:+tar -xpf $STR -C / ; }новые удалить: $(for ((i = 0; i < N; i++)); do [ "${SUSH[$i]}" = 0 ] && printf '%s ' "${CEL[$i]}"; done)"
+  zhurnal "sverka-ne-soshlas punkt=$PUNKT boj=$BOJ rashozhdenij=$RZ iz=$N strahovka=${STR:-net}"
+  exit 1
+fi
+echo "✅ ПОЛОЖЕНО И СВЕРЕНО (сумма, режим, владелец): $N из $N · страховка ${STR:-нет (все новые)}"
+[ -n "$RAVNY_STR" ] && echo "$RAVNY_STR"
+zhurnal "smontirovano punkt=$PUNKT boj=$BOJ fajlov=$N novyh=$((N - SUSHCH)) bez_izmenenij=${#RAVNY[@]} strahovka=${STR:-net}"
+
+# ── 4б. B-N-923: коммит учёта git — ровно смонтированные пути, по корню ─────────────────────────
+git_kommit монтаж ""
+
+# ── 5. B-N-922: монтаж в dorabotki → письмо хозяйке ───────────────────────────────────────────
+V_DORAB=(); for ((i = 0; i < N; i++)); do [[ "${CEL[$i]}" == "$DORAB"/* ]] && V_DORAB+=("$i"); done
+[ ${#V_DORAB[@]} -gt 0 ] || exit "$KOD_GIT"
+TELO=$(
+  echo "smontirovat-fajly → Искре: смонтировано в твои dorabotki (пункт $PUNKT, рука ${SUDO_USER:-$(id -un)})"
+  echo
+  for i in "${V_DORAB[@]}"; do echo "  ${CEL[$i]} · было ${DO[$i]} → стало $(sha "${CEL[$i]}" | cut -c1-16)"; done
+  echo "страховка: ${STR:-нет (все новые; откат = удалить новые)}"
+  [ -n "$RAVNY_STR" ] && echo "$RAVNY_STR"
+  for c in "${BEZ_UCH[@]}"; do echo "⚠️ новый файл БЕЗ строки учёта: $c — впиши строку в список nashi-dorabotki.sh, иначе ночной --check даст 1 (B-N-1028)"; done
+  echo "за тобой: nashi-dorabotki.sh --save (учёт сумм), затем --check"
+  echo "(письмо положил сам инструмент после сверки, B-N-922)"
+)
+pismo_iskre "$TELO" монтаж

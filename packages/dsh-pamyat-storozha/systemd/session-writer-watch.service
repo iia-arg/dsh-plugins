@@ -1,0 +1,11 @@
+[Unit]
+Description=Alert on recurring agent session writer conflicts (B-N-1460)
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/session-writer-watch.py
+StateDirectory=session-writer-watch
+StateDirectoryMode=0700
+UMask=0077
+TimeoutStartSec=60
+SuccessExitStatus=1

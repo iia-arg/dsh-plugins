@@ -1,16 +1,20 @@
-/**
- * Стенд шва секретаря — на НАСТОЯЩЕМ Context платформы, не на заглушке.
- *
- * 🔴 ПОЧЕМУ НЕ ЗАГЛУШКА. Заглушка слепа к запретам платформы: она отдаёт любую
- * службу и не знает про `inject`. На боевом контексте (плагин под runtime)
- * чтение незаявленной службы БРОСАЕТ — и пакет, зелёный на заглушке, упал бы
- * при первом же событии. Проверено живым отказом в бою и перемером на cordis
- * 4.0.1, взятом из каталога стенда, а не из реестра.
- *
- * 🔴 ПОДПИСКА СЧИТАЕТСЯ РАБОЧЕЙ ТОЛЬКО ПО ПОЛУЧЕННОМУ СОБЫТИЮ. «Подписался без
- * ошибки» — не доказательство: мы это правило заводили не про секретаря, но
- * оно ровно про него.
- */
+// RU: Проверяем шов секретаря на настоящем Context платформы: runtime запрещает чтение службы без inject, чего заглушка не проверяет. Работа подписки доказывается полученным событием, а не успешной регистрацией.
+// EN: Test the secretary boundary on a real platform Context: runtime forbids reading a service without inject, which a stub cannot test. Prove subscription behavior through a received event rather than successful registration.
+// RU: Изоляция от машины (A-N-1955): выключатели дистилляции и рассуждений — онлайн-файлы в $HOME/pamyat. На машине, где
+//     они стоят, проба «включена, но ключа нет» краснела при исправном коде: ветка выключателя срабатывает раньше проверки
+//     ключа. Стенд направляет обе переменные на заведомо несуществующие пути; ветку выключателя проверяет отдельная проба
+//     с временным файлом.
+// EN: Isolation from the host (A-N-1955): the distillation and reasoning switches are online files in $HOME/pamyat. On a
+//     host where they exist, the probe «enabled without a key» went red with correct code: the switch branch fires before
+//     the key check. The stand points both variables at paths that do not exist; a separate probe checks the switch
+//     branch with a temporary file.
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+const VREM = mkdtempSync(join(tmpdir(), 'stend-shva-'))
+process.on('exit', () => { try { rmSync(VREM, { recursive: true, force: true }) } catch {} })
+process.env.PAMYAT_DISTILLYACIYA_VYKL = join(VREM, 'net-vyklyuchatelya-distillyacii')
+process.env.PAMYAT_RASSUZHDENIYA_VYKL = join(VREM, 'net-vyklyuchatelya-rassuzhdenij')
 let apply, inject, name, Context
 try {
   ;({ Context } = await import('@deepseek-ai/cordis'))
@@ -25,7 +29,15 @@ try {
 let vsego = 0, proshlo = 0;
 const proba = async (imya, f) => {
   vsego++;
-  try { await f(); proshlo++; console.log('  ✅ ' + imya); }
+  try {
+    const vernulos = await f();
+    // RU: Асинхронная обёртка учитывает возврат тела; любое значение кроме undefined означает отказ. Перечень отдельных значений неполон и пропускает 0, null или объект.
+    // EN: The asynchronous wrapper inspects the body’s return; any value other than undefined means failure. A list of individual values is incomplete and can miss 0, null, or an object.
+    if (vernulos !== undefined && vernulos !== true) {
+      throw new Error('тело пробы ВЕРНУЛО «' + String(vernulos).slice(0, 60) +
+                      '», а обёртка судила по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы');
+    }
+    proshlo++; console.log('  ✅ ' + imya); }
   catch (e) { console.log('  ❌ ' + imya + ' — ' + String(e.message).slice(0, 140)); }
 };
 
@@ -41,13 +53,8 @@ const SOBYTIE = {
   },
 };
 
-/**
- * Ловить крик ОБОИМИ путями.
- * 🔴 На боевом контексте служба логгера плагину не даётся (проверено), поэтому
- * сообщение уходит в обычный вывод. Стенд, слушающий только службу, показал бы
- * «прошло молча» на исправном коде — это уже случилось в первой редакции и
- * стоило трёх ложно-красных проб. Ловим оба канала.
- */
+// RU: Перехватываем сообщения обоими путями: logger и console.error. Доступность logger и фактический путь вывода зависят от контекста; один перехват может дать ложную тишину.
+// EN: Capture messages through both logger and console.error. Logger access and the actual output route depend on context; capturing only one may produce false silence.
 function slushat() {
   const kriki = [];
   const prezhnij = console.error;
@@ -55,7 +62,8 @@ function slushat() {
   return { kriki, vernut: () => { console.error = prezhnij; } };
 }
 
-/** Поднять плагин на настоящем контексте, подсунув службу памяти. */
+// RU: Поднимаем плагин на настоящем Context с подставной службой памяти.
+// EN: Start the plugin on a real Context with a fake memory service.
 function podnyat({ pamyatEst = true, nastrojka = {} } = {}) {
   const koren = new Context();
   const zapisi = [], kriki = [];
@@ -137,10 +145,8 @@ await proba('ПОРЧА: выключён настройкой → говори�
   if (!/ВЫКЛЮЧЕН/.test(sluh.kriki.join(' '))) throw new Error('причина не названа');
 });
 
-// ═══ ДИСТИЛЛЯЦИЯ: ветка Э4 ═══
-// 🔴 Проверяется РАЗВЕДЕНИЕ, а не работа модели: при выключенной настройке к чужому
-// платному API не ходят вовсе, при включенной без ключа — отказывают ВСЛУХ, а не молчат.
-// Саму дистилляцию проверяет stend-distillyacii на подставном сервере.
+// RU: Проверяем разведение: выключенная дистилляция не вызывает платный API, включённая без ключа громко отказывает. Ответы модели проверяет отдельный stend-distillyacii.
+// EN: Test branching: disabled distillation makes no paid API call; enabled distillation without a key rejects audibly. stend-distillyacii separately tests model responses.
 await proba('дистилляция ВЫКЛЮЧЕНА по умолчанию: сводка записана, к API не ходили', async () => {
   const { koren, zapisi, kriki } = await podnyat();
   koren.emit('session/event', { id: 'sess-1' }, SOBYTIE);
@@ -163,6 +169,28 @@ await proba('ПОРЧА: включена, но ключа нет → отказ
   if (!skazano.some((k) => /дистилляция не начата|нет shadowedSeqs/i.test(k))) {
     throw new Error('отказ дистилляции НЕ назван вслух: ' + JSON.stringify(skazano).slice(0, 160));
   }
+});
+
+await proba('ВЫКЛЮЧАТЕЛЬ: включена настройкой, но лежит файл выключения → пропуск НАЗВАН файлом, сводка записана', async () => {
+  const fajl = join(VREM, 'distillyaciya-vyklyuchena')
+  writeFileSync(fajl, 'проба стенда\n')
+  if (!existsSync(fajl)) throw new Error('временный выключатель не создан — проба слепа')
+  const prezhnijPut = process.env.PAMYAT_DISTILLYACIYA_VYKL
+  process.env.PAMYAT_DISTILLYACIYA_VYKL = fajl
+  const prezhnij = console.error; const skazano = [];
+  console.error = (...a) => skazano.push(a.join(' '));
+  let zapisi;
+  try {
+    const p = await podnyat({ nastrojka: { distillyaciya: true, putZhurnala: '/net/takogo/zhurnala' } });
+    zapisi = p.zapisi;
+    p.koren.emit('session/event', { id: 'sess-1' }, SOBYTIE);
+    await new Promise((r) => setTimeout(r, 120));
+  } finally { console.error = prezhnij; process.env.PAMYAT_DISTILLYACIYA_VYKL = prezhnijPut; rmSync(fajl, { force: true }) }
+  if (zapisi.length !== 1) throw new Error('штатная сводка потеряна при выключателе');
+  if (!skazano.some((k) => /ПРОПУЩЕНА/.test(k) && k.includes(fajl))) {
+    throw new Error('пропуск по файлу НЕ назван с путём: ' + JSON.stringify(skazano).slice(0, 160));
+  }
+  if (skazano.some((k) => /дистилляция не начата/i.test(k))) throw new Error('при выключателе дошли до проверки ключа');
 });
 
 await proba('inject объявлен — иначе боевой контекст бросит на первом обращении', () => {

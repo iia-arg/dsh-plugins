@@ -1,0 +1,130 @@
+#!/usr/bin/env node
+/**
+ * sekrety-po-znacheniyu — спросить ФОРМЕННЫЙ фильтр о НАСТОЯЩИХ наших секретах.
+ *
+ * ЗАЧЕМ. Наш фильтр памяти распознаёт секрет ПО ФОРМЕ: перечень структурных образцов,
+ * слово-объявление рядом, энтропия. Значит его слепая зона — форма, которой в перечне нет,
+ * и увидеть её изнутри нельзя: набор проб пишет тот же, кто пишет правила.
+ * Соседняя машина устроена наоборот — её сканер ищет ПО ЗНАЧЕНИЮ, читая хранилище паролей.
+ * У двух устройств слепые зоны РАЗНЫЕ: сканер по значению не видит секрета, которого нет в
+ * хранилище (чужой токен из чужого вывода, ещё не заведённый, присланный в переписке);
+ * фильтр по форме не видит формы вне перечня. Они дополняют друг друга, а не дублируют.
+ * Этот инструмент берёт чужой подход и прикладывает его к НАШЕМУ фильтру: берёт наши
+ * настоящие значения и спрашивает — поймал бы, попади они в текст.
+ *
+ * 🔴 ЗНАЧЕНИЯ НЕ ПЕЧАТАЮТСЯ НИКОГДА. Наружу идут только имя записи, ДЛИНА и исход. Это не
+ * вежливость: инструмент, отвечающий на вопрос о секретах, сам не должен становиться каналом
+ * утечки — иначе он произведёт ровно тот вред, от которого бережёт.
+ *
+ * ⚠️ ЧТО ОТВЕТ ЗНАЧИТ И ЧЕГО НЕ ЗНАЧИТ (класс «инструмент называет область шире своей»):
+ *   «ловится N из N» означает: НАШИ ИЗВЕСТНЫЕ значения этот фильтр опознаёт.
+ *   НЕ означает: «секрет не утечёт». Слепая зона по форме остаётся ровно там, где лежит
+ *   секрет, которого у нас нет: чужой токен, новый формат, значение, впервые увиденное
+ *   в чужом выводе. Знаменатель здесь мал по природе — столько, сколько у нас записей.
+ *   И проверяется РАСПОЗНАВАНИЕ значения в тексте, а не пути, которыми текст доходит до
+ *   фильтра: обход фильтра стороной этим не ловится вовсе.
+ *
+ * КОДЫ: 0 все формы опознаны · 1 есть проходящие · 2 слепота (нечего или нечем мерить)
+ * EN: sekrety-po-znacheniyu — ask the FORM-BASED filter about our REAL secrets.
+ *     WHY. Our memory filter recognises a secret BY FORM: a list of structural patterns, a declaring word
+ *     nearby, entropy. So its blind zone is a form not on the list, and it cannot be seen from inside: the
+ *     probe set is written by the same person who writes the rules.
+ *     The neighbouring machine is built the other way round — its scanner looks BY VALUE, reading the password
+ *     store. The two designs have DIFFERENT blind zones: the value scanner does not see a secret that is not in
+ *     the store (someone else's token from someone else's output, not yet registered, sent in a conversation);
+ *     the form filter does not see a form outside the list. They complement each other rather than duplicate.
+ *     This tool takes the other approach and applies it to OUR filter: it takes our real values and asks —
+ *     would it catch them if they got into a text.
+ *     🔴 VALUES ARE NEVER PRINTED. Only the record name, the LENGTH and the outcome go out. This is not
+ *     politeness: a tool answering a question about secrets must not itself become a leak channel — otherwise
+ *     it does exactly the harm it guards against.
+ *     ⚠️ WHAT THE ANSWER MEANS AND DOES NOT MEAN (the class "a tool names a scope wider than its own"):
+ *     "N of N caught" means: this filter recognises OUR KNOWN values.
+ *     It does NOT mean: "the secret will not leak". The blind zone by form remains exactly where a secret lies
+ *     that we do not have: someone else's token, a new format, a value first seen in someone else's output. The
+ *     denominator here is small by nature — as many as we have records.
+ *     And what is checked is RECOGNITION of a value in text, not the paths by which text reaches the filter:
+ *     bypassing the filter from the side is not caught by this at all.
+ *     CODES: 0 all forms recognised · 1 some pass · 2 blindness (nothing or nothing with which to measure)
+ */
+import { readFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+// Файл настройки пакета dsh-pribory: строки «КЛЮЧ=значение», «#» — комментарий; берётся последнее вхождение ключа.
+// Путь меняет переменная DSH_PRIBORY_CONF. Порядок: довод/переменная → файл → нейтральное умолчание; нет ничего — СЛЕПОТА, код 2.
+// EN: Settings file of the dsh-pribory package: "KEY=value" lines, a line starting with "#" is a comment; the
+//     last occurrence of a key wins.
+//     The DSH_PRIBORY_CONF variable changes the path. Order: argument/variable → file → neutral default;
+//     nothing at all — BLINDNESS, code 2.
+const KONF = process.env.DSH_PRIBORY_CONF || '/etc/dsh-pribory/dsh-pribory.conf';
+// « #» в значении — громкий отказ (код 2), а не склеивание пояснения со значением: комментарий только с начала строки.
+// EN: " #" in a value is a loud refusal (code 2), not gluing the note into the value: a comment only from the line start.
+const konf = (k) => { let z = ''; try { for (const s of readFileSync(KONF, 'utf8').split('\n')) { const t = s.trim(), i = t.indexOf('='); if (t && !t.startsWith('#') && i > 0 && t.slice(0, i).trim() === k) z = t.slice(i + 1); } } catch {} if (/\s#/.test(z)) { console.log('ОТКАЗ: значение ключа ' + k + ' в ' + KONF + ' содержит « #» — комментарий допускается только с начала строки'); process.exit(2); } return z.trim(); };
+
+const HRANILISHCHE = process.env.PS_KATALOG ?? konf('PS_KATALOG');
+const FAJLY = konf('SEKRETY_FAJLY').split(/\s+/).filter(Boolean);   // файлы с секретами — ключ SEKRETY_FAJLY, через пробел · EN: files with secrets — the SEKRETY_FAJLY key, space-separated
+const FILTR = process.env.FILTR_PUT ?? konf('FILTR_PUT');
+if (!FILTR) { console.error('🔴 СЛЕПОТА: фильтр не задан — FILTR_PUT или ключ FILTR_PUT в ' + KONF); process.exit(2); }
+
+let najti_sekret;
+let slepot = 0;
+try { ({ najti_sekret } = await import(FILTR)); }
+catch (e) { console.error('🔴 СЛЕПОТА: фильтр не загрузился (' + FILTR + '): ' + e.message); process.exit(2); }
+
+// три обрамления: секрет редко приходит голым, и форма обрамления меняет, какое правило сработает
+// EN: three wrappings: a secret rarely comes bare, and the wrapping form changes which rule fires
+const OBRAMLENIYA = [
+  ['голое значение',         (z) => z],
+  ['после слова-объявления', (z) => 'token: ' + z],
+  ['внутри прозы',           (z) => 'в выводе мелькнуло ' + z + ' и я не заметила'],
+];
+
+const predmety = [];
+try {
+  const spisok = execFileSync('find', [HRANILISHCHE, '-name', '*.gpg'], { encoding: 'utf8' })
+    .split('\n').filter(Boolean)
+    .map((p) => p.replace(HRANILISHCHE.replace(/\/$/, '') + '/', '').replace(/\.gpg$/, ''));
+  for (const imya of spisok) {
+    try {
+      const z = execFileSync('pass', [imya], { encoding: 'utf8', env: { ...process.env, PASSWORD_STORE_DIR: HRANILISHCHE } }).split('\n')[0].trim();
+      if (z) predmety.push([`pass:${imya}`, z]); else { slepot++; console.log(`  ⚠️  СЛЕПОТА: pass:${imya} — пустое значение`); }
+    } catch (e) { slepot++; console.log(`  ⚠️  СЛЕПОТА: pass:${imya} — не прочиталось (${String(e.message).split('\n')[0].slice(0, 50)})`); }
+  }
+} catch { slepot++; console.log(`  ⚠️  СЛЕПОТА: хранилище ${HRANILISHCHE} не обошлось`); }
+
+for (const put of FAJLY) {
+  if (!existsSync(put)) { slepot++; console.log(`  ⚠️  СЛЕПОТА: ${put} — нет файла`); continue; }
+  try {
+    const z = readFileSync(put, 'utf8').split('\n')[0].trim();
+    if (z) predmety.push([put, z]); else { slepot++; console.log(`  ⚠️  СЛЕПОТА: ${put} — пусто`); }
+  } catch (e) { slepot++; console.log(`  ⚠️  СЛЕПОТА: ${put} — ${String(e.message).slice(0, 50)}`); }
+}
+
+if (predmety.length === 0) {
+  console.error('🔴 СЛЕПОТА: не прочитано НИ ОДНОГО значения — это про доступ, а не про фильтр');
+  process.exit(2);
+}
+
+let lovitsya = 0, prohodit = 0;
+for (const [imya, z] of predmety) {
+  for (const [kak, obernut] of OBRAMLENIYA) {
+    const r = najti_sekret(obernut(z));
+    if (r) { lovitsya++; console.log(`  ✅ ловится ${String(r.klass).padEnd(20)} ${imya} · ${kak} · длина ${z.length}`); }
+    else   { prohodit++; console.log(`  🔴 ПРОХОДИТ${' '.repeat(11)} ${imya} · ${kak} · длина ${z.length}`); }
+  }
+}
+console.log(`ИТОГ: записей ${predmety.length} · форм ${lovitsya + prohodit} · ловится ${lovitsya} · 🔴 ПРОХОДИТ ${prohodit} · слепот ${slepot}`);
+console.log('ГРАНИЦА: это «наши известные значения фильтр опознаёт», а НЕ «секрет не утечёт».');
+// 🔴 ЧАСТИЧНАЯ СЛЕПОТА НЕ ДАЁТ ЗЕЛЁНОГО (правка 07.09.2026, поймана собственной порчей).
+// Первая редакция при недоступном хранилище читала оставшиеся ФАЙЛЫ и печатала «ловится 6 из
+// 6», код 0. Число было честным про прочитанное и лживым про предмет: часть секретов не
+// проверялась вовсе, а читающему пришлось бы помнить, сколько записей «нормально».
+// Слепота ведёт себя как «нельзя»: ответ про часть не выдаётся за ответ про всё.
+// EN: 🔴 PARTIAL BLINDNESS DOES NOT GIVE GREEN (edit of 07.09.2026, caught by my own corruption). The first
+//     edition, with the store unavailable, read the remaining FILES and printed "6 of 6 caught", code 0. The
+//     number was honest about what was read and false about the subject: some secrets were not checked at all,
+//     and the reader would have had to remember how many records are "normal".
+//     Blindness behaves as "not allowed": an answer about a part is not passed off as an answer about the
+//     whole.
+if (prohodit > 0) process.exit(1);
+if (slepot > 0) { console.log('⚠️  ИСХОД 2: часть значений НЕ ПРОВЕРЕНА — «ловится N из N» здесь про прочитанное, не про наши секреты.'); process.exit(2); }
+process.exit(0);

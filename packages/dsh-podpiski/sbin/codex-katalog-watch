@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+# codex-katalog-watch — сторож каталога моделей и версии Codex на sadik (B-P-100 + B-P-107; Михалыч 29.09.2026;
+# слово владельца 29.09 14:29 МСК «сторожа у Codex — завести»). ТОЛЬКО ЧТЕНИЕ настроек Codex (стоп 00:22 по Codex).
+# ЗАЧЕМ: окна кодеров считаются от СВОЕГО каталога (model-catalog-predel-*.json) и config.toml, а OpenAI пишет свой
+#   каталог в models_cache.json и меняет версию codex-cli. Разойдись любое — окно кодера молча станет не тем.
+# ЧТО МЕРИТ (раз в сутки):
+#  1) ВЕРСИЯ: @openai/codex, codex-linux-x64, codex-sdk в sdk-runtime против запомненной → красное ОДИН раз, новое запоминается.
+#  2) КАТАЛОГ OpenAI: свежайший содержащий модель models_cache.json, отдельно для каждой MODELS; поля context_window /
+#     max_context_window / effective_context_window_percent против запомненных → красное ОДИН раз, новое запоминается.
+#     B-N-1742 r2: модели нет / fetched старше 7 суток → СЛЕПОТА раз на смену картины; снимок не считается текущим upstream.
+#  3) НАШ ПРЕДЕЛ: у каждого шлюза floor(model_context_window из config.toml × effective_context_window_percent
+#     из model_catalog_json /100) должно быть = PREDEL (921818 — измеренный предел сервера, проба Альфы 18.09,
+#     window95-20260918/REPORT.md). Не так / каталог не читается / модели нет → красное КАЖДЫЙ прогон (дефект состояния).
+#  4) ДОГОВОР МОДЕЛИ (B-N-1185; B-N-1742): astra у всех, sol где объявлена/назначена namerenie.model в F;
+#     отпечаток model_messages.instructions_template (sha256[:16]) должен быть = своему DOGOVOR_ETALONY. Это текст «договора» кодера
+#     (21420 зн. на 29.09; отличается от встроенного в codex 0.156.0 строкой про сообщения через инструменты). Не так / нет поля /
+#     каталог не читается → красное КАЖДЫЙ прогон, как 3): каталог наш, смена договора обязана быть сознательной — вместе с эталоном.
+#     ⚠️ В записке Вениамина поле названо base_instructions — такого поля в каталоге нет; договор лежит в instructions_template.
+# ПЕРВЫЙ ПРОГОН: версии и свежие записи моделей запоминаются без тревоги; отсутствие/давность upstream и own судятся сразу.
+# ЧЕГО НЕ ЛОВИТ: смену каталога OpenAI, пока ни один шлюз его не перечитал (models_cache.json старый у всех — видно
+#   по дате в строке «чисто»); другие модели, кроме gpt-6-astra/gpt-6.1-sol; смену ПРЕДЕЛА сервера (921818 измерен на astra;
+#   для sol проверяется настроенный предел, физический предел sol НЕ измерен этим сторожем); договор — только MODELS и instructions_template (прочие тексты
+#   model_messages — persistent_instructions, guardian, политики — не сторожатся); смысл правки договора — только факт смены.
+# 🔴 ПАМЯТЬ — ТОЛЬКО ПО УСПЕХУ ДОСТАВКИ (условие ворот Вениамина 29.09 11:33Z; класс «отметка по попытке, не по успеху»,
+#   B-N-792/B-H-105): при беде новая память пишется ТОЛЬКО после rc 0 agent-alert. Канал отказал → память прежняя,
+#   выход кодом 3 (не входит в SuccessExitStatus → юнит failed), завтра та же весть повторится.
+# ПРЕДЕЛ — только из /etc/agent-registry/agents.yaml mashina.raskladka_obshchee.osnova.codex.predel_servera.
+#   Нет ключа/реестр не читается/значение неверно → СЛЕПОТА с причиной, без проверки окон и записи памяти; запасного числа нет.
+# Любой аргумент командной строки → ОТКАЗ, код 2 (иначе «--suho» от руки дал бы боевой прогон с записью памяти).
+# Коды: 0 чисто ИЛИ прежняя слепота уже сообщена (stdout именует её) · 1 изменение/слепота/отбой сообщены · 2 отказ · 3 весть НЕ доставлена, память прежняя.
+# Подмены окружением — ТОЛЬКО для проб, о каждой пишется в stderr (читать чужие пути безвредно; память — в свой файл).
+import glob, json, math, os, re, subprocess, sys
+from datetime import datetime, timedelta, timezone
+if len(sys.argv) > 1:
+    print(f"ОТКАЗ: аргументов не принимаю ({' '.join(sys.argv[1:])[:60]}) — сторож только боевой, пробы через подмены окружения"); sys.exit(2)
+STEND = os.environ.get('CKW_STEND', '')
+if STEND not in ('', '1'): print('ОТКАЗ: CKW_STEND — только 1 или пусто', file=sys.stderr); sys.exit(2)
+def env(k, d):
+    v = os.environ.get(k)
+    if v is not None:
+        if STEND == '1': print(f"⚠️ ПОДМЕНА {k}={v}", file=sys.stderr); return v
+        print(f'ИГНОРИРУЮ {k}: нет CKW_STEND=1', file=sys.stderr)
+    return d
+RUNTIME = env("CKW_RUNTIME", "/opt/claude-oauth/sdk-runtime/node_modules/@openai")
+SHLYUZY = env("CKW_SHLYUZY", "/var/lib/coder-gateway-*/codex-home")
+PAMYAT = env("CKW_PAMYAT", "/var/lib/codex-katalog-watch/pamyat.json")
+ALERT = env("AGENT_ALERT_BIN", "/usr/local/bin/agent-alert")
+REESTR = env("CKW_REESTR", "/etc/agent-registry/agents.yaml")
+DOGOVOR_ETALONY = {"gpt-6-astra": "35bd51b5f577cb7b", "gpt-6.1-sol": "e1bdd4f8f0df4b20"}  # B-N-1742: собственные каталоги alfa/beta/gamma, 07.10; 21420/21769 знаков
+MODELS = tuple(DOGOVOR_ETALONY)
+MAX_CACHE_AGE_S = 7 * 86400  # строго > 7 суток; состояние не содержит растущий возраст
+REGISTRY = {}
+PREDEL_OSHIBKA = None
+PREDEL_PUT = "mashina.raskladka_obshchee.osnova.codex.predel_servera"
+try:
+    import yaml
+    with open(REESTR, encoding="utf-8") as source:
+        REGISTRY = yaml.safe_load(source)
+    PREDEL = REGISTRY["mashina"]["raskladka_obshchee"]["osnova"]["codex"]["predel_servera"]
+    if type(PREDEL) is not int or PREDEL <= 0:
+        raise ValueError("предел должен быть положительным целым числом")
+    PREDEL_OTKUDA = f"реестр {REESTR}"
+except Exception as e:
+    PREDEL_OSHIBKA = f"{REESTR}: {PREDEL_PUT} нет/не читается или неверен ({type(e).__name__})"
+POLYA = ("context_window", "max_context_window", "effective_context_window_percent")
+PAKETY = ("codex", "codex-linux-x64", "codex-sdk")
+agents = REGISTRY.get("agenty") if isinstance(REGISTRY, dict) else None
+AGENT_MODELS = {a["imya"]: a["namerenie"].get("model")
+                for a in (agents if isinstance(agents, list) else [])
+                if isinstance(a, dict) and isinstance(a.get("imya"), str) and isinstance(a.get("namerenie"), dict)}
+
+def dostavit(tekst):
+    """True — канал принял (rc 0). Иначе печатает причину и False."""
+    print(tekst)
+    try:
+        r = subprocess.run([ALERT, "--plain", "--", tekst], capture_output=True, text=True, timeout=150)
+        if r.returncode == 0: return True
+        print(f"🔴 тревога НЕ доставлена (rc {r.returncode}): {(r.stdout + r.stderr).strip()[:200] or 'причина не названа'}")
+    except Exception as e: print(f"🔴 тревога НЕ доставлена: {e}")
+    return False
+
+def skazat(tekst, kod):   # слепота: памяти нет — писать нечего
+    sys.exit(kod if dostavit(tekst) else 3)
+
+if PREDEL_OSHIBKA:
+    skazat(f"🔴 Сторож Codex sadik — СЛЕПОТА: предел из реестра не установлен: {PREDEL_OSHIBKA}", 2)
+
+def dogovor(put, model):
+    """отпечаток текста договора модели в нашем каталоге: (sha16, число знаков)"""
+    import hashlib
+    d = json.load(open(put, encoding="utf-8"))
+    for m in (d.get("models", []) if isinstance(d, dict) else []):
+        if isinstance(m, dict) and m.get("slug") == model:
+            s = (m.get("model_messages") or {}).get("instructions_template")
+            if not isinstance(s, str) or not s: raise ValueError(f"у {model} нет model_messages.instructions_template")
+            return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16], len(s)
+    raise ValueError(f"нет модели {model}")
+
+def model_fields(put, model):
+    d = json.load(open(put, encoding="utf-8"))
+    for m in (d.get("models", []) if isinstance(d, dict) else []):
+        if isinstance(m, dict) and m.get("slug") == model: return {k: m.get(k) for k in POLYA}, d.get("fetched_at")
+    raise ValueError(f"нет модели {model}")
+
+bedy, zapomneno, chisto, dogovor_chisto = [], [], [], []
+try: pam = json.load(open(PAMYAT, encoding="utf-8"))
+except FileNotFoundError: pam = {}
+except Exception as e: skazat(f"🔴 Сторож Codex sadik — СЛЕПОТА: память {PAMYAT} не читается ({e})", 2)
+novaya = dict(pam)
+
+# 1) версии
+ver = {}
+for p in PAKETY:
+    try: ver[p] = json.load(open(f"{RUNTIME}/{p}/package.json", encoding="utf-8"))["version"]
+    except Exception as e: ver[p] = None; bedy.append(f"версия {p} не читается ({type(e).__name__})")
+staraya = pam.get("versii")
+if all(ver.values()):
+    if staraya is None: zapomneno.append(f"версии {ver}")
+    elif staraya != ver:
+        bedy.append("СМЕНИЛАСЬ версия Codex: " + ", ".join(f"{p} {staraya.get(p)} → {ver[p]}" for p in PAKETY if staraya.get(p) != ver[p]))
+    novaya["versii"] = ver
+chisto.append("codex " + (ver.get("codex") or "?"))
+
+# 2) каталог OpenAI — выбор по модели; legacy openai хранит astra.
+def fetched_time(value):
+    try:
+        t = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return t.astimezone(timezone.utc) if t.tzinfo is not None else None
+    except (AttributeError, TypeError, ValueError): return None
+
+kesh = []
+for c in sorted(glob.glob(f"{SHLYUZY}/models_cache.json")):
+    try:
+        doc = json.load(open(c, encoding="utf-8"))
+        if not isinstance(doc, dict) or not isinstance(doc.get("models"), list): raise ValueError("models: нужен список")
+        f = doc.get("fetched_at")
+        kesh.append((fetched_time(f), f, c, doc["models"]))
+    except Exception as e: bedy.append(f"{c}: не читается ({type(e).__name__}: {e})")
+key = lambda row: (row[0] or datetime.min.replace(tzinfo=timezone.utc), row[2])
+freshest = max(kesh, key=key) if kesh else (None, None, SHLYUZY, [])
+novaya["openai_models"] = dict(pam.get("openai_models") or {})
+novaya["upstream_status"] = {}
+upstream_blind = []
+now = datetime.now(timezone.utc)
+for model in MODELS:
+    matches = [(t, f, c, m) for t, f, c, models in kesh for m in models
+               if isinstance(m, dict) and m.get("slug") == model]
+    chosen = max(matches, key=key) if matches else None
+    t, f, c, _ = chosen if chosen else freshest
+    kind, reason = "ok", None
+    if not chosen:
+        kind, reason = "missing", f"upstream-кэш не содержит {model}; свежайший fetched {f or 'не сообщено'}"
+    elif t is None:
+        kind, reason = "invalid-fetched", f"{model}: fetched не прочитан как дата с timezone ({f!r}); {c}"
+    elif now - t > timedelta(seconds=MAX_CACHE_AGE_S):
+        kind, reason = "stale", f"{model}: кэш устарел; fetched {f}; предел >7 суток ({MAX_CACHE_AGE_S} с); {c}"
+    state = {"kind": kind, "source": c, "fetched": f}
+    previous = (pam.get("upstream_status") or {}).get(model)
+    novaya["upstream_status"][model] = state
+    if reason:
+        upstream_blind.append(reason)
+        if previous != state: bedy.append("СЛЕПОТА: " + reason)
+        continue
+    if previous and previous.get("kind") != "ok": bedy.append(f"СЛЕПОТА СНЯТА: {model}; свежайший fetched {f}")
+    a = {k: chosen[3].get(k) for k in POLYA}
+    was = novaya["openai_models"].get(model, pam.get("openai") if model == "gpt-6-astra" else None)
+    if was is None: zapomneno.append(f"каталог OpenAI {model} {a} ({c}, fetched {f[:19]})")
+    elif was.get("polya") != a:
+        bedy.append(f"СМЕНИЛСЯ каталог OpenAI у {model}: " + ", ".join(f"{k} {was['polya'].get(k)} → {a[k]}" for k in POLYA if was["polya"].get(k) != a[k])
+                    + f" (источник {c}, fetched {f[:19]}; было fetched {was.get('fetched', '?')[:19]})")
+    novaya["openai_models"][model] = {"polya": a, "fetched": f, "istochnik": c}
+    if model == "gpt-6-astra": novaya["openai"] = novaya["openai_models"][model]
+    chisto.append(f"OpenAI {model} {a['context_window']}/{a['max_context_window']}/{a['effective_context_window_percent']}% fetched {f[:10]}")
+
+# 3) наш предел у каждого шлюза
+shl = sorted(glob.glob(SHLYUZY))
+if not shl: bedy.append(f"шлюзов нет по маске {SHLYUZY}")
+for g in shl:
+    imya = g.split("coder-gateway-")[-1].split("/")[0]
+    try:
+        t = open(f"{g}/config.toml", encoding="utf-8").read()
+        mcw = int(re.search(r"(?m)^model_context_window\s*=\s*(\d+)", t).group(1))
+        kat = re.search(r'(?m)^model_catalog_json\s*=\s*"([^"]+)"', t).group(1)
+    except Exception as e:
+        bedy.append(f"{imya}: предел не проверен ({type(e).__name__}: {e})"); continue
+    try: declared = {m.get("slug") for m in json.load(open(kat, encoding="utf-8")).get("models", []) if isinstance(m, dict)}
+    except Exception as e:
+        bedy.append(f"{imya}: собственный каталог не прочитан ({type(e).__name__}: {e})"); continue
+    for model in MODELS:
+        # Неназначенная sol у Марка отсутствует намеренно. Неизвестная F-модель — строгая проверка обеих.
+        if model == "gpt-6.1-sol" and model not in declared and AGENT_MODELS.get(imya) in MODELS and AGENT_MODELS[imya] != model:
+            chisto.append(f"{imya}/{model}: не объявлена и не назначена; вне own-проверки")
+            continue
+        try:
+            a, _ = model_fields(kat, model)
+            usable = math.floor(mcw * a["effective_context_window_percent"] / 100)
+            if usable != PREDEL:
+                bedy.append(f"{imya}/{model}: рабочее окно {usable} ≠ {PREDEL} (model_context_window {mcw} × {a['effective_context_window_percent']}% каталога {os.path.basename(kat)})")
+            else: chisto.append(f"{imya}/{model} {usable}")
+        except Exception as e:
+            bedy.append(f"{imya}/{model}: предел не проверен ({type(e).__name__}: {e})")
+        # 4) договор каждой модели в нашем каталоге этого шлюза
+        try:
+            dg, dl = dogovor(kat, model)
+            if dg != DOGOVOR_ETALONY[model]:
+                bedy.append(f"{imya}: СМЕНИЛСЯ договор модели — {model} model_messages.instructions_template {dg} ({dl} зн.) ≠ эталона {DOGOVOR_ETALONY[model]} (каталог {os.path.basename(kat)})")
+            else: dogovor_chisto.append(f"{imya}/{model}")
+        except Exception as e:
+            bedy.append(f"{imya}/{model}: договор модели не проверен ({type(e).__name__}: {e})")
+
+def zapisat():
+    try:
+        os.makedirs(os.path.dirname(PAMYAT), exist_ok=True)
+        json.dump(novaya, open(PAMYAT + ".new", "w", encoding="utf-8"), ensure_ascii=False, indent=1); os.replace(PAMYAT + ".new", PAMYAT)
+        return None
+    except Exception as e: return f"память не записана ({e}) — завтра тревоги 1)/2) повторятся"
+if zapomneno: print("ЗАПОМНЕНО (первый прогон, без тревоги): " + "; ".join(zapomneno))
+chisto.append(f"предел {PREDEL} — {PREDEL_OTKUDA}")
+if dogovor_chisto: chisto.append(f"договоры {DOGOVOR_ETALONY}: {','.join(dogovor_chisto)}")
+if not bedy:
+    oshibka = zapisat()
+    if oshibka is None:
+        print(("СЛЕПОТА upstream (уже сообщена): " + "; ".join(upstream_blind) + " · " if upstream_blind else "чисто: ") + " · ".join(chisto)); sys.exit(0)
+    bedy.append(oshibka)
+heading = "⚠️ Codex на sadik: состояние upstream\n" if all(b.startswith("СЛЕПОТА") for b in bedy) else "🔴 Codex на sadik: каталог/версия/окно\n"
+if not dostavit(heading + "\n".join("• " + b for b in bedy)):
+    print("память НЕ тронута: весть не доставлена — повторится при следующем прогоне"); sys.exit(3)
+if not any(b.startswith("память не записана") for b in bedy):
+    oshibka = zapisat()
+    if oshibka: print("🔴 " + oshibka)
+sys.exit(1)

@@ -1,0 +1,10 @@
+[Unit]
+# RU: Раз в 2 минуты: порог перекрытия 300 с — тревога не позже ~7 минут от начала перекрытия.
+# EN: Every 2 minutes: the overlap threshold is 300 s — the alert comes within ~7 minutes of the overlap start.
+Description=Таймер сторожа движков: агент %i · Engines watchdog timer: agent %i
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=2min
+AccuracySec=30s
+[Install]
+WantedBy=timers.target

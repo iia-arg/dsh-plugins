@@ -1,0 +1,10 @@
+[Unit]
+# Тревога: приёмка копии sadik упала, не сказав. Зовёт OnFailure= у backup-verify.service (B-H-561, 24.09.2026).
+# Скрипт общий с тревогами сборки sadik и копии OMEGA; когда он молчит — в нём.
+Description=Тревога: приёмка копии sadik упала
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/kopiya-upala backup-verify.service "Приёмка копии sadik упала"
+# agent-alert сам ограничен: 3 попытки по 20 с и паузы 5+15 с — 80 с. 120 с — граница сверху.
+TimeoutStartSec=120

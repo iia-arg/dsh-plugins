@@ -1,0 +1,8 @@
+[Unit]
+Description=Запуск сторожа предела длины каждые 30 минут (окно замера 35 мин, с перекрытием)
+[Timer]
+OnBootSec=8min
+OnUnitActiveSec=30min
+Persistent=true
+[Install]
+WantedBy=timers.target

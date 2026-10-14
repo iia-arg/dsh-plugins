@@ -1,0 +1,10 @@
+[Unit]
+Description=Суточный прогон strahovanie-modulej-watch (B-N-903)
+
+[Timer]
+OnCalendar=*-*-* 06:57:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

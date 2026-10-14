@@ -1,0 +1,13 @@
+# /etc/systemd/system/receipt-watch-failed.service — НОВЫЙ (B-N-768, 24.09.2026, кандидат Зари).
+[Unit]
+# Тревога: сторож квитанций упал. Зовёт OnFailure= у receipt-watch.service (drop-in onfailure.conf).
+# Скрипт — общий kopiya-upala (B-H-561), без правки: он берёт юнит и заголовок, а молчит только при строке
+# «BACKUP_RESULT … notification=sent», которой receipt-watch не печатает — значит, говорит всегда.
+# В тревогу идут result, status (1 просрочено / 2 слепота) и хвост журнала юнита со строкой «ИТОГ … код N».
+# ⚠️ ЧАСТОТА: сторож часовой — пока причина не устранена, тревога каждый час. Намеренно: 27 ч немоты дороже.
+Description=Тревога: сторож квитанций упал (просрочено или слепота)
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/kopiya-upala receipt-watch.service "Сторож квитанций: status 1 — просрочено, 2 — слепота"
+# agent-alert сам ограничен: 3 попытки по 20 с и паузы 5+15 с — 80 с. 120 с — граница сверху.
+TimeoutStartSec=120

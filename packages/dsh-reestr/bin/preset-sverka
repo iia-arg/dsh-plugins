@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+# Сверка нашего авторского пресета с заводским образцом standard — раскладка DSH 0.2 (B-N-738, 29.09.2026, Заря; прежняя bash-редакция 47fcfdf1).
+#
+# ЗАЧЕМ (как прежде). Наш пресет — копия чужого, которую ведём мы; обновление платформы подменяет заводской образец целиком.
+# Расхождение растёт молча в обе стороны, и вторая опаснее первой:
+#   (а) наши намеренные отличия пропали  — вернутся инструменты, которые мы гасили;
+#   (б) в заводском появились строки, которых нет у нас — мы тихо отстали от платформы.
+#
+# ЧТО СРАВНИВАЕТ: только перечень строк ВЕРХНЕГО уровня пресета (их id). Содержимое строк НЕ сравнивает — там наши
+# комментарии и disabled, они и должны отличаться. В 0.1 это были «- id:» файла .agent-presets/<имя>/agent.cordis.yml;
+# в 0.2 каталога пресетов нет (dsh-agent-preset-registry 0.2: «neither scans directories nor accepts preset paths») —
+# пресет стал строкой '@deepseek-ai/dsh-agent-preset' в профиле, его строки — прямые элементы config.plugins.
+#   наш:       профиль A Искры, строка с id preset-iskra;
+#   заводской: dsh-web-app/presets/standard.patch.yml установки Искры, строка с id preset-standard.
+#
+# ГДЕ НЕ ПРИМЕНЯЕТСЯ: не проверяет, что пресет подхвачен агентом (видно только в request/header живой сессии), не проверяет
+# вложенные строки групп (planning/compaction/delegation — как и прежде: только верхний уровень). Ничего не чинит.
+# КОДЫ: 0 — совпадает; 1 — расхождение («ОТСТАЛИ»/«ЛИШНЕЕ»); 2 — СЛЕПОТА (№16 аудита 16, 10.10.2026: прежде слепота
+# выходила 1 и читалась как расхождение; потребители — healthcheck `agent-plugins list --health` и registry-watchdog —
+# читают «не 0», а list --health по коду 2 называет её «проверить нечем», а не «доложил находку»).
+# НАСТРОЙКА (№16): PRESET_SVERKA_NASH — профиль A с нашим пресетом, PRESET_SVERKA_ZAVOD — заводской standard.patch.yml,
+# PRESET_SVERKA_NASH_ID — id строки нашего пресета. Умолчаний одной машины НЕТ: не задано — СЛЕПОТА с именем переменной.
+import os, sys
+sys.dont_write_bytecode = True   # вместо прежнего «python3 -B» в shebang: env-shebang не несёт ключей переносимо
+try:
+    import yaml
+except Exception as e:
+    print(f"🔴 СЛЕПОТА: нет модуля yaml ({e})"); sys.exit(2)
+
+NASH = os.environ.get("PRESET_SVERKA_NASH", "")
+ZAVOD = os.environ.get("PRESET_SVERKA_ZAVOD", "")
+NASH_ID, ZAVOD_ID = os.environ.get("PRESET_SVERKA_NASH_ID", ""), "preset-standard"
+if len(sys.argv) > 1:   # №9 аудита 16: доводов нет — отказ, а не тихий прогон
+    print(f"ОТКАЗ: preset-sverka доводов не принимает (дано: {' '.join(sys.argv[1:])}); настройка — PRESET_SVERKA_*"); sys.exit(2)
+ne_zadano = [k for k, v in (("PRESET_SVERKA_NASH", NASH), ("PRESET_SVERKA_ZAVOD", ZAVOD), ("PRESET_SVERKA_NASH_ID", NASH_ID)) if not v]
+if ne_zadano:
+    print(f"🔴 СЛЕПОТА: не задано: {', '.join(ne_zadano)} — сверять нечего"); sys.exit(2)
+NASHI_SVOI = {"mcp-omega"}  # наши намеренные добавления — их отсутствие в заводском НЕ расхождение
+# Заводские строки 0.2, которых у нас нет НАМЕРЕННО — их отсутствие у нас НЕ «отстали». Пуст: command-goal, present,
+# tool-plugin-manager владелец велел добавить во все наши пресеты (30.09 00:24 МСК «Все нужны», шаблоны k7) — до добавления краснеть ПРАВДОЙ.
+NASHI_NET = set()
+
+class Terpimyj(yaml.SafeLoader):
+    pass
+Terpimyj.add_multi_constructor("", lambda loader, tag, node: None)  # !!js и прочие теги — не значение, а выражение; нам не нужны
+
+def stroki(put, preset_id):
+    """(перечень id верхнего уровня пресета, None) либо (None, беда)."""
+    try:
+        d = yaml.load(open(put, encoding="utf-8"), Loader=Terpimyj)
+    except OSError as e:
+        return None, f"не читается: {put} ({e.strerror})"
+    except yaml.YAMLError as e:
+        return None, f"не разбирается: {put} ({str(e).splitlines()[0]})"
+    if not isinstance(d, list):
+        return None, f"не список строк патча: {put}"
+    for zap in d:
+        for r in (zap.get("insert") or []) if isinstance(zap, dict) else []:
+            if isinstance(r, dict) and r.get("id") == preset_id and r.get("name") == "@deepseek-ai/dsh-agent-preset":
+                pl = (r.get("config") or {}).get("plugins")
+                if not isinstance(pl, list):
+                    return None, f"у {preset_id} нет config.plugins: {put}"
+                return [x["id"] for x in pl if isinstance(x, dict) and x.get("id")], None
+    return None, f"строки {preset_id} ('@deepseek-ai/dsh-agent-preset') нет в {put}"
+
+n, beda_n = stroki(NASH, NASH_ID)
+z, beda_z = stroki(ZAVOD, ZAVOD_ID)
+for beda in (beda_n, beda_z):
+    if beda:
+        print(f"🔴 СЛЕПОТА: {beda}"); sys.exit(2)
+if not n or not z:  # признак собственной исправности: пустой перечень — «сравнила ничто с ничем»
+    print(f"🔴 СЛЕПОТА: пробник слеп — строк наш={len(n)} заводской={len(z)}"); sys.exit(2)
+
+propalo = sorted(set(z) - set(n) - NASHI_NET)
+lishnee = sorted(set(n) - set(z) - NASHI_SVOI)
+rc = 0
+if propalo:
+    print("🔴 ОТСТАЛИ ОТ ПЛАТФОРМЫ: в заводском standard есть строки, которых нет у нас:")
+    for x in propalo: print(f"    - id: {x}")
+    rc = 1
+if lishnee:
+    print("🔴 У НАС ЛИШНЕЕ (не объявлено намеренным в NASHI_SVOI):")
+    for x in lishnee: print(f"    - id: {x}")
+    rc = 1
+if rc == 0:
+    print(f"active (строк: наш {len(n)}, заводской {len(z)}; намеренно наши: {', '.join(sorted(NASHI_SVOI))}; намеренно без: {', '.join(sorted(NASHI_NET)) or 'нет'})")
+sys.exit(rc)

@@ -1,7 +1,7 @@
 {
   "name": "dsh-pamyat-omega",
-  "version": "0.1.0-alpha.10",
-  "description": "Долговременный слой памяти агента для DSH: запись знаний во внешнее хранилище по MCP с ПОДТВЕРЖДЕНИЕМ доставки, а не с отчётом об отправке.",
+  "version": "3.1.2",
+  "description": "Долговременная память, подтверждение доставки и поиск по MCP · Long-term memory, delivery confirmation and retrieval over MCP",
   "type": "module",
   "main": "src/index.js",
   "files": [
@@ -9,29 +9,30 @@
     "test",
     "README.md",
     "README.en.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "docs"
   ],
   "scripts": {
     "test": "r=0; for f in test/stend-*.mjs; do node \"$f\"; c=$?; if [ $c -eq 1 ]; then r=1; elif [ $c -eq 2 ] && [ $r -ne 1 ]; then r=2; elif [ $c -ne 0 ] && [ $c -ne 2 ] && [ $r -ne 1 ]; then r=$c; fi; done; exit $r"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-llm": "^0.1.1-rc.2 || ^0.2.0-rc.2",
     "@deepseek-ai/schemastery": "^3.18.1"
   },
   "engines": {
     "node": ">=22"
   },
   "license": "MIT",
+  "author": "Aleksandr Argelander",
   "keywords": [
-    "dsh",
-    "deepseek-harness",
-    "agent",
-    "memory",
-    "mcp",
-    "plugin"
+    "память-агента · agent-memory",
+    "долговременная-память · long-term-memory",
+    "подтверждение-доставки · delivery-confirmation",
+    "MCP · mcp"
   ],
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/cordis": "4.0.4",
     "@deepseek-ai/schemastery": "3.18.1"
   },
   "repository": {

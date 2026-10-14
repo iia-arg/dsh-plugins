@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Sink тревог садика → @idomik_bot (DM Александра). Политика 2026-07-06.
+# Отличие от aclaude/bclaude: pass-store на садике НЕТ, читаем узкий токен из файла 600.
+# Выдан ТОЛЬКО бот тревог — он умеет писать в наш чат и больше ничего.
+set -uo pipefail
+[ -n "${1:-}" ] || { echo "usage: claudeclaw-alert <text>" >&2; exit 2; }
+if ! CHAT="$(timeout 3s /usr/local/bin/vladelec-tg-id)" || [ -z "$CHAT" ]; then
+  echo "claudeclaw-alert: владелец не установлен — тревога НЕ отправлена" >&2
+  exit 2
+fi
+TOKEN=$(cat /etc/claudeclaw-alert.token 2>/dev/null | head -1)
+
+[ -n "$TOKEN" ] || { logger -t claudeclaw-alert "ERROR: no bot token"; exit 1; }
+# 🔴 Адрес с токеном подаётся curl ЧЕРЕЗ СТАНДАРТНЫЙ ВВОД (--config -), а не
+# аргументом: строка запуска процесса (/proc/<pid>/cmdline) читается ЛЮБЫМ
+# пользователем машины, и токен утекал бы при каждой отправке. printf —
+# встроенная команда оболочки, отдельного процесса с токеном не появляется.
+# Текст сообщения секретом не является и остаётся аргументом: так меньше
+# экранирования, а значит меньше шансов молча испортить сообщение.
+# A-N-1948 №5 (№9): разметку НЕ экранируем — вызывающие шлют теги намеренно (inet6-poyavlenie-watch: <b>, <code>). Вместо -f
+# читаем тело ответа: Telegram называет отказ в description (текст с «<» или «&» из чужой причины — 400), оно идёт в журнал,
+# а текст уходит запасным ходом без разметки. Урок dsh-alert:60–65, прежде не применённый здесь. Проба: test/stend-claudeclaw-alert.sh.
+_otvet=$(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TOKEN" \
+  | curl -sS -m 10 -X POST --config - \
+  --data-urlencode "chat_id=${CHAT}" --data-urlencode "text=$1" \
+  --data-urlencode "parse_mode=HTML" 2>&1)
+if ! printf '%s' "$_otvet" | grep -q '"ok":true'; then
+  _p1=$(printf '%s' "$_otvet" | sed -n 's/.*"description":"\([^"]*\)".*/\1/p' | head -1)
+  logger -t claudeclaw-alert "WARN: разметка отвергнута — ${_p1:-причина не названа ответом}"
+  _otvet2=$(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TOKEN" \
+    | curl -sS -m 10 -X POST --config - \
+    --data-urlencode "chat_id=${CHAT}" --data-urlencode "text=$1" 2>&1)
+  if printf '%s' "$_otvet2" | grep -q '"ok":true'; then
+    logger -t claudeclaw-alert "SENT-PLAIN: дошло без разметки (запасной ход)"
+  else
+    _p2=$(printf '%s' "$_otvet2" | sed -n 's/.*"description":"\([^"]*\)".*/\1/p' | head -1)
+    logger -t claudeclaw-alert "WARN: telegram send failed — ни с разметкой, ни без: ${_p2:-причина не названа ответом}"
+    exit 1
+  fi
+fi

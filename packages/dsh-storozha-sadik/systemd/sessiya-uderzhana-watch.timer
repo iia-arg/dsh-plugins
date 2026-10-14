@@ -1,0 +1,10 @@
+# /etc/systemd/system/sessiya-uderzhana-watch.timer — B-N-1633. Такт 2 мин: тревога не позже порог + 2 мин + 1 мин срока попытки.
+[Unit]
+Description=Каждые 2 мин: сторож удержанной сессии агента (B-N-1633)
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=2min
+AccuracySec=10s
+Unit=sessiya-uderzhana-watch.service
+[Install]
+WantedBy=timers.target

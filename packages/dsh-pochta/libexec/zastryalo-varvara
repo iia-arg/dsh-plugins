@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""B-N-1682: two Varvara tell queues, names only, one technical alert per run.
+Age >300 seconds; .md/.txt regular files at top level. No mail body is opened.
+At most 10 alert attempts in a rolling hour, shared by both queues; no retries here.
+Does not prove collection/delivery/reading, or detect an unstarted timer.
+"""
+import argparse,fcntl,json,math,os,signal,stat,subprocess,sys,tempfile,time
+from pathlib import Path
+p=argparse.ArgumentParser(allow_abbrev=False)
+p.add_argument('--shchel',action='append',required=True,type=Path)
+p.add_argument('--state-dir',required=True,type=Path)
+p.add_argument('--alert-bin',default='/usr/local/bin/agent-alert',type=Path)
+a=p.parse_args()
+if len(a.shchel)!=2 or len(set(a.shchel))!=2 or any(not x.is_absolute()for x in [*a.shchel,a.state_dir,a.alert_bin]):p.error('нужны две различные абсолютные щели, абсолютные state-dir и alert-bin')
+AGE=300;WINDOW=3600;MAX_ATTEMPTS=10
+
+def display_name(name):
+ encoded=json.dumps(name,ensure_ascii=False)
+ return encoded if len(encoded)<=160 else encoded[:157]+'…'
+
+def main():
+ now=time.time();sections=[];blind=False
+ for queue in a.shchel:
+  stale=[];total=0;other=0
+  try:
+   with os.scandir(queue)as files:
+    for entry in files:
+     try:s=entry.stat(follow_symlinks=False)
+     except FileNotFoundError:continue  # collector took the letter during this scan
+     if not stat.S_ISREG(s.st_mode):continue
+     total+=1
+     if not entry.name.endswith(('.md','.txt')):other+=1;continue
+     if now-s.st_mtime>AGE:stale.append(entry.name)
+   print(f'щель: {queue} · порог {AGE} с · файлов {total} · чужих расширений {other} · застряло {len(stale)}')
+   if stale:
+    names=', '.join(display_name(n)for n in sorted(stale)[:5])
+    sections.append(f'Щель: {queue}\nСтарше {AGE} с: {len(stale)}; имена (не более 5): {names}')
+  except OSError as error:
+   blind=True;sections.append(f'СЛЕПОТА: щель {queue} не прочитана ({type(error).__name__})');print(sections[-1],file=sys.stderr)
+ if not sections:
+  print('чисто: в обеих щелях нет подходящих файлов старше порога; доставку это не доказывает');return 0
+ status=2 if blind else 1
+ a.state_dir.mkdir(mode=0o700,parents=True,exist_ok=True)
+ with (a.state_dir/'lock').open('a')as lock:
+  try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+  except BlockingIOError:raise ValueError('другой прогон держит лимитер')
+  state=a.state_dir/'attempts.json'
+  attempts=json.loads(state.read_text())if state.exists()else[]
+  if not isinstance(attempts,list)or len(attempts)>MAX_ATTEMPTS or any(type(t)not in(int,float)or not math.isfinite(t)or t<0 or t>now for t in attempts):raise ValueError('неверная память лимита; бюджет не сброшен')
+  attempts=[t for t in attempts if now-t<WINDOW]
+  if len(attempts)>=MAX_ATTEMPTS:
+   print('ПОРОГ 10/ч: техническая тревога подавлена, состояние щелей остаётся красным');return status
+  # Count an attempted send before invoking sender, including failure/timeout.
+  fd,temporary=tempfile.mkstemp(dir=a.state_dir,prefix='.attempts-')
+  try:
+   with os.fdopen(fd,'w')as f:json.dump(attempts+[now],f);f.flush();os.fsync(f.fileno())
+   os.replace(temporary,state)
+  finally:
+   if os.path.exists(temporary):os.unlink(temporary)
+  message='Гостевой агент: Варвара (гостевой агент; техническая тревога стража)\n'+ '\n\n'.join(sections)+'\nСтраж не пересылает содержимое писем и не доказывает доставку.'
+  process=subprocess.Popen([str(a.alert_bin),'--plain'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=True,env=dict(os.environ,AGENT_ALERT_POPYTOK='1',AGENT_ALERT_TAJMAUT='10'))
+  try:process.communicate(message,timeout=15)
+  except subprocess.TimeoutExpired:
+   os.killpg(process.pid,signal.SIGKILL);process.communicate();print('Тревога не отправлена: срок 15 с',file=sys.stderr);return 3
+  if process.returncode:
+   print(f'Тревога не отправлена: отправщик вернул {process.returncode}',file=sys.stderr);return 3
+  print('Тревога принята отправщиком; получение человеком отдельно');return status
+try:sys.exit(main())
+except (OSError,ValueError,subprocess.SubprocessError)as error:
+ print('СЛЕПОТА стража: '+str(error),file=sys.stderr);sys.exit(2)

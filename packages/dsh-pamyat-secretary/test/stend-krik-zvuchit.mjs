@@ -1,27 +1,22 @@
-/**
- * Стенд звука: вести секретаря должны быть СЛЫШНЫ, а не только «сказаны».
- *
- * Почему отдельно от stend-shva. Тот ловит `console.error` ВНУТРИ своего же
- * процесса — то есть проверяет, что функция вывода вызвана, а не что строка
- * куда-то дошла. Ровно на этой разнице 03.09 в ядре нашлись три ЗЕЛЁНЫЕ пробы,
- * подтверждавшие громкость, которой в бою не было: они читали самодельный
- * logger поддельного ctx, а настоящий logger cordis 4.0.1 нем (его сообщения
- * ложатся в кольцевой буфер, который никто не читает).
- *
- * Здесь между вызовом и проверкой не остаётся ни одной нашей подделки: пакет
- * поднимается в ОТДЕЛЬНОМ процессе под настоящим Context, и строку мы ждём в
- * реальном `stderr` этого процесса.
- */
+// RU: Проверяем слышимость сообщений секретаря по stderr отдельного процесса с настоящим Context. Перехват функции в своём процессе не доказывает, что строка дошла; logger cordis 4.0.1 может оставлять её в непрочитанном буфере.
+// EN: Test secretary message audibility through stderr of a separate process using a real Context. Capturing a function in the same process does not prove delivery; the cordis 4.0.1 logger may retain the line in an unread buffer.
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const zdes = dirname(fileURLToPath(import.meta.url));
+// RU: Временное создаём в отдельном mkdtemp и убираем через exit-хук и SIGTERM/SIGINT; общий фиксированный путь может остаться чужим или пережить прогон. SIGKILL уборку не выполнит.
+// EN: Create temporary files in a separate mkdtemp and clean them through the exit hook and SIGTERM/SIGINT; a shared fixed path may belong to another account or survive a run. SIGKILL cannot run cleanup.
+const KAT = mkdtempSync(join(tmpdir(), '.proba-krik-zvuchit-secretary-'));
+process.on('exit', () => rmSync(KAT, { recursive: true, force: true }));
+process.on('SIGTERM', () => process.exit(143)); process.on('SIGINT', () => process.exit(130));
 let vsego = 0, proshlo = 0;
+const sud = (v) => { if (v !== undefined && v !== true) throw new Error('тело пробы ВЕРНУЛО «' + String(v).slice(0, 60) + '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы (правка 06.09.2026)'); };
 const proba = (imya, f) => {
   vsego++;
-  try { f(); proshlo++; console.log('  ✅ ' + imya); }
+  try { sud(f()); proshlo++; console.log('  ✅ ' + imya); }
   catch (e) { console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 200)); }
 };
 
@@ -32,10 +27,8 @@ function podnyat(kod) {
   return { stderr: r.stderr ?? '', stdout: r.stdout ?? '' };
 }
 
-// 🔴 СЛЕПОТА, А НЕ РАСХОЖДЕНИЕ (03.09.2026). Без установленных зависимостей
-// дочерний процесс не поднимется вовсе, и первая же проба сообщила бы
-// «не поднялся» — код 1, то есть «предмет сломан». Это неправда: проверить
-// не удалось. Спрашиваем ОДИН раз и отвечаем словами с кодом 2.
+// RU: Зависимости проверяем один раз. Если дочерний процесс не может стартовать без них, возвращаем слепоту с кодом 2 вместо дефекта с кодом 1.
+// EN: Check dependencies once. If missing dependencies prevent child startup, report an unobservable test with code 2 rather than a defect with code 1.
 {
   const rProba = podnyat("import '@deepseek-ai/cordis';")
   if (/ERR_MODULE_NOT_FOUND/.test(rProba.stderr)) {
@@ -46,7 +39,8 @@ function podnyat(kod) {
 }
 
 
-// Общая часть: настоящий Context со службой памяти, какую попросят.
+// RU: Поднимаем настоящий Context с требуемой службой памяти.
+// EN: Start a real Context with the requested memory service.
 const OSNOVA = (telo) => `
   import { Context } from '@deepseek-ai/cordis';
   import { name, inject, apply } from './src/index.js';
@@ -65,31 +59,44 @@ proba('стенд годен: секретарь поднимается на н�
 });
 
 proba('🔴 ПРИЗНАК ГОТОВНОСТИ ЧИТАЕТ ТЕ ЖЕ ПОЛЯ, ЧТО И ПОТРЕБИТЕЛЬ', () => {
-  // 04.09.2026: проверка готовности читала config.klyuch?.zapisPass — вложенный объект,
-  // которого в схеме нет; вызов читает klyuchPass плоско. Признак говорил «НЕ ГОТОВА» при
-  // исправном механизме, а его же подсказка учила заводить несуществующее поле — и профиль
-  // был написан по ней. Проба стережёт согласие ПРИЗНАКА со СХЕМОЙ, а не текст строки.
+  // RU: Готовность должна читать плоский klyuchPass, объявленный в схеме, а не несуществующий вложенный config.klyuch.zapisPass. Проверяем согласие признака со схемой.
+  // EN: Read readiness from the schema’s flat klyuchPass rather than nonexistent nested config.klyuch.zapisPass. Test agreement between the detector and schema.
   const r = podnyat(OSNOVA(`
     k.provide('pamyat');
     k.pamyat = { zapisat: () => 1 };
-    k.plugin({ name, inject, apply }, { distillyaciya: true, putZhurnala: '/tmp/x',
-                                        klyuchPass: 'a/b', model: 'm' });
+    k.plugin({ name, inject, apply }, { distillyaciya: true, putZhurnala: ${JSON.stringify(join(KAT, 'zhurnal.jsonl'))},
+                                        klyuchPass: 'a/b', model: 'm', komandaTrevogi: '' });
     setTimeout(() => {}, 30);
   `));
   const stroka = (r.stderr.split('\n').find((x) => x.includes('подъём:')) ?? '');
-  if (!/дистилляция взведена/.test(stroka)) {
-    throw new Error('при ключе, заданном ПО СХЕМЕ, признак говорит не «взведена»: ' + stroka.slice(0, 200));
+  // RU: Несуществующая запись pass a/b означает НЕ взведена, но источник должен быть назван. komandaTrevogi задана пустой строкой, чтобы схема не вызвала рабочую команду тревоги.
+  // EN: A missing pass a/b entry means not armed, but the source must be named. Set komandaTrevogi to an empty string so the schema cannot invoke the production alert command.
+  if (!/дистилляция (взведена|НЕ взведена: ключ pass a\/b не получен)/.test(stroka)) {
+    throw new Error('при ключе, заданном ПО СХЕМЕ, признак не прочёл поле klyuchPass: ' + stroka.slice(0, 200));
   }
   if (/klyuch\.|fajlKlyucha/.test(r.stderr)) {
     throw new Error('подсказка называет поле, которого нет в схеме — она учит писать неверно');
   }
 });
 
+proba('🔴 A-N-1870: ГОТОВНОСТЬ НЕ ТРЕБУЕТ putZhurnala (файл не читается с A-P-056)', () => {
+  // RU: Без putZhurnala, с ключом по схеме строка подъёма обязана назвать ключ, а не «НЕ ГОТОВА — не задан putZhurnala»: дистилляция берёт события сессии, файл не читает.
+  // EN: Without putZhurnala and with a schema key, the startup line must name the key, not report unreadiness for putZhurnala: distillation reads session events, never the file.
+  const r = podnyat(OSNOVA(`
+    k.provide('pamyat');
+    k.pamyat = { zapisat: () => 1 };
+    k.plugin({ name, inject, apply }, { distillyaciya: true, klyuchPass: 'a/b', model: 'm', komandaTrevogi: '' });
+    setTimeout(() => {}, 30);
+  `));
+  const stroka = (r.stderr.split('\n').find((x) => x.includes('подъём:')) ?? '');
+  if (!stroka) throw new Error('следа подъёма нет вовсе: ' + r.stderr.slice(0, 160));
+  if (/putZhurnala|НЕ ГОТОВА/.test(stroka)) throw new Error('готовность всё ещё требует putZhurnala: ' + stroka.slice(0, 200));
+  if (!/дистилляция (взведена|НЕ взведена: ключ pass a\/b не получен)/.test(stroka)) throw new Error('ключ не назван: ' + stroka.slice(0, 200));
+});
+
 proba('🔴 КАЖДАЯ строка несёт ИМЯ И ВЕРСИЮ, и версия взята ИЗ МАНИФЕСТА', () => {
-  // По журналу должно быть видно не только кто сказал, но и КАКАЯ редакция: за 03.09.2026
-  // мы трижды получали в процессе не тот код, что лежит на диске, и строка без номера
-  // этого не различала. Версия читается из своего package.json, а не пишется константой:
-  // константа при следующем выпуске утверждала бы номер, которому предмет не соответствует.
+  // RU: Каждая строка должна различать редакцию; версию читаем из package.json, а не задаём константой.
+  // EN: Each line must identify the revision; read the version from package.json rather than a constant.
   const nastoyashchaya = JSON.parse(readFileSync(join(zdes, '..', 'package.json'), 'utf-8')).version;
   const r = podnyat(OSNOVA(`
     k.provide('pamyat');
@@ -99,7 +106,9 @@ proba('🔴 КАЖДАЯ строка несёт ИМЯ И ВЕРСИЮ, и ве
   `));
   const stroka = (r.stderr.split('\n').find((x) => x.includes('подъём:')) ?? '');
   if (!stroka) throw new Error('следа подъёма нет вовсе: ' + r.stderr.slice(0, 160));
-  if (!stroka.includes('[dsh-pamyat-secretary ' + nastoyashchaya + ']')) {
+  // RU: Ищем имя, полную версию и пробел: после версии идёт timestamp, а не закрывающая скобка.
+  // EN: Match the name, complete version, and a space: a timestamp follows the version, not a closing bracket.
+  if (!stroka.includes('[dsh-pamyat-secretary ' + nastoyashchaya + ' ')) {
     throw new Error('в строке нет версии из манифеста (' + nastoyashchaya + '): ' + stroka.slice(0, 120));
   }
 });
@@ -119,8 +128,8 @@ proba('ПРЕДПОСЫЛКА: настоящий ctx.logger ЕСТЬ и НЕМ 
 });
 
 proba('ГЛАВНОЕ: «сводка ПОТЕРЯНА» слышна в stderr настоящего процесса', () => {
-  // Самая важная весть пакета: знание сняли, а записать некуда. Если она нема,
-  // потеря знания выглядит снаружи ровно как отсутствие знания.
+  // RU: Сообщение «знание извлечено, но записать некуда» должно быть слышно: иначе потеря неотличима от отсутствия знания.
+  // EN: The “knowledge extracted but nowhere to write” message must be audible; otherwise loss looks like absence of knowledge.
   const r = podnyat(OSNOVA(`
     k.provide('pamyat');
     k.pamyat = { zapisat: () => 1 };

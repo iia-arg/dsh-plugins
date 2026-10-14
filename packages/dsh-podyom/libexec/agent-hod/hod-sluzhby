@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# hod-sluzhby — идёт ли ход агента-службы (B-N-1014, 26.09.2026, Аврора; условие Вениамина: ОДИН признак на всех).
+# Вынесен из podyom-uzla (:176–200, B-N-844): зовут podyom-uzla (перед подъёмом) и smontirovat-fajly (перед правкой профиля).
+# Меняешь признак — меняешь ЗДЕСЬ, у обоих сразу; копия у кого-то из них разошлась бы молча.
+# ПРИЗНАК: журнал ГЛАВНОГО процесса службы с его запуска (_SYSTEMD_UNIT + _PID), последнее событие turn/* платформы:
+#   type=turn/start — ход идёт; type=turn/end — не идёт; событий нет — ход с запуска не начинался (это ответ).
+# ВЫЗОВ: hod-sluzhby <юнит>. Для стендов: HOD_SYSTEMCTL, HOD_JOURNALCTL (подставные).
+# ВЫВОД — одна строка: pid=<N|0|?> start=<N> end=<N> poslednee=<turn/start|turn/end|> zhurnal=<est|pust|net-processa|slepota> [prichina=…]
+# КОД: 0 ход не идёт (или процесса нет) · 1 ход идёт · 2 журнал живого процесса пуст — СЛЕПОТА, не «не идёт» · 3 неверный вызов
+#   · 4 СЛЕПОТА своего systemctl show (B-N-1223): show упал или MainPID не число — pid=? zhurnal=slepota prichina=…;
+#     pid «?» (не пусто и не 0) — чтобы зовущий, читающий «pid пуст/0 = процесса нет», не принял слепоту за «процесса нет».
+# ГДЕ НЕ ПРИМЕНЯЕТСЯ: строка turn/end потеряна журналом (ограничение частоты journald) → ложное «идёт» (безопасная сторона);
+#   платформа сменит печать событий → «не начинался» (ловится только сверкой с кодом платформы).
+# 🔴 B-N-1340 (в) (01.10.2026, Аврора; решение Забавы): ИДЁТ ЛИ ДИСТИЛЛЯЦИЯ — поле distill= в той же строке, КОДЫ НЕ МЕНЯЮТСЯ
+#   (smontirovat-fajly читает код >1 как «прибор не ответил», podyom-uzla ≥3 — как слепоту; новый код оба прочли бы ложно).
+#   30.09 gamma поднята рукой «hod-sluzhby → systemctl restart» посреди разбора: эти ворота его не видели.
+#   ПРИЗНАК — метка секретаря razbor-idet-*.txt (A-N-804) в putOtklonennyh из живого $DSH_HOME/profiles/web/cordis.patch.yml:
+#   её pid = MainPID юнита и позвана < DISTILL_MIN мин назад. distill=idet:<срез>@ЧЧ:ММZ | net | slepota:<причина>.
+#   Идёт — строка «рву идущую дистилляцию …» в stderr (человеку) и в журнал (тег hod-sluzhby; зовущие stderr глушат).
+#   НЕ ЛОВИТ: перезагрузку машины и OOM (их никто не спрашивает); разбор без метки (секретарь не смог её поставить —
+#   сам об этом кричит); разбор дольше DISTILL_MIN (медиана 23, макс 99,5 мин за 25.09–01.10) — тогда net, а подъём оборвёт.
+set -uo pipefail
+[ $# -eq 1 ] && [ -n "$1" ] && [[ "$1" != -* ]] || { echo "вызов: hod-sluzhby <юнит>" >&2; exit 3; }
+S=${HOD_SYSTEMCTL:-systemctl}; J=${HOD_JOURNALCTL:-journalctl}
+[ "$(id -u)" = 0 ] || [ -n "${HOD_JOURNALCTL:-}" ] || J="sudo -n journalctl"
+pid=$("$S" show "$1" -p MainPID --value 2>/dev/null); rc=$?
+# B-N-1223 (находка Искры при B-N-1189): сбой СВОЕГО show прежде давал «pid=0 … net-processa» кодом 0 — слепота читалась как «процесса нет».
+if [ $rc -ne 0 ]; then echo "pid=? start=0 end=0 poslednee= zhurnal=slepota prichina=systemctl-show-kod-$rc"; exit 4; fi
+if ! [[ "$pid" =~ ^[0-9]+$ ]]; then echo "pid=? start=0 end=0 poslednee= zhurnal=slepota prichina=MainPID-ne-chislo:$(printf '%s' "$pid" | tr -c 'A-Za-z0-9._-' _ | cut -c1-40)"; exit 4; fi
+if [ "$pid" = 0 ]; then echo "pid=0 start=0 end=0 poslednee= zhurnal=net-processa"; exit 0; fi
+DISTILL_MIN=${HOD_DISTILL_MIN:-100}
+R=""; [ "$(id -u)" = 0 ] || [ -n "${HOD_KAT_METOK:-}" ] || R="sudo -n"
+distill() {  # $1 юнит, $2 MainPID → одна строка значения поля distill
+  local dh kat f m
+  if [ -n "${HOD_KAT_METOK:-}" ]; then kat=$HOD_KAT_METOK; else
+    dh=$("$S" show "$1" -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n 's/^DSH_HOME=//p')
+    [ -n "$dh" ] || { echo "slepota:net-DSH_HOME"; return; }
+    kat=$($R grep -m1 -oE '^[[:space:]]*putOtklonennyh:[[:space:]]*[^[:space:]]+' "$dh/profiles/web/cordis.patch.yml" 2>/dev/null | sed -E 's/.*putOtklonennyh:[[:space:]]*//')
+    [ -n "$kat" ] || { echo "slepota:net-putOtklonennyh"; return; }
+  fi
+  for f in $($R find "$kat" -maxdepth 1 -name 'razbor-idet-*.txt' 2>/dev/null | sort); do
+    m=$($R cat "$f" 2>/dev/null | python3 -c 'import sys,json,datetime as d
+try:
+  j=json.load(sys.stdin); t=d.datetime.fromisoformat(j["pozvana"].replace("Z","+00:00"))
+  f=lambda v: " ".join(str(v).split())
+  print("\t".join([f(j["pid"]), str(int((d.datetime.now(d.timezone.utc)-t).total_seconds()//60)), f(j.get("srez") or "?"), t.strftime("%H:%MZ")]))
+except Exception: print("musor")' 2>/dev/null)
+    case "$m" in
+      musor|"") echo "slepota:metka-ne-razobrana:${f##*/}"; return ;;
+    esac
+    # A-N-1948 №10 (№19): поля — по табуляции (read -r), а не словами: срез с пробелом прежде сдвигал pid/возраст/время.
+    local m_pid m_min m_srez m_vremya
+    IFS=$'\t' read -r m_pid m_min m_srez m_vremya <<< "$m"
+    [ "$m_pid" = "$2" ] || continue                              # метка чужого (прошлого) процесса — не «идёт»
+    if [ "$m_min" -ge "$DISTILL_MIN" ]; then logger -t hod-sluzhby "$1: метка разбора ${f##*/} старше ${DISTILL_MIN} мин ($m_min мин) — не считаю идущей" 2>/dev/null; continue; fi
+    echo "idet:$m_srez@$m_vremya"; return
+  done
+  echo "net"
+}
+D=$(distill "$1" "$pid")
+case "$D" in
+  idet:*) w="$1: рву идущую дистилляцию среза ${D#idet:} — позвана ${D##*@}, знания среза не запишутся (B-N-1340)"
+          w="${w/@${D##*@}/}"; echo "⚠️ $w" >&2; logger -t hod-sluzhby "$w" 2>/dev/null ;;
+  slepota:*) echo "⚠️ $1: идёт ли дистилляция — не знаю ($D)" >&2; logger -t hod-sluzhby "$1: дистилляция не измерена ($D)" 2>/dev/null ;;
+esac
+zh=$($J _SYSTEMD_UNIT="$1" _PID="$pid" --no-pager -o cat 2>/dev/null | grep -v '^-- No entries --$')
+if [ -z "$zh" ]; then echo "pid=$pid start=0 end=0 poslednee= zhurnal=pust distill=$D"; exit 2; fi
+st=$(printf '%s\n' "$zh" | grep -c 'type=turn/start'); en=$(printf '%s\n' "$zh" | grep -c 'type=turn/end')
+po=$(printf '%s\n' "$zh" | grep -oE 'type=turn/(start|end)' | tail -1); po=${po#type=}
+echo "pid=$pid start=$st end=$en poslednee=$po zhurnal=est distill=$D"
+[ "$po" = turn/start ] && exit 1
+exit 0

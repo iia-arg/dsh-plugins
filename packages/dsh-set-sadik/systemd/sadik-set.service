@@ -1,0 +1,30 @@
+[Unit]
+Description=Сеть sadik: правила политики, RU-split и маршруты до точек подключения туннелей
+Documentation=man:ip-rule(8)
+# After: сначала сеть, потом наши правила поверх неё.
+After=network-pre.target systemd-networkd.service NetworkManager.service network-online.target
+Wants=network-pre.target network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=3
+# 🔴 PartOf — ради чего юнит и заведён: перезапуск networkd (например, needrestart при
+# обновлении ОС) СМЫВАЕТ правила политики, а туннели при этом НЕ перезапускаются
+# (active/exited), и их ExecStartPost повторно не срабатывает. Поймано 02.09.2026.
+# 🔴 ОБА менеджера сети, а не тот, что сегодня в работе. 02.09.2026 машину перевели
+# с systemd-networkd на NetworkManager — привязка к одному стала мёртвой в тот же час,
+# и дыра открылась заново, молча. Привязка к отсутствующему юниту systemd игнорирует,
+# поэтому лишнего вреда нет, а смена менеджера механизм переживает.
+PartOf=systemd-networkd.service NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=150
+ExecStart=/usr/local/sbin/sadik-reply-routing.sh
+# Проверка ПО СВОЙСТВУ, а не по коду возврата скрипта: код 0 говорит «команды прошли»,
+# а нужно «маршрут до каждой точки подключения существует и идёт НЕ в туннель».
+ExecStartPost=/usr/local/sbin/sadik-set-proverka.sh
+
+[Install]
+WantedBy=multi-user.target

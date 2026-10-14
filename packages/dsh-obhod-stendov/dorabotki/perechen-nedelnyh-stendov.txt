@@ -1,0 +1,11 @@
+# НЕДЕЛЬНЫЙ перечень стендов (B-N-1074, 26.09.2026, Аврора; решение Забавы). Читает vse-stendy-boevye.sh при запуске из
+# vse-stendy-nedelnye.sh (PERECHEN_STENDOV). Долгие стенды — не в ночном обходе (+31 мин), а раз в неделю: среда 01:30Z.
+/opt/iskra/workspace/dorabotki/stend-vzaimnogo-nabludeniya.sh
+/opt/iskra/workspace/dorabotki/stend-storozha-reestrov.sh
+# B-N-1768 (07.10, разбор Авроры; наряд Забавы 15:20Z): долгие стенды sadik-watch — замер Авроры 90 с и 1330 с, под iskra (sudo внутри).
+#   Первый недельный прогон storozha-nad-storozhami будет КРАСНЫМ по двум живым находкам пробы 8 (backup-verify FAILED, zastryalo-v-shcheli@varvara без строки) — это работа стенда.
+/opt/iskra/workspace/dorabotki/stendy/stend-sadik-watch-bez-sredy.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-storozha-nad-storozhami.sh
+# B-N-1808 (08.10, Михалыч; наряд Забавы 06:37Z): stend-needrestart — пишет в живой /etc/needrestart/conf.d; замок dpkg/apt УДЕРЖИВАЕТСЯ на прогон (r2).
+#   Пока needrestart не установлен — код 2 «пропущено: 6», ожидаемо по /etc/agent-registry/stend-exceptions.yaml.
+/opt/iskra/workspace/dorabotki/stend-needrestart.sh

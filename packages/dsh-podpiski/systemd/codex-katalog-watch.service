@@ -1,0 +1,11 @@
+[Unit]
+# B-P-100 + B-P-107 (Михалыч, 29.09.2026; слово владельца 14:29 МСК «сторожа у Codex — завести»). Только чтение.
+Description=Сторож Codex на sadik: версия codex-cli, каталог OpenAI gpt-6-astra, рабочее окно шлюзов = 921818
+Documentation=file:///usr/local/sbin/codex-katalog-watch
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/codex-katalog-watch
+# 1 = тревога сказана — не отказ юнита; 2 = слепота, отказ (её видит и systemd)
+SuccessExitStatus=1
+TimeoutStartSec=300

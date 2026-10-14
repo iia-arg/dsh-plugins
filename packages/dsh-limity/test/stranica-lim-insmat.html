@@ -1,0 +1,95 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Подписки Claude и Codex — расход и остатки</title>
+<style>
+:root{--f:#0f1115;--k:#171a21;--t:#e6e8ec;--s:#8b93a7;--z:#3fb950;--zh:#d29922;--kr:#f85149;--r:#30363d}
+*{box-sizing:border-box}body{margin:0;background:var(--f);color:var(--t);font:15px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif;padding:24px}
+h1{font-size:19px;font-weight:600;margin:0 0 4px}
+.tih{color:var(--s);font-size:13px;margin-bottom:22px}
+.kart{background:var(--k);border:1px solid var(--r);border-radius:10px;padding:18px;margin-bottom:14px}
+.imya{font-size:16px;font-weight:600;margin-bottom:2px}
+.org{color:var(--s);font-size:12px;font-family:ui-monospace,monospace;margin-bottom:14px}
+.stroka{margin-bottom:13px}
+.zag{display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px}
+.zag b{font-weight:600}
+.pol{height:7px;background:#0b0d11;border-radius:4px;overflow:hidden}
+.zap{height:100%;border-radius:4px;transition:width .3s}
+.ost{color:var(--s);font-size:12px;margin-top:3px}
+.plashka{display:inline-block;padding:2px 8px;border-radius:5px;font-size:12px;margin-top:6px}
+.ok{background:rgba(63,185,80,.15);color:var(--z)}.net{background:rgba(248,81,73,.15);color:var(--kr)}
+.slep{background:rgba(139,147,167,.15);color:var(--s)}
+
+.avar{background:rgba(248,81,73,.12);border:1px solid var(--kr);color:var(--kr);padding:14px;border-radius:10px;margin-bottom:14px}
+</style></head><body>
+<h1>Подписки Claude и Codex</h1>
+<div class="tih" id="snyato">загрузка…</div>
+<div id="telo"></div>
+<script>
+const cvet=d=>d>=.9?'var(--kr)':d>=.7?'var(--zh)':'var(--z)';
+const doC=u=>{const s=u*1000-Date.now();if(s<=0)return'вот-вот';const c=Math.floor(s/36e5),m=Math.floor(s%36e5/6e4);return c>0?`через ${c} ч ${m} мин`:`через ${m} мин`};
+function polosa(n,o){const d=o&&o.izrashodovano_dolya!=null?o.izrashodovano_dolya:null;
+ if(d===null)return `<div class="stroka"><div class="zag"><span>${n}</span><b style="color:var(--s)">нет данных</b></div></div>`;
+ const p=(d*100).toFixed(d<.1?1:0);
+ return `<div class="stroka"><div class="zag"><span>${n}</span><b>израсходовано ${p}% · осталось ${(100-p).toFixed(d<.1?1:0)}%</b></div>
+ <div class="pol"><div class="zap" style="width:${Math.min(d*100,100)}%;background:${cvet(d)}"></div></div>
+ ${o.sbros_unix?`<div class="ost">обнулится ${doC(o.sbros_unix)}</div>`:''}</div>`}
+function premium(o){
+ if(!o)return `<div class="stroka"><div class="zag"><span>премиум-модель</span><b style="color:var(--s)">нет данных — сборщик старой версии</b></div></div>`;
+ const m=o.model||'премиум';
+ let klass,tekst;
+ if(o.sostoyanie==='dostupna'){klass='ok';tekst='доступна — запросы этой моделью проходят';}
+ else if(o.sostoyanie==='otkazano'){klass='net';tekst='ОТКАЗАНО — лимит этой модели исчерпан, агент на ней встанет';}
+ else {klass='slep';tekst='проверить не удалось'+(o.http?` (ответ ${o.http})`:'')+' — это НЕ «лимит исчерпан», это слепота пробы';}
+ return `<div class="stroka"><div class="zag"><span>модель ${m}</span></div>
+ <span class="plashka ${klass}">${tekst}</span>
+ <div class="ost">доли и времени обнуления по отдельной модели Anthropic не отдаёт — есть только «принимает / отклоняет». Снимается отдельным пробным запросом ЭТОЙ моделью.</div></div>`}
+fetch('limity.json?_='+Date.now()).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(d=>{
+ const vozrast=Math.floor((Date.now()/1000-d.snyato_unix)/60);
+ document.getElementById('snyato').innerHTML=`снято ${d.snyato_chelovecheski} — ${vozrast} мин назад`
+  +(vozrast>45?' · <span style="color:var(--kr)">🔴 данные устарели, сборщик молчит</span>':'');
+ // Названия — слово владельца 30.09.2026 15:53 МСК. Техническое имя из сборщика — мелко рядом, для сверки.
+ const CHEI={'podpiska-1':'Клод-1 (Забава)','podpiska-2':'Клод-2 (MomICan)','podpiska-5':'Клод-3 (Med)','podpiska-3':'Кодекс-1 (MomICan)','podpiska-4':'Кодекс-2 (Med)'};
+ const PORYADOK=['podpiska-1','podpiska-2','podpiska-5','podpiska-3','podpiska-4'];
+ const mesto=k=>{const i=PORYADOK.indexOf(k);return i<0?99:i};
+ const podpis=i=>(CHEI[i]||i)+` <span style="opacity:.45;font-size:12px;font-weight:400">${i}</span>`;
+ document.getElementById('telo').innerHTML=Object.entries(d.podpiski).sort(([a],[b])=>mesto(a)-mesto(b)||a.localeCompare(b)).map(([imya,p])=>{
+  if(p.zhdyom)return `<div class="kart"><div class="imya">${podpis(imya)}</div><span class="plashka slep">ещё не измеряется</span><div class="ost">${p.zhdyom}</div></div>`;
+  if(p.oshibka)return `<div class="kart"><div class="imya">${podpis(imya)}</div><div class="avar">не снялось: ${p.oshibka}</div></div>`;
+  // ── третья подписка: Codex. У неё ДРУГИЕ величины, и подставлять её в карточку
+  //    Anthropic нельзя: там, где Codex молчит, чужая карточка нарисовала бы «нет данных
+  //    — сборщик старой версии», то есть соврала бы про причину.
+  if(p.postavshchik==='codex'){
+   const v=p.vozrast_minut, kr=p.kredity||{};
+   // Длину окна берём ИЗ ДАННЫХ поставщика, а не пишем словами в подписи:
+   // подпись «5 часов» была бы догадкой и молча устарела бы при смене тарифа.
+   const okno=o=>{const c=o&&o.okno_sekund;return c?` · окно ${c>=86400?c/86400+' сут':c/3600+' ч'}`:''};
+   return `<div class="kart"><div class="imya">${podpis(imya)}</div><div class="org">${p.organizaciya||'—'}</div>
+   ${polosa('основная квота'+okno(p.nedelya),p.nedelya)}
+   ${polosa('основная квота, короткое окно'+okno(p.vtoroe_okno),p.vtoroe_okno)}
+   ${p.vtoroe_okno?'':`<div class="ost">короткого окна у основной квоты Codex сейчас НЕТ В ОТВЕТЕ
+    (поле secondary_window пустое). Строку держим нарочно: появится — увидим сразу, а пустая
+    строка честнее отсутствующей.</div>`}
+   ${polosa('Spark'+okno(p.spark_korotkoe),p.spark_korotkoe)}
+   ${polosa('Spark'+okno(p.spark_nedelya),p.spark_nedelya)}
+   ${polosa('code review'+okno(p.code_review),p.code_review)}
+   <span class="plashka ${p.predel_dostignut==null?'slep':p.predel_dostignut?'net':'ok'}">${p.predel_dostignut==null?'предел: неизвестно (поля нет в данных)':p.predel_dostignut?'ПРЕДЕЛ ДОСТИГНУТ'+(p.tip_dostignutogo?' ('+p.tip_dostignutogo+')':''):'предел не достигнут'}</span>
+   <span class="plashka ${p.kredity==null?'slep':kr.pererashod_ischerpan?'net':'ok'}">дополнительные кредиты: ${
+    p.kredity==null?'неизвестно (поля нет в данных)':kr.bezlimit?'без предела':`остаток ${kr.ostatok==null?'—':kr.ostatok}`}</span>
+   ${kr.priblizitelno_lokalnyh_soobshcheniy?`<div class="ost">на кредиты примерно: локальных сообщений ${kr.priblizitelno_lokalnyh_soobshcheniy.join('–')}, облачных ${(kr.priblizitelno_oblachnyh_soobshcheniy||[]).join('–')} (оценка поставщика)</div>`:''}
+   ${p.sbrosy_kvoty&&p.sbrosy_kvoty.dostupno!=null?`<div class="ost">досрочных сбросов квоты: доступно ${p.sbrosy_kvoty.dostupno}, применимо сейчас ${p.sbrosy_kvoty.primenimo_seychas??'—'}</div>`:''}
+   ${p.modeli&&Object.keys(p.modeli).length?`<div class="ost">модели: ${Object.entries(p.modeli).map(([m,ok])=>m+(ok?' — доступна':' — НЕДОСТУПНА')).join(' · ')}</div>`:''}
+   ${p.limit_rashodov_dostignut?'<span class="plashka net">достигнут лимит расходов</span>':''}
+   <div class="ost">${p.chego_net||''}</div>
+   <div class="ost">снято ${v==null?'—':v+' мин назад'} · опрос не каждую минуту:
+    допустимая частота этой точки нигде не объявлена${v!=null&&v>40?' · <span style="color:var(--kr)">🔴 число устарело, сборщик Codex молчит</span>':''}</div></div>`}
+  const per=p.pererashod||{};
+  return `<div class="kart"><div class="imya">${podpis(imya)}</div><div class="org">${p.organizaciya||'—'}</div>
+  <div class="ost" style="margin:-8px 0 12px">снято ${d.snyato_chelovecheski} · тариф Anthropic в ответе не сообщает</div>
+  ${polosa('за 5 часов',p.pyat_chasov)}${polosa('за неделю',p.nedelya)}${premium(p.premium)}
+  <span class="plashka ${per.sostoyanie==null?'slep':per.sostoyanie==='allowed'?'ok':'net'}">перерасход: ${
+   per.sostoyanie==null?'неизвестно (поля нет в данных)':per.sostoyanie==='allowed'?'разрешён — при исчерпании работа продолжится':'запрещён — при исчерпании агент ОСТАНОВИТСЯ'}</span></div>`}).join('')
+}).catch(e=>{document.getElementById('telo').innerHTML=
+ `<div class="avar"><b>Данные не получены: ${e.message}</b><br>Это отказ страницы, а не «расход ноль». Проверьте службу лимитов на sadik (dsh-limity).</div>`;
+ document.getElementById('snyato').textContent='—'});
+setTimeout(()=>location.reload(),300000);
+</script></body></html>

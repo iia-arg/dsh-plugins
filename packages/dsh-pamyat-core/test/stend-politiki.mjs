@@ -1,8 +1,13 @@
-/**
- * Стенд политики записи. Доказывает главное: «человек отказал» и «канала нет» —
- * РАЗНЫЕ исходы с разными объяснениями. Если стенд это перестанет ловить,
- * сломанная установка станет неотличима от осторожного человека.
- */
+
+// RU: Каждый mkdtemp создаём через vremennyj(): уборка выполняется при обычном выходе, исключении, process.exit и SIGTERM/SIGINT, включая timeout 120. SIGKILL не перехватывается; временные файлы дочернего процесса убирает сам дочерний процесс.
+// EN: Create every mkdtemp through vremennyj(): cleanup runs on normal exit, exceptions, process.exit, and SIGTERM/SIGINT, including timeout 120. SIGKILL cannot be intercepted; a child process must clean up its own temporary files.
+import { mkdtempSync as mkdtempSync_, rmSync as rmSync_ } from 'node:fs'
+const VREMENNYE = []
+const vremennyj = (...a) => { const k = mkdtempSync_(...a); VREMENNYE.push(k); return k }
+process.on('exit', () => { for (const k of VREMENNYE) rmSync_(k, { recursive: true, force: true }) })
+process.on('SIGTERM', () => process.exit(143)); process.on('SIGINT', () => process.exit(130))
+// RU: Политика должна различать отказ человека и отсутствие канала по исходу и объяснению; поломка установки не должна выглядеть человеческим решением.
+// EN: Policy must distinguish human refusal from a missing channel by outcome and explanation; an installation failure must not look like a human decision.
 let reshitPoKlassu, istolkovatPodtverzhdenie, KLASSY_SPRASHIVAT
 try {
   ;({ reshitPoKlassu, istolkovatPodtverzhdenie, KLASSY_SPRASHIVAT } = await import('../src/politika.js'))
@@ -18,21 +23,17 @@ const proba = (imya, f) => {
   vsego++;
   try {
     const vernulos = f();
-    // 🔴 ПРИРОДА ТЕЛА ПРОВЕРЯЕТСЯ, А НЕ ПОДРАЗУМЕВАЕТСЯ (05.09.2026). Прогонщик синхронный —
-    // ждать не умеет. Ожидающее тело вернёт промис, try его НЕ поймает, проба зачтётся
-    // мгновенно, а брошенное внутри уйдёт в никуда. Такая проба не краснеет НИКОГДА, ни на
-    // каких данных: это не ложно-зелёное, а отсутствие проверки под видом проверки.
-    // Замер 05.09: семь стендов ядра из десяти зеленели на подложенном падении в ожидающем
-    // теле. Действующих async-тел не было ни одного — беда была впереди, и закрыта устройством.
+    // RU: Прогонщик синхронный и не ждёт промис: async-тело могло бы зачесть успех до исключения внутри. Возвращённый промис означает отказ пробы.
+    // EN: The runner is synchronous and does not await promises: an async body could record success before an inner exception. A returned promise fails the probe.
     if (vernulos && typeof vernulos.then === 'function') {
       throw new Error('тело пробы ОЖИДАЮЩЕЕ, а прогонщик синхронный: вынеси ожидание наружу');
     }
-    // 🔴 ВОЗВРАТ ТЕЛА УЧИТЫВАЕТСЯ (05.09.2026). Обёртка краснела только на ИСКЛЮЧЕНИИ,
-    // а возврат выбрасывала — проба вида «вернуть true либо строку с причиной» была
-    // зелёной при ЛЮБОМ содержимом. Замер фактом: вписала в каждый стенд ядра пробу,
-    // заведомо возвращающую строку, — ПЯТЬ стендов её не заметили.
-    if (typeof vernulos === 'string') throw new Error(vernulos);
-    if (vernulos === false) throw new Error('тело пробы вернуло false без причины');
+    // RU: Тело пробы должно бросить ошибку или вернуть undefined. Любое другое значение, включая строку, false, 0, null и объект, означает отказ: игнорирование возврата даёт ложный успех.
+    // EN: The probe body must throw an error or return undefined. Any other value, including a string, false, 0, null, or an object, means failure: ignoring returns produces false success.
+    if (vernulos !== undefined && vernulos !== true) {
+      throw new Error('тело пробы ВЕРНУЛО «' + String(vernulos).slice(0, 60) +
+                      '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы');
+    }
     proshlo++; console.log('  ✅ ' + imya); }
   catch (e) { console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 130)); }
 };
@@ -116,6 +117,66 @@ proba('ПОРЧА: канала нет вовсе → природа полом�
 proba('разрешение работает', () => {
   const r = istolkovatPodtverzhdenie('allowed-once', true);
   if (r.zapisyvat !== true) throw new Error('разрешение не сработало');
+});
+
+// RU: Парно проверяем zapishet на собранном ядре с временной базой, а не на копиях метода. reshit отвечает о политике: ask одинаков на узлах с отвечающим и без него, хотя без отвечающего запись проходит с пометкой. Здесь проверяем решение о возможности записи; запись в рабочую память проверяется отдельно.
+// EN: Test zapishet in pairs on the assembled core with a temporary database, not on copied methods. reshit answers a policy question: ask is identical with or without a confirmer, although without one the record passes with a mark. This tests the write-eligibility decision; actual working-memory writes are tested separately.
+const { apply } = await import('../src/index.js');
+const { mkdtempSync } = await import('node:fs');
+const { join } = await import('node:path');
+const { tmpdir } = await import('node:os');
+const katalogSluzhebnyj = vremennyj(join(tmpdir(), 'politika-'));
+let schyotBaz = 0;
+const sobratYadro = (cfg) => {
+  const servisy = {};
+  const ctx = { provide(imya, obj) { servisy[imya] = obj; }, on() {}, logger: { error() {} } };
+  apply(ctx, { putBazy: join(katalogSluzhebnyj, `b${schyotBaz++}.db`), agent: 'stend', ...cfg });
+  if (!servisy.pamyat) throw new Error('стенд негоден: сервис pamyat не объявлен');
+  return servisy.pamyat;
+};
+const zapishet = (klass, cfg) =>
+  sobratYadro({ sprashivat: cfg.sprashivat, otvechayushchegoNet: cfg.otvechayushchegoNet })
+    .zapishet(klass);
+proba('«запишет ли» РАЗЛИЧАЕТ узлы: без отвечающего пишет, с отвечающим — нет', () => {
+  const sprashivat = ['ogranichenie', 'navyk'];
+  const bez = zapishet('ogranichenie', { sprashivat, otvechayushchegoNet: true });
+  const s   = zapishet('ogranichenie', { sprashivat, otvechayushchegoNet: false });
+  if (bez !== true)  throw new Error('на узле БЕЗ отвечающего класс обязан записываться');
+  if (s   !== false) throw new Error('на узле С отвечающим класс без подтверждения писать нельзя');
+  // RU: Обычный класс пишется при обеих настройках; это контроль против прибора, всегда возвращающего разные ответы.
+  // EN: An ordinary class is writable under both configurations; this guards against a detector that always returns different answers.
+  if (!zapishet('urok', { sprashivat, otvechayushchegoNet: true })) throw new Error('обычный класс не пишется');
+  if (!zapishet('urok', { sprashivat, otvechayushchegoNet: false })) throw new Error('обычный класс не пишется');
+});
+
+proba('ПОРЧА-ПОКАЗАТЕЛЬ: «спросит ли» на этих же данных НЕ различает узлы', () => {
+  const sprashivat = ['ogranichenie', 'navyk'];
+  const a = reshitPoKlassu('ogranichenie', { sprashivat })?.reshenie;
+  const b = reshitPoKlassu('ogranichenie', { sprashivat })?.reshenie;
+  if (a !== 'ask' || b !== 'ask') throw new Error('ожидалось ask на обоих');
+  // RU: reshit описывает политику, а не возможность записи; проба не даёт снова использовать его для сужения классов.
+  // EN: reshit describes policy, not write eligibility; this probe prevents using it again to narrow classes.
+});
+
+// RU: Три пробы различают ручной и автоматический вызовы: ослабляющий признак действует только на свой вызов и не меняет соседний путь.
+// EN: Three probes distinguish manual and automatic calls: the relaxation flag applies only to its own call and does not change the other path.
+const zapishetV = (klass, cfg, vyzov = {}) =>
+  sobratYadro({ sprashivat: cfg.sprashivat, otvechayushchegoNet: cfg.otvechayushchegoNet })
+    .zapishet(klass, vyzov);
+proba('(а1) на узле С отвечающим: вызов дистилляции пишет, РУЧНОЙ — по-прежнему нет', () => {
+  const cfg = { sprashivat: ['ogranichenie', 'navyk'], otvechayushchegoNet: false };
+  if (zapishetV('ogranichenie', cfg) !== false) {
+    throw new Error('ручной вызов на узле с человеком обязан требовать подтверждения');
+  }
+  if (zapishetV('ogranichenie', cfg, { otvechayushchegoNetVVyzove: true }) !== true) {
+    throw new Error('вызов, объявивший отсутствие отвечающего, обязан писать');
+  }
+});
+proba('(а1) признак вызова НЕ отменяет политику для обычных классов', () => {
+  const cfg = { sprashivat: ['ogranichenie', 'navyk'], otvechayushchegoNet: false };
+  // RU: Обычный класс пишется без признака: контроль против безусловного true при непустом втором аргументе.
+  // EN: An ordinary class is writable without the flag: a control against unconditional true for a nonempty second argument.
+  if (!zapishetV('urok', cfg)) throw new Error('обычный класс обязан писаться и так');
 });
 
 console.log('  итог: ' + proshlo + ' из ' + vsego);

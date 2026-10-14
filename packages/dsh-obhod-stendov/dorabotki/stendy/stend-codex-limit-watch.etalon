@@ -1,0 +1,286 @@
+=== N: исправное 25/0, авто ВЫКЛ — ничего
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 25.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 25% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВЫКЛ · решение: ничего
+     код 0
+   · прогон t+600 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790800600.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 25.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800600.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 25% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВЫКЛ · решение: ничего
+     код 0
+   итог: тревог 0 · вызовов переключателя 0 · ссылки → p3/auth.json
+=== P: 3 на 85 % — одно предупреждение на окно
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     ⚠️ подписка 3 выбрана на 85% (порог переключения 95%); порог 95 % задан владельцем; время от 95 до 100 % не измерено (3 (pro): 85% до 06.10 12:45Z · �
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 85.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 85% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВЫКЛ · решение: ничего
+     код 0
+   · прогон t+600 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790800600.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 85.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800600.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 85% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВЫКЛ · решение: ничего
+     код 0
+   итог: тревог 1 · вызовов переключателя 0 · ссылки → p3/auth.json
+=== F: 3 на 92 %, 4 на 0, авто ВЫКЛ — тревога «пора», переключатель НЕ зовётся
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     ⚠️ подписка 3 выбрана на 92% (порог переключения 95%); порог 95 % задан владельцем; время от 95 до 100 % не измерено (3 (pro): 92% до 06.10 12:45Z · �
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВЫКЛ · решение: ничего
+     код 0
+   · прогон t+600 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790800600.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800600.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВЫКЛ · решение: ничего
+     код 0
+   итог: тревог 1 · вызовов переключателя 0 · ссылки → p3/auth.json
+=== A: 3 на 92 %, 4 на 0, авто ВКЛ — переключение на 4, дальше тишина
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     ⚠️ подписка 3 выбрана на 92% (порог переключения 95%); порог 95 % задан владельцем; время от 95 до 100 % не измерено (3 (pro): 92% до 06.10 12:45Z · �
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: ничего
+     код 0
+   · прогон t+600 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790800600.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800600.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: ничего
+     код 0
+   итог: тревог 1 · вызовов переключателя 0 · ссылки → p3/auth.json
+=== Z: 3 сервер «нельзя» (доля 60), 4 на 10, авто ВКЛ — переключение
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     💳 КРЕДИТЫ ПОШЛИ В РАСХОД: подписка 3, обычный доступ закрыт, balance 62500, сброс окна 06.10 12:45Z; идёт с неизвестного момента (возможно �
+     🔄 АВТОПЕРЕКЛЮЧЕНИЕ Codex 3→4: подписка 3 выбрана (60%), 4 10% · pereklyuchatel-codex код 0: переключено на 4
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": false, "primary": {"resetsAt": 1791290724, "usedPercent": 60.0, "windowDurationMins": 10080}, "rateLimit
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 10.0, "windowDurationMins": 10080}, "rateLimitReac
+     3 (pro): 60% до 06.10 12:45Z · НЕЛЬЗЯ · кредиты 62500.00 · 4 (prolite): 10% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: АВТО на 4: сделано
+     код 0
+   итог: тревог 2 · вызовов переключателя 1 · ссылки → p4/auth.json
+=== H: 3 на 100 %, 4 на 75 % (полоса бывшего гистерезиса), авто ВКЛ — ПЕРЕКЛЮЧАЕТ
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     🔄 АВТОПЕРЕКЛЮЧЕНИЕ Codex 3→4: подписка 3 выбрана (100%), 4 75% · pereklyuchatel-codex код 0: переключено на 4
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 100.0, "windowDurationMins": 10080}, "rateLimit
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 75.0, "windowDurationMins": 10080}, "rateLimitReac
+     3 (pro): 100% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 75% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: АВТО на 4: сделано
+     код 0
+   итог: тревог 1 · вызовов переключателя 1 · ссылки → p4/auth.json
+=== B: 3 на 89 %, 4 на 88,5 % (шум у порога) — остаёмся, без тревоги «обе»
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     ⚠️ подписка 3 выбрана на 89% (порог переключения 95%); порог 95 % задан владельцем; время от 95 до 100 % не измерено (3 (pro): 89% до 06.10 12:45Z · �
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 89.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 88.5, "windowDurationMins": 10080}, "rateLimitReac
+     3 (pro): 89% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 88% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: ничего
+     код 0
+   итог: тревог 1 · вызовов переключателя 0 · ссылки → p3/auth.json
+=== O: ОБЕ выбраны (95/94 — цель не ниже на 2 п.п.), авто ВКЛ — не переключает, тревога один раз
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 95.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 94.0, "windowDurationMins": 10080}, "rateLimitReac
+     3 (pro): 95% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 94% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: другая не ниже активной на запас шума — �
+     код 0
+   · прогон t+600 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790800600.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 95.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800600.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 94.0, "windowDurationMins": 10080}, "rateLimitReac
+     3 (pro): 95% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 94% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: другая не ниже активной на запас шума — �
+     код 0
+   · прогон t+1200 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790801200.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 95.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790801200.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 94.0, "windowDurationMins": 10080}, "rateLimitReac
+     3 (pro): 95% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 94% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: другая не ниже активной на запас шума — �
+     код 0
+   итог: тревог 0 · вызовов переключателя 0 · ссылки → p3/auth.json
+=== R: 3 на 100 %, 4 на 95 % — переключает (относительно, как podpiski; 5 % недели не теряются)
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     💳 подписка 3 выбрана (100%), но на кредитах · кредиты 62500.00; свободной квоты у другой нет (3 (pro): 100% до 06.10 12:45Z · кредиты 62500.00; 4 (prolite): 9
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 100.0, "windowDurationMins": 10080}, "rateLimit
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 95.0, "windowDurationMins": 10080}, "rateLimitReac
+     3 (pro): 100% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 95% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: активная 3 выбрана, но на кредитах · кред
+     код 0
+   итог: тревог 1 · вызовов переключателя 0 · ссылки → p3/auth.json
+=== E: 3 на 90 %, 4 на 89 % — остаёмся, «обе» НЕ сказано (4 не выбрана)
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     ⚠️ подписка 3 выбрана на 90% (порог переключения 95%); порог 95 % задан владельцем; время от 95 до 100 % не измерено (3 (pro): 90% до 06.10 12:45Z · �
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 90.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 89.0, "windowDurationMins": 10080}, "rateLimitReac
+     3 (pro): 90% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 89% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: ничего
+     код 0
+   итог: тревог 1 · вызовов переключателя 0 · ссылки → p3/auth.json
+=== W: у 3 появилось второе окно на 95 % (primary 30) — решает наибольшее: переключает
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     🔄 АВТОПЕРЕКЛЮЧЕНИЕ Codex 3→4: подписка 3 выбрана (95%), 4 0% · pereklyuchatel-codex код 0: переключено на 4
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 30.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 95% до 30.09 23:13Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: АВТО на 4: сделано
+     код 0
+   итог: тревог 1 · вызовов переключателя 1 · ссылки → p4/auth.json
+=== Q: выдержка и предел — переключатель отказывает (код 1), авто ВКЛ
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     ⚠️ подписка 3 выбрана на 92% (порог переключения 95%); порог 95 % задан владельцем; время от 95 до 100 % не измерено (3 (pro): 92% до 06.10 12:45Z · �
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: ничего
+     код 0
+   · прогон t+600 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790800600.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800600.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: ничего
+     код 0
+   · прогон t+3700 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790803700.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790803700.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: ничего
+     код 0
+   · прогон t+7400 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790807400.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790807400.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: ничего
+     код 0
+   · прогон t+11100 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790811100.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790811100.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: ничего
+     код 0
+   · прогон t+14800 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790814800.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790814800.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВКЛ · решение: ничего
+     код 0
+   итог: тревог 1 · вызовов переключателя 0 · ссылки → p3/auth.json
+=== S: слепота — 4 не читается: 1,2 — молчит; 3 — тревога; снова читается — отметка снята
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 25.0, "windowDurationMins": 10080}, "rateLimitR
+     3 (pro): 25% до 06.10 12:45Z · кредиты 62500.00 · 4: НЕ ИЗМЕРЕНО ×1 (ОШИБКА подставы: нет ответа) · активная 3 · авто ВЫКЛ · решение: ничего
+     код 0
+   · прогон t+600 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790800600.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 25.0, "windowDurationMins": 10080}, "rateLimitR
+     3 (pro): 25% до 06.10 12:45Z · кредиты 62500.00 · 4: НЕ ИЗМЕРЕНО ×2 (ОШИБКА подставы: нет ответа) · активная 3 · авто ВЫКЛ · решение: ничего
+     код 0
+   · прогон t+1200 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     🔴 заслон лимита СЛЕП: подписка 4 не читается 3+ прогонов подряд — выбранный лимит не будет замечен (3 (pro): 25% до 06.10 12:45Z · кредиты 
+     RATE_LIMITS {"at": 1790801200.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 25.0, "windowDurationMins": 10080}, "rateLimitR
+     3 (pro): 25% до 06.10 12:45Z · кредиты 62500.00 · 4: НЕ ИЗМЕРЕНО ×3 (ОШИБКА подставы: нет ответа) · активная 3 · авто ВЫКЛ · решение: ничего
+     код 2
+   · прогон t+1800 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790801800.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 25.0, "windowDurationMins": 10080}, "rateLimitR
+     3 (pro): 25% до 06.10 12:45Z · кредиты 62500.00 · 4: НЕ ИЗМЕРЕНО ×4 (ОШИБКА подставы: нет ответа) · активная 3 · авто ВЫКЛ · решение: ничего
+     код 2
+   · прогон t+2400 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790802400.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 25.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790802400.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 25% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВЫКЛ · решение: ничего
+     код 0
+   итог: тревог 1 · вызовов переключателя 0 · ссылки → p3/auth.json
+=== U: 3 на 92, 4 НЕ ЧИТАЕТСЯ, авто ВКЛ — не переключает («не измерено» ≠ «годна»)
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     ⚠️ подписка 3 выбрана на 92% (порог переключения 95%); порог 95 % задан владельцем; время от 95 до 100 % не измерено (3 (pro): 92% до 06.10 12:45Z · �
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4: НЕ ИЗМЕРЕНО ×1 (ОШИБКА подставы: нет ответа) · активная 3 · авто ВКЛ · решение: ничего
+     код 0
+   итог: тревог 1 · вызовов переключателя 0 · ссылки → p3/auth.json
+=== D: делёж — gamma на 4; 3 на 92 — авто не действует
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     ⚠️ подписка 3 на 92% (порог 95%) — на ней alfa, beta, marc; делёж, авто не действует. Сброс 06.10 12:45Z
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная делёж · авто ВКЛ · решение: делёж — авто не действует; 3 (alfa, beta, ma
+     код 0
+   итог: тревог 1 · вызовов переключателя 0 · ссылки → p3/auth.json
+=== K: выключатель мусор {"avto": "true"} — ВЫКЛ
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     ⚠️ подписка 3 выбрана на 92% (порог переключения 95%); порог 95 % задан владельцем; время от 95 до 100 % не измерено (3 (pro): 92% до 06.10 12:45Z · �
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВЫКЛ · решение: ничего
+     код 0
+   итог: тревог 1 · вызовов переключателя 0 · ссылки → p3/auth.json
+=== L: тревога не доставлена — код 3, отметка не пишется, повтор; канал ожил — доставлено, дальше тишина
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     ⚠️ подписка 3 выбрана на 92% (порог переключения 95%); порог 95 % задан владельцем; время от 95 до 100 % не измерено (3 (pro): 92% до 06.10 12:45Z · �
+     🔴 ТРЕВОГА НЕ ДОСТАВЛЕНА (канал /var/tmp/zclw-C8CavW/alert)
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВЫКЛ · решение: ничего
+     код 3
+   · прогон t+600 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     ⚠️ подписка 3 выбрана на 92% (порог переключения 95%); порог 95 % задан владельцем; время от 95 до 100 % не измерено (3 (pro): 92% до 06.10 12:45Z · �
+     🔴 ТРЕВОГА НЕ ДОСТАВЛЕНА (канал /var/tmp/zclw-C8CavW/alert)
+     RATE_LIMITS {"at": 1790800600.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800600.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВЫКЛ · решение: ничего
+     код 3
+   · прогон t+1200 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     ⚠️ подписка 3 выбрана на 92% (порог переключения 95%); порог 95 % задан владельцем; время от 95 до 100 % не измерено (3 (pro): 92% до 06.10 12:45Z · �
+     RATE_LIMITS {"at": 1790801200.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790801200.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВЫКЛ · решение: ничего
+     код 0
+   · прогон t+1800 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790801800.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 92.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790801800.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 92% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВЫКЛ · решение: ничего
+     код 0
+   итог: тревог 3 · вызовов переключателя 0 · ссылки → p3/auth.json
+=== Y: ЖИВОЕ ЧТЕНИЕ через подставной app-server (CLW_BIN), предел 3 с: norm · paket · obryv · net_polya · molchit
+   · norm: 3 (pro): 42% до 06.10 12:45Z · 4 (pro): 42% до 06.10 12:45Z · активная [0 с]
+   · paket: 3 (pro): 42% до 06.10 12:45Z · 4 (pro): 42% до 06.10 12:45Z · активная [10 с]
+   · obryv: 3: НЕ ИЗМЕРЕНО ×1 (нет ответа за 3 с) · 4: НЕ ИЗМЕРЕНО ×1 (нет ответа за 3 с) · активная [16 с]
+   · net_polya: 3: НЕ ИЗМЕРЕНО ×2 (ответ без ordinaryUsageAllowed (NoneType) — формат сервера сменился?) · 4: НЕ ИЗМЕРЕНО ×2 (ответ без ordinaryUsageAllow [0 с]
+   · molchit: 3: НЕ ИЗМЕРЕНО ×3 (нет ответа за 3 с) · 4: НЕ ИЗМЕРЕНО ×3 (нет ответа за 3 с) · активная [16 с]
+   итог: тревог 1 · вызовов переключателя 0 · ссылки → p3/auth.json
+=== V: ввод — довод --dry-run
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT
+     ОТКАЗ: доводов нет (получено: --dry-run) — сторож только боевой, пробы �
+     код 2
+   итог: тревог 0 · вызовов переключателя 0 · ссылки → p3/auth.json
+=== X: ключ CLW_STEND
+   — с ключом (прогон):
+   · прогон t+0 с:
+     ПОДМЕНЕНО: KATALOG DOMA NASTROJKA SOSTOYANIE DOM ISTOCHNIK PEREKL ALERT TEPER
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "62500", "hasCredits": true}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791290724, "usedPercent": 25.0, "windowDurationMins": 10080}, "rateLimitR
+     RATE_LIMITS {"at": 1790800000.0, "credits": {"balance": "0", "hasCredits": false}, "limitIds": [], "ordinaryUsageAllowed": true, "primary": {"resetsAt": 1791377256, "usedPercent": 0.0, "windowDurationMins": 10080}, "rateLimitReach
+     3 (pro): 25% до 06.10 12:45Z · кредиты 62500.00 · 4 (prolite): 0% до 07.10 12:47Z · активная 3 · авто ВЫКЛ · решение: ничего
+     код 0
+   — без ключа (загрузка без запуска): PEREKL · SOST · DOMA
+     ИГНОРИРУЮ (нет CLW_STEND=1), беру боевые: CLW_KATALOG CLW_DOMA CLW_NASTROJKA CLW_SOSTOYANIE CLW_DOM CLW_ISTOCHNIK CLW_PEREKL CLW_ALERT
+     /usr/local/sbin/pereklyuchatel-codex · /var/lib/codex-limit-watch/sostoyanie.json · ['/var/lib/coder-gateway-alfa/codex-home', '/var/lib/coder-gateway-beta/codex-home', '/var/lib/coder-gateway-gamma/codex-home', '/var/lib/coder-gateway-marc/codex-home', '/va
+   — ключ 2 (прогон):
+     ОТКАЗ: CLW_STEND=«2» — допустимо только 1 (стенд) или пусто (бой); ничего не тронуто
+     код 2
+   итог: тревог 0 · вызовов переключателя 0 · ссылки → p3/auth.json

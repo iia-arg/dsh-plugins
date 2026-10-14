@@ -1,0 +1,15 @@
+[Unit]
+Description=Кнопка — исполнитель разрешённых команд для агентов машины
+After=multi-user.target
+
+[Service]
+Type=simple
+# Своим cgroup: переживает перезапуск любой агентской службы, включая ту,
+# которая её и попросила перезапуститься.
+User=root
+ExecStart=/usr/local/sbin/agent-button-daemon.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

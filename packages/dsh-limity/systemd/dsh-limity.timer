@@ -1,0 +1,10 @@
+# B-N-1776: проход службы лимитов раз в минуту (Codex меряется раз в 10 мин, приёмная — по событию писателей).
+[Unit]
+Description=Служба лимитов подписок sadik — раз в минуту
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target

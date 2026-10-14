@@ -1,0 +1,7 @@
+[Unit]
+Description=sadik egress failover US(awg3) -> NL(awg0)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/sadik-vpn-failover.sh

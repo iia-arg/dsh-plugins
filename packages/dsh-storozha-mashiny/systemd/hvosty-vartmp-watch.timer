@@ -1,0 +1,12 @@
+# RU: Раз в сутки; состояния нет — остывание обеспечивает сам суточный такт.
+# EN: Once a day; there is no state — the daily tick itself is the cool-down.
+[Unit]
+Description=Суточный прогон hvosty-vartmp-watch · Daily run of hvosty-vartmp-watch
+
+[Timer]
+OnCalendar=*-*-* 05:17:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

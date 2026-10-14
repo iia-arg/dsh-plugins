@@ -1,12 +1,6 @@
-/** Стенд документации: оба README растут вместе, ссылаются только на то, что
- *  РЕАЛЬНО уедет в пакет, и называют один и тот же способ перепроверки.
- *
- *  Коды: 0 сошлось | 1 расхождение | 2 слепота (проверить не удалось).
- *
- *  🔴 СОСТАВ БЕРЁТСЯ У САМОГО npm (`npm pack --dry-run --json`), а НЕ из files.
- *  Довод куплен разбором 03.09.2026: files — тот самый перечень, который и
- *  устаревает молча. Считать по нему значит мерить предмет прибором, который
- *  дал сбой. Ответ npm — это то, что уедет на самом деле.
+/**
+ * RU: Стенд документации сравнивает оба README, ссылки с настоящим архивом npm и способ перепроверки. Состав берётся через npm pack --dry-run --json, не устаревающий files глазами. Коды 0 — совпало, 1 — расхождение, 2 — проверить не удалось; он не доказывает качество всей документации.
+ * EN: The documentation test compares both READMEs, their references against the actual npm archive, and verification instructions. Obtain contents through npm pack --dry-run --json rather than manually reading a stale files list. Exit codes: 0 matches, 1 mismatch, 2 unable to check; it does not prove overall documentation quality.
  */
 import { readFileSync, mkdtempSync, rmSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -14,10 +8,17 @@ const require_fs = () => ({ mkdtempSync, rmSync, readdirSync })
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+// RU: Убрать зарегистрированные временные объекты на обычном exit и SIGTERM/SIGINT. SIGKILL и временное дочерних процессов не покрыты.
+// EN: Remove registered temporary objects on normal exit and SIGTERM/SIGINT. This covers neither SIGKILL nor child-process temporary objects.
+import { mkdtempSync as mkdtempSync_, rmSync as rmSync_ } from 'node:fs'
+const VREMENNYE = []
+const vremennyj = (...a) => { const k = mkdtempSync_(...a); VREMENNYE.push(k); return k }
+process.on('exit', () => { for (const k of VREMENNYE) rmSync_(k, { recursive: true, force: true }) })
+process.on('SIGTERM', () => process.exit(143)); process.on('SIGINT', () => process.exit(130))
 
 const koren = join(dirname(fileURLToPath(import.meta.url)), '..')
-// 🔴 ПРИБОР НАЗЫВАЕТ СЕБЯ. Этот стенд ещё и запускает соседние — то есть прибор
-// над приборами; «неизвестно чем мерили» здесь стоило бы дороже всего.
+// RU: Стенд запускает другие стенды, поэтому собственная сумма особенно нужна для воспроизводимости прибора над приборами.
+// EN: This test runs other tests, so its own checksum is especially necessary to identify a reproducible instrument over instruments.
 {
   const { createHash } = await import('node:crypto')
   const put = fileURLToPath(import.meta.url)
@@ -28,15 +29,21 @@ const ru = readFileSync(join(koren, 'README.md'), 'utf8')
 const en = readFileSync(join(koren, 'README.en.md'), 'utf8')
 
 let vsego = 0, proshlo = 0, slep = 0
-const proba = (i, f) => { vsego++; try { f(); proshlo++; console.log('  ✅ ' + i) } catch (e) { console.log('  ❌ ' + i + ' — ' + String(e.message).slice(0, 140)) } }
+// RU: Обёртка принимает только undefined без исключения; возвращённое значение считается отказом.
+// EN: The wrapper accepts only undefined without an exception; a returned value counts as failure.
+const proba = (i, f) => { vsego++; try { const v = f(); if (v !== undefined) throw new Error('тело пробы ВЕРНУЛО «' + String(v).slice(0, 60) + '» — тело обязано бросить или промолчать'); proshlo++; console.log('  ✅ ' + i) } catch (e) { console.log('  ❌ ' + i + ' — ' + String(e.message).slice(0, 140)) } }
 const slepota = (i, pochemu) => { vsego++; slep++; console.log('  ⬜ ' + i + ' — ' + pochemu) }
 
-// --- СОСТАВ ПУБЛИКАЦИИ: ответ npm, а не наше прочтение files ------------------
+// RU: Проверить состав по ответу npm, не повторной интерпретации files.
+// EN: Check package contents from the npm response rather than another interpretation of files.
 let sostav = null
 try {
   const out = execFileSync('npm', ['pack', '--dry-run', '--json'], { cwd: koren, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
   sostav = JSON.parse(out)[0].files.map((f) => f.path).sort()
-} catch (e) { /* ниже честная слепота, а не зелень */ }
+} catch (e) { /**
+ * RU: Непроверенный предмет ниже даёт слепоту, не зелёный исход.
+ * EN: An unchecked subject below yields an inability-to-check result, not a pass.
+ */ }
 
 proba('стенд годен: оба README непусты', () => {
   if (ru.length < 1000 || en.length < 1000) throw new Error(`ru ${ru.length}, en ${en.length} знаков`)
@@ -49,8 +56,8 @@ proba('ключи настройки описаны в обоих', () => {
   }
 })
 
-// 🔴 ПРОБА ПЕРВАЯ (условие ворот 03.09.2026). Обещание без содержимого: README ссылается на файл,
-// которого в пакете нет. Поставивший идёт по ссылке и упирается в пустоту.
+// RU: Ссылка README обязана вести к файлу в архиве, не только к существующему пути рабочего дерева.
+// EN: A README link must target an archived file, not merely a path present in the working tree.
 if (sostav === null) slepota('ссылки README ведут в состав публикации', 'npm pack --dry-run --json не отработал — состав неизвестен')
 else proba('ссылки README ведут в состав публикации', () => {
   const ssylki = new Set()
@@ -60,8 +67,8 @@ else proba('ссылки README ведут в состав публикации'
   if (net.length) throw new Error(`обещано, но не уедет: ${net.join(', ')}`)
 })
 
-// 🔴 ПРОБА ВТОРАЯ (условие ворот 03.09.2026). Парные README расходятся молча: один говорит про стенд,
-// другой молчит. Проба на ссылки этого не поймает — второй просто не ссылается.
+// RU: Оба языка обязаны упоминать тот же стенд: одна проверка ссылок не обнаружила бы отсутствие упоминания во втором README.
+// EN: Both languages must mention the same test; checking links alone cannot detect an omitted mention in the other README.
 proba('оба README называют ОДИН И ТОТ ЖЕ способ перепроверки', () => {
   const komandy = (t) => new Set([...t.matchAll(/^ {4}(node [^\n]+)$/gm)].map((m) => m[1].trim()))
   const a = komandy(ru), b = komandy(en)
@@ -73,31 +80,15 @@ proba('оба README называют ОДИН И ТОТ ЖЕ способ пе�
   }
 })
 
-// 🔴 КАЖДЫЙ ЯЗЫК МЕРЯЕТСЯ СВОИМ ШАБЛОНОМ (03.09.2026). Прежняя проба искала
-// в обоих файлах одну и ту же смесь «код 2|exit 2» — и на английском находила
-// только латинскую половину. Того же вида замер снаружи дал вывод «английский
-// не упоминает слепоту НИ РАЗУ», хотя она там описана словами: искали русские
-// слова в английском тексте. Шаблон, общий для двух языков, находит только то,
-// что в них совпало.
+// RU: Каждый язык проверяется своими словами/шаблонами: общий русско-английский шаблон обнаруживал бы только совпадающие части и давал ложное отсутствие.
+// EN: Check each language with its own wording/patterns: a shared Russian-English pattern would detect only common parts and falsely report omissions.
 proba('оба называют, что слепота — отдельный код, а не успех', () => {
   if (!/слепот|код 2/.test(ru)) throw new Error('русский не называет третий исход')
   if (!/blind|exit 2|code 2/.test(en)) throw new Error('английский не называет третий исход')
 })
 
-// --- СОСТАВ ВЫЧИСЛИМ, А СУММУ СЧИТАЕТ НЕ ЭТОТ ФАЙЛ ---------------------------
-// 🔴 ВТОРАЯ РЕАЛИЗАЦИЯ СПОСОБА УБРАНА 03.09.2026, и это правка против себя же.
-// Здесь считалась сумма предмета — своим кодом, в формате канона. Она сходилась
-// со скриптом `summa-predmeta` (сумма файла d4fc96426534a870) на момент правки,
-// проверено. Но повторение способа В ДРУГОМ ФАЙЛЕ и есть та болезнь, от которой
-// мы уходили всю ночь: две реализации расходятся при первой же правке одной из
-// них, и заметить это некому — стенд свою сумму печатает, а с чужой не сверяет.
-//
-// За ночь этот формат разошёлся ТРИЖДЫ на ровном месте: порядок полей в строке,
-// завершающий перевод строки, локаль сортировки. Все три прозой не передаются и
-// меняют число молча. Способ определён ФАЙЛОМ; здесь его нет.
-//
-// Что осталось: проверка, что состав ВЫЧИСЛИМ, берётся у самого npm и каждый
-// обещанный файл читается. Это про предмет, а не про способ.
+// RU: Проверить вычислимость состава и чтение обещанных файлов. Алгоритм канонической суммы не дублируется здесь: локаль, порядок и завершающий перевод строки должны определяться единственным инструментом.
+// EN: Check computable contents and readability of promised files. Do not duplicate the canonical checksum algorithm here: one instrument must define locale, ordering, and final newline.
 if (sostav === null) slepota('состав публикации вычислим', 'npm pack --dry-run --json не отработал')
 else proba('состав публикации вычислим', () => {
   if (sostav.length === 0) throw new Error('состав пуст — публиковать нечего')
@@ -106,20 +97,8 @@ else proba('состав публикации вычислим', () => {
   console.log('       сумму предмета считает summa-predmeta (сумма файла d4fc96426534a870), не этот стенд')
 })
 
-// --- ФОРМА ВЕРСИЙ В МАНИФЕСТЕ (03.09.2026) -----------------------------------
-// 🔴 ЗАЩИТА, РАБОТАВШАЯ ПО СОВПАДЕНИЮ, ПРИВОДИТСЯ В НАМЕРЕННОЕ СОСТОЯНИЕ.
-// Команда установки умеет молча переписать точную версию на диапазон — у соседей
-// это случилось за ночь. У меня не случилось, но не по осмотрительности: я
-// ставила с ключом, запрещающим трогать манифест, и набирала его по другой
-// причине. Механизм, уберегающий по совпадению, ломается от смены привычки — и
-// тот, кто её сменит, не узнает, что защита была.
-//
-// Проверяется ФОРМА, а не перечень версий: перечень устареет при первом же
-// обновлении, форма — решение фермы и меняется осознанно.
-//   «что нужно у ПОЛУЧАТЕЛЯ» (peer) — диапазон «^»: требование к чужой машине,
-//     точная версия там ломает установку тому, у кого версия новее;
-//   «чем гоняем МЫ» (dev) — точная: наша машина, воспроизводимость замера.
-// ГДЕ НЕ ПРИМЕНЯЕТСЯ: не судит, ПРАВИЛЬНЫЕ ли версии — только их форму.
+// RU: Проверяется форма зависимостей: peer — диапазон ^ для получателя, dev — точная версия для воспроизводимости. Это не проверка правильности выбранных версий.
+// EN: Check dependency shape: peer uses a ^ range for recipients; dev uses an exact version for reproducibility. This does not check whether the selected versions are appropriate.
 proba('форма версий: у получателя диапазон, у нас точная', () => {
   const m = JSON.parse(readFileSync(join(koren, 'package.json'), 'utf8'))
   const peer = Object.entries(m.peerDependencies || {})
@@ -131,21 +110,12 @@ proba('форма версий: у получателя диапазон, у н�
   if (ploho.length) throw new Error(ploho.join('; '))
 })
 
-// --- СТЕНДЫ В РАСКЛАДКЕ ПОЛУЧАТЕЛЯ (03.09.2026) ------------------------------
-// 🔴 ЧЕГО НЕ ПОЙМАЛА НИ ОДНА ПРОБА ВЫШЕ. Все они смотрят на пакет ИЗ ПАКЕТА, где
-// рядом лежат node_modules и дерево платформы. У получателя ни того, ни другого
-// нет, и стенд, падающий там сырой ошибкой оболочки, выглядит как «пакет
-// сломан», а не как «зависимости не поставлены». На этом 03.09 завернули
-// метапакет: 8/8 в мастерской автора, 4/8 в чужой раскладке.
-// Здесь пакет собирается, распаковывается и стенды запускаются ОТТУДА.
-// Годный исход — 0 (сошлось) или 2 (честная слепота словами). Код 1 означает,
-// что получатель увидит расхождение там, где у нас зелено.
-// ГДЕ НЕ ПРИМЕНЯЕТСЯ: себя не запускаем (рекурсия), и `npm install` не делаем —
-// проверяется именно поведение БЕЗ установленных зависимостей.
+// RU: Архив распаковывается и стенды запускаются без установленных зависимостей. Пригодны 0 или читаемый отказ 2, не 1. Сам стенд не запускается рекурсивно и npm install не выполняется.
+// EN: Extract the archive and run tests without installed dependencies. Accept 0 or a readable inability-to-check result 2, not 1. Do not recursively run this test itself or execute npm install.
 if (sostav === null) slepota('стенды годны в раскладке получателя', 'состав неизвестен — паковать нечего')
 else proba('стенды годны в раскладке получателя', () => {
   const { mkdtempSync, rmSync, readdirSync } = require_fs()
-  const tmp = mkdtempSync(join(tmpdir(), 'stend-poluchatel-'))
+  const tmp = vremennyj(join(tmpdir(), 'stend-poluchatel-'))
   try {
     execFileSync('npm', ['pack', '--pack-destination', tmp], { cwd: koren, stdio: 'ignore' })
     const arh = readdirSync(tmp).find((f) => f.endsWith('.tgz'))
@@ -153,7 +123,10 @@ else proba('стенды годны в раскладке получателя',
     execFileSync('tar', ['xzf', join(tmp, arh), '-C', tmp], { stdio: 'ignore' })
     const raspak = join(tmp, 'package')
     const moyo = fileURLToPath(import.meta.url).split('/').pop()
-    const stendy = readdirSync(join(raspak, 'test')).filter((f) => f.endsWith('.mjs') && f !== moyo)
+    // RU: Запускать только опубликованные test/stend-*.mjs из ответа npm. Файлы с точкой и временные .obyortka-* исключены, чтобы копия стенда не породила рекурсивные процессы.
+    // EN: Run only published test/stend-*.mjs from the npm response. Exclude dotfiles and temporary .obyortka-* so a test copy cannot spawn recursive processes.
+    const stendy = sostav.filter((p) => /^test\/stend-[^/]+\.mjs$/.test(p)).map((p) => p.slice('test/'.length))
+      .filter((f) => f !== moyo && !f.startsWith('.'))
     if (stendy.length === 0) throw new Error('в составе нет ни одного стенда, кроме этого')
     const plohie = []
     for (const st of stendy) {

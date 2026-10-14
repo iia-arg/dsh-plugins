@@ -1,0 +1,14 @@
+# 🔴 ВКЛЮЧАТЬ ТОЛЬКО ПОСЛЕ ТАКТА 2 перехода B-N-1621 («ПЕРЕШЛО»): до него --proverit красный по построению.
+# Включить: systemctl enable --now svesti-dostup-watch.timer · снять: systemctl disable --now svesti-dostup-watch.timer
+[Unit]
+Description=Сторож доступа шлюзов к токенам подписок — ежечасно (B-N-1621 k2)
+
+[Timer]
+OnBootSec=20min
+OnCalendar=*-*-* *:25:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=svesti-dostup-watch.service
+
+[Install]
+WantedBy=timers.target

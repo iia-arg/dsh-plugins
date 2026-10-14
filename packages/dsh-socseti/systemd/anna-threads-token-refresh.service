@@ -1,0 +1,15 @@
+[Unit]
+Description=Refresh Anna threads long-lived token
+After=socseti-anna.service
+[Service]
+Type=oneshot
+User=anna
+Group=anna
+SupplementaryGroups=socseti
+UMask=0077
+Environment=PASSWORD_STORE_DIR=/opt/anna/.password-store
+ExecStart=/usr/local/bin/node /opt/socseti-anna/src/meta-token-refresh.mjs /opt/anna/.config/socseti/config.json threads
+TimeoutStartSec=180
+Restart=no
+NoNewPrivileges=true
+ProtectSystem=full

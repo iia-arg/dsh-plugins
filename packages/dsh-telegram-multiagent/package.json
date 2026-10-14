@@ -1,0 +1,57 @@
+{
+  "name": "dsh-telegram-multiagent",
+  "version": "3.1.7",
+  "description": "Устойчивый Telegram, файловый A2A и сайт-канал для DSH с квитанциями и изоляцией сессий · Durable Telegram, file A2A and website channel for DSH with receipts and session isolation",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node test/vse-stendy.mjs"
+  },
+  "files": [
+    "src",
+    "test",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "RECEIPTS.md",
+    "OWNER-COPIES.md",
+    "OLD-PATHS.md",
+    "NEW-SESSIONS.md",
+    "OUTGOING-FILES.md",
+    "docs",
+    "LIVE-INPUT.md",
+    "courier",
+    "systemd",
+    "MAIL-STOP.md",
+    "MAIL-NEW.md",
+    "GUEST-PDF.md"
+  ],
+  "keywords": [
+    "telegram · телеграм",
+    "dsh · платформа",
+    "channel · канал",
+    "receipts · квитанции",
+    "session-isolation · изоляция-сессий"
+  ],
+  "license": "MIT",
+  "author": "Aleksandr Argelander",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iia-arg/dsh-plugins.git",
+    "directory": "packages/dsh-telegram-multiagent"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "prezhnie_imena": [
+      "telegram-multiagent"
+    ]
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1"
+  }
+}

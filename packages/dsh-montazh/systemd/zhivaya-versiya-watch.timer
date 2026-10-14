@@ -1,0 +1,10 @@
+[Unit]
+Description=Ежечасный прогон zhivaya-versiya-watch
+
+[Timer]
+OnCalendar=*-*-* *:41:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

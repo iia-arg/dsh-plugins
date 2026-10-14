@@ -1,0 +1,17 @@
+[Unit]
+Description=Observe DSH and Codex compaction evidence for alfa beta gamma
+
+[Service]
+Type=oneshot
+User=coders
+Group=coders
+WorkingDirectory=/opt/coders/alfa/plugins/dsh-compact-outcomes
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 /opt/coders/alfa/plugins/dsh-compact-outcomes/collector.py --config /opt/coders/alfa/plugins/dsh-compact-outcomes/agents.json --state-dir /opt/coders/alfa/pamyat/compact-outcomes --outbox /opt/coders/alfa/a2a/out --turn-log-dir /opt/coders/alfa/pamyat/compact-outcomes/turns
+TimeoutStartSec=90
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/coders/alfa/pamyat/compact-outcomes /opt/coders/alfa/a2a/out

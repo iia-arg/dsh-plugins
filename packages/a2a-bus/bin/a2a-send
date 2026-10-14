@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # a2a-send — написать другому агенту ЭТОЙ машины и показать это владельцу.
 #
-# ЗАЧЕМ. Шина A2A внутри одной машины: агенты пишут друг другу напрямую, без посредника
+# ЗАЧЕМ. Шина A2A внутри sadik: агенты пишут друг другу напрямую, без посредника
 # на другой машине. Владелец при этом видит переписку в своих личных чатах —
 # у каждого агента свой бот, и каждый агент пишет только от своего имени.
 #
@@ -30,19 +30,57 @@
 #   подменить его отсюда нельзя (это свойство tell-owner, не наше);
 # — не отменяет доставку письма из-за неисправного чата: видимость вторична.
 #
-# 🔴 ПРИВАТНОЕ ПИСЬМО ПОДАВАЙТЕ ЧЕРЕЗ СТАНДАРТНЫЙ ВВОД, А НЕ АРГУМЕНТОМ
+# 🔴 ПИСЬМА ЧЕРЕЗ --text ЗАПРЕЩЕНЫ: файл через stdin; --text — только короткие служебные строки.
 # Замер 29.08.2026, A/B на живой машине:
-#   a2a-send <agent> "текст"          → текст ВИДЕН в /proc/<pid>/cmdline
+#   a2a-send petrovich --text "текст"          → текст ВИДЕН в /proc/<pid>/cmdline
 #                                         любому пользователю машины (2 из 2)
-#   printf 'текст' | a2a-send <agent> → не виден (0 из 2)
+#   printf 'текст' | a2a-send petrovich → не виден (0 из 2)
 # Внутрь tell-owner текст уходит через stdin в обоих случаях — это закрыто
 # здесь. Но собственную командную строку инструмент закрыть не может: её задаёт
 # вызывающий. Окно короткое (доли секунды), однако для переписки двух агентов
 # оно настоящее.
 #
-# КОДЫ: 0 письмо доставлено и владелец увидел | 1 письмо НЕ доставлено
-#       3 ошибка вызова или получателя | 4 письмо доставлено, видимость НЕ ушла
+# КОДЫ: 0 письмо положено (копия отправителя подтверждена ИЛИ ожидается у получателя)
+#       1 письмо НЕ доставлено
+#       3 ошибка вызова или получателя (в т.ч. чужой ящик — отказ ДО передачи)
+#       4 письмо доставлено, видимость НЕ ушла — ТОЛЬКО это (до 25.09 код 4 давал и чужой ящик)
 set -uo pipefail
+# Явный локальный протокол. Обычная ветка ниже остаётся прежней.
+if [ "${1:-}" = "--v2" ]; then
+  shift
+  exec python3 "$(dirname "$0")/../lib/a2a-bus/v2_with_mirror.py" "$@"
+fi
+
+# #286: ровно одна итоговая запись за процесс, не за каждую промежуточную печать.
+# «Передано» означает локальную укладку, НЕ начало хода и НЕ доставку на другой хост.
+# Не пишем тело/ответ tell-owner: в них может быть переписка. Поля экранированы %q.
+SLED_TRANSFER=ne_podtverzhdena
+SLED_REASON=nepredvidennoe_zavershenie
+sled_itog() {
+  local code="$1" row dest source target reason outcome
+  [ "$BASH_SUBSHELL" -eq 0 ] || return 0
+  outcome=otkaz
+  [ "$SLED_TRANSFER" = ne_podtverzhdena ] || outcome=peredano
+  [ "$code" -ne 0 ] || [ "$SLED_TRANSFER" != ne_podtverzhdena ] || outcome=ishod_ne_ustanovlen
+  printf -v dest '%q' "${komu:-ne_zadan}"
+  printf -v source '%q' "stdin_ili_argv"
+  printf -v target '%q' "${yashchik:-ne_vybran}/${imya:-ne_sozdano}"
+  printf -v reason '%q' "$SLED_REASON"
+  row="ishod=$outcome kod=$code peredacha=$SLED_TRANSFER komu=$dest istochnik=$source fajl=$target prichina=$reason pid=$$ uid=$EUID"
+  # Одна попытка, 3 с ожидания + 1 с до SIGKILL; отказ журнала не меняет исход отправки.
+  if ! timeout -k 1s 3s logger -t a2a-send -- "$row"; then
+    printf '%s\n' "a2a-send: журнал НЕ подтвердил запись исхода (ожидание 3+1 с); $row" >&2
+  fi
+  return 0
+}
+trap 'sled_itog "$?"' EXIT
+# B-N-613 (25.09.2026): сигнал — свой код и своя причина. Без этого EXIT брал "$?" ПРЕЖНЕЙ
+# команды: процесс кончался 143, а в журнале стояло «kod=0 ishod_ne_ustanovlen». exit N здесь
+# запускает тот же EXIT уже с N. Bash выполняет ловушку после завершения текущей дочерней команды.
+trap 'SLED_REASON=signal_TERM; exit 143' TERM
+trap 'SLED_REASON=signal_INT; exit 130' INT
+trap 'SLED_REASON=signal_HUP; exit 129' HUP
+
 
 KOREN="${A2A_KOREN:-/var/spool/a2a}"
 # В чат идёт видимость переписки, а не её хранилище: письмо целиком лежит
@@ -52,91 +90,207 @@ PREDEL_V_CHAT="${A2A_PREDEL_V_CHAT:-900}"
 TELL="${A2A_TELL_BIN:-/usr/local/bin/tell-owner}"
 REESTR="${A2A_REESTR_BIN:-/usr/local/bin/agent-registry}"
 
+# Явное намерение: текст аргументом только --text ОДИН_АРГУМЕНТ,
+# либо поток stdin. Это не оценка смысла: явно переданное «asdf» допустимо.
+# Цена: прежний неявный inline отказывает; письмо мигрируют на --text/stdin.
 bez_kopii=0
-argv=()
-for a in "$@"; do
-  case "$a" in
-    --bez-kopii) bez_kopii=1 ;;   # служебное: подтверждения, техническое
-    *) argv+=("$a") ;;
-  esac
-done
-
-if [ "${#argv[@]}" -lt 1 ]; then
-  echo "a2a-send: a2a-send <агент> [текст] [--bez-kopii]" >&2
-  echo "          приватное письмо — через ввод: printf '%s' \"текст\" | a2a-send <агент>" >&2
-  echo "          агенты этой машины: $("$REESTR" list 2>/dev/null | grep -oE '^[a-z0-9_-]+' | tr '\n' ' ')" >&2
-  exit 3
+if [ "${1:-}" = "--bez-kopii" ]; then bez_kopii=1; shift; fi
+if [ "$#" -lt 1 ]; then
+  echo 'a2a-send: нужен адресат. Формат: [--bez-kopii] <агент> [--text "текст"]; иначе текст из stdin' >&2
+  { SLED_REASON='ne_zadan_adresat'; exit 3; }
 fi
-
-komu="${argv[0]}"
-
-# 🔴 ДОВОД, ПОХОЖИЙ НА КЛЮЧ, НЕ УЕЗЖАЕТ КАК ТЕКСТ (02.09.2026, живьём).
-# Было: `a2a-send <agent> -f файл` — ключа -f здесь нет, и строка «-f /tmp/...»
-# ушла адресату КАК ТЕКСТ ПИСЬМА, 20 байт вместо 10828. Код 0, доклад бодрый,
-# получатель получил мусор. Поймала по числу байт в собственном выводе.
-# Класс злее обычного «неизвестный ключ игнорируется»: там довод пропадает,
-# здесь он СТАНОВИТСЯ ДАННЫМИ и выглядит как замысел отправителя.
-# Граница: ловим только начало текста, не весь. Письмо, НАЧИНАЮЩЕЕСЯ с дефиса
-# по замыслу, придётся слать через ввод — цена невелика, а тихая подмена дороже.
-if [ "${#argv[@]}" -gt 1 ]; then
-  case "${argv[1]}" in
-    -*) echo "a2a-send: «${argv[1]}» похоже на ключ, а стоит на месте ТЕКСТА." >&2
-        echo "          Здесь нет ключей кроме --bez-kopii. Порядок: a2a-send <агент> [текст]" >&2
-        echo "          Файл шлите через ввод: cat файл | a2a-send <агент>" >&2
-        exit 2 ;;
-  esac
+komu="$1"; shift
+if [[ ! "$komu" =~ ^[a-z][a-z0-9_-]*$ ]]; then
+  echo "a2a-send: негодный адресат «$komu» — письмо НЕ отправлено" >&2
+  { SLED_REASON='negodnyj_adresat'; exit 3; }
 fi
-
-tekst="${argv[*]:1}"
-[ -z "$tekst" ] && tekst="$(cat)"
+# Старый служебный ключ допускается после адресата, но не из тела --text.
+if [ "${1:-}" = "--bez-kopii" ]; then bez_kopii=1; shift; fi
+iz_argv=0
+if [ "$#" -eq 0 ]; then
+  if [ -t 0 ]; then
+    echo 'a2a-send: текст не задан; передайте stdin либо --text "текст"' >&2
+    { SLED_REASON='net_teksta'; exit 3; }
+  fi
+  if ! tekst="$(cat)"; then
+    echo 'a2a-send: чтение stdin отказало — письмо НЕ отправлено' >&2
+    { SLED_REASON='otkaz_chteniya_stdin'; exit 3; }
+  fi
+elif [ "$#" -eq 2 ] && [ "$1" = "--text" ]; then
+  tekst="$2"; iz_argv=1
+else
+  if [ "$1" = "--text" ]; then
+    echo 'a2a-send: --text требует ровно один аргумент; письмо НЕ отправлено' >&2
+    { SLED_REASON='nevernye_argumenty_text'; exit 3; }
+  fi
+  if [[ "$1" == -* ]]; then
+    printf 'a2a-send: неизвестный ключ %s; письмо НЕ отправлено\n' "$1" >&2
+    { SLED_REASON='neizvestnyj_klyuch'; exit 3; }
+  fi
+  echo 'a2a-send: намерение отправить текст не задано явно; нужен --text "текст" или stdin. Письмо НЕ отправлено' >&2
+  # Только печать, НЕ исполнение. %q сохраняет кавычки, переводы строк и $().
+  # Тело идёт в stdin курьера; строка не исполняется автоматически.
+  zamena=("$0")
+  [ "$bez_kopii" -eq 1 ] && zamena+=(--bez-kopii)
+  zamena+=("$komu")
+  echo 'Если оставшиеся аргументы — именно тело письма, проверьте текст в строке ниже:' >&2
+  printf "ЗАМЕНА: printf '%%s' %q | " "$*" >&2
+  printf 'bash ' >&2
+  printf '%q ' "${zamena[@]}" >&2
+  printf '\n' >&2
+  { SLED_REASON='neyavnoe_namerenie_otpravki'; exit 3; }
+fi
 
 # 🔴 ПРЕДЕЛ ДЛИНЫ ДЛЯ АРГУМЕНТА (02.09.2026, перенесено с парной машины, где он
 # стоит с 14.08). Замер 29.08 в шапке показал: текст, поданный аргументом, ВИДЕН
 # в /proc/<pid>/cmdline любому пользователю машины (2 из 2), поданный через stdin —
 # не виден (0 из 2). Окно короткое, доли секунды, но настоящее.
 #
-# 🔴 ПОЧЕМУ ПРЕДЕЛ, А НЕ ЗАПРЕТ. Полный запрет argv закрыл бы штатный путь соседям,
+# Историческое основание лимита, сохранено: полный запрет argv закрыл бы путь соседям,
 # у которых инлайн прописан в наставлениях, — ради окна в доли секунды, где видна
 # СЛУЖЕБНАЯ переписка между нашими же учётками. Это была бы защита от воображаемого
 # при живом непроверенном. Лечим настоящее: длинный текст в argv и виден дольше,
 # и содержательнее — его и отсекаем.
 #
 # ГДЕ НЕ ПРИМЕНЯЕТСЯ:
-#   * к коротким служебным строкам — они проходят аргументом и это штатно;
-#   * к тексту из stdin — там ограничения нет вовсе, окна тоже нет;
+#   * к коротким служебным строкам — проходят через явный --text;
+#   * к тексту из stdin — лимит argv не применяется, действует общий предел байтов письма;
 #   * 🔴 НЕ ЗАЩИЩАЕТ ОТ УТЕЧКИ СЕКРЕТА и не для того заведён: секреты в письма не
 #     кладутся ВООБЩЕ, в переписке бывают только пути в хранилище. Прочитавший
 #     замер и решивший «значит через argv можно слать секреты покороче» ошибётся.
 PREDEL_ARGV="${A2A_PREDEL_ARGV:-500}"
-if [ "${#argv[@]}" -gt 1 ]; then
-  znakov_argv="$(printf '%s' "$tekst" | python3 -c 'import sys; print(len(sys.stdin.read()))' 2>/dev/null || echo 0)"
+if [ "$iz_argv" -eq 1 ]; then
+  if ! znakov_argv="$(printf '%s' "$tekst" | python3 -c 'import sys; print(len(sys.stdin.read()))' 2>/dev/null)" || [[ ! "$znakov_argv" =~ ^[0-9]+$ ]]; then
+    echo 'a2a-send: длина аргумента не установлена — письмо НЕ отправлено' >&2
+    SLED_REASON=dlina_argv_ne_ustanovlena; exit 3
+  fi
   if [ "$znakov_argv" -gt "$PREDEL_ARGV" ]; then
     echo "a2a-send: письмо $znakov_argv знаков аргументом — ЗАПРЕЩЕНО (предел $PREDEL_ARGV)." >&2
     echo "  Аргумент виден в /proc/<pid>/cmdline любому на машине, пока идёт вызов." >&2
     echo "  Подайте через стандартный ввод:  printf '%s' \"\$TEXT\" | a2a-send $komu" >&2
     echo "  или из файла:                    cat письмо.txt | a2a-send $komu" >&2
-    exit 3
+    { SLED_REASON='prevyshen_predel_argv'; exit 3; }
   fi
 fi
 if [ -z "${tekst//[[:space:]]/}" ]; then
   # Пустое письмо — почти наверняка оборванный конвейер, а не замысел.
   echo "a2a-send: пустое письмо — не отправляю" >&2
-  exit 3
+  { SLED_REASON='pustoe_pismo'; exit 3; }
 fi
 
 # Получатель берётся ИЗ РЕЕСТРА, своего перечня агентов здесь нет: иначе он
 # разошёлся бы с реестром молча при заведении одиннадцатого.
-polzovatel="$("$REESTR" pole "$komu" polzovatel --json 2>/dev/null | tr -d '"')"
-if [ -z "$polzovatel" ]; then
-  echo "a2a-send: 🔴 в реестре нет агента «$komu» либо у него не задан пользователь — письмо НЕ отправлено" >&2
-  exit 3
+# 🔴 ЯЩИК БЕРЁТСЯ ИЗ РЕЕСТРА ПЕРВЫМ ДЕЛОМ (17.09.2026). Повод: письма Альфе лежали
+# МЁРТВЫМИ ДВОЕ СУТОК — курьер кладёт по УЧЁТКЕ, а агент читает свой ящик по ИМЕНИ.
+# При одной учётке на трёх кодеров это расходится ПО ПОСТРОЕНИЮ, а не по случаю:
+# замер 17.09 — платформа alfa читает /var/spool/a2a/alfa, курьер кладёт в .../coders.
+# Решение владельца: ящик объявляется в реестре, курьер забирает оттуда.
+kanal_json="$("$REESTR" pole "$komu" kanal --json 2>/dev/null)"
+kod_reestra=$?
+# Code 3 may mean an unassigned legacy channel; loader/execution failure is not that.
+if [ "$kod_reestra" -ne 0 ] && [ "$kod_reestra" -ne 3 ]; then
+  echo "a2a-send: реестр недоступен (код $kod_reestra) — письмо НЕ отправлено" >&2
+  SLED_REASON=reestr_nedostupen; exit 3
 fi
-
-yashchik="$KOREN/$polzovatel"
+yashchik="$(printf '%s' "$kanal_json" | python3 -c 'import json,sys
+try: d=json.load(sys.stdin)
+except Exception: d={}
+print((d.get("yashchik") or "").strip())' 2>/dev/null)"
+if [ -n "$yashchik" ]; then
+  istochnik="реестр (kanal.yashchik)"
+  iz_reestra=1
+  # 🔴 УЧЁТКА НУЖНА И ЗДЕСЬ — не для выбора ящика, а для СТРОКИ ОТЧЁТА в конце (стр. ~300).
+  # 17.09: письмо уже ЛЕГЛО, а курьер падал после записи «polzovatel: unbound variable» —
+  # факт и отчёт разошлись, отправитель прочёл бы доставку как отказ. Поймано ЖИВОЙ пробой:
+  # стенд считал успехом «файл лёг» и не заметил, что процесс упал ПОСЛЕ записи.
+  polzovatel="$("$REESTR" pole "$komu" polzovatel --json 2>/dev/null | tr -d '"')"
+else
+  # 🔴 ОТКАТ НА ПРЕЖНЕЕ ПОВЕДЕНИЕ ОБЯЗАТЕЛЕН: у агентов, которым поле ещё не назначено,
+  # письма должны идти КАК ПРЕЖДЕ. Снять этот путь — значит оборвать связь тем, кто её не просил.
+  polzovatel="$("$REESTR" pole "$komu" polzovatel --json 2>/dev/null | tr -d '"')"
+  if [ -z "$polzovatel" ]; then
+    echo "a2a-send: 🔴 в реестре нет агента «$komu» либо у него не задан пользователь — письмо НЕ отправлено" >&2
+    { SLED_REASON='adresat_ili_polzovatel_ne_najden'; exit 3; }
+  fi
+  yashchik="$KOREN/$polzovatel"
+  istochnik="умолчание (по учётке $polzovatel)"
+  iz_reestra=0
+  # 🔴 ПРЕДУПРЕЖДЕНИЕ, А НЕ ОТКАЗ (17.09.2026). Ветку отката ломать нельзя: она несёт письма
+  # тем, кому поле ещё не назначено. Но если учётка ОБЩАЯ, путь по ней заведомо НИЧЕЙ —
+  # именно так письма кодерам легли в /var/spool/a2a/coders и пролежали с 15.09 непрочитанными.
+  # Исход НЕ меняем (иначе оборвём связь тем, кто её не просил), но молчать об этом нельзя:
+  # успешный код при доставке в мёртвый ящик — это тишина, которую прочтут как «все молчат».
+  na_uchyotke=0
+  for a in $("$REESTR" list 2>/dev/null | grep -oE '^[a-z0-9_-]+'); do
+    [ "$("$REESTR" pole "$a" polzovatel --json 2>/dev/null | tr -d '"')" = "$polzovatel" ] \
+      && na_uchyotke=$((na_uchyotke + 1))
+  done
+  if [ "$na_uchyotke" -gt 1 ]; then
+    echo "a2a-send: ⚠️ ящик выбран ПО ОБЩЕЙ УЧЁТКЕ «$polzovatel» (агентов на ней $na_uchyotke)." >&2
+    echo "  Такой ящик не принадлежит никому и может не читаться НИ ОДНИМ агентом." >&2
+    echo "  Лечится назначением kanal.yashchik в реестре агента «$komu». Письмо отправляю: обрывать" >&2
+    echo "  прежний путь нельзя, но знать об этом надо." >&2
+  fi
+fi
+# 🔴 ИСТОЧНИК ПЕЧАТАЕТСЯ РЯДОМ СО ЗНАЧЕНИЕМ. Довод из выпуска a15: у iskra и petrovich
+# значение из реестра и значение из умолчания СОВПАДАЮТ, и без имени источника проба
+# зелена при ОБОИХ исходах — то есть не различает доехавшую настройку от недоехавшей.
+# 🔴 СВЕРКА ПРИНАДЛЕЖНОСТИ ЯЩИКА — ТОЛЬКО ДЛЯ ВЕТКИ РЕЕСТРА (17.09.2026, условие приёмки).
+# ЗАЧЕМ. Проверка «каталог существует» (ниже) не спрашивает, ЧЕЙ он. В /var/spool/a2a/ лежат
+# шесть каталогов (alfa beta coders dsh gamma iskra), и любое из этих имён в поле прошло бы
+# проверку, а письмо легло бы туда МОЛЧА, с успешным кодом.
+# ПОВОД НЕ ВООБРАЖАЕМЫЙ: 17.09 чужой адрес уже приезжал КОПИЕЙ ПРОФИЛЯ ДОНОРА (у Беты остался
+# порт шлюза Альфы 8790). Кодеров клонируют друг от друга ⇒ поле приедет так же, и письма
+# Гаммы лягут Бете.
+# ПОЧЕМУ ТОЛЬКО ВЕТКА РЕЕСТРА: путь из отката курьер строит САМ из учётки — извне его подменить
+# нечем, сверять нечего. Недоверенное значение приходит ТОЛЬКО из реестра, там и проверяем.
+# ПОЧЕМУ ДОПУСТИМЫ ДВА ИМЕНИ, А НЕ ОДНО: у petrovich ящик называется по УЧЁТКЕ (dsh), и это
+# законно. Сверка «только с именем агента» заблокировала бы его, заведи ему поле однажды.
+# Поэтому годным считается имя ящика, равное ИМЕНИ АДРЕСАТА ЛИБО ЕГО УЧЁТКЕ — и ничему иному.
+# 🔴 ФЛАГ, А НЕ СРАВНЕНИЕ СТРОК: скрипт идёт под set -u, и в ветке реестра переменной
+# $polzovatel НЕ СУЩЕСТВУЕТ вовсе — условие по ней роняло курьера «unbound variable»
+# на ЗАКОННОМ случае. Поймано пробой 17.09, чтением кода не находилось.
+if [ "${iz_reestra:-0}" = "1" ]; then
+  imya_yashchika="$(basename "$yashchik")"
+  ego_polzovatel="$("$REESTR" pole "$komu" polzovatel --json 2>/dev/null | tr -d '"')"
+  # 🔴 УЧЁТКА ГОДНА ТОЛЬКО ЕСЛИ ОНА У РОВНО ОДНОГО АГЕНТА (17.09.2026, поправка Забавы).
+  # ПОЧЕМУ. Прежнее правило «имя агента ЛИБО его учётка» разрешало кодерам ящик «coders» —
+  # а это и есть тот МЁРТВЫЙ ящик, ради которого вся правка: учётка coders у ТРОИХ
+  # (alfa, beta, gamma), читать его не настроен НИКТО, и письма лежат там с 15.09 (замер
+  # 17.09: три штуки). То есть прежнее правило пропускало ровно ту беду, что чинится.
+  # Неверной была одна посылка: «учётка агента однозначно указывает на ЕГО ящик». Она
+  # держится, пока учётка своя, и рушится там, где учётка ОБЩАЯ — то есть в самом предмете.
+  # ЧИСЛО СЧИТАЕТСЯ ИЗ РЕЕСТРА, СПИСКА ИСКЛЮЧЕНИЙ НЕТ: заведут четвёртого кодера — знаменатель
+  # вырастет сам, и устаревать нечему.
+  agentov_na_uchyotke=0
+  if [ -n "$ego_polzovatel" ]; then
+    for a in $("$REESTR" list 2>/dev/null | grep -oE '^[a-z0-9_-]+'); do
+      [ "$("$REESTR" pole "$a" polzovatel --json 2>/dev/null | tr -d '"')" = "$ego_polzovatel" ] \
+        && agentov_na_uchyotke=$((agentov_na_uchyotke + 1))
+    done
+  fi
+  uchyotka_godna=0
+  [ "$imya_yashchika" = "$ego_polzovatel" ] && [ "$agentov_na_uchyotke" -eq 1 ] && uchyotka_godna=1
+  if [ "$imya_yashchika" != "$komu" ] && [ "$uchyotka_godna" != "1" ]; then
+    echo "a2a-send: 🔴 ЯЩИК ЧУЖОЙ — письмо НЕ отправлено." >&2
+    echo "  запрошен ящик «$imya_yashchika» ($yashchik), а письмо адресовано «$komu»" >&2
+    if [ "$imya_yashchika" = "$ego_polzovatel" ]; then
+      echo "  причина отказа: имя ящика равно УЧЁТКЕ «$ego_polzovatel», а она ОБЩАЯ — агентов на ней $agentov_na_uchyotke." >&2
+      echo "  Общий ящик не принадлежит никому: читать его не настроен ни один агент." >&2
+    else
+      echo "  (его учётка «${ego_polzovatel:-—}», агентов на ней $agentov_na_uchyotke; годно имя адресата либо ЕДИНОЛИЧНАЯ учётка)" >&2
+    fi
+    echo "  вероятная причина: поле kanal.yashchik приехало КОПИЕЙ от другого агента." >&2
+    # B-N-608 (25.09.2026): отказ ДО передачи — код 3 («ошибка получателя»), а не 4:
+    # код 4 означает только «письмо доставлено, видимость НЕ ушла».
+    { SLED_REASON='yashchik_ne_sootvetstvuet_adresatu'; exit 3; }
+  fi
+fi
+echo "a2a-send: ящик $yashchik · источник: $istochnik" >&2
 if [ ! -d "$yashchik" ]; then
   # Агент в реестре есть, а ящика нет — расхождение намерения и факта.
   echo "a2a-send: 🔴 ящик $yashchik не существует (агент $komu в реестре есть) — письмо НЕ отправлено" >&2
-  exit 1
+  { SLED_REASON='yashchik_otsutstvuet'; exit 1; }
 fi
 
 # Своё ИМЯ агента здесь не нужно и не спрашивается: получателю о том, кто
@@ -144,10 +298,87 @@ fi
 # Имя, вписанное отправителем, было бы его же утверждением о себе.
 ya_polzovatel="$(id -un)"
 
+# BEGIN COPY FIELD CHECK
+# Ошибка наблюдения не блокирует доставку; повреждённый UTF-8 заменяется только при разборе.
+if ! _copy_field="$(printf '%s' "$tekst" | python3 -c '
+import sys, re, json
+sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+head = "\n".join(sys.stdin.read().splitlines()[:3])
+pattern = r"(?:^\s*копи(?:я|и)\s*:\s*([^\n]+)|\(\s*копи(?:я|и)\s*:?\s+([^()\n]+)\))"
+fields = [(m.group(1) or m.group(2)).strip() for m in re.finditer(pattern, head, re.I | re.M)]
+fields = [x for x in fields if x]
+if fields:
+    print(json.dumps(fields, ensure_ascii=False))
+')"; then
+  echo 'ПРЕДУПРЕЖДЕНИЕ: поле копий проверить не удалось; доставка продолжается' >&2
+  _copy_field=""
+fi
+if [ -n "$_copy_field" ]; then
+  printf 'ВНИМАНИЕ: поле копий называет: %s; этот вызов отправляет одному адресату и копий не делает.\n' "$_copy_field" >&2
+  echo 'Другие отправки этим предупреждением не проверяются.' >&2
+fi
+# END COPY FIELD CHECK
+
+# 🔴 КОНВЕРТ ДОСТАВКИ — СТАВИТСЯ ВСЕГДА И БЕЗУСЛОВНО, ПЕРВОЙ СТРОКОЙ.
+# Почему безусловно, а не «если ещё нет» (проба 19.09.2026 на подставном ledger):
+# при пересылке ЧУЖОГО письма целиком его конверт окажется первым, id совпадёт с уже
+# принятой записью, тело будет ДРУГИМ — и приём ОТВЕРГНЕТ письмо: «logical identity
+# conflict: одинаковый ID, разные байты». То есть письмо НЕ ДОЙДЁТ ВООБЩЕ.
+# ⚠️ Прежнее обоснование («два письма сольются в одно») ОПРОВЕРГНУТО той же пробой:
+# слияния нет, есть отказ приёма. Правило то же, беда другая — искать её будут по описанию.
+# 🔴 id БЕРЁТСЯ ОТ АДРЕСАТА И ТЕЛА, а не от времени и случайного числа: имя файла ниже
+# содержит /dev/urandom и НЕ ВОСПРОИЗВОДИМО — повтор получил бы новый ключ и стал бы
+# в ledger новым распоряжением. Случайный ключ ХУЖЕ пустого: пустой честно говорит
+# «не знаю», случайный ЛЖЁТ «это другое письмо».
+# 🔴 И КОНВЕРТ НЕ ЕСТЬ ЗАЩИТА ПОДЛИННОСТИ: чужой id можно написать первой строкой руками.
+# Это ТОЛЬКО УЧЁТ — по нему нельзя отличать своих от чужих.
+# 🔴 ТЕЛО ДО КОНВЕРТА — для показа владельцу. Конверт СЛУЖЕБНЫЙ и окна показа есть не должен.
+# Повод (19.09.2026, регрессия нашего же монтажа): конверт прибавил 91 знак КАЖДОМУ письму,
+# и тела 810-900 знаков, вчера доходившие целиком, стали резаться. Рез при этом честно
+# называется — молчания нет, — но режется то, что вчера проходило.
+# 🔴 ПОЧЕМУ НЕ «ВЫЧЕСТЬ 91»: 91 это производная (16+64+10+1), и константа не знает ни одного
+# слагаемого. Записанная ВТОРЫМ местом, она разойдётся с первым при смене формата конверта,
+# и вторая никому не видна. Показываем ИСХОДНОЕ тело — тогда вычитать нечего.
+# B-N-1492 r2: режим — публичное поле реестра; JSON канала читает только verify.
+# Отказ реестра/неизвестный режим => прежняя копия отправителя, НЕ молчание.
+copy_policy="$(timeout 3s "$REESTR" pole "$komu" kanal --json 2>/dev/null | timeout 3s python3 -c '
+import json,sys
+try:
+    k=json.load(sys.stdin)
+    if k.get("tip")!="telegram": print("sender:external_or_unknown");sys.exit(0)
+    mode=k.get("rezhim_dostavki")
+    print("receiver" if mode=="owner-all" else "sender:not_owner_all" if mode in ("personal","broadcast") else "sender:mode_unavailable")
+except Exception:
+    print("sender:registry_unavailable")
+' 2>/dev/null)"
+[ "$?" = 0 ] && [ -n "$copy_policy" ] || copy_policy=sender:lookup_failed
+
+tekst_do_konverta="$tekst"
+konvert_id="$(printf '%s\n%s' "$komu" "$tekst" | sha256sum | cut -d' ' -f1)"
+tekst="[delivery-v1 id=${konvert_id} reply=no]
+${tekst}"
+
+# Same byte limit as the postman; include the envelope and printf's final newline.
+PREDEL_BAJT="${A2A_PREDEL_BAJT:-1048576}"
+if [[ ! "$PREDEL_BAJT" =~ ^[0-9]+$ ]] || ! [ "$PREDEL_BAJT" -gt 0 ] || ! [ "$PREDEL_BAJT" -le 1048576 ]; then
+  echo 'a2a-send: A2A_PREDEL_BAJT должен быть целым в 1..1048576 Б — письмо НЕ отправлено' >&2
+  SLED_REASON=negodnyj_predel_bajt; exit 3
+fi
+if ! razmer_pisma="$(printf '%s\n' "$tekst" | wc -c)" || [[ ! "$razmer_pisma" =~ ^[0-9]+$ ]]; then
+  echo 'a2a-send: размер письма не установлен — письмо НЕ отправлено' >&2
+  SLED_REASON=razmer_pisma_ne_ustanovlen; exit 3
+fi
+if [ "$razmer_pisma" -gt "$PREDEL_BAJT" ]; then
+  echo "a2a-send: письмо $razmer_pisma Б крупнее предела $PREDEL_BAJT Б — письмо НЕ отправлено" >&2
+  SLED_REASON=prevyshen_predel_bajt; exit 3
+fi
+
 metka="$(date -u '+%Y%m%dT%H%M%SZ')"
 sluchajnoe="$(od -An -N4 -tx4 /dev/urandom 2>/dev/null | tr -d ' \n')"
 [ -z "$sluchajnoe" ] && sluchajnoe="$$"
 imya="${metka}-${ya_polzovatel}-${sluchajnoe}.txt"
+# Метка обязанности остаётся в sources после приёма, даже если режим потом сменили.
+[ "$copy_policy" = receiver ] && imya="${metka}-${ya_polzovatel}-ownerall-${sluchajnoe}.txt"
 
 # 🔴 umask ставится ЗДЕСЬ и только на запись письма: до переноса права раздаёт
 # отправитель, и это единственная точка, где окно закрывается.
@@ -155,15 +386,16 @@ staryj_umask="$(umask)"
 umask 077
 vremennoe="$yashchik/.$imya"
 if ! printf '%s\n' "$tekst" > "$vremennoe" 2>/dev/null; then
+  rm -f "$vremennoe" 2>/dev/null
   umask "$staryj_umask"
   echo "a2a-send: 🔴 не удалось записать письмо в $yashchik — письмо НЕ отправлено" >&2
-  exit 1
+  { SLED_REASON='otkaz_zapisi_vremennogo_fajla'; exit 1; }
 fi
 if ! mv -n "$vremennoe" "$yashchik/$imya" 2>/dev/null; then
   umask "$staryj_umask"
   rm -f "$vremennoe" 2>/dev/null
   echo "a2a-send: 🔴 не удалось переименовать письмо в $yashchik — письмо НЕ отправлено" >&2
-  exit 1
+  { SLED_REASON='otkaz_perenosa_v_yashchik'; exit 1; }
 fi
 umask "$staryj_umask"
 
@@ -177,13 +409,41 @@ else
   razmer="$(stat -c '%s' "$yashchik/$imya" 2>/dev/null || echo 0)"
   if [ "$razmer" -eq 0 ]; then
     echo "a2a-send: 🔴 письмо легло пустым — отправка не удалась" >&2
-    exit 1
+    { SLED_REASON='pismo_pustoe'; exit 1; }
   fi
 fi
 
-echo "a2a-send: письмо $imya → $komu ($polzovatel), $(printf '%s' "$tekst" | wc -c) Б"
+SLED_TRANSFER=peredano_v_yashchik
 
-[ "$bez_kopii" -eq 1 ] && exit 0
+# The recipient's owner-all copy is not visibility in the sender's own chat.
+# A sender-owned full record is written only after the placement check above.
+if ! own_copy="$(printf '%s' "$tekst_do_konverta" | timeout -k 1s 16s python3 "$(dirname "$0")/../lib/a2a-bus/outgoing_mirror.py" "$komu" "$konvert_id")"; then
+  echo 'a2a-send: письмо положено; полная копия отправителя не подтверждена, автоматического повтора письма нет' >&2
+  SLED_REASON=polnaya_kopiya_otpravitelya_ne_podtverzhdena
+  exit 4
+fi
+printf '%s\n' "$own_copy"
+
+# 🔴 п.320: ДВЕ МЕРЫ ОДНОГО ПИСЬМА, ОБЕ ПОДПИСАНЫ (07.09.2026).
+# Печаталось `wc -c` — БАЙТЫ, а предел argv и обрезка считаются в ЗНАКАХ (python len).
+# На кириллице это вдвое: 21 знак = 41 байт. Читающий доклад сверял «41» с пределом
+# в знаках и получал вдвое завышенную оценку заполнения — молча и всегда.
+# Мера обязана быть та же, в какой считается граница; вторая — только с подписью.
+echo "a2a-send: письмо $imya → $komu ($polzovatel), $(printf '%s' "$tekst" | wc -c) Б / $(printf '%s' "$tekst" | python3 -c 'import sys; print(len(sys.stdin.read()))' 2>/dev/null || echo '?') зн."
+
+if [ "$copy_policy" = receiver ]; then
+  echo "a2a-send: копия: делает получатель; ожидается приём и отправка question/answer, курьер копию не подтверждает."
+  SLED_REASON=kopiya_poluchatelya_ozhidaetsya
+  exit 0
+fi
+case "$own_copy" in
+  'source owner copy retained:'*|'source owner copy already retained:'*)
+    echo 'a2a-send: полная копия в собственном owner-all reader; доставка в Telegram ещё не подтверждена'
+    SLED_REASON=polnaya_kopiya_v_own_reader
+    exit 0 ;;
+esac
+echo "a2a-send: копия: прежний маршрут отправителя ($copy_policy)."
+[ "$bez_kopii" -eq 1 ] && { SLED_REASON='kopiya_ne_zaproshena'; exit 0; }
 
 # ── ВИДИМОСТЬ ВЛАДЕЛЬЦУ
 # 🔴 СЧЁТ И ОБРЕЗКА — ТОЛЬКО ПО ЗНАКАМ, НЕ ПО БАЙТАМ (замерено 29.08.2026).
@@ -191,16 +451,16 @@ echo "a2a-send: письмо $imya → $komu ($polzovatel), $(printf '%s' "$teks
 # знаков и может разрубить символ пополам, отдав в чат битый хвост. Число в
 # пометке при этом врало бы вдвое. python3 знает знаки в любой локали, а юнит
 # ходит с пустым окружением, где локаль C.
-znakov="$(printf '%s' "$tekst" | python3 -c 'import sys; print(len(sys.stdin.read()))')"
+znakov="$(printf '%s' "$tekst_do_konverta" | python3 -c 'import sys; print(len(sys.stdin.read()))')"
 if [ "$znakov" -gt "$PREDEL_V_CHAT" ]; then
   # 🔴 Обрезка НАЗЫВАЕТСЯ вслух: молча обрезанное письмо владелец прочтёт как
   # письмо целиком и решит, что видел всё.
-  vidno="$(printf '%s' "$tekst" | python3 -c 'import sys; print(sys.stdin.read()[:int(sys.argv[1])], end="")' "$PREDEL_V_CHAT")"
+  vidno="$(printf '%s' "$tekst_do_konverta" | python3 -c 'import sys; print(sys.stdin.read()[:int(sys.argv[1])], end="")' "$PREDEL_V_CHAT")"
   hvost="
 
 … показано $PREDEL_V_CHAT из $znakov знаков, письмо целиком у получателя: $imya"
 else
-  vidno="$tekst"
+  vidno="$tekst_do_konverta"
   hvost=""
 fi
 
@@ -211,8 +471,8 @@ fi
 # было бы видно постороннему в момент отправки. tell-owner читает stdin.
 otvet="$(printf '%s' "→ $komu: $vidno$hvost" | "$TELL" 2>&1)"
 kod_chata=$?
-[ "$kod_chata" -eq 0 ] && exit 0
+[ "$kod_chata" -eq 0 ] && { SLED_REASON='kopiya_vladelcu_podtverzhdena'; exit 0; }
 # Письмо УЖЕ доставлено. Отдельный код, а не 1: «доставлено, но владелец не
 # увидел» и «не доставлено» — разные новости, и сливать их нельзя.
 echo "a2a-send: ⚠️ письмо доставлено, но копия владельцу НЕ ушла: ${otvet:-причина не названа}" >&2
-exit 4
+{ SLED_REASON='kopiya_vladelcu_ne_podtverzhdena'; exit 4; }

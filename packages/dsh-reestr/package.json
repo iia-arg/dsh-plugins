@@ -1,0 +1,44 @@
+{
+  "name": "dsh-reestr",
+  "version": "3.1.3",
+  "description": "Реестр вмешательств машины с агентами DSH: что поставлено, откуда, чем проверить; правка реестра со сверкой основы и сторож расхождений · Machine intervention registry for DSH agent hosts: what is installed, from where, how to verify it; registry edits with base checks and a drift watchdog",
+  "keywords": [
+    "dsh",
+    "реестр · registry",
+    "сторож · watchdog",
+    "монтаж · deployment",
+    "сверка · verification"
+  ],
+  "license": "MIT",
+  "author": "Aleksandr Argelander",
+  "engines": { "node": ">=18" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iia-arg/dsh-plugins.git",
+    "directory": "packages/dsh-reestr"
+  },
+  "bin": {
+    "agent-plugins": "bin/agent-plugins",
+    "agent-plugins-lock-check": "bin/agent-plugins-lock-check",
+    "registry-watchdog": "bin/registry-watchdog.sh",
+    "nezafiksirovano-watch": "bin/nezafiksirovano-watch",
+    "shvy-mezhdu-paketami-watch": "bin/shvy-mezhdu-paketami-watch",
+    "preset-sverka": "bin/preset-sverka",
+    "sverka-montazha": "bin/sverka-montazha.sh",
+    "sverka-zavisimostej": "bin/sverka-zavisimostej.sh",
+    "priznak-oblasti-podklyucheniya": "bin/priznak-oblasti-podklyucheniya.sh",
+    "srez-obshchego-kataloga": "bin/srez-obshchego-kataloga.sh"
+  },
+  "scripts": {
+    "test": "bash test/progon-na-podstave.sh"
+  },
+  "files": [
+    "systemd/",
+    "bin",
+    "test",
+    "docs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ]
+}

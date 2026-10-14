@@ -1,0 +1,35 @@
+#!/bin/bash
+# dsh-dump-kopiya <DSH_HOME> <каталог платформы> — «dsh --profile web --dump-config» на КОПИИ дома (30.09.2026).
+# ЗАЧЕМ. --dump-config ПЕРЕЗАПИСЫВАЕТ <DSH_HOME>/profiles/web/cordis.yml (замер 30.09: один вызов — ровно этот файл). Проверки
+# живости реестра (dsh-profile-patch-*, dsh-home-patch-<агент>) звали его на боевом доме — и каждый list --health будил
+# istoriya-profilya.path холостым снимком; 26.09 серия таких событий убила .path на 4 суток.
+# КАК. Во /tmp — копия дома из ССЫЛОК: настоящий только каталог profiles/web (без cordis.yml), всё прочее — ссылки на боевое.
+# Запись листа ложится в копию; копия убирается на любом выходе. Звать ОТ УЧЁТКИ АГЕНТА (sudo -u …), как прежний прямой вызов.
+# ЧЕГО НЕ ДЕЛАЕТ: не защищает от записи ЧЕРЕЗ ссылку в иные файлы дома (замер: dump-config пишет только cordis.yml); пути в
+# выводе — пути копии (/tmp/dsh-dump-kopiya.*), проверки, ищущие путь дома в выводе, это увидят.
+# EN: dsh-dump-kopiya <DSH_HOME> <platform directory> — "dsh --profile web --dump-config" on a COPY of the home
+#     (30.09.2026).
+#     WHY. --dump-config OVERWRITES <DSH_HOME>/profiles/web/cordis.yml (measured 30.09: one call — exactly this
+#     file). Registry liveness checks (dsh-profile-patch-*, dsh-home-patch-<agent>) called it on the production
+#     home — and every list --health woke istoriya-profilya.path with an idle snapshot; on 26.09 a series of
+#     such events killed .path for 4 days.
+#     HOW. In /tmp — a copy of the home made of LINKS: only the profiles/web directory is real (without
+#     cordis.yml), everything else links to production. The leaf write lands in the copy; the copy is removed on
+#     any exit. Call it AS THE AGENT'S ACCOUNT (sudo -u …), like the former direct call.
+#     WHAT IT DOES NOT DO: it does not protect against writing THROUGH a link into other home files (measured:
+#     dump-config writes only cordis.yml); paths in the output are the copy's paths (/tmp/dsh-dump-kopiya.*),
+#     checks looking for the home path in the output will see that.
+set -uo pipefail
+H=${1:-}; A=${2:-}
+[ -n "$H" ] && [ -n "$A" ] && [ $# -eq 2 ] || { echo "вызов: dsh-dump-kopiya <DSH_HOME> <каталог платформы>" >&2; exit 2; }
+[ -d "$H/profiles/web" ] || { echo "СЛЕПОТА: нет каталога $H/profiles/web" >&2; exit 2; }
+B="$A/node_modules/@deepseek-ai/dsh/lib/bin.js"; [ -f "$B" ] || { echo "СЛЕПОТА: нет $B" >&2; exit 2; }
+T=$(mktemp -d /tmp/dsh-dump-kopiya.XXXXXX) || { echo "СЛЕПОТА: mktemp не удался" >&2; exit 2; }
+trap 'rm -rf -- "$T"' EXIT
+mkdir -p "$T/.dsh/profiles/web"
+for e in "$H"/* "$H"/.[!.]*; do [ -e "$e" ] || [ -L "$e" ] || continue; b=${e##*/}; [ "$b" = profiles ] || ln -s "$e" "$T/.dsh/$b"; done
+for e in "$H/profiles"/* "$H/profiles"/.[!.]*; do [ -e "$e" ] || [ -L "$e" ] || continue; b=${e##*/}; [ "$b" = web ] || ln -s "$e" "$T/.dsh/profiles/$b"; done
+for e in "$H/profiles/web"/* "$H/profiles/web"/.[!.]*; do [ -e "$e" ] || [ -L "$e" ] || continue; b=${e##*/}; [ "$b" = cordis.yml ] || ln -s "$e" "$T/.dsh/profiles/web/$b"; done
+NODE="${NODE:-node}"
+command -v "$NODE" >/dev/null 2>&1 || { echo "СЛЕПОТА: Node не найден ($NODE)" >&2; exit 2; }
+DSH_HOME="$T/.dsh" "$NODE" "$B" --profile web --dump-config

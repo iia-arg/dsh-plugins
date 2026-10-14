@@ -1,0 +1,19 @@
+[Unit]
+Description=Приёмник команд владельца для sadik (/switch подписки), long-poll @arg_dsh_alert_bot (B-N-1151, Искра)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agent-switch
+ExecStart=/usr/local/sbin/sadik-komandy-priyomnik
+Restart=always
+RestartSec=5
+RestartPreventExitStatus=2
+NoNewPrivileges=false
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sadik-komandy
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

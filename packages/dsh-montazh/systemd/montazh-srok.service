@@ -1,0 +1,12 @@
+[Unit]
+# B-N-1169 (Михалыч, 29.09.2026; слово владельца 12:41 МСК «14 суток нормально»): уборка страховок монтажей
+# старше 14 суток ДО ночной копии sadik (sadik-backup.timer 03:00 UTC + до 5 мин).
+Description=Уборщик страховок /var/backups/montazh* старше 14 суток (B-N-1169)
+Documentation=file:///usr/local/sbin/montazh-srok
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/montazh-srok --boj
+TimeoutStartSec=1800
+Nice=10
+IOSchedulingClass=idle

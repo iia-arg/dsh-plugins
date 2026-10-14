@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+# polozhit — заменить исполняемый файл АТОМАРНО и только если он грамматически цел.
+#
+# 🔴 ЗАЧЕМ. 05.09.2026 у координатора прогон сборщика упал с `syntax error`: таймер (60 с)
+# поймал файл В МОМЕНТ ПРАВКИ, наполовину записанным. Прогон пропущен, следующий чист —
+# то есть беда самоустранилась и в журнале осталась как загадка.
+# У меня четыре таймерных инструмента, два из них ходят каждые 30 минут; окно то же.
+#
+# 🔴 И РАЗМЕР УЯЗВИМОСТИ У РАЗНЫХ СПОСОБОВ ПРАВКИ РАЗНЫЙ — ЗАМЕРЕНО, НЕ ПРЕДПОЛОЖЕНО:
+#     sed -i        создаёт НОВЫЙ inode и переименовывает → АТОМАРЕН
+#                   (проба: inode 2103996 → 2103997, жёсткая ссылка осталась на старом)
+#     python open(p,"w")  усекает файл НА МЕСТЕ → окно полузаписи открыто
+# Значит опасен не «всякий редактор», а тот, что пишет по месту. Здесь безопасен любой:
+# запись идёт в файл рядом, а на место встаёт готовое одним движением.
+#
+# ЧТО ДЕЛАЕТ: читает содержимое из stdin, пишет во временный файл В ТОМ ЖЕ каталоге
+# (иначе mv через границу разделов перестаёт быть атомарным), проверяет грамматику по
+# расширению/шебангу, сохраняет владельца и права цели, затем mv поверх.
+#
+# ЧЕГО НЕ ДЕЛАЕТ: не проверяет СМЫСЛ правки — только грамматику. Грамматически целый
+# файл может быть неверным; это ловит стенд, а не эта обёртка.
+# И не спасает от правки ЧУЖОЙ рукой в тот же миг: две правки подряд затрут друг друга
+# молча, здесь блокировки нет.
+#
+# КОДЫ: 0 положено · 3 отказ (нет цели / пустой ввод / грамматика) · 4 положено, но
+#       владельца сохранить не удалось (сказано вслух) · 5 цель изменилась с момента съёма
+#       (при --esli-summa либо POLOZHIT_SUMMA_PRI_SYOME); 6 положено неатомарно; 7 положено, inode не снят
+# EN: polozhit — replace an executable file ATOMICALLY and only if it is grammatically intact.
+#     🔴 WHY. On 05.09.2026 the coordinator's builder run failed with `syntax error`: a timer (60 s) caught the
+#     file AT THE MOMENT OF EDITING, half-written. The run was skipped, the next one was clean — i.e. the
+#     trouble cured itself and stayed in the journal as a riddle.
+#     I have four timer tools, two of them run every 30 minutes; the window is the same.
+#     🔴 AND THE SIZE OF THE VULNERABILITY DIFFERS BETWEEN EDITING METHODS — MEASURED, NOT ASSUMED:
+#     sed -i creates a NEW inode and renames → ATOMIC (probe: inode 2103996 → 2103997, a hard link stayed on the
+#     old one)
+#     python open(p,"w") truncates the file IN PLACE → the half-write window is open
+#     So the danger is not "any editor" but one that writes in place. Here any is safe: writing goes into a file
+#     alongside, and the finished one takes the place in one move.
+#     WHAT IT DOES: reads the content from stdin, writes it into a temporary file IN THE SAME directory
+#     (otherwise mv across partitions stops being atomic), checks the grammar by extension/shebang, keeps the
+#     target's owner and mode, then mv over it.
+#     WHAT IT DOES NOT DO: it does not check the MEANING of the edit — only the grammar. A grammatically intact
+#     file may be wrong; a stand catches that, not this wrapper. Nor does it save from an edit by ANOTHER hand
+#     at the same moment: two edits in a row overwrite each other silently, there is no lock here.
+#     CODES: 0 placed · 3 refusal (no target / empty input / grammar) · 4 placed, but the owner could not be
+#     kept (said aloud) · 5 stale checksum, not placed (SHA256 flag or legacy MD5 env); 6 placed non-atomically; 7 placed, inode unavailable
+set -uo pipefail
+# 🔴 КЛЮЧ --esli-summa <16 знаков> (07.09.2026). ЗАЧЕМ: в 03:46–03:49 две руки правили
+# ОДИН файл, и вторая уложила черновик, снятый ДО правки первой — работа первой исчезла,
+# боевая приёмка 85 секунд отвечала «неизвестный ключ», то есть была СЛЕПА.
+# Между съёмом черновика и укладкой прошло 40 минут; за это время цель сменилась.
+# У нас записано правило «съём и отправка — один заход» для ЧИСЕЛ, отправляемых людям.
+# Для ПРАВКИ ФАЙЛА такого правила не было, а нужно ровно оно.
+# ГДЕ НЕ ПРИМЕНЯЕТСЯ: это НЕ блокировка. Между сверкой и mv остаётся окно в доли секунды;
+# ключ ловит расхождение НА МИНУТАХ (чужая правка, пока ты думал), а не гонку на месте.
+# И он необязателен: без него поведение прежнее, чтобы не сломать зовущих.
+# EN: 🔴 THE --esli-summa <16 characters> FLAG (07.09.2026). WHY: at 03:46–03:49 two hands edited ONE file, and
+#     the second put a draft taken BEFORE the first one's edit — the first one's work vanished, the production
+#     acceptance answered "unknown flag" for 85 seconds, i.e. it was BLIND. 40 minutes passed between taking the
+#     draft and placing it; during that time the target changed.
+#     We have a written rule "take and send in one go" for NUMBERS sent to people. For EDITING A FILE there was
+#     no such rule, yet exactly that is needed.
+#     WHERE IT DOES NOT APPLY: this is NOT a lock. Between the check and mv a window of fractions of a second
+#     remains; the flag catches a divergence OVER MINUTES (someone else's edit while you were thinking), not a
+#     race on the spot. And it is optional: without it the behaviour is as before, so as not to break callers.
+ESLI_SUMMA=""
+ARGS=()
+ZHDU=""
+for a in "$@"; do
+  if [ -n "$ZHDU" ]; then ESLI_SUMMA="$a"; ZHDU=""; continue; fi
+  case "$a" in
+    --esli-summa) ZHDU=1 ;;
+    -*) echo "ОТКАЗ: неизвестный ключ $a — цель не тронута" >&2; exit 3 ;;
+    *) ARGS+=("$a") ;;
+  esac
+done
+[ -z "$ZHDU" ] || { echo "🔴 polozhit: --esli-summa требует значение (16 знаков sha256)" >&2; exit 3; }
+set -- "${ARGS[@]:-}"
+[ $# -eq 1 ] || { echo "ОТКАЗ: нужен ровно один файл" >&2; exit 3; }
+CEL="${1:-}"
+[ -n "$CEL" ] || { echo "polozhit <файл> [--esli-summa <16 знаков>]  — содержимое со stdin" >&2; exit 3; }
+[ -f "$CEL" ] || { echo "🔴 polozhit: цели нет: $CEL (это замена, а не создание)" >&2; exit 3; }
+
+if [ -n "$ESLI_SUMMA" ]; then
+  TEK=$(sha256sum "$CEL" 2>/dev/null | cut -c1-16)
+  if [ "$TEK" != "$ESLI_SUMMA" ]; then
+    echo "🔴 polozhit: ЦЕЛЬ ИЗМЕНИЛАСЬ С МОМЕНТА СЪЁМА — не кладу." >&2
+    echo "   ждали $ESLI_SUMMA · сейчас ${TEK:-не снялась}" >&2
+    echo "   Между вашим черновиком и этой укладкой файл правила другая рука." >&2
+    echo "   Пересними предмет, перенеси правку на него и клади заново." >&2
+    exit 5
+  fi
+fi
+
+KAT=$(dirname "$CEL"); IMYA=$(basename "$CEL")
+# 🔴 ВРЕМЕННЫЙ ФАЙЛ СОХРАНЯЕТ РАСШИРЕНИЕ ЦЕЛИ (05.09.2026, свой дефект, пойман прогоном).
+# Раньше имя было «.цель.novyj.XXXXXX» — со случайным хвостом вместо расширения. Для .sh это
+# безразлично, а `node --check` на таком файле падает с ERR_UNKNOWN_FILE_EXTENSION: то есть
+# ЛЮБОЙ .mjs, уложенный этим инструментом, получал ЛОЖНЫЙ ОТКАЗ «грамматика не прошла».
+# Отказ ИНСТРУМЕНТА выдавался за отказ ПРЕДМЕТА — и я не замечала, потому что кладу в
+# основном .sh. Дефект был спящим ровно до первого .mjs.
+# EN: 🔴 THE TEMPORARY FILE KEEPS THE TARGET'S EXTENSION (05.09.2026, my own defect, caught by a run). Previously
+#     the name was ".target.novyj.XXXXXX" — with a random tail instead of the extension. For .sh it does not
+#     matter, but `node --check` on such a file fails with ERR_UNKNOWN_FILE_EXTENSION: i.e. ANY .mjs placed with
+#     this tool got a FALSE REFUSAL "grammar failed". A TOOL refusal was passed off as a SUBJECT refusal — and I
+#     did not notice, because I mostly place .sh. The defect slept exactly until the first .mjs.
+RASSH=""; case "$IMYA" in *.*) RASSH=".${IMYA##*.}";; esac
+VREM=$(mktemp "$KAT/.$IMYA.novyj.XXXXXX") || { echo "🔴 polozhit: не создать временный в $KAT" >&2; exit 3; }
+if [ -n "$RASSH" ]; then
+  mv "$VREM" "$VREM$RASSH" && VREM="$VREM$RASSH"
+fi
+trap 'rm -f "$VREM"' EXIT
+
+cat > "$VREM"
+if [ ! -s "$VREM" ]; then
+  echo "🔴 polozhit: на входе ПУСТО — цель не тронута. Пустой ввод чаще всего значит, что" >&2
+  echo "   команда слева упала, а не что файл должен стать пустым." >&2
+  exit 3
+fi
+
+# Грамматика — по существу файла, а не по имени: расширения может не быть вовсе.
+# EN: Grammar — by the file's substance, not by its name: there may be no extension at all.
+SHEBANG=$(head -c 200 "$VREM" | head -1)
+PROVERKA=()
+case "$CEL" in
+  *.sh) PROVERKA=(bash -n) ;;
+  *.mjs|*.js) PROVERKA=(node --check) ;;
+  *.py) PROVERKA=(python3 -c 'import sys; compile(open(sys.argv[1], "rb").read(), sys.argv[1], "exec")') ;;
+  *) case "$SHEBANG" in
+       '#!'*bash*|'#!'*/sh*) PROVERKA=(bash -n) ;;
+       '#!'*node*) PROVERKA=(node --check); mv "$VREM" "$VREM.mjs" || exit 3; VREM="$VREM.mjs" ;;
+       '#!'*python*) PROVERKA=(python3 -c 'import sys; compile(open(sys.argv[1], "rb").read(), sys.argv[1], "exec")') ;;
+     esac ;;
+esac
+if [ "${#PROVERKA[@]}" -gt 0 ]; then
+  if ! OUT=$("${PROVERKA[@]}" "$VREM" 2>&1); then
+    echo "🔴 polozhit: грамматика НЕ прошла (${PROVERKA[0]}) — цель НЕ тронута:" >&2
+    printf '%s\n' "$OUT" | head -5 >&2
+    exit 3
+  fi
+else
+  echo "⚠️ polozhit: грамматику этого вида не проверяю — кладу как есть"
+fi
+
+# 🔴 ГРАММАТИКА — НЕ РАБОТА (05.09.2026, находка соседнего агента, куплена боем).
+# Он вставил строку с переменной ВЫШЕ её определения; под `set -u` это валит скрипт целиком,
+# а `bash -n` не видит: синтаксис верен, беда времени исполнения. Черновик прошёл проверку
+# формы и всё равно уронил боевой сторож флота на 28 секунд.
+# Недостающее звено — ПРОГОН ЧЕРНОВИКА ДО ПОДМЕНЫ, пока цель ещё не тронута.
+#
+# ⚠️ ПОЧЕМУ НЕ ПО УМОЛЧАНИЮ. Прогон ИСПОЛНЯЕТ код: у сторожа это безобидно, а произвольный
+# скрипт может писать, слать, перезапускать. Молчаливый прогон при укладке однажды сделал бы
+# ровно то, чего никто не просил. Поэтому — явным ключом, и цена названа здесь, а не в памятке.
+# EN: 🔴 GRAMMAR IS NOT WORK (05.09.2026, a neighbouring agent's finding, bought in production). They inserted a
+#     line with a variable ABOVE its definition; under `set -u` this kills the whole script, and `bash -n` does
+#     not see it: the syntax is right, the trouble is at run time. The draft passed the form check and still
+#     brought down the fleet's production watcher for 28 seconds.
+#     The missing link is RUNNING THE DRAFT BEFORE THE SWAP, while the target is still untouched.
+#     ⚠️ WHY NOT BY DEFAULT. A run EXECUTES code: for a watcher this is harmless, but an arbitrary script may
+#     write, send, restart. A silent run on placement would one day do exactly what nobody asked for. So — by an
+#     explicit flag, and the price is named here, not in a memo.
+if [ -n "${POLOZHIT_PROGON:-}" ]; then
+  echo "прогон черновика ДО подмены (цель ещё не тронута): $POLOZHIT_PROGON"
+  if ! OUT=$(POLOZHIT_CHERNOVIK="$VREM" sh -c "$POLOZHIT_PROGON" 2>&1); then
+    echo "🔴 polozhit: ЧЕРНОВИК НЕ ОТРАБОТАЛ — цель НЕ тронута:" >&2
+    printf '%s
+' "$OUT" | head -8 >&2
+    echo "  Грамматика прошла, а работа нет: так выглядит обращение к переменной до её" >&2
+    echo "  определения под set -u — беда времени исполнения, форму она не нарушает." >&2
+    exit 3
+  fi
+  echo "  черновик отработал (код 0)"
+else
+  # 🔴 МОЛЧАНИЕ ЗДЕСЬ ЧИТАЛОСЬ БЫ КАК «ПРОВЕРЕНО» (05.09.2026, правило координатора для
+  # всех четверых: синтаксис → ПРОГОН ЧЕРНОВИКА → подмена). Запретить укладку без прогона
+  # нельзя: прогон ИСПОЛНЯЕТ код, и для многих файлов это недопустимо. Но и промолчать
+  # нельзя — «проверено формой» и «проверено работой» разные вещи, а отличить их читателю
+  # нечем, если не сказать.
+  # Замер на своём предмете: node --check даёт код 0 на файле с НЕСУЩЕСТВУЮЩИМ импортом,
+  # а прогон падает. Форма чиста, работа — нет.
+  # EN: 🔴 SILENCE HERE WOULD READ AS "CHECKED" (05.09.2026, the coordinator's rule for all four: syntax → RUN OF
+  #     THE DRAFT → swap). Forbidding placement without a run is impossible: a run EXECUTES code, and for many
+  #     files that is unacceptable. But keeping silent is not allowed either — "checked by form" and "checked by
+  #     work" are different things, and the reader has nothing to tell them apart with unless it is said.
+  #     Measured on its own subject: node --check gives code 0 on a file with a NON-EXISTENT import, while a run
+  #     fails. The form is clean, the work is not.
+  echo "⚠️  прогон черновика НЕ делался (ключ POLOZHIT_PROGON не задан)."
+  echo "   Проверена ФОРМА, не РАБОТА: так проходят обращение к переменной до её определения"
+  echo "   под set -u и импорт несуществующего имени. Если файл безопасно прогнать —"
+  echo "   POLOZHIT_PROGON='bash \"\$POLOZHIT_CHERNOVIK\"' polozhit <цель>"
+fi
+
+# 🔴 УТВЕРЖДЕНИЕ ОБ АТОМАРНОСТИ СНИМАЕТСЯ ЗАМЕРОМ, А НЕ ПЕЧАТАЕТСЯ ПО НАМЕРЕНИЮ.
+# Прежняя редакция печатала «замена атомарна» ВСЕГДА. Пока временный создаётся в каталоге
+# цели (mktemp "$KAT/..."), это верно по построению — но строка переживёт правку: поменяет
+# кто-нибудь mktemp на /tmp, и подпись останется, а атомарности не будет. Ложная подпись
+# хуже пустой: пустая заставит проверить, стоящая — нет.
+# Приём соседнего агента 06.09.2026: сверить inode временного ДО и цели ПОСЛЕ. Совпал — это было
+# ПЕРЕИМЕНОВАНИЕ (атомарно); разошёлся — mv пошёл через границу разделов и скопировал,
+# то есть окно полузаписи есть, сколько бы веток ни было проверено.
+# 🔴 СВЕРКА ЦЕЛИ ПЕРЕД УКЛАДКОЙ (09.09.2026).
+# ЗАЧЕМ. Между съёмом черновика и укладкой цель может смениться ЧУЖОЙ (или своей
+# второй) рукой — и polozhit клал поверх молча, затирая чужую правку без следа.
+# Случай 07.09: два процесса одного захода, второй затёр правку первого на 85 секунд;
+# «чужая рука» искалась в журнале sudo, а руки были обе мои.
+# ПРАВИЛО (общее, шире файлов): между съёмом и укладкой предмет обязан быть пересверен,
+# кем бы ни был снят черновик. Расходится — ОТКАЗ, а не запись поверх.
+# ГДЕ НЕ ПРИМЕНЯЕТСЯ: если сумма при съёме не передана (POLOZHIT_SUMMA_PRI_SYOME пуста),
+# сверять не с чем — тогда честно печатаем «цель не сверялась», но НЕ отказываем:
+# иначе сломались бы все прежние вызовы, а молчаливого отказа мы и избегаем.
+# EN: 🔴 THE ATOMICITY CLAIM IS TAKEN BY MEASUREMENT, NOT PRINTED BY INTENT. The previous edition printed "the
+#     replacement is atomic" ALWAYS. As long as the temporary file is created in the target's directory (mktemp
+#     "$KAT/..."), this is true by construction — but the line will outlive an edit: someone changes mktemp to
+#     /tmp, the caption stays, and atomicity is gone. A false caption is worse than an empty one: an empty one
+#     makes you check, a present one does not.
+#     A neighbouring agent's technique of 06.09.2026: compare the inode of the temporary file BEFORE and of the
+#     target AFTER. Equal — it was a RENAME (atomic); different — mv went across partitions and copied, i.e.
+#     there is a half-write window, however many branches were checked.
+#     🔴 CHECKING THE TARGET BEFORE PLACING (09.09.2026).
+#     WHY. Between taking the draft and placing it the target may be changed by ANOTHER hand (or by your own
+#     second one) — and polozhit placed over it silently, wiping someone else's edit without a trace. Case of
+#     07.09: two processes of one turn, the second wiped the first one's edit for 85 seconds; the "foreign hand"
+#     was searched for in the sudo log, while both hands were mine.
+#     RULE (general, broader than files): between taking and placing, the subject must be re-checked, whoever
+#     took the draft. It differs — REFUSAL, not writing over it.
+#     WHERE IT DOES NOT APPLY: if the checksum at taking is not passed (POLOZHIT_SUMMA_PRI_SYOME is empty),
+#     there is nothing to compare with — then we honestly print "the target was not checked", but do NOT refuse:
+#     otherwise all previous calls would break, and a silent refusal is exactly what we avoid.
+if [ -n "${POLOZHIT_SUMMA_PRI_SYOME:-}" ]; then
+  SUMMA_SEJCHAS=$(md5sum "$CEL" 2>/dev/null | awk '{print $1}')
+  if [ "$SUMMA_SEJCHAS" != "$POLOZHIT_SUMMA_PRI_SYOME" ]; then
+    echo "🔴 ОТКАЗ: ЦЕЛЬ ИЗМЕНИЛАСЬ между съёмом черновика и укладкой." >&2
+    echo "   при съёме: $POLOZHIT_SUMMA_PRI_SYOME" >&2
+    echo "   сейчас:    ${SUMMA_SEJCHAS:-НЕ СНЯТА}" >&2
+    echo "   Класть поверх значит затереть чужую правку без следа. Снимите черновик заново." >&2
+    exit 5
+  fi
+  echo "  цель сверена с моментом съёма: $POLOZHIT_SUMMA_PRI_SYOME — совпало"
+else
+  echo "  ⚠️ цель НЕ сверялась: сумма при съёме не передана (POLOZHIT_SUMMA_PRI_SYOME)."
+  echo "     Это не «цель не менялась» — это «не смотрели»."
+fi
+
+IN_VREM=$(stat -c '%i' "$VREM" 2>/dev/null || echo '')
+REZHIM=$(stat -c '%a' "$CEL"); VLAD=$(stat -c '%U:%G' "$CEL")
+chmod "$REZHIM" "$VREM" || { echo "ОТКАЗ: права черновика не выставлены" >&2; exit 3; }
+KOD=0
+chown "$VLAD" "$VREM" 2>/dev/null || { echo "⚠️  владельца $VLAD сохранить не удалось (нужен root) — файл ляжет от $(id -un)"; KOD=4; }
+mv -f "$VREM" "$CEL" || { echo "ОТКАЗ: замена $CEL не состоялась" >&2; exit 3; }
+trap - EXIT
+echo "положено: $CEL ($(wc -c <"$CEL") б, режим $REZHIM, владелец $(stat -c '%U:%G' "$CEL"))"
+IN_CEL=$(stat -c '%i' "$CEL" 2>/dev/null || echo '')
+if [ -n "$IN_VREM" ] && [ "$IN_VREM" = "$IN_CEL" ]; then
+  echo "  замена атомарна (ЗАМЕР, не обещание): inode $IN_VREM сохранён при mv — это было"
+  echo "  переименование, значит таймер не мог поймать файл полузаписанным."
+elif [ -z "$IN_VREM" ] || [ -z "$IN_CEL" ]; then
+  echo "  ⚠️ атомарность НЕ ПРОВЕРЕНА: не удалось снять inode. Это про прибор, не про предмет —"
+  echo "  файл положен, но утверждать «атомарно» не на чем."
+  [ "$KOD" -eq 0 ] && KOD=7
+else
+  echo "  🔴 ЗАМЕНА НЕ БЫЛА АТОМАРНОЙ: inode $IN_VREM → $IN_CEL, то есть mv скопировал файл"
+  echo "  через границу разделов, а не переименовал. Окно полузаписи БЫЛО: читатель мог"
+  echo "  застать цель недописанной. Временный файл обязан лежать в каталоге цели."
+  [ "$KOD" -eq 0 ] && KOD=6
+fi
+exit $KOD

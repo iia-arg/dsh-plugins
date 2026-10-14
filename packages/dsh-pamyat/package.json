@@ -1,30 +1,47 @@
 {
   "name": "dsh-pamyat",
-  "version": "0.1.0-alpha.32",
-  "description": "Память агента: имя для набора из шести пакетов, собранных и проверенных вместе",
+  "version": "3.1.4",
+  "description": "Память агента: имя для набора из девяти пакетов памяти, собранных и проверенных вместе · Agent memory: one name for a set of nine memory packages built and verified together",
+  "keywords": [
+    "dsh",
+    "агент · agent",
+    "память · memory",
+    "набор · bundle",
+    "метапакет · metapackage",
+    "проверка состава · composition check"
+  ],
   "type": "module",
   "files": [
     "test",
     "sostav.json",
-    "summa-predmeta",
+    "summa-predmeta-2",
     "README.md",
     "README.en.md",
+    "docs",
     "CHANGELOG.md"
   ],
   "scripts": {
     "test": "node test/stend-sostava.mjs"
   },
   "dependencies": {
-    "dsh-pamyat-core": "0.1.0-alpha.40",
-    "dsh-pamyat-omega": "0.1.0-alpha.10",
-    "dsh-pamyat-secretary": "0.1.0-alpha.16",
-    "dsh-pamyat-byudzhet": "0.1.0-alpha.8",
-    "dsh-pamyat-nudzh": "0.1.0-alpha.12",
-    "dsh-pamyat-restore": "0.1.0-alpha.18"
+    "dsh-pamyat-core": "3.1.2",
+    "dsh-pamyat-omega": "3.1.2",
+    "dsh-pamyat-secretary": "3.1.2",
+    "dsh-pamyat-byudzhet": "3.1.2",
+    "dsh-pamyat-nudzh": "3.1.2",
+    "dsh-pamyat-restore": "3.1.2",
+    "dsh-pamyat-storozha": "3.1.3",
+    "dsh-pamyat-kompakt-dsh": "3.1.2",
+    "dsh-pamyat-kompakt": "3.1.2"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/iia-arg/dsh-plugins.git",
     "directory": "packages/dsh-pamyat"
+  },
+  "license": "MIT",
+  "author": "Aleksandr Argelander",
+  "engines": {
+    "node": ">=22"
   }
 }

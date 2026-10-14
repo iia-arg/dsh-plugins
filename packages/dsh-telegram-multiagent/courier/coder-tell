@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in alfa|beta|gamma) ;; *) echo 'OTKAZ: unknown coder' >&2; exit 2 ;; esac
+case "${2:-}" in
+  --stop-pause) [ "$#" = 2 ] || exit 2 ;;
+  --stop-replace) [ "$#" = 4 ] && [ "$3" = -f ] || exit 2 ;;
+  -f) [ "$#" = 3 ] || exit 2 ;;
+  *) echo 'Usage: coder-tell <alfa|beta|gamma> -f <file> | --stop-pause | --stop-replace -f <file>' >&2; exit 2 ;;
+esac
+exec "$(dirname "$0")/iskra-tell" --coder "$@"

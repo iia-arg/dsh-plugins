@@ -1,0 +1,11 @@
+[Unit]
+Description=Ежесуточная уборка страховок монтажей sadik — за 30 мин до копии (B-N-1169)
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=montazh-srok.service
+
+[Install]
+WantedBy=timers.target

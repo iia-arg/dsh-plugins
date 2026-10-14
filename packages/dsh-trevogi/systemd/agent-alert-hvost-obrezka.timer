@@ -1,0 +1,9 @@
+[Unit]
+Description=Часовая обрезка хвоста · Hourly tail trimming
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

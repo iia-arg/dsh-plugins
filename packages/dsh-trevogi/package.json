@@ -1,0 +1,11 @@
+{
+  "name": "dsh-trevogi",
+  "version": "3.1.2",
+  "description": "Отправка тревог и сторожа журнала · Alert delivery and journal watchers",
+  "keywords": ["тревоги · alerts", "сторожа · watchers", "systemd"],
+  "license": "MIT",
+  "author": "Aleksandr Argelander",
+  "engines": { "node": ">=18" },
+  "files": ["bin", "lib", "systemd", "test", "docs", "README.md", "CHANGELOG.md", "LICENSE", "dsh-trevogi.conf.example"],
+  "scripts": {"test": "bash test/vse-stendy.sh"}
+}

@@ -1,0 +1,12 @@
+[Unit]
+Description=Обновитель токена Codex подписки — каждые 6 ч (обновляет, только когда до конца access < 72 ч)
+
+[Timer]
+OnBootSec=10min
+OnCalendar=*-*-* 00/6:20:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=codex-obnovitel.service
+
+[Install]
+WantedBy=timers.target

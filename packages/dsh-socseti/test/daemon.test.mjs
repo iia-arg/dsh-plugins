@@ -1,0 +1,2 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {spawn} from 'node:child_process';
+test('daemon refuses unknown options and does not start',async()=>{for(const args of [[],['--dry-run'],['--check'],['-n'],['/absent','extra']]){const c=spawn(process.execPath,['src/main.mjs',...args],{cwd:new URL('..',import.meta.url),stdio:['ignore','pipe','pipe']});let stderr='';c.stderr.on('data',b=>stderr+=b);const code=await new Promise(r=>c.on('exit',r));assert.equal(code,2);assert.match(stderr,/usage:/)}});

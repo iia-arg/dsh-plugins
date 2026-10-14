@@ -1,18 +1,5 @@
-/**
- * Стенд: модель на ВЫБОРЕ ТЕМ вернула ПРОЗУ вместо массива JSON.
- *
- * 🔴 ПЯТАЯ ПРИЧИНА ПОТЕРИ ЗНАНИЯ, и лечится она иначе четырёх прежних. У беды одно имя —
- * «знание не дошло до памяти», а причин уже пять, и каждая со своим лечением:
- *   1. текст отклонён фильтром        → текст ЕСТЬ, спасать в файл
- *   2. модель вернула пустоту         → спасать нечего, нужен ПОВТОР (задание)
- *   3. текст не влез в предел обрезки → спасать отброшенное начало
- *   4. бюджет ответа съеден рассуждением → лечится ЧИСЛОМ (maxTokens)
- *   5. ответ не разобрался как JSON   → текст ЕСТЬ и он ОСМЫСЛЕН, но темы не извлечены:
- *      сохранить сырой ответ, чтобы разобрать рукой, и не выдавать это за «тем нет»
- *
- * ГДЕ НЕ ПРИМЕНЯЕТСЯ: стенд не проверяет, что модель ДЕЙСТВИТЕЛЬНО реже отвечает прозой
- * после повтора указания в конце — это замер на живой модели, здесь только НАШЕ поведение.
- */
+// RU: Проверяем прозу вместо JSON-массива при выборе тем: содержательный сырой ответ сохраняется для ручного разбора и не называется отсутствием тем. Это отличается от отказа фильтра с текстом, пустоты без текста, отброшенного начала и бюджета, съеденного рассуждением. Частота прозы у живой модели после изменения промпта не проверяется.
+// EN: Test prose instead of a JSON array during topic selection: preserve the meaningful raw response for manual processing rather than call it no topics. This differs from filter rejection with text, an empty response, discarded prefixes, and reasoning exhausting the budget. Live-model prose frequency after prompt changes is untested.
 let distillirovat, sozdatSohranenieProzy;
 try {
   ;({ distillirovat } = await import('../src/distill-shov.js'));
@@ -26,26 +13,37 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { zstdCompressSync } from 'node:zlib';
+// RU: Каждый mkdtemp создаём через vremennyj(): уборка выполняется при обычном выходе, исключении, process.exit и SIGTERM/SIGINT, включая timeout 120. SIGKILL не перехватывается; временное дочернего процесса убирает сам процесс.
+// EN: Create every mkdtemp through vremennyj(): cleanup runs on normal exit, exceptions, process.exit, and SIGTERM/SIGINT, including timeout 120. SIGKILL cannot be intercepted; a child process cleans its own temporary files.
+import { mkdtempSync as mkdtempSync_, rmSync as rmSync_ } from 'node:fs'
+// RU: Без метода маски входа тело дистилляции отказывает. Здесь маска-пустышка намеренно пропускает текст, чтобы изолировать другой предмет; маску проверяет stend-maski-vhoda-sekretarya.
+// EN: The distillation body rejects without the input-mask method. Here an identity fake deliberately passes text through to isolate another subject; stend-maski-vhoda-sekretarya tests masking.
+const MASKA_PUSTYSHKA_STENDA = (t) => ({ tekst: t, zameneno: 0, klassy: [], predelDostignut: false });
+const VREMENNYE = []
+const vremennyj = (...a) => { const k = mkdtempSync_(...a); VREMENNYE.push(k); return k }
+process.on('exit', () => { for (const k of VREMENNYE) rmSync_(k, { recursive: true, force: true }) })
+process.on('SIGTERM', () => process.exit(143)); process.on('SIGINT', () => process.exit(130))
 
 let ok = 0, bed = 0;
+const sud = (v) => { if (v !== undefined && v !== true) throw new Error('тело пробы ВЕРНУЛО «' + String(v).slice(0, 60) + '», а обёртка судит по ИСКЛЮЧЕНИЮ: возврат молча зеленел бы. Проверка ПО УСТРОЙСТВУ, а не по перечню значений (06.09.2026)'); };
 const proba = (imya, f) => {
   try {
-    const v = f();
-    if (v && typeof v.then === 'function') throw new Error('тело ОЖИДАЮЩЕЕ, а прогонщик синхронный');
-    if (typeof v === 'string') throw new Error(v);
+    // RU: sud() принимает только undefined или true; нижние проверки остальных значений недостижимы.
+    // EN: sud() accepts only undefined or true; lower checks of other values are unreachable.
+    sud(f());
     ok++; console.log('  ✅ ' + imya);
   } catch (e) { bed++; console.log('  ❌ ' + imya + ' — ' + String(e.message).slice(0, 180)); }
 };
 
-const kat = mkdtempSync(join(tmpdir(), 'stend-prozy-'));
+const kat = vremennyj(join(tmpdir(), 'stend-prozy-'));
 const otklonennye = join(kat, 'otklonennye');
 const zhurnal = join(kat, 's.jsonl.zstd');
 writeFileSync(zhurnal, zstdCompressSync(Buffer.from(
   [JSON.stringify({ seq: 10, type: 'user/message', data: { content: 'Речь про предмет замера.' } }),
    JSON.stringify({ seq: 11, type: 'assistant/message', data: { content: 'Ответ числом.' } })].join('\n') + '\n', 'utf-8')));
 
-// ПРОЗА ВМЕСТО МАССИВА — ровно то, что даёт живая модель, когда указание формата теряется
-// в начале запроса перед сотнями тысяч знаков транскрипта.
+// RU: Ответ прозой моделирует потерю указания JSON-формата перед длинным транскриптом.
+// EN: A prose response models losing the JSON-format instruction before a long transcript.
 const PROZA = 'В этом отрезке обсуждались три темы: во-первых, метки реестра; во-вторых, '
   + 'область поиска по мейнтейнеру; в-третьих, потеря знания при отказе разбора.';
 let poslednijZapros = null;
@@ -63,7 +61,7 @@ const adres = `http://127.0.0.1:${server.address().port}/v1/messages`;
 const klyuch = join(kat, 'k'); writeFileSync(klyuch, 'proba\n', { mode: 0o600 });
 
 const kriki = [];
-const itog = await distillirovat({
+const itog = await distillirovat({ maska: MASKA_PUSTYSHKA_STENDA,
   putZhurnala: zhurnal,
   dannye: { shadowedSeqs: [10, 11], shadowedTokenCount: 5000 },
   seansId: 'proba-prozy',
@@ -99,14 +97,15 @@ proba('🔴 указание формата ПОВТОРЕНО В КОНЦЕ з�
   const soob = JSON.stringify(poslednijZapros.messages ?? poslednijZapros);
   const i = soob.lastIndexOf('массив JSON');
   if (i < 0) return 'указания о формате в теле сообщения нет вовсе';
-  // повтор обязан стоять именно В КОНЦЕ: модель слушает конец, а начало тонет в транскрипте
+  // RU: Повтор указания формата должен стоять в конце после транскрипта.
+  // EN: The repeated format instruction must appear at the end after the transcript.
   const hvost = soob.slice(-260);
   if (!/массив JSON/.test(hvost)) return 'указание есть, но НЕ в конце — оно утонет перед транскриптом';
 });
 
 proba('⚠️ сохранение прозы НЕ ОБЯЗАТЕЛЬНО: без него заход не падает', () => {
-  // Признак «правка не сделала старый вызов непригодным»: у пакета есть читатели,
-  // которые про сохранение прозы не знают и не передадут его.
+  // RU: Отсутствие нового обработчика сохранения прозы не должно ломать прежних вызывающих.
+  // EN: Omitting the new prose-saving handler must not break existing callers.
   const est = readFileSync(new URL('../src/distill-shov.js', import.meta.url), 'utf-8');
   if (!/typeof sohranitProzu === 'function'/.test(est)) {
     return 'вызов не защищён проверкой типа — старый вызывающий получит падение вместо исхода';

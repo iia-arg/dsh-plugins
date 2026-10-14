@@ -1,0 +1,485 @@
+{
+  "result": {
+    "id": "4h711EdtZKt6zo7yD5Uf2ToZpvPdkSVn",
+    "kind": "group",
+    "url": "https://example.invalid/calculator#plan=4h711EdtZKt6zo7yD5Uf2ToZpvPdkSVn",
+    "documentVersion": "a0d25846bd74481f908c281d970a67f25dd162b1be8c3d1a580cd7778d9e5d7a",
+    "catalogVersion": 2,
+    "state": "draft",
+    "editable": true,
+    "plan": {
+      "policyVersion": 3,
+      "group": 20,
+      "adults": 20,
+      "teens": 0,
+      "foodDays": 7,
+      "extraTeam": 0,
+      "organizer": "Стенд PDF — не заявка",
+      "title": "Проверка длинной таблицы для организаторов ретрита — программа проживания, питания и занятий на неделю для участников и мастеров",
+      "housing": [
+        {
+          "resource": "dome-house",
+          "occupancy": 2,
+          "quantity": 5
+        },
+        {
+          "resource": "a-frame",
+          "occupancy": 2,
+          "quantity": 4
+        },
+        {
+          "resource": "double-room",
+          "occupancy": 2,
+          "quantity": 2
+        }
+      ],
+      "activities": [
+        {
+          "resource": "dome-hall",
+          "day": 0,
+          "slot": "evening",
+          "options": []
+        },
+        {
+          "resource": "dome-hall",
+          "day": 1,
+          "slot": "morning",
+          "options": []
+        },
+        {
+          "resource": "dome-hall",
+          "day": 1,
+          "slot": "evening",
+          "options": []
+        },
+        {
+          "resource": "dome-hall",
+          "day": 2,
+          "slot": "morning",
+          "options": []
+        },
+        {
+          "resource": "dome-hall",
+          "day": 2,
+          "slot": "evening",
+          "options": []
+        },
+        {
+          "resource": "dome-hall",
+          "day": 3,
+          "slot": "morning",
+          "options": []
+        },
+        {
+          "resource": "dome-hall",
+          "day": 3,
+          "slot": "evening",
+          "options": []
+        },
+        {
+          "resource": "dome-hall",
+          "day": 4,
+          "slot": "morning",
+          "options": []
+        },
+        {
+          "resource": "dome-hall",
+          "day": 4,
+          "slot": "evening",
+          "options": []
+        },
+        {
+          "resource": "dome-hall",
+          "day": 5,
+          "slot": "morning",
+          "options": []
+        },
+        {
+          "resource": "dome-hall",
+          "day": 5,
+          "slot": "evening",
+          "options": []
+        },
+        {
+          "resource": "dome-hall",
+          "day": 6,
+          "slot": "morning",
+          "options": []
+        },
+        {
+          "resource": "dome-hall",
+          "day": 6,
+          "slot": "evening",
+          "options": []
+        },
+        {
+          "resource": "bath",
+          "day": 2,
+          "slot": "noon",
+          "options": [
+            "tub"
+          ]
+        },
+        {
+          "resource": "bath",
+          "day": 2,
+          "slot": "evening",
+          "options": [
+            "tub"
+          ]
+        },
+        {
+          "resource": "bath",
+          "day": 6,
+          "slot": "noon",
+          "options": [
+            "tub"
+          ]
+        },
+        {
+          "resource": "bath",
+          "day": 6,
+          "slot": "evening",
+          "options": [
+            "tub"
+          ]
+        },
+        {
+          "resource": "music",
+          "day": 1,
+          "slot": "day",
+          "options": []
+        },
+        {
+          "resource": "long-hall",
+          "day": 3,
+          "slot": "day",
+          "options": []
+        },
+        {
+          "resource": "cinema",
+          "day": 4,
+          "slot": "day",
+          "options": []
+        },
+        {
+          "resource": "dining-hall",
+          "day": 5,
+          "slot": "day",
+          "options": []
+        }
+      ],
+      "week": "2027-06-05"
+    },
+    "quote": {
+      "exclusive": false,
+      "week": "2027-06-05",
+      "end": "2027-06-12",
+      "season": "high",
+      "version": 2,
+      "group": 20,
+      "adults": 20,
+      "teens": 0,
+      "childSettings": {
+        "baseDiscount": 0,
+        "discountMode": "sequential",
+        "durationDiscounts": [
+          {
+            "days": 5,
+            "percent": 10
+          },
+          {
+            "days": 8,
+            "percent": 15
+          },
+          {
+            "days": 14,
+            "percent": 25
+          },
+          {
+            "days": 28,
+            "percent": 40
+          }
+        ],
+        "childFreeUnder": 6,
+        "childDiscountUnder": 13,
+        "childDiscount": 50,
+        "bathPrice": 3000,
+        "bathHours": 3,
+        "bathCapacity": 10,
+        "bathSessionsPerWeek": 2,
+        "bathFreeAfterDays": 7,
+        "bathFreePerWeek": 1,
+        "includedActivities": "Лодки, сапы, велосипед, йога или цигун по утрам — без дополнительной оплаты."
+      },
+      "policyVersion": 3,
+      "mainMasters": 2,
+      "extraTeam": 0,
+      "discountedTeam": 0,
+      "fullTeam": 0,
+      "eligibleGuests": 20,
+      "attendees": 22,
+      "teamSettings": {
+        "mainHousingDiscount": 100,
+        "mainFoodDiscount": 100,
+        "extraHousingDiscount": 100,
+        "extraFoodDiscount": 0
+      },
+      "settlement": {
+        "adults": 20,
+        "teens": 0,
+        "mainMasters": 2,
+        "extraTeam": 0,
+        "attendees": 22,
+        "allocated": 22,
+        "missing": 0,
+        "surplus": 0,
+        "complete": true
+      },
+      "compositionComplete": true,
+      "allocated": 22,
+      "foodDays": 7,
+      "grossHousingTotal": 1008000,
+      "housingTotal": 910000.0,
+      "mainHousingDiscountAmount": 98000.0,
+      "extraHousingDiscountAmount": 0.0,
+      "childHousingDiscountAmount": 0,
+      "grossFoodTotal": 770000,
+      "foodTotal": 700000.0,
+      "mainFoodDiscountAmount": 70000.0,
+      "extraFoodDiscountAmount": 0.0,
+      "childFoodDiscountAmount": 0.0,
+      "childDiscountAmount": 0.0,
+      "teamHousingAllocation": [
+        {
+          "role": "main",
+          "resource": "a-frame",
+          "occupancy": 2,
+          "rate": 7000,
+          "name": "Треугольные домики A-frame",
+          "discountPercent": 100
+        },
+        {
+          "role": "main",
+          "resource": "a-frame",
+          "occupancy": 2,
+          "rate": 7000,
+          "name": "Треугольные домики A-frame",
+          "discountPercent": 100
+        }
+      ],
+      "housingBenefits": [
+        {
+          "role": "main",
+          "resource": "a-frame",
+          "occupancy": 2,
+          "rate": 7000,
+          "name": "Треугольные домики A-frame",
+          "discountPercent": 100,
+          "places": 2,
+          "gross": 98000,
+          "discount": 98000.0,
+          "net": 0.0
+        }
+      ],
+      "activityTotal": 453000,
+      "optionTotal": 40000,
+      "total": 2103000.0,
+      "lines": [
+        {
+          "kind": "housing",
+          "label": "Купольные домики (Шарики): 5 × 2 чел. × 7 ночей",
+          "rate": 6000,
+          "amount": 420000
+        },
+        {
+          "kind": "housing",
+          "label": "Треугольные домики A-frame: 4 × 2 чел. × 7 ночей",
+          "rate": 7000,
+          "amount": 392000
+        },
+        {
+          "kind": "housing",
+          "label": "Прямоугольные домики: комнаты (половина домика): 2 × 2 чел. × 7 ночей",
+          "rate": 7000,
+          "amount": 196000
+        },
+        {
+          "kind": "discount",
+          "label": "Основные мастера · Треугольные домики A-frame, по 2 чел.: 2 мест × 7000 ₽ × 7 ночей = 98000 ₽. Скидка 100% (98000,00 ₽); к оплате 0,00 ₽",
+          "amount": -98000.0
+        },
+        {
+          "kind": "food",
+          "label": "Питание всех участников и команды: 22 × 7 дней",
+          "amount": 770000
+        },
+        {
+          "kind": "discount",
+          "label": "Основные мастера · питание: 2 × 5000 ₽ × 7 дней = 70000 ₽. Скидка 100% (70000,00 ₽); к оплате 0,00 ₽",
+          "amount": -70000.0
+        },
+        {
+          "kind": "activity",
+          "label": "05.06 18:00–21:00 · Большой Купол · 180 м²",
+          "rate": 20000,
+          "amount": 20000
+        },
+        {
+          "kind": "activity",
+          "label": "06.06 08:00–11:00 · Большой Купол · 180 м²",
+          "rate": 20000,
+          "amount": 20000
+        },
+        {
+          "kind": "activity",
+          "label": "06.06 18:00–21:00 · Большой Купол · 180 м²",
+          "rate": 20000,
+          "amount": 20000
+        },
+        {
+          "kind": "activity",
+          "label": "07.06 08:00–11:00 · Большой Купол · 180 м²",
+          "rate": 20000,
+          "amount": 20000
+        },
+        {
+          "kind": "activity",
+          "label": "07.06 18:00–21:00 · Большой Купол · 180 м²",
+          "rate": 20000,
+          "amount": 20000
+        },
+        {
+          "kind": "activity",
+          "label": "08.06 08:00–11:00 · Большой Купол · 180 м²",
+          "rate": 20000,
+          "amount": 20000
+        },
+        {
+          "kind": "activity",
+          "label": "08.06 18:00–21:00 · Большой Купол · 180 м²",
+          "rate": 20000,
+          "amount": 20000
+        },
+        {
+          "kind": "activity",
+          "label": "09.06 08:00–11:00 · Большой Купол · 180 м²",
+          "rate": 20000,
+          "amount": 20000
+        },
+        {
+          "kind": "activity",
+          "label": "09.06 18:00–21:00 · Большой Купол · 180 м²",
+          "rate": 20000,
+          "amount": 20000
+        },
+        {
+          "kind": "activity",
+          "label": "10.06 08:00–11:00 · Большой Купол · 180 м²",
+          "rate": 20000,
+          "amount": 20000
+        },
+        {
+          "kind": "activity",
+          "label": "10.06 18:00–21:00 · Большой Купол · 180 м²",
+          "rate": 20000,
+          "amount": 20000
+        },
+        {
+          "kind": "activity",
+          "label": "11.06 08:00–11:00 · Большой Купол · 180 м²",
+          "rate": 20000,
+          "amount": 20000
+        },
+        {
+          "kind": "activity",
+          "label": "11.06 18:00–21:00 · Большой Купол · 180 м²",
+          "rate": 20000,
+          "amount": 20000
+        },
+        {
+          "kind": "activity",
+          "label": "07.06 12:00–16:00 · Баня",
+          "rate": 40000,
+          "amount": 40000
+        },
+        {
+          "kind": "option",
+          "label": "07.06 12:00–16:00 · Опция: Горячая купель",
+          "rate": 10000,
+          "amount": 10000
+        },
+        {
+          "kind": "activity",
+          "label": "07.06 18:00–22:00 · Баня",
+          "rate": 40000,
+          "amount": 40000
+        },
+        {
+          "kind": "option",
+          "label": "07.06 18:00–22:00 · Опция: Горячая купель",
+          "rate": 10000,
+          "amount": 10000
+        },
+        {
+          "kind": "activity",
+          "label": "11.06 12:00–16:00 · Баня",
+          "rate": 40000,
+          "amount": 40000
+        },
+        {
+          "kind": "option",
+          "label": "11.06 12:00–16:00 · Опция: Горячая купель",
+          "rate": 10000,
+          "amount": 10000
+        },
+        {
+          "kind": "activity",
+          "label": "11.06 18:00–22:00 · Баня",
+          "rate": 40000,
+          "amount": 40000
+        },
+        {
+          "kind": "option",
+          "label": "11.06 18:00–22:00 · Опция: Горячая купель",
+          "rate": 10000,
+          "amount": 10000
+        },
+        {
+          "kind": "activity",
+          "label": "06.06 12:00–15:00 · Музыкальная гостиная · около 48 м²",
+          "rate": 7000,
+          "amount": 7000
+        },
+        {
+          "kind": "activity",
+          "label": "08.06 12:00–15:00 · Вытянутый зал · 73 м²",
+          "rate": 9000,
+          "amount": 9000
+        },
+        {
+          "kind": "activity",
+          "label": "09.06 12:00–15:00 · Кинозал над баней · около 60 м² (проектор, экран, хороший звук)",
+          "rate": 6000,
+          "amount": 6000
+        },
+        {
+          "kind": "activity",
+          "label": "10.06 12:00–15:00 · Зал над столовой · около 127 м²",
+          "rate": 11000,
+          "amount": 11000
+        }
+      ],
+      "warnings": [
+        "Баня: в слот до 15 человек; гостей 20 и мастеров 2, всего 22 человек — разделите на подгруппы.",
+        "Музыкальная гостиная · около 48 м²: в слот до 20 человек; гостей 20 и мастеров 2, всего 22 человек — разделите на подгруппы.",
+        "Кинозал над баней · около 60 м² (проектор, экран, хороший звук): в слот до 15 человек; гостей 20 и мастеров 2, всего 22 человек — разделите на подгруппы."
+      ],
+      "organizer": "Стенд PDF — не заявка",
+      "title": "Проверка длинной таблицы для организаторов ретрита — программа проживания, питания и занятий на неделю для участников и мастеров"
+    },
+    "updatedAt": "2026-10-06T22:15:49.647644+00:00"
+  },
+  "guestName": "Стенд PDF — не заявка",
+  "letterhead": "legal"
+}

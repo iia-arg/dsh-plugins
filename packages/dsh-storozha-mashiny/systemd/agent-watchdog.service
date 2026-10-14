@@ -1,0 +1,7 @@
+[Unit]
+Description=Сторож машины: службы, память, место на диске · Machine watchdog: units, memory, disk space
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/agent-watchdog.sh

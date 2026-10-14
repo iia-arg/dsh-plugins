@@ -1,0 +1,10 @@
+[Unit]
+Description=Читатель ночного обхода (B-N-1741): раз в час 04:50–10:50 UTC — после обхода 03:40 (предел юнита 50 мин); ночь прочитана — молчит
+
+[Timer]
+OnCalendar=*-*-* 04..10:50:00 UTC
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

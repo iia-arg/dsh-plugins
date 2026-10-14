@@ -1,0 +1,16 @@
+[Unit]
+Description=Сторож размера копии sadik и места под неё (ступенька ±5%, прогноз места в ночах)
+Documentation=file:///usr/local/sbin/razmer-kopii-watch
+After=multi-user.target
+
+[Service]
+Type=oneshot
+# Под root: last.json копии и полка /backups — root 600/700. Так же ходит приёмка копии (backup-verify).
+ExecStart=/usr/local/sbin/razmer-kopii-watch
+# Код 1 = «нашёл ступеньку или нехватку места» — штатный исход наблюдения, тревога уже сказана.
+# 🔴 ГРАНИЦА: 2 сюда НЕ дописывать. 2 = «мерить нечем»; failed по нему — единственное, чем слепота
+# отличается от молчания исправного сторожа (правило соседа backup-coverage-watch).
+SuccessExitStatus=1
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal

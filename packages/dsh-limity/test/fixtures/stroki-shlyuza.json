@@ -1,0 +1,28 @@
+[
+ {
+  "moment_utc": 1791394926.8,
+  "provajder": "claude",
+  "podpiska": 2,
+  "okno": "five_hour",
+  "dolya": 0.33,
+  "sbros_utc": 1791406800,
+  "status": null,
+  "izmereno": 1,
+  "prichina": null,
+  "istochnik": "sdk_event",
+  "otkuda": "gateway@zarya"
+ },
+ {
+  "moment_utc": 1791394926.8,
+  "provajder": "claude",
+  "podpiska": 2,
+  "okno": "seven_day",
+  "dolya": 0.37,
+  "sbros_utc": 1791939600,
+  "status": "allowed_warning",
+  "izmereno": 1,
+  "prichina": null,
+  "istochnik": "sdk_event",
+  "otkuda": "gateway@zarya"
+ }
+]

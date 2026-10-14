@@ -1,0 +1,29 @@
+# Настройки Codex кодера @@IMYA@@ (CODEX_HOME шлюза) — семейство codex, B-H-081 Ш5. Числа — формулой из F (osnova.codex), не литералом.
+# Codex 0.156: порог = min(model_auto_compact_token_limit, 90% окна) (openai_models.rs:525), рабочее окно = окно × процент каталога.
+# Окно @@W@@ = ⌈@@L@@ / @@KATALOG_DOLYA@@⌉: рабочее окно = измеренный предел сервера @@L@@ (подбор под предел, не паспорт модели).
+# Порог сжатия Codex @@AUTO@@ = @@L@@ − @@PRIROST@@ (наибольший замеренный прирост за ход); 90% окна = @@W90@@ — потолок не мешает.
+model_context_window = @@W@@
+model_auto_compact_token_limit = @@AUTO@@
+model_catalog_json = "@@CODEX_HOME@@/model-catalog-predel-20260929.json"
+
+# Предел project-doc: умолчание Codex — 32768 байт на все project-doc вместе, сверх него хвост обрезается; AGENTS.md агента больше.
+project_doc_max_bytes = 65536
+
+# B-N-1894 (условие Вениамина 04:1xZ): ключ OMEGA нужен ПРОЦЕССУ Codex для заголовка MCP, а не командам модели.
+# Codex по умолчанию не вычищает *KEY* из окружения команд (ignore_default_excludes = true) — исключаем имя явно.
+# Граница: прячет переменную от shell-команд Codex, не от процесса шлюза. НЕ ЛОВИТ: чтение /proc/<pid шлюза>/environ командой той же учётки — ключ виден (замер Вениамина 09.10 04:2xZ); лечение — B-N-1899.
+[shell_environment_policy]
+exclude = ["OMEGA_MCP_API_KEY"]
+
+[projects."@@DOM@@/workspace"]
+trust_level = "trusted"
+
+[mcp_servers.omega]
+url = "http://127.0.0.1:8377/mcp/"
+# B-N-1894 (09.10, Аврора): OMEGA ≥1.5.19 требует Bearer (A-N-1173-ost). Codex берёт заголовок из ИМЕНИ переменной окружения шлюза
+# (drop-in 15-omega-mcp-klyuch.conf → EnvironmentFile=/etc/omega/mcp-klyuch.env); значения здесь нет. Нет переменной — падает только этот сервер:
+# «MCP startup failed: Environment variable OMEGA_MCP_API_KEY for MCP server 'omega' is not set» (проба Codex 0.160.0 app-server).
+bearer_token_env_var = "OMEGA_MCP_API_KEY"
+@@ESLI DOP_M@@
+@@VSTAVKA DOP_M@@
+@@/ESLI DOP_M@@

@@ -1,0 +1,17 @@
+# /etc/systemd/system/golos-watch.service — НОВЫЙ (B-N-760, 24.09.2026, кандидат Зари).
+# Сторож голоса: у каждого DSH-агента реестра голосовые расшифровываются локально (см. шапку скрипта).
+# Читатель исхода: тревога уходит через agent-alert в общий канал; 3 (тревога не ушла) — failed,
+# его видит сторож упавших служб.
+[Unit]
+Description=Сторож голоса: расшифровка голосовых у каждого DSH-агента реестра (B-N-760)
+After=whisper-warm.service
+[Service]
+Type=oneshot
+# root: читает профили всех агентов и пробует от их учёток (runuser); сам ничего не пишет, кроме /tmp.
+User=root
+Environment=LC_ALL=C.UTF-8
+PrivateTmp=true
+ExecStart=/usr/local/sbin/golos-watch
+# 1 — находка (тревога ушла), 2 — слепота (тревога ушла): ответы сторожа, а не его поломка.
+SuccessExitStatus=1 2
+TimeoutStartSec=30min

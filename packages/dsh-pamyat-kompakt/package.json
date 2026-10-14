@@ -1,0 +1,34 @@
+{
+  "name": "dsh-pamyat-kompakt",
+  "version": "3.1.2",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "index.mjs",
+  "description": "Компакт контекста агента: сводка своей моделью, атомарная перезапись журнала сессии (Claude SDK и Codex), возврат сводки в контекст · Agent context compaction: summary by its own model, atomic session-log rewrite (Claude SDK and Codex), summary returned to context",
+  "keywords": [
+    "компакт · compaction",
+    "сводка · summary",
+    "контекст · context window",
+    "память агента · agent memory",
+    "Claude Agent SDK",
+    "Codex",
+    "DSH"
+  ],
+  "files": [
+    "index.mjs",
+    "promt-svodki.txt",
+    "ramka-stenogrammy.txt",
+    "ramka-s-hvostom.txt",
+    "CHANGELOG.md",
+    "stend-*.mjs",
+    "porogi.mjs",
+    "README.md",
+    "docs/",
+    "tekstovye-nastrojki.mjs",
+    "README.en.md"
+  ],
+  "license": "MIT",
+  "author": "Aleksandr Argelander"
+}

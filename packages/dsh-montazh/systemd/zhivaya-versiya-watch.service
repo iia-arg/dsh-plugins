@@ -1,0 +1,13 @@
+[Unit]
+Description=Живая версия общих носителей (шлюз, мост, адаптер) против диска — журнал живого pid
+
+[Service]
+# B-N-961: stdout службы — под своим тегом; итог через logger остаётся ОДНОЙ строкой под тегом скрипта.
+SyslogIdentifier=zhivaya-versiya-watch-vyvod
+Type=oneshot
+ExecStart=/usr/local/sbin/zhivaya-versiya-watch --avto-montazh
+# 1 = расхождение (тревога ушла) — не падение юнита; 2 = слепота/канал — failed.
+SuccessExitStatus=1
+Nice=10
+# Условие Вениамина: зависший journalctl/systemctl не держит юнит в activating навсегда.
+TimeoutStartSec=10min

@@ -1,0 +1,475 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""codex-obnovitel — ПРОГРАММА-ОБНОВИТЕЛЬ токена Codex подписки (B-N-800, 24.09.2026, кандидат Зари).
+
+ЗАЧЕМ (слово владельца 24.09 20:03): токен лежит в системной части шлюза, а не в каталоге агента;
+всем шлюзам читать, писать одному; обновляет не агент, а программа по расписанию.
+
+УСТРОЙСТВО (замеры B-N-800, стенд на подставном сервере):
+  ПОЛНЫЙ носитель   $CODEX_OBN_POLNYJ  (root 0600) — access+refresh; читает и пишет ТОЛЬКО эта программа.
+  ПРОИЗВОДНЫЙ файл  $CODEX_OBN_PROIZV  — тот же JSON, но refresh_token = "". Права НЕ свои (B-N-1621): новый файл
+                    наследует группу, режим и ACL ЗАМЕНЯЕМОГО (до перехода root:claudeoauth 0640, после — root:root
+                    0600 + ACL «своя подписка» от svesti-dostup-podpisok); прежнего нет — root:root 0600, закрыто.
+                    На него ведут ССЫЛКИ auth.json из CODEX_HOME всех шлюзов подписки.
+  🔴 Почему refresh у шлюзов ПУСТОЙ: codex exec сам идёт за refresh на исходе срока (порог 5–15 мин)
+     и по 401. Шлюз с полным токеном без права записи сжёг бы токен всем (стенд: 19 попыток, файл
+     не тронут). С пустым — сжигать нечего: сервер откажет, упадёт один ход, цепочка цела.
+  Дом программы     $CODEX_OBN_DOM (root 0700) — её CODEX_HOME; auth.json в нём — РАБОЧАЯ КОПИЯ полного
+                    (root 0600), а не ссылка (B-N-807). Codex пишет только в копию; в полный носитель
+                    пара попадает переносом (временный рядом + fsync + rename) ПОСЛЕ проверки успеха.
+  🔴 Зачем копия (B-N-807, стенд): Codex пишет auth.json на месте. Убитый посреди записи обрезал бы
+     ПОЛНЫЙ носитель. SIGTERM app-server переживает и дописывает файл сиротой уже после нас. Теперь
+     рвётся и дописывается только копия; полный меняется лишь атомарным rename.
+
+ЧТО ДЕЛАЕТ ПРОГОН:
+  1. flock — второй прогон не идёт (код 4).
+  2. Читает ПОЛНЫЙ. Если рабочая копия читается и НОВЕЕ полного (прошлый прогон убит после записи
+     копии, до переноса) — ПЕРЕНОСИТ её в полный и производный, код 0 «подобрала». Иначе копия
+     пересоздаётся из полного. Срок access из JWT.
+     До конца больше $CODEX_OBN_POROG_CH (72) часов → не обновляет. Производный сверяет и чинит,
+     если он разошёлся с полным (без refresh). Код 10 «не требовалось».
+  3. Иначе штатно: `codex app-server --stdio` → `account/read {"refreshToken": true}` (без хода к модели).
+     🔴 Ответ app-server успеху НЕ свидетель: отказ он отдаёт молча (account:null, код 0), а 0.156 на
+     стенде ротировал токен и вернул ошибку. Успех сверяется ПО ФАЙЛУ: last_refresh сдвинулся И хеш
+     refresh_token сменился И срок access вырос. Ответ app-server печатается замечанием.
+     Ответа ждёт до $CODEX_OBN_PREDEL_S (240) с; app-server не убивается раньше: после ответа или предела
+     stdin закрывается, ждём выхода ещё 60 с, потом TERM, 10 с, KILL. Предел юнита выше суммы (360 с).
+  4. Только ПОСЛЕ подтверждения успеха (по КОПИИ) переносит её в полный, затем пишет производный:
+     временный рядом, права, fsync, rename.
+     Ссылки указывают на путь и переживают rename. Шлюз не прочтёт полуфайл. Код 0 «обновил».
+  5. Отказ → производный НЕ трогается (старый access ещё жив до exp), тревога agent-alert, код 2.
+
+ДВЕ ПОДПИСКИ (codex-podpiska-4, 30.09, условие Вениамина «путь явно в каждом вызове; 4 записал в 3 → отказ»):
+  экземпляр на подписку — свой юнит, все пять путей (POLNYJ, PROIZV, DOM, ZAMOK, SLED) задаются ЯВНО, умолчаний нет.
+  Отказ (код 3, тревога), ничего не тронуто: путь не задан · производный не в каталоге полного · производный или
+  рабочая копия дома — ДРУГОГО аккаунта, чем полный (account_id). След прогона несёт путь полного (читает сторож).
+  Смена аккаунта у подписки (вход владельца в другой аккаунт) — удалить производный руками, прогон создаст его заново.
+КОДЫ: 0 обновил · 10 не требовалось · 2 отказ обновления · 3 слепота (носитель/дом/бинарь не годны) ·
+      4 уже идёт другой прогон · 5 тревога не доставлена (поверх 2/3).
+НЕ СПАСАЕТ (устройство, не код): процесс погиб между ответом сервера и полной записью копии — старый
+      refresh списан, новый не лёг; нужен вход владельца. Окно — время записи файла (доли секунды).
+ЧЕГО НЕ ЛОВИТ: смерть самого таймера (это codex-auth-watch по свежести прогона); отзыв токена
+      сервером между прогонами (увидит ближайший прогон как отказ); порчу auth.json в домах шлюзов,
+      если ссылку заменили файлом (это codex-auth-watch).
+ЗНАЧЕНИЯ ТОКЕНОВ НЕ ПЕЧАТАЮТСЯ НИКОГДА: только хеш sha256[:8] и сроки.
+"""
+import base64, datetime, fcntl, hashlib, json, os, pwd, select, shutil, subprocess, sys, tempfile, time
+
+# 🔴 ПОДПИСОК ДВЕ (codex-podpiska-4, 30.09): пути подписки — ТОЛЬКО явно из юнита, без умолчаний. Умолчание
+# «подписка 3» у экземпляра 4 с потерянной строкой Environment= обновляло бы ЧУЖУЮ подписку молча.
+YAVNYE = ('CODEX_OBN_POLNYJ', 'CODEX_OBN_PROIZV', 'CODEX_OBN_DOM', 'CODEX_OBN_ZAMOK', 'CODEX_OBN_SLED')
+POLNYJ = os.environ.get('CODEX_OBN_POLNYJ', '')
+PROIZV = os.environ.get('CODEX_OBN_PROIZV', '')
+DOM = os.environ.get('CODEX_OBN_DOM', '')
+# тот же бинарь, что запускает шлюз (@openai/codex-sdk из слоя sdk-runtime, 0.156 на 24.09)
+BIN = os.environ.get('CODEX_OBN_BIN', '/opt/claude-oauth/sdk-runtime/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex')
+POROG_CH = float(os.environ.get('CODEX_OBN_POROG_CH', '72'))
+# B-N-1539(2): ВНЕОЧЕРЕДНОЙ refresh. Флаг-файл <DOM>/vneocherednoj ставит codex-limit-watch, когда сервер ответил 401 на замер
+# лимита (access ОТОЗВАН до срока — 04.10 ~09:1xZ после смены тарифа; обычный прогон не обновлял: срок не истёк). При флаге порог
+# POROG_CH не применяется. Не чаще раза в VNEOCH_MIN минут (отметка — mtime <DOM>/vneocherednoj.popytka): заслон ходит раз в 10 мин,
+# и без предела отказавший refresh (refresh тоже отозван — нужен вход владельца) повторялся бы и тревожил каждые 10 мин.
+# 60 мин: первая попытка — сразу по флагу; повтор нужен только при временной беде сервера, а тревога об отказе — раз в час, не чаще.
+# Флаг снимается ТОЛЬКО после удачного refresh И пробного запроса под новым access (account/rateLimits/read — ответ, а не 401);
+# при отказе refresh или пробы — тревога, флаг остаётся. Права и схема хранения токена НЕ меняются: флаг и отметка — в доме (root 0700).
+VNEOCH_MIN = float(os.environ.get('CODEX_OBN_VNEOCH_MIN', '60'))
+PROBA_S = 20   # пробный запрос; сумма худшего прогона 240 + 60 + 10 (refresh) + 20 + 5 = 335 < TimeoutStartSec 360
+PREDEL_S = float(os.environ.get('CODEX_OBN_PREDEL_S', '240'))   # ожидание ответа app-server; юнит: TimeoutStartSec=360
+ZAMOK = os.environ.get('CODEX_OBN_ZAMOK', '')
+SLED = os.environ.get('CODEX_OBN_SLED', '')
+ALERT = os.environ.get('CODEX_OBN_ALERT', '/usr/local/bin/agent-alert')
+
+h8 = lambda s: hashlib.sha256((s or '').encode()).hexdigest()[:8]
+
+def skaz(t): print(t, flush=True)
+
+def trevoga(kod, tekst):
+    skaz(tekst)
+    try:
+        if os.access(ALERT, os.X_OK) and subprocess.run(
+                [ALERT, f'обновитель токена Codex ({os.uname().nodename}): {tekst}'],
+                capture_output=True, timeout=60).returncode == 0:
+            sys.exit(kod)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    skaz(f'🔴 ТРЕВОГА НЕ ДОСТАВЛЕНА (канал {ALERT})')
+    sys.exit(5)
+
+def exp_jwt(jwt):
+    try:
+        pl = jwt.split('.')[1]; pl += '=' * (-len(pl) % 4)
+        return int(json.loads(base64.urlsafe_b64decode(pl))['exp'])
+    except Exception:
+        return None
+
+def chitat(put):
+    with open(put, encoding='utf-8') as f:
+        return json.load(f)
+
+def sled(itog, **k):
+    try:
+        os.makedirs(os.path.dirname(SLED), exist_ok=True)
+        with open(SLED + '.tmp', 'w', encoding='utf-8') as f:
+            json.dump({'vremya': int(time.time()), 'itog': itog, 'polnyj': POLNYJ, **k}, f)
+        os.replace(SLED + '.tmp', SLED)
+    except OSError as e:
+        skaz(f'⚠️ след прогона не записан: {e}')
+
+def akkaunt(d):
+    """Аккаунт пары: tokens.account_id, иначе chatgpt_account_id из id_token. Сравнивается, не печатается."""
+    t = (d or {}).get('tokens') or {}
+    if t.get('account_id'):
+        return str(t['account_id'])
+    try:
+        pl = t['id_token'].split('.')[1]; pl += '=' * (-len(pl) % 4)
+        return str(json.loads(base64.urlsafe_b64decode(pl))['https://api.openai.com/auth']['chatgpt_account_id'])
+    except Exception:
+        return None
+
+def chuzhoj_proizvodnyj(d):
+    """Текст беды, если производный на диске — ДРУГОГО аккаунта, чем пара d (обновитель одной подписки пишет в другую).
+    Производного нет или не читается — не беда: его и пишем. Смена аккаунта подписки — вход владельца + удалить производный."""
+    try:
+        z = chitat(PROIZV)
+    except (OSError, ValueError):
+        return None
+    a0, a1 = akkaunt(z), akkaunt(d)
+    if a0 and a1 and a0 == a1:
+        return None
+    return (f'ОТКАЗ: производный {PROIZV} — ДРУГОГО аккаунта, чем полный {POLNYJ} (акк.#{h8(a0)} ≠ #{h8(a1)}): '
+            f'обновитель одной подписки пишет в другую? Ничего не записано.')
+
+def proizvodnyj_iz(d):
+    p = json.loads(json.dumps(d))
+    p.setdefault('tokens', {})['refresh_token'] = ''
+    return p
+
+def prava_prezhnego():
+    """B-N-1621: (группа, текст getfacl) заменяемого производного; None — его нет. Права задаёт тот, кто ведёт доступ
+    (svesti-dostup-podpisok, переход), а не обновитель: иначе каждая запись возвращала бы групповое чтение всем шлюзам."""
+    try:
+        st = os.stat(PROIZV)
+    except FileNotFoundError:
+        return None
+    r = subprocess.run(['getfacl', '--omit-header', '--absolute-names', '--', PROIZV], capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        raise RuntimeError(f'права прежнего производного не прочитаны (getfacl код {r.returncode}) — замена отменена, прежний цел')
+    return st.st_gid, r.stdout
+
+def zapisat_proizvodnyj(d):
+    """Временный рядом (root 0600) → права ПРЕЖНЕГО (группа, режим, ACL) → fsync → rename. Ссылки из домов переживают rename."""
+    beda = chuzhoj_proizvodnyj(d)
+    if beda:
+        raise RuntimeError(beda)
+    prezh = prava_prezhnego()
+    p = proizvodnyj_iz(d)
+    tmp = PROIZV + '.novyj'
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, json.dumps(p, indent=2).encode())
+        os.fchown(fd, 0, prezh[0] if prezh else 0)
+        os.fchmod(fd, 0o600)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    if prezh:
+        r = subprocess.run(['setfacl', '--set-file=-', '--', tmp], input=prezh[1], capture_output=True, text=True)
+        if r.returncode != 0:
+            os.unlink(tmp)
+            raise RuntimeError(f'права прежнего производного не перенесены (setfacl код {r.returncode}) — замена отменена, прежний цел')
+    else:
+        skaz(f'⚠️ прежнего производного {PROIZV} нет — новый закрыт (root 0600); доступ шлюзам выдаст svesti-dostup-podpisok --svesti')
+    os.replace(tmp, PROIZV)
+    if prezh and prava_prezhnego() != prezh:
+        raise RuntimeError('права производного после замены разошлись с прежними (группа или ACL)')
+    # сверка другим срезом: прочесть записанное с диска
+    z = chitat(PROIZV)
+    if z['tokens'].get('refresh_token') or h8(z['tokens'].get('access_token')) != h8(d['tokens'].get('access_token')):
+        raise RuntimeError('производный после записи не совпал с полным (или несёт refresh)')
+
+def zapisat_polnyj(d):
+    """Перенос пары в ПОЛНЫЙ: временный рядом (root 0600) → fsync → rename → fsync каталога. Рвётся только временный."""
+    tmp = POLNYJ + '.novyj'
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, json.dumps(d, indent=2).encode())
+        os.fchown(fd, 0, 0); os.fchmod(fd, 0o600); os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, POLNYJ)
+    dfd = os.open(os.path.dirname(POLNYJ), os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+    z = chitat(POLNYJ)
+    if h8(z['tokens'].get('refresh_token')) != h8(d['tokens'].get('refresh_token')):
+        raise RuntimeError('полный после переноса не совпал с копией')
+
+def zapisat_rabochij(d):
+    """Рабочая копия полного в доме Codex: временный + rename. Ссылку прежней раскладки rename заменяет файлом."""
+    put = os.path.join(DOM, 'auth.json'); tmp = put + '.novyj'
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, json.dumps(d, indent=2).encode()); os.fchmod(fd, 0o600); os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, put)
+
+
+def perenesti(d, polnyj=False, rabochij=False):
+    """A transfer error is a named refusal, including a confirmed partial full-file update."""
+    try:
+        if rabochij:
+            zapisat_rabochij(d)
+        else:
+            if polnyj:
+                zapisat_polnyj(d)
+            zapisat_proizvodnyj(d)
+    except (OSError, RuntimeError) as e:
+        if polnyj:
+            try:
+                full_new = chitat(POLNYJ) == d
+            except (OSError, ValueError):
+                full_new = None
+            state = ('полный уже содержит новую пару; производный НЕ подтверждён' if full_new else
+                     'новая пара в полном НЕ подтверждена' if full_new is False else
+                     'состояние полного не проверено; нужна ручная сверка')
+        else:
+            state = 'полный этим переносом не заменялся; рабочая копия/производный НЕ подтверждены'
+        reason = f'ОТКАЗ переноса ({type(e).__name__}): {state}'
+        sled('otkaz', prichina=reason)
+        trevoga(2, reason)
+
+
+def novee(d1, d0):
+    """d1 — законно более поздняя пара, чем d0: refresh другой и непустой, срок access и last_refresh позже."""
+    t1, t0 = d1.get('tokens') or {}, d0.get('tokens') or {}
+    e1, e0 = exp_jwt(t1.get('access_token', '')), exp_jwt(t0.get('access_token', ''))
+    return bool(t1.get('refresh_token') and h8(t1.get('refresh_token')) != h8(t0.get('refresh_token'))
+                and e1 and (not e0 or e1 > e0) and str(d1.get('last_refresh') or '') > str(d0.get('last_refresh') or ''))
+
+def proizvodnyj_soshelsya(d):
+    try:
+        z = chitat(PROIZV)
+    except (OSError, ValueError):
+        return False
+    t, tz = d.get('tokens', {}), z.get('tokens', {})
+    return (not tz.get('refresh_token') and tz.get('access_token') == t.get('access_token')
+            and tz.get('id_token') == t.get('id_token') and tz.get('account_id') == t.get('account_id'))
+
+def app_server_refresh():
+    """Штатный refresh: codex app-server --stdio → account/read {refreshToken:true}. Итог — словарь ответа."""
+    env = {**os.environ, 'CODEX_HOME': DOM, 'HOME': DOM}
+    p = subprocess.Popen([BIN, 'app-server', '--stdio'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL, env=env, cwd=DOM)
+    buf = b''
+    def send(x): p.stdin.write((json.dumps(x) + '\n').encode()); p.stdin.flush()
+    def read(i, predel=60):
+        nonlocal buf
+        end = time.monotonic() + predel
+        while True:
+            while b'\n' in buf:
+                line, buf = buf.split(b'\n', 1)
+                try:
+                    x = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(x, dict) and x.get('id') == i:
+                    return x
+            left = end - time.monotonic()
+            if left <= 0 or not select.select([p.stdout.fileno()], [], [], left)[0]:
+                return {'error': f'нет ответа за {predel} с'}
+            chunk = os.read(p.stdout.fileno(), 65536)
+            if not chunk:
+                return {'error': 'app-server завершился'}
+            buf += chunk
+    try:
+        send({'id': 1, 'method': 'initialize', 'params': {'clientInfo': {'name': 'codex-obnovitel', 'version': '1'}}})
+        r = read(1)
+        if 'error' in r:
+            return r
+        send({'method': 'initialized'})
+        send({'id': 2, 'method': 'account/read', 'params': {'refreshToken': True}})
+        return read(2, predel=PREDEL_S)
+    finally:
+        # Не убивать сразу: запрос мог уйти, и Codex допишет копию, когда придёт ответ (B-N-807).
+        try:
+            p.stdin.close()
+        except Exception:
+            pass
+        for sig, zhdat in ((None, 60), (p.terminate, 10), (p.kill, 10)):
+            if sig:
+                skaz(f'⚠️ app-server не вышел — {"TERM" if sig == p.terminate else "KILL"} (пострадать может только рабочая копия)')
+                sig()
+            try:
+                p.wait(timeout=zhdat); break
+            except subprocess.TimeoutExpired:
+                continue
+
+def proba_access(d):
+    """Пробный запрос под НОВЫМ access: account/rateLimits/read под копией ПРОИЗВОДНОГО (refresh пуст — сжечь нечего) во временном
+    каталоге внутри дома (root 0700), каталог удаляется. Итог: None — сервер ответил по существу; иначе строка причины."""
+    kat = tempfile.mkdtemp(prefix='proba-access-', dir=DOM)
+    try:
+        put = os.path.join(kat, 'auth.json')
+        fd = os.open(put, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            json.dump(proizvodnyj_iz(d), f)
+        p = subprocess.Popen([BIN, 'app-server', '--listen', 'stdio://'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, cwd=kat, env={**os.environ, 'CODEX_HOME': kat, 'HOME': kat})
+        buf, konec = b'', time.monotonic() + PROBA_S
+        def send(x): p.stdin.write((json.dumps(x) + '\n').encode()); p.stdin.flush()
+        def read(i):
+            nonlocal buf
+            while True:
+                while b'\n' in buf:
+                    l, buf = buf.split(b'\n', 1)
+                    try:
+                        x = json.loads(l)
+                    except ValueError:
+                        continue
+                    if isinstance(x, dict) and x.get('id') == i:
+                        return x
+                ost = konec - time.monotonic()
+                if ost <= 0 or not select.select([p.stdout.fileno()], [], [], ost)[0]:
+                    return {'error': f'нет ответа за {PROBA_S} с'}
+                kus = os.read(p.stdout.fileno(), 65536)
+                if not kus:
+                    return {'error': 'app-server завершился'}
+                buf += kus
+        try:
+            send({'id': 1, 'method': 'initialize', 'params': {'clientInfo': {'name': 'codex-obnovitel-proba', 'version': '1'}}})
+            r = read(1)
+            if 'error' in r:
+                return str(r['error'])[:200]
+            send({'method': 'initialized'}); send({'id': 2, 'method': 'account/rateLimits/read', 'params': {}})
+            r = read(2)
+            if 'error' in r:
+                return str(r['error'])[:200]
+            return None if isinstance(r.get('result'), dict) and 'rateLimits' in r['result'] else 'ответ без rateLimits'
+        finally:
+            try:
+                p.stdin.close()
+            except OSError:
+                pass
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill(); p.wait(timeout=5)
+    finally:
+        shutil.rmtree(kat, ignore_errors=True)
+
+def glavnaya():
+    if len(sys.argv) > 1:
+        print(f'ОТКАЗ: доводов нет (получено: {" ".join(sys.argv[1:])})', file=sys.stderr); sys.exit(3)
+    net = [k for k in YAVNYE if not os.environ.get(k, '').strip()]
+    if net:
+        trevoga(3, f'ОТКАЗ: не заданы пути подписки {", ".join(net)} — умолчаний нет (подписок две); ничего не тронуто')
+    if os.path.dirname(os.path.dirname(POLNYJ)) != os.path.dirname(PROIZV):
+        trevoga(3, f'ОТКАЗ: производный {PROIZV} не в каталоге подписки полного {POLNYJ} (ждём <каталог>/polnyj/auth.json '
+                   f'и <каталог>/auth.json) — пути двух подписок смешаны? Ничего не тронуто')
+    try:
+        zf = open(ZAMOK, 'w')
+        fcntl.flock(zf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        skaz('уже идёт другой прогон обновителя — этот не начинаю'); sys.exit(4)
+    # слепота: носитель, ссылка дома, бинарь
+    st = os.lstat(POLNYJ) if os.path.lexists(POLNYJ) else None
+    if st is None or not os.path.isfile(POLNYJ):
+        trevoga(3, f'СЛЕПОТА: полного носителя нет: {POLNYJ}')
+    if (os.stat(POLNYJ).st_mode & 0o077) != 0 or os.stat(POLNYJ).st_uid != 0:
+        trevoga(3, f'СЛЕПОТА: полный носитель не root 0600: {POLNYJ} {oct(os.stat(POLNYJ).st_mode & 0o777)} uid {os.stat(POLNYJ).st_uid}')
+    if not os.path.isdir(DOM):
+        trevoga(3, f'СЛЕПОТА: дома обновителя нет: {DOM}')
+    RAB = os.path.join(DOM, 'auth.json')
+    if not os.access(BIN, os.X_OK):
+        trevoga(3, f'СЛЕПОТА: бинарь Codex не исполним: {BIN}')
+    try:
+        d0 = chitat(POLNYJ)
+        t0 = d0['tokens']
+    except (OSError, ValueError, KeyError) as e:
+        trevoga(3, f'СЛЕПОТА: полный носитель не читается как auth.json Codex: {type(e).__name__}')
+    beda = chuzhoj_proizvodnyj(d0)
+    if beda:
+        sled('otkaz', prichina=beda)
+        trevoga(3, '🔴 ' + beda)
+    # Подбор незавершённой ротации: прошлый прогон убит после записи копии, до переноса.
+    if os.path.isfile(RAB) and not os.path.islink(RAB):
+        try:
+            dr = chitat(RAB)
+        except (OSError, ValueError):
+            dr = None
+            skaz('⚠️ рабочая копия не читается (обрыв записи прошлым прогоном?) — пересоздаю из полного')
+        if dr is not None and akkaunt(dr) != akkaunt(d0):
+            beda = (f'ОТКАЗ: рабочая копия {RAB} — ДРУГОГО аккаунта, чем полный {POLNYJ} (акк.#{h8(akkaunt(dr))} ≠ #{h8(akkaunt(d0))}): '
+                    f'дом обновителя общий с другой подпиской? Копия не подобрана и не перезаписана')
+            sled('otkaz', prichina=beda)
+            trevoga(3, '🔴 ' + beda)
+        if dr is not None and novee(dr, d0):
+            perenesti(dr, polnyj=True)
+            rh = h8(dr['tokens'].get('refresh_token'))
+            sled('obnovil', refresh_hash=rh, exp=exp_jwt(dr['tokens'].get('access_token', '')), podobrano=True)
+            skaz(f'подобрала незавершённую ротацию из рабочей копии: refresh#{h8(t0.get("refresh_token"))} → #{rh} · '
+                 f'last_refresh {dr.get("last_refresh")} · перенесена в полный, производный записан')
+            sys.exit(0)
+    if not t0.get('refresh_token'):
+        trevoga(3, 'СЛЕПОТА: в полном носителе нет refresh_token — обновлять нечем, нужен вход владельца')
+    exp0 = exp_jwt(t0.get('access_token', ''))
+    ost_ch = (exp0 - time.time()) / 3600 if exp0 else None
+    opisanie = (f'access до {datetime.datetime.fromtimestamp(exp0, datetime.timezone.utc):%Y-%m-%d %H:%MZ} '
+                f'(осталось {ost_ch:.1f} ч)' if exp0 else 'срок access не читается')
+    FLAG, POPYTKA = os.path.join(DOM, 'vneocherednoj'), os.path.join(DOM, 'vneocherednoj.popytka')
+    vneoch = os.path.isfile(FLAG)
+    if vneoch:
+        proshlo = (time.time() - os.stat(POPYTKA).st_mtime) / 60 if os.path.isfile(POPYTKA) else None
+        if proshlo is not None and proshlo < VNEOCH_MIN:
+            skaz(f'внеочередной отложен: прошлая попытка {proshlo:.0f} мин назад (не чаще раза в {VNEOCH_MIN:g} мин); флаг на месте')
+            vneoch = False
+        else:
+            with open(POPYTKA, 'w') as f:
+                f.write(datetime.datetime.now(datetime.timezone.utc).isoformat() + '\n')
+            skaz(f'ВНЕОЧЕРЕДНОЙ refresh: флаг {FLAG} (сервер отвечал 401) — порог {POROG_CH:g} ч не применяется')
+    if ost_ch is not None and ost_ch > POROG_CH and not vneoch:
+        if not proizvodnyj_soshelsya(d0):
+            perenesti(d0)
+            skaz('производный расходился с полным — переписан (без refresh)')
+        sled('ne-trebovalos', ost_ch=round(ost_ch, 1))
+        skaz(f'не требовалось: {opisanie}, порог {POROG_CH:g} ч · refresh#{h8(t0.get("refresh_token"))}')
+        sys.exit(10)
+    lr0, rh0 = d0.get('last_refresh'), h8(t0.get('refresh_token'))
+    skaz(f'обновляю: {opisanie}, порог {POROG_CH:g} ч · refresh#{rh0} · last_refresh {lr0}')
+    perenesti(d0, rabochij=True)
+    otvet = app_server_refresh()
+    try:
+        d1 = chitat(RAB); t1 = d1['tokens']
+    except (OSError, ValueError, KeyError) as e:
+        sled('otkaz', prichina=f'рабочая копия не читается после refresh: {type(e).__name__}')
+        trevoga(2, f'🔴 ОТКАЗ: после refresh рабочая копия не читается ({type(e).__name__}); ПОЛНЫЙ цел. '
+                   f'Если сервер успел ротировать — нужен вход владельца.')
+    akk = (otvet.get('result') or {}).get('account')
+    lr1, rh1 = d1.get('last_refresh'), h8(t1.get('refresh_token'))
+    exp1 = exp_jwt(t1.get('access_token', ''))
+    # Успех судится по НОСИТЕЛЮ, а не по ответу: 0.156 на стенде ротировал токен и всё равно вернул ошибку RPC.
+    # Ротация состоялась — старый refresh уже списан, и производный обязан получить новую пару.
+    if lr1 != lr0 and rh1 != rh0 and t1.get('refresh_token') and exp1 and (not exp0 or exp1 > exp0):
+        perenesti(d1, polnyj=True)
+        sled('obnovil', refresh_hash=rh1, exp=exp1)
+        zamechanie = '' if akk else f' · ⚠️ ответ app-server: {str(otvet.get("error") or "account=null")[:120]} (ротация по носителю состоялась)'
+        skaz(f'обновил: refresh#{rh0} → #{rh1} · last_refresh {lr1} · access до '
+             f'{datetime.datetime.fromtimestamp(exp1, datetime.timezone.utc):%Y-%m-%d %H:%MZ} · перенесено в полный, производный записан{zamechanie}')
+        if os.path.isfile(FLAG):   # и при отложенном внеочередном: обычный refresh тоже повод проверить новый access
+            beda = proba_access(d1)
+            if beda:
+                trevoga(2, f'🔴 ВНЕОЧЕРЕДНОЙ refresh прошёл (refresh#{rh0} → #{rh1}), но новый access НЕ принят пробным запросом: {beda}. '
+                           f'Флаг {FLAG} оставлен — следующая попытка не раньше чем через {VNEOCH_MIN:g} мин.')
+            os.unlink(FLAG)
+            skaz(f'флаг внеочередного снят: новый access принят сервером (account/rateLimits/read)')
+        sys.exit(0)
+    prichina = otvet.get('error') or ('account=null — сервер отказал в refresh' if not akk else 'носитель не изменился')
+    sled('otkaz', prichina=str(prichina)[:200])
+    trevoga(2, f'🔴 ОТКАЗ обновления токена Codex: {str(prichina)[:200]} · refresh#{rh0}→#{rh1} · '
+               f'{opisanie}. Производный НЕ тронут. Если access истёк — нужен вход владельца (codex login на полный носитель).'
+               + (f' Флаг внеочередного {FLAG} оставлен — повтор не раньше чем через {VNEOCH_MIN:g} мин.' if vneoch else ''))
+
+if __name__ == '__main__':
+    glavnaya()
