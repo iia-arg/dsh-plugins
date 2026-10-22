@@ -55,6 +55,16 @@ blind_(){ say "$1" "СЛЕПОТА: $2"; blind=$((blind+1)); }
 
 W=$(mktemp -d) || { echo "СЛЕПОТА: нет временного каталога"; exit 2; }
 trap 'rm -rf "$W"' EXIT
+# Реестр — подставной (как в стенде пакета dsh-pribory, efdbfaec): белый список navyki.tolko учётки стенда не применяется.
+# OBHOD-1017: с NAVYKI-R3 (16.10) у iskra есть navyki.tolko — живой реестр давал отказ сборщика (код 2) на подставных источниках.
+mkdir -p "$W/bin"
+cat > "$W/bin/agent-registry" <<'REGISTRY'
+#!/bin/sh
+echo 'agent-registry-error: field-not-found' >&2
+exit 3
+REGISTRY
+chmod 755 "$W/bin/agent-registry"
+export PATH="$W/bin:$PATH"
 A="$W/src-polka"; B="$W/src-razdacha"; T="$W/target"
 mkdir -p "$A/skill-svoj" "$B/skill-chuzhoj" "$T"
 printf -- '---\nname: skill-svoj\n---\nтело полки\n'      > "$A/skill-svoj/SKILL.md"

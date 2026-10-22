@@ -1,0 +1,9 @@
+# AP notice: merge these records into the machine daily-watcher list.
+# AP016 companion3.1.28: persistent workers; active+MainPID, 30s activating grace; Zabava2026-10-21 17:09:24Z.
+autopilot-mail-notice@master.service active
+autopilot-mail-notice@vintik.service active
+autopilot-mail-notice@shpuntik.service active
+autopilot-mail-notice@gayka.service active
+autopilot-mail-notice@sova.service active
+autopilot-mail-notice@shurup.service active
+autopilot-mail-notice@tumbler.service active

@@ -1,10 +1,19 @@
 # dsh-vypusk-watch · сторож окна выпуска · release window watchdog
 
-Версия · Version: 3.1.6
+Версия · Version: 3.1.8
 
 **Сторож, который сверяет каждый установленный пакет с git-меткой его версии и громко говорит, если в бой попало не то, что выпускали.**
 
 **A watchdog that compares every installed package with the git tag of its version and speaks up loudly if what reached production is not what was released.**
+
+
+Без непустого `VYPUSK_REPO` сторож отказывает **кодом 3 до helper окна, канала тревог и файлов состояния**: это ошибка вызова, а не тревога СЛЕПОТЫ. Правило действует и с `--avto-montazh`. При заданном дереве остальные ошибки настроек/чтения остаются слепотой с прежним кодом 2 и уведомлением.
+
+Missing/empty `VYPUSK_REPO` is **invocation error 3 before the window helper, alert channel or state files**, including `--avto-montazh`. With an explicit tree, other missing settings or read failures keep their existing blindness2/alert contract.
+
+Читатель кода 3 в бою: `vypusk-okno-watch.service` (`SuccessExitStatus=0 1 2` ⇒ `failed`) → `/etc/agent-registry/storozha-sutochnye.txt:53` (`vypusk-okno-watch.service 1`) → `/usr/local/sbin/sadik-watch`: каждые 10 минут проверяет `is-failed` и формирует владельцу `FAILED`, кроме подтверждённой отсрочки окном монтажа; эту запись перечня сохраняйте.
+
+Production reader of exit 3: `vypusk-okno-watch.service` (`SuccessExitStatus=0 1 2` ⇒ `failed`) → `/etc/agent-registry/storozha-sutochnye.txt:53` (`vypusk-okno-watch.service 1`) → `/usr/local/sbin/sadik-watch`: checks `is-failed` every 10 minutes and reports `FAILED` to the owner, except for a confirmed deployment-window deferral; preserve this list entry.
 
 ## Зачем нужно · Why it exists
 
@@ -121,14 +130,14 @@ An overridden reference checks the candidate, not equality with production. Sett
 - Не отличает «смонтировали и пометили» от «не монтировали вовсе»: оба дают «метка = бой», то есть зелёное. Он ловит несоответствие боя выпуску, а не отсутствие работы.
 - Не ловит правку в памяти процесса: сверяет диск с диском. Живую версию показывает только журнал работающего процесса.
 - Не ловит пакеты вне дерева, подмену самой метки, верность кода (одинаково плохой код в обоих местах — зелёный), содержимое `node_modules` и файлы, исключённые режимом счёта.
-- Не ловит неверное значение переменной окружения (`VYPUSK_TIHO=да` — не «1», режим боевой) и опечатку в имени необязательной (`VYPUSK_TIH0=1` — ноль вместо «O», переменная не прочитана вовсе; так же с `VYPUSK_NAPOMINAT` и др.). Опечатка в имени обязательной настройки ловится: это слепота «не задана».
+- Не ловит неверное значение переменной окружения (`VYPUSK_TIHO=да` — не «1», режим боевой) и опечатку в имени необязательной (`VYPUSK_TIH0=1` — ноль вместо «O», переменная не прочитана вовсе; так же с `VYPUSK_NAPOMINAT` и др.). Опечатка в имени обязательной настройки ловится: VYPUSK_REPO — отказ3 без канала, остальные — слепота2 «не задана».
 - `src/vypusk-okno-watch.sh` — снимок установленного файла, и стенд сверяет их суммы: правка снимка без выпуска нового боевого файла даёт красный стенд.
 - Сверка по раскладке (`VYPUSK_RASKLADKA`) пропускает в метке только верхние имена `README.md`, `CHANGELOG.md`, `LICENSE`, `docs`, `test`; остальное ставится по `bin`, `sbin`, `libexec`, `lib`, `systemd`. Любой другой верхний файл метки — слепота «куда ставится, не знаю (верх «…»)». `README.en.md` в перечне нет: пакет из `VYPUSK_RASKLADKA`, получивший `README.en.md`, ослепит сверку своей раскладки на первой же новой метке.
 
 - Does not distinguish "installed and tagged" from "not installed at all": both give "tag = production", i.e. green. It catches production diverging from a release, not the absence of work.
 - Does not catch an in-memory change in a process: it compares disk with disk. Only the running process's journal shows the live version.
 - Misses packages outside the tree, a moved tag itself, code correctness (equally bad code in both places is green), `node_modules` contents and files excluded by the counting mode.
-- Misses a wrong environment value (`VYPUSK_TIHO=yes` is not "1", the mode stays live) and a typo in the name of an optional one (`VYPUSK_TIH0=1` — zero instead of "O", the variable is not read at all; likewise `VYPUSK_NAPOMINAT` etc.). A typo in a required setting's name is caught: it is blindness "not set".
+- Misses a wrong environment value (`VYPUSK_TIHO=yes` is not "1", the mode stays live) and a typo in the name of an optional one (`VYPUSK_TIH0=1` — zero instead of "O", the variable is not read at all; likewise `VYPUSK_NAPOMINAT` etc.). A typo in a required setting's name is caught: VYPUSK_REPO refuses3 without alerts; the others report blindness2 "not set".
 - `src/vypusk-okno-watch.sh` is a snapshot of the installed file, and the stand compares their checksums: editing the snapshot without releasing a new production file turns the stand red.
 - The layout check (`VYPUSK_RASKLADKA`) skips only the top-level names `README.md`, `CHANGELOG.md`, `LICENSE`, `docs`, `test` in a tag; everything else is placed by `bin`, `sbin`, `libexec`, `lib`, `systemd`. Any other top-level file in the tag is blindness «куда ставится, не знаю (верх «…»)» (don't know where it goes). `README.en.md` is not in the list: a `VYPUSK_RASKLADKA` package that gains `README.en.md` blinds its layout check on the very next new tag.
 

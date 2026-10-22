@@ -1,0 +1,20 @@
+[Unit]
+Description=Autopilot ID-only notices for %i
+After=autopilot-mail.service
+Requires=autopilot-mail.service
+
+[Service]
+Type=simple
+SyslogLevel=warning
+User=%i
+SupplementaryGroups=autopilot-mail
+WorkingDirectory=/opt/%i/workspace
+ExecStart=/usr/bin/python3 -s -B /opt/autopilot/notices/aa67cc5970dd90e63a90f8a696ad51359bbb58dfbff21c768c918b7dadfab270/mail-notice-loop.py --directory /opt/%i/a2a/zakryto/%i
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/opt/%i/a2a/zakryto/%i
+InaccessiblePaths=/var/spool/a2a /etc/agent-registry
+UMask=0077
+TimeoutStopSec=10

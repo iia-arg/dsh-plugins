@@ -145,17 +145,44 @@ PY
 progon "$VREM/pustoj-koren.yaml"
 if [ "$KOD" = 5 ]; then ok "пустой корень без маски -> код 5"; else bad "пустой корень -> код $KOD, а обязан быть 5"; fi
 
-echo "── 6. Размеченное молчит: ни одной строки про дом координатора"
+echo "── 6. Размеченное молчит: контролируемый дом; живые находки — данные"
 progon
 if [ "$KOD" != 0 ] && [ "$KOD" != 1 ]; then
   slep "сторож отказал кодом $KOD — проверять молчание не на чем"
 else
-  n=$(command grep -c '• iskra/' "$VYVOD_FAJL")
-  if [ "$n" = 0 ]; then ok "про дом координатора тревоги нет (размечено полностью)"; else bad "про дом координатора $n строк, хотя разметка полная"; fi
+  # Полнота живой разметки не является константой стенда. Как и в уровне1,
+  # её нарушения судит боевой сторож; здесь проверяется исправность механизма.
+  n=$(command grep -cF '• iskra/' "$VYVOD_FAJL" || true)
+  echo "  справка: живых непокрытых комнат координатора $n — не вердикт приёмки"
+  command grep -F '• iskra/' "$VYVOD_FAJL" | sed 's/^/  справка: /' || true
   # B-N-1768 (07.10, Аврора): ЖИВЫЕ непокрытые — ДАННЫЕ, их судит часовой сторож (рамка стенда: шапка и уровень 15);
   #   прежде здесь стоял вердикт, и приёмка краснела на исправном стороже от каждого нового неразмеченного каталога.
   n=$(command grep -c '• /opt/\|• /var/lib/' "$VYVOD_FAJL")
   echo "  справка: живых непокрытых верхнего уровня сейчас $n — не вердикт приёмки"
+  # Отдельный вывод сохраняет живую базу $VYVOD_FAJL для порчи шага7.
+  python3 - "$REESTR" "$VREM" <<'PY6' 2>/dev/null
+import sys, os, yaml
+source, temp = sys.argv[1:]
+d = yaml.safe_load(open(source, encoding="utf-8"))
+home = os.path.join(temp, "koren6", "iskra")
+for room in (".gnupg", ".config/rclone", ".spark-sekrety"):
+    os.makedirs(os.path.join(home, room), exist_ok=True)
+d["agenty"] = [{"imya": name, "rol": "фикстура", "namerenie": {
+    "sluzhba": name + ".service", "dom": home, "polzovatel": "iskra",
+    "kopiya": {"klast": [".gnupg", ".config/rclone", ".spark-sekrety"], "ne_klast_prichina": {}}}}
+    for name in ("iskra", "proba")]
+d["korni_obhoda"] = [{"put": os.path.join(temp, "koren6"), "maski": ["iskra"], "zachem": "полностью размеченный дом шага6"}]
+yaml.safe_dump(d, open(os.path.join(temp, "p6.yaml"), "w", encoding="utf-8"), allow_unicode=True)
+PY6
+  if [ ! -s "$VREM/p6.yaml" ]; then
+    slep "не собрался размеченный дом шага6"
+  else
+    AGENTS_REGISTRY="$VREM/p6.yaml" AGENT_ALERT_BIN="$ZAGLUSHKA" "$STOROZH" > "$VREM/p6.out" 2>&1
+    KOD6=$?
+    if [ "$KOD6" = 0 ]; then ok "размеченный дом фикстуры шага6 молчит";
+    elif [ "$KOD6" = 1 ]; then bad "размеченный дом фикстуры шага6 дал тревогу: $(grep -m1 -E '^[[:space:]]*• ' "$VREM/p6.out" || head -1 "$VREM/p6.out")";
+    else slep "размеченный дом фикстуры шага6 не проверен, код $KOD6"; fi
+  fi
 fi
 
 echo "── 7. Снята ОДНА разметка -> появился РОВНО он"

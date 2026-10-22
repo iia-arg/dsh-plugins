@@ -2,7 +2,7 @@ Russian version: [README.md](README.md) · English below
 
 # a2a-bus — let agents on one machine talk to each other, without giving up isolation
 
-**Version:** 3.1.2
+**Version:** 3.1.7
 
 Several agents live on one machine. Isolation follows **system accounts**. The bus does not isolate agents sharing one UID from each other.
 
@@ -40,8 +40,7 @@ access to it.
 | `sbin/a2a-proba-novichka` | acceptance probe: does a letter arrive, is a foreign mailbox refused, does the round trip work |
 | `systemd/` | the service and a timer that runs it every 5 seconds, plus drop-ins in `systemd/a2a-pochtalon.service.d/` (`60-python-padenie-70.conf` runs the postman through `python-padenie-70` from dsh-storozha-mashiny; `70-predel-v-chat.conf` sets `A2A_PREDEL_V_CHAT=3800`) |
 | `lib/a2a-bus/` | `outgoing_mirror.py` (full sender record for owner-all) and `v2_with_mirror.py` (wrapper for `a2a-send --v2`); `a2a-send` looks for them in `$(dirname "$0")/../lib/a2a-bus/` |
-| `share/agent-registry/shablony-raskladki/` | layout templates A/B/C/M for `agent-registry sobrat`/`verify` (see "Layout templates" below) |
-| `bin/` | `a2a-send`, `tell-owner`, `agent-registry` — sender, owner notification and registry tools |
+| `bin/` | `a2a-send`, `tell-owner` — sender and owner notification (since 3.1.7 `agent-registry` and the layout templates live in `dsh-reestr`, B-N-2071) |
 | `test/` | sender-copy, common ACL/generator and root-postman regressions; requirements and commands are below |
 | `LICENSE` | MIT license (not installed) |
 
@@ -82,6 +81,12 @@ agenty:
         yashchik: /var/spool/a2a/demosvc
 ```
 
+`agent-registry verify` accepts `kanal.yashchik_rezhim` as the string `'1730'` (default) or `'0700'` for an intentionally closed mailbox. Quote this YAML value: unquoted `0700` becomes the integer448 and is rejected. Unknown values and mode/owner mismatches fail verification. Run `python3 -B test/stend-yashchik-rezhim.py` against private fixtures without root. The verifier does not change permissions.
+
+Since 3.1.5 the reverse check marks a non-root permission denial on the PARENT of a mailbox declared closed (`'0700'`) as a border, like the direct mailbox check, not as blindness; the `verify` summary adds «обратно: граница N (не моей рукой: <account>)». Any other denial, and any denial as root, stays blindness. Full reverse check: `sudo agent-registry verify`. Stand: `python3 -B test/stend-obratno-granica.py` (not as root).
+
+Since 3.1.6 the A profile carries Autopilot mail: `namerenie.raskladka.autopilot_pochta: true` sets the channel `agentName` to the Latin record name and adds `autopilotMail` (`noticeDir` `<dom>/a2a/zakryto/<name>`; `trafficChatId` and `publisherBotIds` from `mashina.raskladka_obshchee.autopilot_pochta`; `names` = visible name and record name). Without the flag the profile is byte-identical. Overrides cannot set these parameters; an invalid flag or shared block fails the build. Install code and A templates together: the previous code refuses the new templates. Stand: `python3 -B test/stend-ap-pochta.py` (no root).
+
 This is not a complete registry for `verify`/`sobrat`. `a2a-zavesti demo` creates the account mailbox, `demosvc`; `kanal.yashchik` names the same path. `agent-registry pole demo polzovatel --json` must print `"demosvc"`. Record both sender and recipient; an owner-all sender also needs matching `dom`, `polzovatel` and `kanal`. A shared system account needs explicit separate agent mailboxes and a check of their readers: an account mailbox does not establish a route to one agent.
 
 Check dependencies before installing the service/drop-ins; these commands install nothing:
@@ -99,10 +104,10 @@ If this check returns nonzero, resolve its cause before installing the service.
 There is nothing to `npm install` here: this lives in the system, and a package manager would put
 it where it cannot run — while looking like a successful install. Copy it by hand:
 
-Install `bin/agent-registry` first, both `lib/a2a-bus/*` helpers next, and `bin/a2a-send` last. A new mirror with an old registry cannot recognize an unknown sender without the machine marker: it returns code 4 after placement. Do not resend automatically: Roll back the mirror helpers before the registry; do not leave a new mirror with an old registry.
+Install `dsh-reestr` (it carries `agent-registry` since 3.1.7) first, both `lib/a2a-bus/*` helpers next, and `bin/a2a-send` last. A new mirror with an old registry cannot recognize an unknown sender without the machine marker: it returns code 4 after placement. Do not resend automatically: Roll back the mirror helpers before the registry; do not leave a new mirror with an old registry.
 
 ```sh
-install -m 0755 bin/agent-registry /usr/local/bin/
+# agent-registry comes from the dsh-reestr package (installed first since a2a-bus 3.1.7)
 install -d -m 0755 /usr/local/lib/a2a-bus
 install -m 0644 lib/a2a-bus/outgoing_mirror.py lib/a2a-bus/v2_with_mirror.py /usr/local/lib/a2a-bus/
 install -m 0755 bin/a2a-send bin/tell-owner /usr/local/bin/
@@ -116,13 +121,7 @@ a2a-zavesti <nickname>          # per agent: group a2a-pochta, membership, mailb
 a2a-proba-novichka <nickname>   # prove it, don't assume it; letters go to a stand-in root
 ```
 
-For `sobrat`/`verify`, install all seven templates at the registry's configured directory (on sadik: `/etc/agent-registry/shablony-raskladki`). This does not start services:
-
-```sh
-install -d -m 0755 /etc/agent-registry/shablony-raskladki/codex /etc/agent-registry/shablony-raskladki/sdk-claude
-install -m 0644 share/agent-registry/shablony-raskladki/codex/*.tmpl /etc/agent-registry/shablony-raskladki/codex/
-install -m 0644 share/agent-registry/shablony-raskladki/sdk-claude/*.tmpl /etc/agent-registry/shablony-raskladki/sdk-claude/
-```
+Since 3.1.7 the layout templates for `sobrat`/`verify` are installed by `dsh-reestr` (B-N-2071: an agent registry is needed on a host without the mail bus too).
 
 The argument is the agent's **nickname from the registry**, not its system account. `a2a-zavesti` does not create the
 account, edit the registry, set up a bot or restart the agent's platform; a running agent picks up the new group only
@@ -145,14 +144,14 @@ number out loud: "read 1 of 5" is honest, "OK" is not.
 `root` in production — green — and as an ordinary user on the test bench — red. Name the subject
 explicitly (`id -u`, then `sudo -n` when needed) instead of assuming whose hands run it.
 
-## Sender side: `bin/a2a-send`, `bin/tell-owner`, `bin/agent-registry`
+## Sender side: `bin/a2a-send`, `bin/tell-owner` (and `agent-registry`, shipped by `dsh-reestr` since 3.1.7)
 
 Until 2026-09-04 these three lived only on the machine and the README pointed at them as
 external (`A2A_SEND_BIN`, `A2A_TELL_BIN`, `A2A_REESTR_BIN`). They are published here as they run
 in production, with private names in comments replaced by `<agent>` / "one machine". A sender needs both `bin/` and `lib/` under one prefix. Install the sender files with the same prerequisites as the full installation above:
 
 ```sh
-install -m 0755 bin/agent-registry /usr/local/bin/
+# agent-registry comes from the dsh-reestr package (installed first since a2a-bus 3.1.7)
 install -d -m 0755 /usr/local/lib/a2a-bus
 install -m 0644 lib/a2a-bus/outgoing_mirror.py lib/a2a-bus/v2_with_mirror.py /usr/local/lib/a2a-bus/
 install -m 0755 bin/a2a-send bin/tell-owner /usr/local/bin/
@@ -179,7 +178,7 @@ the calling agent's **own** bot. Which bot is decided by the calling system user
 someone else's name even by accident. No config or empty message — exit `1` and a loud line,
 never silence: an unsent report looks like "the agent did not report".
 
-**`agent-registry`** — registry queries, verification and layout assembly (Python). It does not edit the registry.
+**`agent-registry`** (since 3.1.7 shipped by `dsh-reestr`; this reference stays here until that README takes it over) — registry queries, verification and layout assembly (Python). It does not edit the live registry.
 Sub-commands: `kto <user>` — the nickname for a system user (the postman uses this for the owner notification); `list`, `sluzhby` (services and dependencies per agent), `pole <agent>
 <field> [--json]`, `mashina [--json]` (machine-wide paths — paths only, never secret values),
 `obshchee [--json]`, `pokrytie [--json]` (the whole backup-coverage frame in one call), `pokrytie --json --s-nepolnymi`,

@@ -8,7 +8,7 @@ import {claudeImageCall, imageContent, IMAGE_BASE64_LIMIT} from './image-content
 import {installOstrovApi} from './ostrov-api.js'
 
 import { createServer } from 'node:http'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
@@ -123,6 +123,13 @@ const PODPIS = (() => {
   }
 })()
 const log = (m) => console.error(`${PODPIS} ${m}`)
+
+// RU: Снимок при import, не при apply: поздний монтаж на диске не меняет код процесса.
+// EN: Capture at import, not apply: later deployment must not rename the loaded code.
+const SUMMA_ZAGRUZHENNOGO_KODA = (() => {
+  try { return createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex') }
+  catch { return null }
+})()
 
 const PARITY = JSON.parse(
   readFileSync(new URL('./paritet.json', import.meta.url), 'utf8'),
@@ -821,19 +828,28 @@ function sobratPolosu(turns, ot) {
   }
 }
 
-// RU: Форматировать измеренный диапазон и итог одним текстом для журнала и уведомления.
-// EN: Format the measured range and outcome as one text shared by logs and notices.
+// RU: Форматировать измеренный диапазон и итог одним текстом для журнала и уведомления. Нет объявления — значит только, что
+// агент не позвал закрытие полосы, а не что работа потеряна (B-N-2097). Разные локальные сутки начала и конца — обе полные даты.
+// EN: Format the measured range and outcome as one text shared by logs and notices. No declaration means only that the agent did
+// not close the streak, not that work was lost (B-N-2097). Start and end on different local days — both full dates are printed.
 function tekstRezyume(p, itog, zone) {
   const vr = chasyMinuty(zone)
+  const den = dayKeyFactory(zone)
+  const data = new Intl.DateTimeFormat('ru-RU', { timeZone: zone, day: '2-digit', month: '2-digit', year: 'numeric' })
+  const polnoe = (ms) => `${data.format(ms)} ${vr(ms)} (${zone})`
+  const raznye = den(p.ot) !== den(p.do)
+  const ot = raznye ? polnoe(p.ot) : vr(p.ot)
+  const doo = raznye ? polnoe(p.do) : vr(p.do)
   const obyavleno = typeof itog === 'string' && itog !== ''
+  const NE_OBYAVLEN = 'итог агентом не объявлен — см. ответ хода'
   if (p.n === 1) {
     return obyavleno
-      ? `одиночное автономное пробуждение в ${vr(p.ot)} закрыто агентом (полоса из 1): ${itog}`
-      : `одиночное автономное пробуждение в ${vr(p.ot)} осталось без объявления (полоса из 1)`
+      ? `одиночное автономное пробуждение в ${ot} закрыто агентом (полоса из 1): ${itog}`
+      : `одиночное автономное пробуждение в ${ot} (полоса из 1): ${NE_OBYAVLEN}`
   }
   return obyavleno
-    ? `полоса из ${p.n} закрыта агентом, с ${vr(p.ot)} до ${vr(p.do)}: ${itog}`
-    : `полоса из ${p.n} оборвалась без объявления, с ${vr(p.ot)} до ${vr(p.do)}`
+    ? `полоса из ${p.n} закрыта агентом, с ${ot} до ${doo}: ${itog}`
+    : `полоса из ${p.n}, с ${ot} до ${doo}: ${NE_OBYAVLEN}`
 }
 
 const otmetkiObyavleniya = new Map()
@@ -1278,6 +1294,8 @@ export function apply(ctx, config) {
 
     console.error(`[dsh-tool-bridge версия НЕ ПРОЧИТАНА] подъём: ${e?.message ?? e}`)
   }
+
+  log(`src/index.js sha256=${SUMMA_ZAGRUZHENNOGO_KODA ?? 'НЕ ПРОЧИТАНА'} pid=${process.pid}`)
 
   const TICKET_TTL_MS = (config?.ticketTtlMinutes ?? TICKET_TTL_MINUTES_DEFAULT) * 60000
 

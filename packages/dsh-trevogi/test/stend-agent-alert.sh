@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # RU: Настоящая отправка только в подставной curl; журнал, хвост и токен в /tmp.
 # EN: Real send path uses a curl double; journal, tail and token live in /tmp.
-# RU: Проверяет 31 исход, включая UTF-16 с эмодзи, запасной plain и режим --proverit-nastrojku. Не доказывает живую доставку,
+# RU: Проверяет 45 исходов, включая UTF-16 с эмодзи, запасной plain, режим --proverit-nastrojku, строку журнала у каждого отказа, номер в ней и отсутствие pyc при ручном запуске. Не доказывает живую доставку,
 # права другой учётной записи, конкурентные вызовы и фактическую длительность боевых пауз.
-# EN: Checks 31 outcomes including emoji UTF-16, plain fallback and --proverit-nastrojku. Does not prove live delivery,
+# EN: Checks 45 outcomes including emoji UTF-16, plain fallback, --proverit-nastrojku, a journal line on every refusal, its version and no pyc on a manual run. Does not prove live delivery,
 # another account's permissions, concurrent calls or actual production delay lengths.
 set -uo pipefail
 export DSH_PROBA=0
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
 PREDMET="${AGENT_ALERT_BIN:-$ROOT/bin/agent-alert}"
-ZHDYOM_PROVEROK=31        # канарейка: точное число, не «не меньше» —
+ZHDYOM_PROVEROK=45        # канарейка: точное число, не «не меньше» —
 ok=0; fail=0
 sud() { # sud <ожидание> <факт> <что>
   if [ "$1" = "$2" ]; then ok=$((ok+1)); echo "  ok   $3"
@@ -38,6 +38,9 @@ printf '# fixture\n' > "$D/empty.conf"
 export DSH_TREVOGI_CONFIG="$D/empty.conf"
 export AGENT_ALERT_TOKEN_FILE="$D/etc/token" AGENT_ALERT_CHAT_FILE="$D/etc/chat" AGENT_ALERT_HVOST="$D/hvost"
 export AGENT_ALERT_PAUZY="1 1 1 1 1 1 1 1" AGENT_ALERT_TAJMAUT=2
+# Спул — несуществующий путь стенда (ворота 3.1.8, 15.10 23:59Z): под учёткой не-root без токена agent-alert идёт клиентским
+# путём и без этой строки клал пробу в БОЕВОЙ спул — владельцу ушла настоящая тревога «проба». Root идёт прямым путём, ему всё равно.
+export AGENT_ALERT_SPUL="$D/net-spula"
 export PATH="$D/bin:$PATH" STEND_DIR="$D"
 
 mk_curl() { printf '#!/bin/bash\ncat >/dev/null\n%s\n' "$1" > "$D/bin/curl"; chmod +x "$D/bin/curl"; }
@@ -141,6 +144,50 @@ sud "2 1" "$k $(printf '%s' "$o" | grep -c 'настройка не разреш
 o=$("$D/subject/bin/alert" --proverit-nastrojku лишнее 2>&1); k=$?
 sud "2 1" "$k $(printf '%s' "$o" | grep -c 'лишний довод')" "лишний довод → код 2, не отправка"
 sud 0 "$(cat "$D/curl-zvan" 2>/dev/null | wc -l)" "ни один вызов проверки не звал сеть"
+
+echo "── 7. немые выходы → строка журнала «исход=<причина>» (B-N-2064, 15.10.2026: недоставка 14.10 не оставила ни строки)"
+# ishod <исход> <код> <поток out|err|-> <образец сообщения> <что> -- команда…: ровно +1 строка «исход=<исход> »,
+# прежний код, прежнее сообщение ровно в прежнем потоке («-» — сам agent-alert не печатает: печатал читатель настроек).
+ishod() {
+  local is=$1 kod=$2 pot=$3 obr=$4 chto=$5 z0 z1 k want; shift 6
+  z0=$(grep -cF "исход=$is " "$D/zhurnal"); "$@" >"$D/so" 2>"$D/se" </dev/null; k=$?
+  z1=$(grep -cF "исход=$is " "$D/zhurnal")
+  case $pot in out) want="1 0";; err) want="0 1";; *) want="0 0";; esac
+  sud "$kod 1 $want" "$k $((z1-z0)) $(grep -cF -- "$obr" "$D/so") $(grep -cF -- "$obr" "$D/se")" "$chto"
+}
+mk_curl 'echo zvan >> "$STEND_DIR/curl-zvan"; echo "{\"ok\":true}"; exit 0'
+ishod пустое-сообщение 1 out 'пустое сообщение — не отправляю' "пустое сообщение → код 1, строка журнала, stdout" -- "$D/subject/bin/alert"
+sud 1 "$(tail -1 "$D/zhurnal" | grep -cF "исход=пустое-сообщение учётка=$(id -un) ЮНИТ=")" "строка исхода называет учётку и юнит"
+ishod отказ-DSH_PROBA 2 err 'DSH_PROBA допускает только 0 или 1' "DSH_PROBA=x → код 2, строка журнала, stderr" -- env DSH_PROBA=x "$D/subject/bin/alert" проба
+ishod отказ-настроек 2 - 'читатель настроек' "негодная настройка при отправке → код 2, строка журнала" -- env DSH_TREVOGI_CONFIG="$D/bad.conf" "$D/subject/bin/alert" проба
+: > "$D/etc/token-pust"
+ishod нет-токена-или-чата 1 out 'тревога НЕ отправлена' "пустой токен (прямой путь) → код 1, строка журнала, stdout" -- env AGENT_ALERT_TOKEN_FILE="$D/etc/token-pust" "$D/subject/bin/alert" проба
+ishod формат-не-подготовлен 1 err 'plain не подготовлен — НЕ отправлено' "--plain не подготовлен → код 1, строка журнала, stderr" -- env AGENT_ALERT_PREDEL=abc "$D/subject/bin/alert" --plain тайна-текста-7c1
+sud 0 "$(grep -cF 'тайна-текста-7c1' "$D/zhurnal")" "текст тревоги в строку исхода не попал"
+ishod формат-не-подготовлен 1 err 'ни html, ни plain не подготовлены' "ни html, ни plain → код 1, строка журнала, stderr" -- env AGENT_ALERT_PREDEL=abc "$D/subject/bin/alert-porcha" проба
+sud 0 "$(cat "$D/curl-zvan" 2>/dev/null | wc -l)" "ни один немой выход не звал сеть"
+
+echo "── 8. номер в строках журнала — константа читателя, равная package.json (3.1.6, info Вениамина 15.10 05:05Z: литерал 3.1.1)"
+PAKET=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/package.json" 2>/dev/null)
+[ -n "$PAKET" ] || { echo "СЛЕПОТА: номер из $ROOT/package.json не прочитан"; exit 2; }
+DSH_PROBA=1 "$D/subject/bin/alert" nomer-proba >/dev/null 2>&1
+sud 1 "$(tail -1 "$D/zhurnal" | grep -cF "версия=$PAKET исход=проба")" "строка пробы несёт номер пакета $PAKET"
+mk_curl 'echo "{\"ok\":true}"; exit 0'
+"$D/subject/bin/alert" nomer-otpravka >/dev/null 2>&1
+sud 1 "$(grep -F 'nomer-otpravka' "$D/zhurnal" | tail -1 | grep -cF "версия=$PAKET исход=")" "строка отправки несёт номер пакета $PAKET"
+sud 0 "$(cat "$ROOT"/bin/* | grep -vE '^\s*#' | grep -cE 'версия=[0-9]')" "литерала «версия=<цифра>» в исполняемых строках bin/ нет"
+
+echo "── 9. ручной запуск по шебангу не пишет pyc в lib (B-N-2067: «sudo agent-alert-otpravitel --help» оставил __pycache__ в бою)"
+L9="$D/subject/lib/dsh-trevogi"
+rm -rf "$L9/__pycache__"   # копия; у боевого предмета (AGENT_ALERT_BIN=/usr/local/…) он мог быть скопирован вместе с lib
+for f in agent-alert-otpravitel otkaz-klyuch-watch; do
+  cp "$ROOT/bin/$f" "$D/subject/bin/$f" && chmod +x "$D/subject/bin/$f" || { echo "СЛЕПОТА: $f не скопирован"; exit 2; }
+done
+o=$(env -u PYTHONDONTWRITEBYTECODE "$D/subject/bin/agent-alert-otpravitel" --help 2>&1); k=$?
+sud "2 1 0" "$k $(printf '%s' "$o" | grep -c 'ОТКАЗ: agent-alert-otpravitel') $(find "$L9" -name '*.pyc' | wc -l)" "отправитель --help по шебангу: дошёл до main (импорт был), pyc в lib нет"
+rm -rf "$L9/__pycache__"
+o=$(env -u PYTHONDONTWRITEBYTECODE "$D/subject/bin/otkaz-klyuch-watch" --help 2>&1); k=$?
+sud "0 1 0" "$k $(printf '%s' "$o" | grep -c '^usage:') $(find "$L9" -name '*.pyc' | wc -l)" "otkaz-klyuch-watch --help по шебангу: справка (импорт был), pyc в lib нет"
 
 echo "── итог: ok=$ok fail=$fail (ждали проверок: $ZHDYOM_PROVEROK)"
 vsego=$((ok+fail))

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "L": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-012",
+  "P": "/srv/autopilot/projects/ap-test-0112",
+  "T": "/var/tmp/AP012-PDRY-RUN-20261019",
+  "Pdry": "/var/tmp/AP012-PDRY-RUN-20261019/project",
+  "S": "/root/AP012-P-20261019-r2",
+  "runId": "pdry012-20261019",
+  "observation": "/var/tmp/AP012-PDRY-RUN-20261019/observations/transport-01.json"
+}

@@ -200,6 +200,9 @@ SREZ="$(snyat '
     printf "%s|%s|%s\n" "$u" "$(systemctl is-active $u 2>/dev/null)" \
       "$(systemctl show $u -p ActiveEnterTimestamp --value 2>/dev/null)"
   done
+  # B-N-2103: one complete, bounded RO snapshot; unknown/empty is refusal.
+  _enabled_scope=$(printf "%s" "$_ramka" | jq -c "{doma:.doma,nepolnye:.nepolnye}") || exit 1
+  $S timeout 60 /usr/local/libexec/sadik-watch-enabled.sh collect "$_enabled_scope" || exit 1
   # Дома — тоже из реестра: агент без базы честно даст ошибку чтения ниже, а не пропуск.
   while IFS= read -r d; do
     b="$d/pamyat/pamyat.db"
@@ -540,8 +543,13 @@ PY
     # 🔴 «-- No entries --» — ОДНА СТРОКА, А НЕ НОЛЬ. Первая редакция этой правки считала
     # её содержимым, и ветка слепоты была мертва: проба показала «рубеж поставлен» вместо
     # «журнал пуст». Та же грабля уже описана в podyom-uzla на sadik — отсеиваем явно.
-    vsego=$($S journalctl -u $u --since "-'"$OKNO_OTKAZA"'" --no-pager 2>/dev/null | grep -cv "^-- No entries --$")
-    d=$($S journalctl -u $u --since "-'"$OKNO_OTKAZA"'" --no-pager -o short-unix 2>/dev/null | grep -i "Prompt is too long" | tail -1 | awk "{print \$1}" | cut -d. -f1)
+    # B-N-2063 SINGLE-READ: один 3h-срез на UNIT для обоих разборов.
+    # Точка сохраняет завершающие переводы строк, включая единственную пустую строку.
+    # Коды/вывод разбора остаются прежними: отказ без строк → SLEPOTA.
+    _otkaz_log=$($S journalctl -u "$u" --since "-'"$OKNO_OTKAZA"'" --no-pager -o short-unix 2>/dev/null; printf .)
+    _otkaz_log=${_otkaz_log%.}
+    vsego=$(printf "%s" "$_otkaz_log" | grep -cv "^-- No entries --$")
+    d=$(printf "%s" "$_otkaz_log" | grep -i "Prompt is too long" | tail -1 | awk "{print \$1}" | cut -d. -f1)
     if [ "${vsego:-0}" -eq 0 ]; then
       printf "OTKAZDLINA|%s|SLEPOTA\n" "$u"
     else
@@ -552,7 +560,7 @@ PY
     # строка шлюза («node[pid]: [subscription-gateway …] 🔴 сбой вызова: …»): чужие sudo-команды с тем же текстом в журнале шлюза не в счёт.
     # Длительность хода — от последнего «мост подключён»/«подсказка:» до отказа: лимит обрывает ход за секунды, а снаружи это похоже на работу.
     case "$u" in *gateway*)
-      lim=$($S journalctl -u $u --since "-'"$OKNO_OTKAZA"'" --no-pager -o short-unix 2>/dev/null | awk -v IGNORECASE=1 "/node\\[[0-9]+\\]: \\[(dsh-)?subscription-gateway [^]]*\\] (мост подключён|подсказка:)/ {s=\$1} /node\\[[0-9]+\\]: \\[(dsh-)?subscription-gateway [^]]*\\] 🔴 сбой вызова: .*(hit your (session|usage|weekly)|usage limit|rate limit|try again at|resets [0-9])/ {f=\$1; st=s; t=\$0} END {if (f) {sub(/.*сбой вызова: /, \"\", t); gsub(/[|;]/, \"/\", t); printf \"%s;%s;%s\", f, st, substr(t, 1, 200)}}")
+      lim=$(printf "%s" "$_otkaz_log" | awk -v IGNORECASE=1 "/node\\[[0-9]+\\]: \\[(dsh-)?subscription-gateway [^]]*\\] (мост подключён|подсказка:)/ {s=\$1} /node\\[[0-9]+\\]: \\[(dsh-)?subscription-gateway [^]]*\\] 🔴 сбой вызова: .*(hit your (session|usage|weekly)|usage limit|rate limit|try again at|resets [0-9])/ {f=\$1; st=s; t=\$0} END {if (f) {sub(/.*сбой вызова: /, \"\", t); gsub(/[|;]/, \"/\", t); printf \"%s;%s;%s\", f, st, substr(t, 1, 200)}}")
       printf "OTKAZLIMIT|%s|%s\n" "$u" "${lim:-нет}" ;;
     esac
   done
@@ -576,6 +584,11 @@ fi
 [ -z "$SREZ" ] && { trevoga "срез от $HOST пуст: команда сбора вернула код 0, строк данных не получено. Причина не установлена."; exit 2; }
 
 SEYCHAS=$(date +%s); BEDY=0
+# B-N-2103: shared reader, also executed by the narrow copy test.
+if ! . "$(dirname -- "${BASH_SOURCE[0]}")/../libexec/sadik-watch-enabled.sh"; then
+  trevoga "СЛЕПОТА: читатель autostart не загружен"; exit 2
+fi
+sadik_enabled_check "$SREZ" || exit 2
 GR_OBRYV=""; GR_TISHINA=""; GR_TISHINA_MIN=""; GR_KVOTA=""; KVOTA_DO=""   # B-N-860: группы служб (set -u)
 declare -A PAUZA_SL=()   # B-N-1462: служба → «<агент> на паузе по /stop с …»; строки PAUZA идут в срезе раньше SVEZH
 GR_PAUZA=""; GR_PAUZA_TXT=""   # B-N-1462: агенты, чей файл паузы устарел / нечитаем / недоверен — тревога, это не пауза
@@ -1004,6 +1017,43 @@ else
     # B-N-1068: «!<юнит> <причина>» — осознанно НЕ внесён (для проверки полноты ниже); срока у такой строки нет.
     case "$_u" in '!'*) NE_VNESENY="$NE_VNESENY${_u#!} "; continue ;; esac
     V_PERECHNE="$V_PERECHNE$_u "
+    # AP016: persistent workers are judged by liveness, never by start-job age. Startup grace matches N: 30s.
+    if [ "$_srok" = active ]; then
+      _live_Id=""; _live_LoadState=""; _live_ActiveState=""; _live_MainPID=""; _live_InactiveExitTimestamp=""
+      _live_raw=$(timeout -k 1s 3s systemctl show "$_u" -p Id,LoadState,ActiveState,MainPID,InactiveExitTimestamp --timestamp=unix 2>/dev/null); _live_rc=$?
+      _live_seen=" "; _live_n=0
+      while IFS='=' read -r _live_k _live_v; do
+        case "$_live_k" in Id|LoadState|ActiveState|MainPID|InactiveExitTimestamp)
+          case "$_live_seen" in *" $_live_k "*) _live_rc=1 ;; esac
+          _live_seen="$_live_seen$_live_k "; _live_n=$((_live_n+1))
+          printf -v "_live_$_live_k" '%s' "$_live_v" ;;
+          *) _live_rc=1 ;;
+        esac
+      done <<< "$_live_raw"
+      _live_kind=""; _live_detail=""
+      if [ "$_live_rc" -ne 0 ] || [ "$_live_n" -ne 5 ] || [ "$_live_Id" != "$_u" ] || [ "$_live_LoadState" != loaded ] || ! [[ "$_live_MainPID" =~ ^(0|[1-9][0-9]*)$ ]]; then
+        _live_kind=slepo; _live_detail="СЛЕПОТА: состояние/PID службы не прочитаны или негодны"
+      else
+        case "$_live_ActiveState" in
+          active)
+            if [ "$_live_MainPID" = 0 ]; then _live_kind=no-pid; _live_detail="active, но MainPID=0 — worker не работает"; fi ;;
+          activating)
+            _live_since="${_live_InactiveExitTimestamp#@}"; _live_now=$(date +%s)
+            if ! [[ "$_live_since" =~ ^[1-9][0-9]{0,10}$ && "$_live_now" =~ ^[1-9][0-9]{0,10}$ ]] || [ "$_live_since" -gt "$_live_now" ]; then
+              _live_kind=slepo; _live_detail="СЛЕПОТА: момент входа в activating не прочитан или недоверен"
+            elif [ $(( _live_now - _live_since )) -gt 30 ]; then
+              _live_kind=activating; _live_detail="activating $(( _live_now - _live_since )) с при сроке запуска 30 с — worker не запустился"
+            fi ;;
+          inactive|failed|deactivating|reloading|maintenance|refreshing)
+            _live_kind="$_live_ActiveState"; _live_detail="служба $_live_ActiveState (MainPID=$_live_MainPID) — worker не active" ;;
+          *) _live_kind=slepo; _live_detail="СЛЕПОТА: неизвестный ActiveState «$_live_ActiveState»" ;;
+        esac
+      fi
+      if [ -n "$_live_kind" ]; then
+        GR_SUT="$GR_SUT${GR_SUT:+ }$_u:active-$_live_kind"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }$_u — $_live_detail"; BEDY=$((BEDY+1))
+      fi
+      continue
+    fi
     if ! [[ "$_srok" =~ ^[1-9][0-9]*s?$ ]]; then
       GR_SUT="$GR_SUT${GR_SUT:+ }$_u:строка"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }$_u — строка перечня негодна (срок «${_srok}»)"; BEDY=$((BEDY+1)); continue
     fi
@@ -1137,34 +1187,21 @@ if [ -z "$_gp_sost" ]; then log "   гостевые правила Варвар
 gruppa gostevye-pravila "$_gp_sost" "Варвара: гостевые правила $GP — $_gp_sost (B-N-1646)" 86400
 # B-N-1646 END
 
-# ── 2г. РЕЕСТР ПЛАГИНОВ ПРАВЛЕН МИМО pravka (B-N-898, 25.09.2026) ────────────────────────────────────────────────────────
-# 🔴 ЗАЧЕМ. 25.09 07:38–12:46Z plugins.yaml правили 25 раз install+mv мимо `agent-plugins pravka` — без её проверок (форма,
-#   повторы ключей, разделы, убыль, копия, приёмка чтением), и этого не видел никто. С B-N-898 pravka пишет в журнал
-#   «pravka: установлено <реестр> sha256 <полный> …» (logger -t agent-plugins).
-# Признак: sha256 ЖИВОГО файла ≠ sha последней такой строки → «правлен мимо pravka» с последним коммитом git; строк нет вовсе →
-#   «установок pravka в журнале нет». Состав группы — живой sha[:16]: новая правка мимо — новая тревога; вернули через
-#   pravka — «снова в порядке».
-# ⚠️ ЧЕГО НЕ ЛОВИТ: правку pravka-ой, а потом «откат руками» того же содержимого (sha совпадёт); правку, которую pravka
-#   поставила неверно по смыслу (её судит verify); журнал, обрезанный ротацией journald до последней установки — тогда
-#   ложное «нет установок» (громко, не тихо). Реестр агентов agents.yaml — не здесь (у него pravka нет).
-# 🔴 ТОЛЬКО _UID=0 (условие Вениамина 25.09): тег -t agent-plugins поставит любая учётка (`logger -t agent-plugins …` от
-#   iskra/zarya) и навсегда погасит тревогу. _UID journald пишет сам по отправителю; pravka ставит только под root.
-#   Не ловит: подложную строку от root (любой sudo logger) — это рука с правом писать и сам реестр.
-REESTR_PL="${SADIK_REESTR_PLAGINOV:-/etc/agent-registry/plugins.yaml}"
-GR_PRAVKA=""; GR_PRAVKA_TXT=""
-_zhiv=$(sha256sum "$REESTR_PL" 2>/dev/null | cut -d' ' -f1)
-_posl=$(journalctl -t agent-plugins _UID=0 -o cat --no-pager -q 2>/dev/null | grep -aF "pravka: установлено $REESTR_PL sha256 " | tail -1 | sed -n 's/.* sha256 \([0-9a-f]\{64\}\).*/\1/p')
-_kommit=$(git --no-optional-locks -C "$(dirname "$REESTR_PL")" log -1 --format='%h %ad «%s»' --date=format-local:%d.%m\ %H:%MZ -- "$(basename "$REESTR_PL")" 2>/dev/null | cut -c1-120)
-if [ -z "$_zhiv" ]; then
-  GR_PRAVKA="ne-prochitan"; GR_PRAVKA_TXT="реестр плагинов не прочитан: $REESTR_PL"; BEDY=$((BEDY+1))
-elif [ -z "$_posl" ]; then
-  GR_PRAVKA="${_zhiv:0:16}"; GR_PRAVKA_TXT="реестр плагинов: установок pravka в журнале НЕТ — живой ${_zhiv:0:16} поставлен мимо неё (последний коммит: ${_kommit:-не найден})"; BEDY=$((BEDY+1))
-elif [ "$_zhiv" != "$_posl" ]; then
-  GR_PRAVKA="${_zhiv:0:16}"; GR_PRAVKA_TXT="реестр плагинов ПРАВЛЕН МИМО pravka: живой ${_zhiv:0:16}, последняя установка pravka ${_posl:0:16} (последний коммит: ${_kommit:-не найден})"; BEDY=$((BEDY+1))
-else
-  log "   реестр плагинов: живой ${_zhiv:0:16} = последняя установка pravka"
+# ── 2г. РЕЕСТР ПЛАГИНОВ ПРАВЛЕН МИМО pravka (общий код со стендом) ──
+# Отсутствующая библиотека — отказ, а не пропущенная проверка.
+if ! . "$(dirname -- "${BASH_SOURCE[0]}")/../libexec/sadik-watch-pravka.sh"; then
+  trevoga "СЛЕПОТА: общий код проверки реестра 2г не загружен"
+  exit 2
 fi
-gruppa pravka "$GR_PRAVKA" "$GR_PRAVKA_TXT" 21600
+sadik_proverit_pravku
+
+# AP-MAIL-HEALTH BEGIN: existing 10-minute reader, public certificate only.
+if ! . "$(dirname -- "${BASH_SOURCE[0]}")/../libexec/sadik-watch-autopilot.sh"; then
+  trevoga 'СЛЕПОТА: читатель сертификата/состояния copy не загружен'
+  exit 2
+fi
+sadik_proverit_autopilot
+# AP-MAIL-HEALTH END
 
 # ── 2в. ROOT-КАТАЛОГ ГОЛОСА В /var/tmp (B-N-1822, 08.10.2026, Аврора; граница Зари B-N-1691b, оценка Вениамина) ──────
 # Порча — по коду и замеру Зари (zamer-var-tmp.sh): VoiceTempStore без своего baseDirectory кладёт <база>/dsh-voice-<uid>
@@ -1187,6 +1224,189 @@ else
   [ -n "$GR_VOICE" ] && { GR_VOICE_TXT="$VAR_TMP: каталог голоса от root — $GR_VOICE (стенд под root без своего каталога; убрать после сверки)"; BEDY=$((BEDY+1)); }
 fi
 gruppa voice-root "$GR_VOICE" "$GR_VOICE_TXT" 21600
+
+# AP-PREPARE-BUDZHET BEGIN (r4 — LIMIT и из task_limits.py AP 0.1.14.1, наряд Забавы 21.10 12:09; r3 — вид отказа и по failed[] 0.1.14, наряд Забавы 04:55; r2; наряд Забавы 21.10 04:31/04:36/04:40/04:44/04:45 МСК; Вениамин 04:30:44, 04:35:52, 04:40:47, 04:44:49; к A-N-3131)
+# ЗАЧЕМ: prepare учёта Автопилота (runtime_receipt_source.py) при нехватке бюджета застревает (BUDGET_EXCEEDED); лечение — 0.1.15.
+#   Бюджет ОБЩИЙ на тик (один Meter): почта читается в тот же счётчик несколько раз, и каждый участник OPEN RUN прибавляет свои
+#   sourceBytes. Отдельного сохранённого счётчика prepare в бою НЕТ (Гамма, ANSWER cdc36347): есть JSON-строка тика в журнале
+#   autopilot-usage.service (раз в минуту) — верхний sourceBytes = prepare + registration + consumer и registration.metadataByteLimit.
+# ЧТО МЕРЯЕТ (расчёт — python ниже, bash только раскладывает его вывод по gruppa):
+#   ЗАСТРЯЛ — последние ≥ 2×K_HOLOD (=6) JSON-тиков подряд ОДНИМ ВИДОМ отказа → тревога. Вид отказа тика: верхнее поле error
+#     (форма 0.1.13) · failed[].reason@runId верхнего уровня (форма 0.1.14: верхнего error там НЕТ — Гамма 01:54Z, frames 1401/4 MiB)
+#     · finalization.failed[].reason — отдельным видом. K_HOLOD=3 — max K холодного старта 0.1.14 (замер Гаммы): холодный старт
+#     нового RUN (K=2–3) тревоги не даёт. scope до 0.1.14 НЕНАДЁЖЕН (:405 ставит gateway и на raw-отказ) — «scope из журнала», не делится.
+#   ФАКТ — последний тик БЕЗ отказа (нет error, failed[], finalization.failed): верхний sourceBytes / LIMIT, ОЦЕНКА СВЕРХУ; > 3/4 — тревога. Ошибочный тик фаз не несёт:
+#     нет годного тика в окне — «неизвестно», не 0.
+#   LIMIT — из строки «LIMIT=…» tools/runtime_receipt_source.py текущего выпуска: число/произведение (до 0.1.14.1) ЛИБО ссылка
+#     «core._task_limits.<ИМЯ>» → константа <ИМЯ> из task_limits.py выпуска (pilot/, затем lib/) — с 0.1.14.1; иное — СЛЕПОТА с
+#     именами файлов. Сверка с metadataByteLimit журнала: разошлись — тревога (так виден и недоставленный выпуск).
+#   ТЕКУЩЕЕ — почта × чтения + receipts (runtimeSource.ledger из record) участников OPEN RUN, ОЦЕНКА СНИЗУ; > 3/4 — тревога.
+#     Чтения почты: idle 1, при OPEN 2 + 2×OPEN (Гамма ANSWER cdc36347, выпуск 013; до A-N-3131). Нет receipts у OPEN-участника — СЛЕПОТА.
+#   ПРОГНОЗ — почта × 4 + receipts команды Мастера: команда — ключи agents из /etc/autopilot-mail/retention.json (настройка самого
+#     Автопилота), дома — из /etc/agent-registry/agents.yaml; > 3/4 — «предупреждение, не тревога» раз в сутки. Журнал: «команда N,
+#     в реестре M из N», кого нет в реестре и у кого нет receipts.
+#   СЛЕПОТА — нет JSON-тика 10 мин; журнал, index, record, LIMIT не прочитаны → тревога с причиной.
+# ⚠️ ЧЕГО НЕ ЛОВИТ: застревание короче 6 тиков; отказ registration.failed[] (в вид не входит — не prepare);
+#   застревание, у которого вид МИГАЕТ (напр. в 0.1.14 finalization.failed то есть, то нет при стоящем failed[]) — счёт «подряд» сбросится; prepare отдельно от registration/consumer (в бою не пишется); прочие источники
+#   участника кроме receipts (оценка снизу); RUN, открытый и закрытый между тактами (10 мин); смену числа чтений почты в 0.1.15 —
+#   константы с адресом выше менять руками.
+AP_CURRENT="${SADIK_AP_CURRENT:-/opt/autopilot/current}"; AP_INDEX="${SADIK_AP_INDEX:-/var/lib/autopilot-usage/index.json}"
+AP_RETENTION="${SADIK_AP_RETENTION:-/etc/autopilot-mail/retention.json}"; AP_AGENTS="${SADIK_AP_AGENTS:-/etc/agent-registry/agents.yaml}"
+AP_MAIL="${SADIK_AP_MAIL_DB:-/var/lib/autopilot-mail/mail.sqlite}"
+# окно 24 ч (r4): с окном 15 мин счёт «подряд» и время начала застревания упирались в начало окна — врали при долгом застревании
+AP_JOURNAL="${SADIK_AP_JOURNAL_CMD:-journalctl -u autopilot-usage.service -o short-unix --since -24h --no-pager}"
+_ap_py='import ast,json,os,re,subprocess,sys,time
+# аргументы: cur index retention agents_yaml mail journal_cmd seychas
+cur,index,retention,agents_yaml,mail,jcmd=sys.argv[1:7];now=float(sys.argv[7])
+K_HOLOD=3            # max K холодного старта 0.1.14 — замер Гаммы (Вениамин 04:44:49, решение Забавы 04:45)
+POROG_Z=2*K_HOLOD    # «застрял» — столько JSON-тиков подряд одной ошибкой
+OKNO=600             # нет JSON-тика дольше — СЛЕПОТА (таймер autopilot-usage раз в минуту)
+out={"log":[],"apb":[],"app":[],"bedy":0}
+def slepo(t):
+    out["apb"].append(("сторож бюджета prepare учёта слеп","СЛЕПОТА сторожа бюджета prepare учёта: "+t));out["bedy"]+=1;out["log"].append("СЛЕПОТА — "+t)
+def mb(b):return "%.1f МБ"%(b/1e6)
+def pr(b,l):return "%d %%"%(b*100//l)
+# LIMIT из кода текущего выпуска
+lim=None;f=os.path.join(cur,"tools","runtime_receipt_source.py")
+def ev(n):
+    if isinstance(n,ast.Constant) and type(n.value) is int:return n.value
+    if isinstance(n,ast.BinOp) and isinstance(n.op,(ast.Mult,ast.Add)):a,b=ev(n.left),ev(n.right);return a*b if isinstance(n.op,ast.Mult) else a+b
+    raise ValueError
+# Формы строки LIMIT в runtime_receipt_source.py выпуска (наряд Забавы 12:09, 3.1.27):
+#   до 0.1.14.1 — «LIMIT=16*1024*1024» (число/произведение);
+#   с 0.1.14.1 — «LIMIT=core._task_limits.USAGE_BYTE_LIMIT», константа — в task_limits.py выпуска: pilot/ (раскладка выпуска;
+#   lib/ пакета ставится в pilot/) или lib/ (раскладка пакета). Иное — СЛЕПОТА с именами файлов, не умолчание.
+TL=[os.path.join(cur,"pilot","task_limits.py"),os.path.join(cur,"lib","task_limits.py")];lim_otkuda=None
+def arif(t):return ev(ast.parse(t.strip(),mode="eval").body)
+try:
+    m=re.search(r"^LIMIT *= *(.+?) *$",open(f,encoding="utf-8").read(),re.M)
+    if not m:slepo("в "+f+" нет строки LIMIT=…")
+    elif re.fullmatch(r"[0-9 *+()]+",m.group(1)):lim=arif(m.group(1));lim_otkuda=f+" (число в строке)"
+    elif re.fullmatch(r"(?:core\.)?_task_limits\.([A-Z_][A-Z0-9_]*)",m.group(1)):
+        imya=re.fullmatch(r"(?:core\.)?_task_limits\.([A-Z_][A-Z0-9_]*)",m.group(1)).group(1);est=[t for t in TL if os.path.isfile(t)]
+        if not est:slepo("LIMIT в "+f+" ссылается на _task_limits."+imya+", но task_limits.py нет ни в "+TL[0]+", ни в "+TL[1])
+        else:
+            m2=re.search(r"^"+imya+r" *= *([0-9 *+()]+?) *$",open(est[0],encoding="utf-8").read(),re.M)
+            if not m2:slepo("в "+est[0]+" нет строки "+imya+"=<число/произведение> (на неё ссылается LIMIT в "+f+")")
+            else:lim=arif(m2.group(1));lim_otkuda=est[0]+":"+imya
+    else:slepo("LIMIT в "+f+" незнакомой формы: «"+m.group(1)[:80]+"» — ни число, ни _task_limits.<ИМЯ>")
+except (OSError,ValueError,SyntaxError) as e:slepo("LIMIT из кода не прочитан: "+f+" / "+" / ".join(TL)+" ("+e.__class__.__name__+")")
+if lim:out["log"].append("LIMIT из кода: %d (%s)"%(lim,lim_otkuda))
+# журнал collector'"'"'а: ФАКТ и ЗАСТРЯЛ
+try:j=subprocess.run(jcmd,shell=True,capture_output=True,text=True,timeout=60);jl=j.stdout.splitlines() if j.returncode==0 else None
+except (OSError,subprocess.TimeoutExpired):jl=None
+if jl is None:slepo("журнал autopilot-usage не прочитан ("+jcmd.split()[0]+")")
+else:
+    tiki=[]
+    for s in jl:
+        i=s.find("{")
+        if i<0:continue
+        try:ts=float(s.split()[0]);d=json.loads(s[i:])
+        except (ValueError,IndexError):continue
+        if isinstance(d,dict):tiki.append((ts,d))
+    if not tiki or now-tiki[-1][0]>OKNO:
+        slepo("нет JSON-тика autopilot-usage за %d мин (последний: %s)"%(OKNO//60,time.strftime("%H:%MZ",time.gmtime(tiki[-1][0])) if tiki else "нет в окне"))
+    else:
+        # ВИД ОТКАЗА ТИКА (наряд Забавы 04:55, форма строк — Гамма 01:54Z, frames 1401/4 MiB):
+        #   0.1.13 — верхнее поле error (+ scope); 0.1.14 — верхнего error НЕТ, причина в failed[].reason верхнего уровня (по RUN);
+        #   finalization.failed[].reason — отдельным видом. Пустой вид — тик годный.
+        def prichiny(lst):
+            return tuple(sorted({"%s@%s"%(f.get("reason"),f.get("runId")) for f in lst if isinstance(f,dict) and f.get("reason")})) if isinstance(lst,list) else ()
+        def vid(d):
+            v=[]
+            if d.get("error"):v.append("error: %s (scope из журнала: %s; до 0.1.14 метка ненадёжна)"%(d["error"],d.get("budgetScope") or (d.get("gatewayPreparation") or {}).get("scope")))
+            p=prichiny(d.get("failed"))
+            if p:v.append("failed: "+", ".join(p))
+            fz=prichiny((d.get("finalization") or {}).get("failed") if isinstance(d.get("finalization"),dict) else None)
+            if fz:v.append("finalization.failed: "+", ".join(fz))
+            return tuple(v)
+        n=0;v0=vid(tiki[-1][1])
+        for ts,d in reversed(tiki):
+            if not v0 or vid(d)!=v0:break
+            n+=1
+        if n:
+            # окно журнала конечно (AP_JOURNAL): если отказы идут с самого начала окна, настоящее начало — раньше; так и пишем
+            # (r4: боевой 3.1.26 с окном 15 мин писал «15 тиков с 08:58Z» при застревании с 06:10:20Z — замер 21.10 09:13Z)
+            nach=tiki[len(tiki)-n][0];za_oknom=n==len(tiki)
+            kogda=("с ≤ %s (начало за окном журнала)" if za_oknom else "с %s")%time.strftime("%d.%m %H:%MZ",time.gmtime(nach))
+            skolko=("≥ %d" if za_oknom else "%d")%n
+            out["log"].append("отказ тика %s подряд %s: %s"%(skolko,kogda," · ".join(v0)))
+            if n>=POROG_Z:
+                out["apb"].append(("prepare учёта застрял","prepare учёта Автопилота ЗАСТРЯЛ: %s тиков подряд одним видом %s (порог 2×K=%d) — %s"%(skolko,kogda,POROG_Z," · ".join(v0))));out["bedy"]+=1
+        god=[(ts,d) for ts,d in tiki if not vid(d) and type(d.get("sourceBytes")) is int]
+        if god:
+            ts,d=god[-1];sb=d["sourceBytes"];jlim=(d.get("registration") or {}).get("metadataByteLimit")
+            if type(jlim) is not int:jlim=None
+            L=jlim or lim
+            if lim and jlim and lim!=jlim:
+                out["apb"].append(("LIMIT журнала ≠ LIMIT кода","сторож бюджета prepare: LIMIT в журнале collector'"'"'а %d ≠ в коде текущего выпуска %d — выпуск сменился? сверить"%(jlim,lim)));out["bedy"]+=1
+            if L:
+                out["log"].append("ФАКТ (оценка сверху, prepare+registration+consumer) тик %s: %d из %d (%s)"%(time.strftime("%H:%MZ",time.gmtime(ts)),sb,L,pr(sb,L)))
+                if sb>L*3//4:
+                    out["apb"].append(("расход тика выше 3/4 бюджета","расход тика учёта Автопилота %s из %s (%s, порог 3/4; тик %s) — оценка сверху, prepare вместе с registration и consumer"%(mb(sb),mb(L),pr(sb,L),time.strftime("%H:%MZ",time.gmtime(ts)))));out["bedy"]+=1
+        else:out["log"].append("ФАКТ: годного тика в окне нет (только отказы: error/failed/finalization.failed) — неизвестно, не 0")
+# оценки по размерам: текущее и прогноз
+def ctenie_pochty(open_n):return 1 if open_n==0 else 2+2*open_n   # Гамма ANSWER cdc36347 (013): registration 2 при OPEN (idle 1) + prepare и consumer по 1 на OPEN RUN; до A-N-3131
+try:runs=[r for r in json.load(open(index,encoding="utf-8"))["runs"] if r.get("phase")=="OPEN"]
+except (OSError,ValueError,KeyError,TypeError) as e:runs=None;slepo("index "+index+" не прочитан ("+e.__class__.__name__+")")
+if lim and runs is not None:
+    tek=0;pochta=None;uch=[];ok=True
+    for r in runs:
+        try:rec=json.load(open(r["record"],encoding="utf-8"));pochta=rec["origin"]["mailDatabase"]
+        except (OSError,ValueError,KeyError,TypeError) as e:slepo("record OPEN RUN %s не прочитан (%s)"%(r.get("runId"),e.__class__.__name__));ok=False;break
+        for p in rec.get("participants",[]):
+            try:led=p["runtimeSource"]["ledger"];tek+=os.stat(led).st_size;uch.append(p["name"])
+            except (KeyError,TypeError):slepo("у участника %s OPEN RUN нет runtimeSource.ledger"%p.get("name"));ok=False
+            except OSError as e:slepo("receipts участника %s OPEN RUN нет: %s (%s) — путь сменился или агент новый"%(p.get("name"),led,e.__class__.__name__));ok=False
+    if ok:
+        pm=0
+        if runs:
+            try:pm=os.stat(pochta).st_size
+            except OSError as e:slepo("почта %s не прочитана (%s)"%(pochta,e.__class__.__name__));ok=False
+        if ok:
+            tek+=pm*ctenie_pochty(len(runs))*(1 if runs else 0)
+            out["log"].append("текущее (оценка снизу): %d из %d (%s; OPEN %d; участники %s; почта × %d)"%(tek,lim,pr(tek,lim),len(runs),",".join(sorted(set(uch))) or "-",ctenie_pochty(len(runs)) if runs else 0))
+            if tek>lim*3//4:
+                out["apb"].append(("текущее выше 3/4 бюджета","prepare учёта Автопилота приближается к бюджету: %s из %s (%s, порог 3/4) — OPEN %d, участники %s; оценка снизу (почта × %d + receipts)"%(mb(tek),mb(lim),pr(tek,lim),len(runs),",".join(sorted(set(uch))),ctenie_pochty(len(runs)))));out["bedy"]+=1
+    # прогноз: команда из настройки Автопилота, дома — из реестра агентов sadik
+    try:komanda=sorted(json.load(open(retention,encoding="utf-8"))["agents"])
+    except (OSError,ValueError,KeyError,TypeError) as e:komanda=None;out["log"].append("прогноз: команда не прочитана из %s (%s)"%(retention,e.__class__.__name__))
+    doma={}
+    try:
+        import yaml
+        for a in yaml.safe_load(open(agents_yaml,encoding="utf-8"))["agenty"]:
+            dom=(a.get("namerenie") or {}).get("dom") if isinstance(a.get("namerenie"),dict) else None
+            if a.get("imya") and dom:doma[a["imya"]]=dom
+    except Exception as e:out["log"].append("прогноз: реестр агентов %s не прочитан (%s)"%(agents_yaml,e.__class__.__name__))
+    if komanda:
+        try:pm4=os.stat(mail).st_size*ctenie_pochty(1)
+        except OSError:pm4=None
+        net=[a for a in komanda if a not in doma];bez=[];prog=pm4 or 0
+        for a in komanda:
+            if a in doma:
+                try:prog+=os.stat(os.path.join(doma[a],"workspace",".message-receipts","receipts.sqlite")).st_size
+                except OSError:bez.append(a)
+        out["log"].append("прогноз на команду (оценка снизу): %d из %d (%s) · команда %d из retention.json, в реестре агентов %d из %d%s%s%s"%(prog,lim,pr(prog,lim),len(komanda),len(komanda)-len(net),len(komanda),(" · нет в реестре: "+",".join(net)) if net else "",(" · нет receipts: "+",".join(bez)) if bez else "",(" · почта не прочитана" if pm4 is None else "")))
+        if prog>lim*3//4:
+            out["app"].append(("прогноз на команду выше 3/4 бюджета","⚠️ предупреждение, не тревога: RUN всей командой Мастера (%d) съел бы ≈ %s из %s (%s, порог 3/4) — оценка снизу; до 0.1.15 (A-N-3131) под риском"%(len(komanda),mb(prog),mb(lim),pr(prog,lim))))
+for k in ("apb","app"):
+    print(k.upper()+"_SOST\t"+"; ".join(s for s,_ in out[k]));print(k.upper()+"_TXT\t"+" | ".join(t for _,t in out[k]))
+print("BEDY\t%d"%out["bedy"])
+for l in out["log"]:print("LOG\t"+l)
+'
+GR_APB=""; GR_APB_TXT=""; GR_APP=""; GR_APP_TXT=""
+_apb=$(snyat "python3 -c $(printf '%q' "$_ap_py") $(printf '%q ' "$AP_CURRENT" "$AP_INDEX" "$AP_RETENTION" "$AP_AGENTS" "$AP_MAIL" "$AP_JOURNAL" "$SEYCHAS") 2>&1"); _apk=$?
+if [ "$_apk" -ne 0 ] || ! printf '%s\n' "$_apb" | grep -q '^BEDY	'; then
+  GR_APB="сторож бюджета prepare учёта слеп"; GR_APB_TXT="СЛЕПОТА сторожа бюджета prepare учёта: расчёт не отработал (код $_apk): $(printf '%s' "$_apb" | tail -1 | cut -c1-200)"; BEDY=$((BEDY+1))
+  log "   бюджет prepare учёта: СЛЕПОТА — расчёт не отработал (код $_apk)"
+else
+  _apf() { printf '%s\n' "$_apb" | awk -F'\t' -v k="$1" '$1==k{sub(/^[^\t]*\t/,""); print; exit}'; }
+  GR_APB=$(_apf APB_SOST); GR_APB_TXT=$(_apf APB_TXT); GR_APP=$(_apf APP_SOST); GR_APP_TXT=$(_apf APP_TXT); BEDY=$((BEDY + $(_apf BEDY)))
+  printf '%s\n' "$_apb" | awk -F'\t' '$1=="LOG"{sub(/^LOG\t/,""); print "   бюджет prepare учёта: " $0}' | while IFS= read -r _l; do log "$_l"; done
+fi
+gruppa ap-prepare-budzhet "$GR_APB" "$GR_APB_TXT" 21600
+gruppa ap-prepare-prognoz "$GR_APP" "$GR_APP_TXT" 86400
+# AP-PREPARE-BUDZHET END
 
 # ── 3. Голос жизни: молчание сторожа должно быть отличимо от молчания беды ──────
 # 🔴 B-N-988 (26.09.2026): прежде здесь раз в сутки писалась строка «жив» в СВОЙ журнал — читателя у неё не было (FARM п.8),

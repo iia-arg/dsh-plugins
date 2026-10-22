@@ -1,0 +1,11 @@
+[Unit]
+Description=Approximate Autopilot end-of-turn usage tick
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=60s
+AccuracySec=1s
+Unit=autopilot-usage.service
+
+[Install]
+WantedBy=timers.target

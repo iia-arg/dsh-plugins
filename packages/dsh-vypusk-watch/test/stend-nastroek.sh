@@ -1,12 +1,14 @@
 #!/bin/bash
+# RU: VYPUSK_REPO отсутствует/пуст: ошибка вызова 3 без канала, до остальных настроек.
+# EN: Missing/empty VYPUSK_REPO is invocation error 3 without alerts, before other settings.
 # RU: Стенд настроек сторожа выпуска. Предмет: машинных умолчаний в коде нет; незаданная обязательная настройка и
-#     незаданная настройка вида «пусто = выкл» — СЛЕПОТА с её именем, код 2, тревога в канал; явно пустое значение
+#     кроме VYPUSK_REPO, незаданная настройка вида «пусто = выкл» — СЛЕПОТА с её именем, код 2, тревога в канал; явно пустое значение
 #     принимается («выключено»). Зовущий — ночной обходчик (берёт stend-*.sh).
 #     Среда изолирована: env -i, дерево — несуществующий путь, канал тревог — подставной (счётчик вызовов).
 #     Код: 0 — все пробы, 1 — есть красная, 2 — стенд слеп. VYPUSK_TEST_WATCH — подмена предмета (порча/основа).
 #     Чего НЕ ловит: верность самих значений (существование путей проверяют другие стенды и сам сторож).
 # EN: Settings stand of the release watchdog. Subject: the code has no machine defaults; a missing required setting
-#     and a missing "empty = off" setting are BLINDNESS naming it, exit 2, alarm to the channel; an explicitly empty
+#     except VYPUSK_REPO, a missing "empty = off" setting is BLINDNESS naming it, exit 2, alarm to the channel; an explicitly empty
 #     value is accepted ("off"). Caller: the nightly walker (it takes stend-*.sh).
 #     Isolated environment: env -i, the tree is a nonexistent path, the alarm channel is a stub (call counter).
 #     Exit: 0 — all probes, 1 — a red one, 2 — the stand is blind. VYPUSK_TEST_WATCH overrides the subject.
@@ -37,7 +39,7 @@ VSE=(VYPUSK_REPO="$T/net-dereva" VYPUSK_KORNI="$T/net-kornej" VYPUSK_AGENT_KORNI
 bez() { local r=(); for a in "${VSE[@]}"; do [ "${a%%=*}" = "$1" ] || r+=("$a"); done; printf '%s\0' "${r[@]}"; }
 
 k=$(zapusk)
-proba "настроек нет вовсе → СЛЕПОТА «не задана настройка VYPUSK_REPO», код 2, канал 1" '[ "$k" = 2 ] && [ "$(vyzovov)" = 1 ] && grep -qF "не задана настройка VYPUSK_REPO" "$T/out"'
+proba "настроек нет вовсе → ОТКАЗ VYPUSK_REPO, код 3, канал 0" '[ "$k" = 3 ] && [ "$(vyzovov)" = 0 ] && grep -qF "ОТКАЗ" "$T/out" && grep -qF "VYPUSK_REPO" "$T/out"'
 mapfile -d '' -t E < <(bez VYPUSK_KORNI); k=$(zapusk "${E[@]}")
 proba "нет VYPUSK_KORNI → СЛЕПОТА с именем, код 2 (а не «всё вне области», код 0)" '[ "$k" = 2 ] && grep -qF "не задана настройка VYPUSK_KORNI" "$T/out"'
 mapfile -d '' -t E < <(bez VYPUSK_SSYLKI); k=$(zapusk "${E[@]}")

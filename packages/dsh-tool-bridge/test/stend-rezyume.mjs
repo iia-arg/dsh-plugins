@@ -34,6 +34,7 @@ ${vyrez('sobratPolosu')}
 ${vyrez('polosaKotoraiaOborvalas')}
 ${vyrez('tekushchayaPolosa')}
 ${vyrez('chasyMinuty')}
+${vyrez('dayKeyFactory')}
 ${vyrez('tekstRezyume')}
 ${vyrez('putOtmetki')}
 ${vyrez('postavitOtmetku')}
@@ -102,13 +103,29 @@ sud(F.tekushchayaPolosa(zhurnal(['h', 'a', 'a', 'h']), KINDS) === null,
   'после внешнего слова текущей полосы нет')
 
 const bez = F.tekstRezyume(p3, '', 'Europe/Moscow')
-sud(/без объявления/.test(bez) && /\b3\b/.test(bez), 'текст без объявления: число и признак', bez)
+const NE_OB = 'итог агентом не объявлен — см. ответ хода'
+sud(bez.includes(NE_OB) && /\b3\b/.test(bez), 'текст без объявления: число и фиксированная строка «итог агентом не объявлен — см. ответ хода»', bez)
+sud(!/без объявления|оборвалась/.test(bez), 'прежних слов «без объявления»/«оборвалась» нет (B-N-2097)', bez)
 sud(/\d\d:\d\d/.test(bez), 'текст без объявления называет время', bez)
+sud(!/\d\d\.\d\d\.\d{4}/.test(bez), 'одни локальные сутки — без даты, как прежде', bez)
+// B-N-2097: полоса Анны 14.10→16.10 с одинаковым 09:30 МСК печаталась «с 09:30 до 09:30»
+const MSK = (d, h, m) => Date.UTC(2026, 9, d, h - 3, m)
+const anna = F.tekstRezyume({ n: 5, ot: MSK(14, 9, 30), do: MSK(16, 9, 30) }, '', 'Europe/Moscow')
+sud(anna.includes('14.10.2026 09:30 (Europe/Moscow)') && anna.includes('16.10.2026 09:30 (Europe/Moscow)'),
+  'разные сутки (14.10→16.10, 09:30 оба): обе полные даты + время + зона', anna)
+const polnoch = F.tekstRezyume({ n: 2, ot: MSK(14, 23, 50), do: MSK(15, 0, 10) }, '', 'Europe/Moscow')
+sud(polnoch.includes('14.10.2026 23:50') && polnoch.includes('15.10.2026 00:10'),
+  'граница полуночи по ЛОКАЛЬНОЙ зоне (в UTC это одни сутки 14.10) — даты печатаются', polnoch)
+const utcRaznye = F.tekstRezyume({ n: 2, ot: Date.UTC(2026, 9, 14, 23, 30), do: Date.UTC(2026, 9, 15, 0, 30) }, '', 'Europe/Moscow')
+sud(!/\d\d\.\d\d\.\d{4}/.test(utcRaznye) && utcRaznye.includes('с 02:30 до 03:30'),
+  'разные сутки UTC, но одни московские (15.10) — без даты: судит локальная зона', utcRaznye)
+const annaS = F.tekstRezyume({ n: 5, ot: MSK(14, 9, 30), do: MSK(16, 9, 30) }, 'свели учёт', 'Europe/Moscow')
+sud(annaS.includes('закрыта агентом') && annaS.includes('16.10.2026 09:30'), 'с объявлением даты тоже полные', annaS)
 const s3 = F.tekstRezyume(p3, 'свели два учёта', 'Europe/Moscow')
 sud(/закрыта агентом/.test(s3) && /свели два учёта/.test(s3) && /\b3\b/.test(s3),
   'текст с объявлением: признак, итог и число', s3)
 const b1 = F.tekstRezyume(p1, '', 'Europe/Moscow')
-sud(!/полоса из 1 оборвалась/.test(b1) && /\b1\b/.test(b1),
+sud(!/полоса из 1 оборвалась/.test(b1) && /\b1\b/.test(b1) && b1.includes(NE_OB),
   'вырожденный случай назван своими словами, число честное', b1)
 sud(/закрыт/.test(F.tekstRezyume(p1, 'итог', 'Europe/Moscow')),
   'вырожденный случай с объявлением тоже читается', F.tekstRezyume(p1, 'итог', 'Europe/Moscow'))
@@ -183,14 +200,14 @@ try {
     const r2 = F.rezyumeNaKonceHoda({ id: 'drugoy', session: { events: zhurnal(['h', 'a', 'a', 'h']) } },
       L, F.snyatOtmetku, F.napechatatRezyume)
     sud(r2.pechatali === true, 'без вызова агента резюме ВСЁ РАВНО напечатано', JSON.stringify(r2))
-    sud(LOG.some((m) => /без объявления/.test(m)), 'и текст его — «без объявления»',
+    sud(LOG.some((m) => m.includes('итог агентом не объявлен — см. ответ хода')), 'и текст его — «итог агентом не объявлен — см. ответ хода»',
       LOG.join(' | ').slice(0, 200))
   } finally {
     rmSync(dir2, { recursive: true, force: true })
   }
 }
 
-const VSEGO = 32
+const VSEGO = 38
 console.log(`ИТОГО: сошлось ${ok}, расхождений ${bad}, слепот ${slep}`)
 if (ok + bad + slep !== VSEGO) {
   console.log(`СЛЕПОТА канарейка: проверок ${ok + bad + slep}, а стенд состоит из ${VSEGO} — часть не исполнилась`)

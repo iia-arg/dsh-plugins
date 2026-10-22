@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "supported": [
+    {
+      "engine": "codex",
+      "cliVersion": "0.162.1",
+      "sdkVersion": null,
+      "sdkEntrySha256": null,
+      "profile": "codex-app-server-v2-child-v1"
+    },
+    {
+      "engine": "claude",
+      "cliVersion": "2.1.299",
+      "sdkVersion": "0.3.299",
+      "sdkEntrySha256": "47c7ec6c045d41190e1286b39f46e2adcc1c40e790ca3363a4844e43ce22421e",
+      "profile": "claude-agent-sdk-child-v1"
+    }
+  ]
+}

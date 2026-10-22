@@ -7,12 +7,15 @@
 # ГДЕ СЛЕП: монтаж мимо инструмента; корень git под чужим владельцем (ветка есть, проба — нет); удаление файлов из состава.
 set -u
 TOOL=${SMV_TOOL:-/usr/local/sbin/smontirovat-vypusk}
+FIXTURE=$(dirname -- "$0")/smv_fixture.py
+[ -r "$FIXTURE" ] || { echo "СЛЕПОТА: нет fixture $FIXTURE"; exit 2; }
+SOURCE_GIT=(sudo -n -u "$(stat -c %U /opt/iskra/workspace/dsh-plugins)" git -C /opt/iskra/workspace/dsh-plugins)
 [ "$(id -u)" = 0 ] || { echo "СЛЕПОТА: стенд нужен от root (корень git — root, как в бою)"; exit 2; }
 [ -r "$TOOL" ] || { echo "СЛЕПОТА: предмета нет: $TOOL"; exit 2; }
 # Предохранитель: предмет без SMV_MONTAZH положил бы страховки прогона в НАСТОЯЩИЙ /var/backups/montazh (так и вышло 30.09 19:20Z на основе).
 grep -q 'SMV_MONTAZH' "$TOOL" || { echo "СЛЕПОТА: предмет не знает SMV_MONTAZH — прогон задел бы /var/backups/montazh; не запускаю"; exit 2; }
 M1=0a11d7c; M2=755e4f4; P=packages/dsh-pamyat
-git -C /opt/iskra/workspace/dsh-plugins cat-file -e "$M1^{commit}" 2>/dev/null && git -C /opt/iskra/workspace/dsh-plugins cat-file -e "$M2^{commit}" 2>/dev/null \
+"${SOURCE_GIT[@]}" cat-file -e "$M1^{commit}" 2>/dev/null && "${SOURCE_GIT[@]}" cat-file -e "$M2^{commit}" 2>/dev/null \
   || { echo "СЛЕПОТА: коммитов $M1/$M2 в дереве нет — предмета нет"; exit 2; }
 W=$(mktemp -d /tmp/stend-smv-git-XXXXXX) || exit 2
 trap 'rm -rf "$W"' EXIT
@@ -26,7 +29,7 @@ git -C "$R0" init -q && echo "*.tgz" > "$R0/.gitignore" && git -C "$R0" add .git
 echo "чужое" > "$R0/chuzhoe.txt"
 zel=0; kras=0
 ok(){ echo "✅ $1"; zel=$((zel+1)); }; no(){ echo "❌ $1"; kras=$((kras+1)); }
-run(){ rm -f "$MO_STATE_DIR"/*.json; SMV_MONTAZH=$W/montazh SMF_RUKA='Stend <stend@sadik>' bash "$TOOL" "$1" "$P" "$2" --v-boj "$3" > "$W/out" 2>&1; echo $?; }
+run(){ rm -f "$MO_STATE_DIR"/*.json; SMV_MONTAZH=$W/montazh SMF_RUKA='Stend <stend@sadik>' python3 -B "$FIXTURE" "$W" "$TOOL" "$1" "$P" "$2" -- "$1" "$P" "$2" --v-boj "$3" > "$W/out" 2>&1; echo $?; }
 h0=$(git -C "$R0" rev-parse HEAD)
 k=$(run $M1 "$B" PROBA-1263); msg=$(git -C "$R0" log -1 --format=%s); au=$(git -C "$R0" log -1 --format='%an <%ae>')
 n=$(git -C "$R0" show --stat --format= HEAD | grep -c '|')

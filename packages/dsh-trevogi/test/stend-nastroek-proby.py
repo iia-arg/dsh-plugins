@@ -17,7 +17,7 @@ class AlertTests(unittest.TestCase):
         self.env = {k:v for k,v in os.environ.items() if not k.startswith(('AGENT_ALERT_', 'OTKAZ_KLYUCH_', 'DSH_TREVOGI_', 'DSH_PROBA'))}
         self.env.update(PATH=str(self.d/'bin')+':'+os.environ['PATH'], FIXTURE=str(self.d),
                         AGENT_ALERT_TOKEN_FILE=str(self.d/'token'), AGENT_ALERT_CHAT_FILE=str(self.d/'chat'),
-                        AGENT_ALERT_HVOST=str(self.d/'tail'), AGENT_ALERT_PAUZY='0 0', AGENT_ALERT_TAJMAUT='1', DSH_TREVOGI_CONFIG=str(self.d/'empty.conf'))
+                        AGENT_ALERT_HVOST=str(self.d/'tail'), AGENT_ALERT_SPUL=str(self.d/'net-spula'), AGENT_ALERT_PAUZY='0 0', AGENT_ALERT_TAJMAUT='1', DSH_TREVOGI_CONFIG=str(self.d/'empty.conf'))
         for name,body in {
             'logger': "import json,os,sys\np=os.environ['FIXTURE']+'/log'\nwith open(p,'a') as f:f.write(json.dumps(sys.argv[1:],ensure_ascii=False)+'\\n')\n",
             'curl': "import json,os,sys\nd=os.environ['FIXTURE']\nwith open(d+'/cmdline','wb') as f:f.write(open('/proc/self/cmdline','rb').read())\nwith open(d+'/argv','a') as f:f.write(json.dumps(sys.argv[1:])+'\\n')\ns=sys.stdin.read()\nwith open(d+'/wire','w') as f:f.write(s)\nif os.environ.get('CURL_ECHO'):\n print(s,file=sys.stderr);sys.exit(6)\nprint('{\"ok\":true}')\n",

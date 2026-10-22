@@ -173,9 +173,28 @@ dopisat_vyvod() {   # закрыть трубы tee и дождаться, по�
 }
 ZHURNAL_ZAPIS="${VYPUSK_ZHURNAL_ZAPIS:-/usr/local/libexec/vypusk-tegom/zhurnal-zapis}"   # подмена и VYPUSK_ZHURNAL_DIR — только стенду
 GALKA="✅"   # sled_vorot меняет её на «пробный прогон», если каталог вне git (следа нет)
+# B-N-2115(б) (18.10.2026, Заря): «метка уже есть» — ДО записи следа, в ОБОИХ режимах. Прежде в режиме npm проверки не было вовсе
+#   (режим дерева проверяет раньше, :194): повторный прогон по dsh-autopilot-v0.1.9 записал вторую строку следа (вывод ec308f8d),
+#   а метку рука поставить не смогла. Строка следа на уже стоящую метку — заранее выданный допуск: сторож принимает метку, если
+#   ХОТЬ ОДНА строка следа совпала по tree (metki-mimo-vorot-watch :151–160). Проверка здесь, а не в начале, — ловит и метку,
+#   поставленную ВО ВРЕМЯ прогона. Имена — как у сторожа: по каталогу и по имени пакета (без @scope/).
+#   НЕ ЛОВИТ: каталог вне git (пробный прогон — следа и так нет) и репозиторий, который git этой учётке не открывает
+#   (чужой владелец без safe.directory) — там проверка молчит, как прежде.
+metka_uzhe_est() {   # $1 метка по каталогу · $2 пакет → печатает имя найденной метки, код 0; нет — код 1
+  local m
+  git -C "$KATALOG" rev-parse --git-dir >/dev/null 2>&1 || return 1
+  for m in "$1" "${2##*/}-v${VERSIYA}"; do
+    git -C "$KATALOG" rev-parse -q --verify "refs/tags/$m" >/dev/null 2>&1 && { printf '%s' "$m"; return 0; }
+  done
+  return 1
+}
 sled_vorot() {   # $1 метка · $2 пакет · $3 режим — звать прямо перед «✅»
-  local otv kod
+  local otv kod est
   dopisat_vyvod
+  if est=$(metka_uzhe_est "$1" "$2"); then
+    echo "🔴 ОТКАЗ: метка $est уже есть (→ $(git -C "$KATALOG" rev-parse --short=12 "$est^{commit}" 2>/dev/null)) — след ворот не пишу: метки не переносятся, нужен новый номер." >&2
+    exit 1
+  fi
   # «--ключ=значение»: каталог/метка на «-» (П21 стенда ворот) иначе читались бы помощником как ключ.
   otv=$(sudo -n "$ZHURNAL_ZAPIS" --metka="$1" --paket="$2" --rezhim="$3" --katalog="$KATALOG" --vyvod="$VREM/vyvod" \
         ${VYPUSK_ZHURNAL_DIR:+--zhurnal-dir="$VYPUSK_ZHURNAL_DIR"} 2>&1); kod=$?
@@ -199,37 +218,53 @@ if [ "$REZHIM" = derevo ]; then
   # Состав — git ls-files каталога (то, что ляжет в метку), а не find: записки и остатки вне git в метку не едут.
   ( cd "$REPO_D" && git ls-files -- "$SUBDIR" ) | sed "s#^$SUBDIR/##" > "$VREM/sostav" || true
   [ -s "$VREM/sostav" ] || { echo "СЛЕПОТА: в git нет ни одного файла $SUBDIR — метка ляжет пустой." >&2; exit 2; }
-  if ! python3 - "$REESTR_D" "$SUBDIR" > "$VREM/zapis" 2> "$VREM/zapis.err" <<'PYD'
+  # 3.1.31 (Заря; «да» Забавы 05:30:55Z — латентный остаток B-N-2033 в режиме дерева): записей derevo одного subdir может быть
+  #   НЕСКОЛЬКО (один пакет на двух местах). Единица сверки — ID записи, как в сверке копий (B-N-2033, :602): судятся ВСЕ записи
+  #   subdir; у каждой — двусторонний состав и побайтное «выпуск = бой»; расхождения называются с ID, все сразу. Записей 0 — СЛЕПОТА.
+  #   НЕ ЛОВИТ: VYPUSK_KOPII в режиме дерева не читается (сужать нечем — имени из package.json нет), судятся все записи subdir.
+  if ! python3 - "$REESTR_D" "$SUBDIR" "$VREM" > "$VREM/zapisi" 2> "$VREM/zapis.err" <<'PYD'
 import sys, yaml
-d = yaml.safe_load(open(sys.argv[1]))
-z = [s for s in d.get('services', []) if (s.get('derevo') or {}).get('subdir') == sys.argv[2]]
-if len(z) != 1: sys.exit('записей с derevo.subdir=%s: %d (нужна одна)' % (sys.argv[2], len(z)))
-dv = z[0]['derevo']
-for f in dv.get('files') or []: print('F\t%s\t%s' % (f['remote'], f['local']))
-for f in dv.get('not_installed') or []: print('N\t%s\t' % f)
-for f in dv.get('expected_diff_files') or []: print('E\t%s\t' % f)
+reestr, subdir, vrem = sys.argv[1:4]
+d = yaml.safe_load(open(reestr))
+z = [s for s in d.get('services', []) if isinstance(s, dict) and (s.get('derevo') or {}).get('subdir') == subdir]
+if not z: sys.exit('записей с derevo.subdir=%s: 0 (нужна хотя бы одна)' % subdir)
+ids = [str(s.get('id')) for s in z]
+if len(set(ids)) != len(ids): sys.exit('id записей derevo.subdir=%s повторяются: %s' % (subdir, ', '.join(ids)))
+for n, s in enumerate(z):
+    dv = s['derevo']
+    with open('%s/zapis.%d' % (vrem, n), 'w', encoding='utf-8') as f:
+        for x in dv.get('files') or []: f.write('F\t%s\t%s\n' % (x['remote'], x['local']))
+        for x in dv.get('not_installed') or []: f.write('N\t%s\t\n' % x)
+        for x in dv.get('expected_diff_files') or []: f.write('E\t%s\t\n' % x)
+    print('%d\t%s' % (n, ids[n]))
 PYD
   then echo "СЛЕПОТА: запись реестра не прочитана ($REESTR_D): $(tail -1 "$VREM/zapis.err")" >&2; exit 2; fi
-  # Двусторонняя сверка: файл метки без строки в записи — запись отстала; строка files без файла в метке — тоже.
-  OTSTALO=$(awk -F'\t' '$1=="F"||$1=="N"{print $2}' "$VREM/zapis" | LC_ALL=C sort -u | LC_ALL=C comm -23 <(LC_ALL=C sort -u "$VREM/sostav") -)
-  LISHNEE=$(awk -F'\t' '$1=="F"{print $2}' "$VREM/zapis" | LC_ALL=C sort -u | LC_ALL=C comm -13 <(LC_ALL=C sort -u "$VREM/sostav") -)
-  if [ -n "$OTSTALO$LISHNEE" ]; then
+  N_ZAP=$(grep -c . "$VREM/zapisi")
+  [ "$N_ZAP" -gt 1 ] && echo "   записей derevo для $SUBDIR: $N_ZAP ($(cut -f2 "$VREM/zapisi" | paste -sd, - | sed 's/,/, /g')) — судятся все, единица — ID"
+  SLEP_D=""; RAZN_D=""; NF=0
+  while IFS=$'\t' read -r nz idz; do
+    Z="$VREM/zapis.$nz"
+    # Двусторонняя сверка: файл метки без строки в записи — запись отстала; строка files без файла в метке — тоже.
+    OTSTALO=$(awk -F'\t' '$1=="F"||$1=="N"{print $2}' "$Z" | LC_ALL=C sort -u | LC_ALL=C comm -23 <(LC_ALL=C sort -u "$VREM/sostav") -)
+    LISHNEE=$(awk -F'\t' '$1=="F"{print $2}' "$Z" | LC_ALL=C sort -u | LC_ALL=C comm -13 <(LC_ALL=C sort -u "$VREM/sostav") -)
+    [ -n "$OTSTALO" ] && SLEP_D="$SLEP_D$(echo "$OTSTALO" | sed "s/^/   [$idz] в метке, нет в записи: /")"$'\n'
+    [ -n "$LISHNEE" ] && SLEP_D="$SLEP_D$(echo "$LISHNEE" | sed "s/^/   [$idz] в files записи, нет в метке: /")"$'\n'
+    while IFS=$'\t' read -r vid rem loc; do
+      [ "$vid" = F ] || continue; NF=$((NF+1))
+      grep -qxF "$rem" <(awk -F'\t' '$1=="E"{print $2}' "$Z") && continue
+      sudo -n cat -- "$loc" 2>/dev/null | cmp -s - "$KATALOG/$rem" || RAZN_D="$RAZN_D[$idz] $rem → $loc"$'\n'
+    done < "$Z"
+  done < "$VREM/zapisi"
+  if [ -n "$SLEP_D" ]; then
     echo "СЛЕПОТА: запись реестра ≠ составу метки (VYPUSK_REESTR — реестр-кандидат этого выпуска):" >&2
-    [ -n "$OTSTALO" ] && echo "$OTSTALO" | sed 's/^/   в метке, нет в записи: /' >&2
-    [ -n "$LISHNEE" ] && echo "$LISHNEE" | sed 's/^/   в files записи, нет в метке: /' >&2
+    printf '%s' "$SLEP_D" >&2
     exit 2
   fi
-  RAZN_D=""; NF=0
-  while IFS=$'\t' read -r vid rem loc; do
-    [ "$vid" = F ] || continue; NF=$((NF+1))
-    grep -qxF "$rem" <(awk -F'\t' '$1=="E"{print $2}' "$VREM/zapis") && continue
-    sudo -n cat -- "$loc" 2>/dev/null | cmp -s - "$KATALOG/$rem" || RAZN_D="$RAZN_D$rem → $loc"$'\n'
-  done < "$VREM/zapis"
   if [ -n "$RAZN_D" ]; then
     echo "🔴 ОТКАЗ: выпуск ≠ бою по записи реестра — метку ставят после монтажа (дерево метки = бой):" >&2
     printf '%s' "$RAZN_D" | head -10 | sed 's/^/   /' >&2; exit 1
   fi
-  echo "   выпуск = бой по записи реестра: файлов $NF, состав метки $(grep -c . "$VREM/sostav") (files + not_installed, сверено в обе стороны)"
+  echo "   выпуск = бой по записи реестра: записей $N_ZAP ($(cut -f2 "$VREM/zapisi" | paste -sd, - | sed 's/,/, /g')), файлов $NF, состав метки $(grep -c . "$VREM/sostav") (files + not_installed, сверено в обе стороны)"
   if [ -n "${STENDY_INACHE:-}" ]; then
     echo "⚠️ стенды пакета НЕ ПРОГНАНЫ: обход объявлен — «$STENDY_INACHE». Это не «стенды зелёные»."
   else
@@ -594,22 +629,34 @@ def arhiv_polki(vid,zakreplena=None):
             ("различаются: "+", ".join(raz[:20])) if raz else "",("лишние в архиве: "+", ".join(lishnie[:20])) if lishnie else "",
             ("нет в архиве: "+", ".join(net[:20])) if net else "") if x));return None
     return arh,sha,chleny,tar_rel
-# B-N-1904 К3 (вердикт Вениамина 05:1xZ): копий-каталогов нет и VYPUSK_KOPII не задан, но у пакета есть запись derevo
+# B-N-1904 К3: без копий-каталогов проверяем все подходящие derevo автоматически.
+# B-N-VYPUSK-KOPII: явная область нужна только при одновременном наличии копий и derevo.
 # (пакет разложен по местам файлами, а не каталогом копии) — сверяем ИСПОЛНЯЕМОЕ: каждый files.local с files.remote дерева
 # выпуска. Запись — та, чей derevo.subdir совпадает с концом пути каталога выпуска. Нет записи — прежняя СЛЕПОТА ниже.
 # НЕ ЛОВИТ: файлы пакета, не перечисленные в derevo.files; поведение; верность самой записи (что files — весь бой пакета);
 # режим и владельца мест (files.mode/owner) — сверяются только байты.
 # B-N-2033 (14.10.2026, Аврора; замысел Гаммы 51aa233e, условия Вениамина 00:4xZ): записей derevo одного subdir может быть НЕСКОЛЬКО
-# (socseti и socseti-anna — один пакет на двух местах). Единица сверки — registry ID, не общий subdir: без VYPUSK_KOPII судятся ВСЕ
-# подходящие записи (порядок записей в реестре исхода не меняет; ни первая, ни последняя, ни «совпавшая по ref» не выбираются сами),
-# с VYPUSK_KOPII — ровно перечисленные ID этих записей, прочие названы «вне выпуска». Слепота любой выбранной записи не перекрывается
+# (socseti и socseti-anna — один пакет на двух местах). Единица сверки — registry ID, не общий subdir:
+# явный VYPUSK_KOPII выбирает ровно перечисленные ID этих записей, прочие названы «вне выпуска».
+# Слепота любой выбранной записи не перекрывается
 # другой хорошей: сперва проверяются ВСЕ выбранные, потом сверяются все и называются все расхождения.
 # Бюджет: не больше 256 ID и 16384 мест на выпуск — сверх того СЛЕПОТА с числом и порогом, не частичный проход.
 # НЕ ЛОВИТ (как и прежде): файлы пакета вне derevo.files; поведение; режим/владелец мест; общая цель двух ID — одно место, не два диска.
 put=tree.resolve().as_posix()
+# A renamed source can still be bound by a registered copy's package.json.name.
+# Do not treat that copy's malformed derevo as an absent record.
+for ident in known:
+    if "derevo" in all_ids[ident]:
+        dv=all_ids[ident]["derevo"]
+        if not isinstance(dv,dict) or not isinstance(dv.get("subdir"),str) or not dv["subdir"].strip("/"):
+            blind("неверный derevo.subdir у копии "+ident)
 zap=[r for _,r in rows if isinstance(r,dict) and isinstance(r.get("derevo"),dict) and isinstance(r["derevo"].get("subdir"),str)
-     and r["derevo"]["subdir"].strip("/") and put.endswith("/"+r["derevo"]["subdir"].strip("/"))]
+     and r["derevo"]["subdir"].strip("/") and (put.endswith("/"+r["derevo"]["subdir"].strip("/")) or r.get("id") in known)]
 der={str(r.get("id")):r for r in zap}
+# B-N-VYPUSK-KOPII: package.json does not define whether the release is copies or places.
+# Require an explicit scope only when directory copies and places are both available.
+if der and selected and not scope_set:
+    blind("область не задана: у пакета есть derevo-записи "+", ".join(sorted(der))+"; нужен явный VYPUSK_KOPII (package/version/copies)")
 der_sel=None
 if scope_set and any(i in der for i in selected):
     if not all(i in der for i in selected):blind("VYPUSK_KOPII смешивает записи derevo ("+", ".join(i for i in selected if i in der)+") и иные id ("+", ".join(i for i in selected if i not in der)+") — область выпуска одного рода")
@@ -654,7 +701,7 @@ if der_sel is not None:
             except OSError:blind("место не читается "+ident+": "+loc)
             if not ok:r.append(rem+" → "+loc)
         sverka+=len(mesta)
-        print("КОПИЙ-КАТАЛОГОВ НЕТ; ВЫПУСК ПО МЕСТАМ: запись derevo "+ident+", files "+str(nfl)+(", expected_diff_files пропущено "+str(len(propusk)) if propusk else ""))
+        print("ВЫПУСК ПО МЕСТАМ: запись derevo "+ident+", files "+str(nfl)+(", expected_diff_files пропущено "+str(len(propusk)) if propusk else ""))
         if r:raz[ident]=r
     vne=[i for i in sorted(der) if i not in der_sel]
     if scope_set:print("ВНЕ ЭТОГО ВЫПУСКА (явный subset): "+(", ".join(vne) if vne else "нет"))
@@ -728,6 +775,116 @@ for ident in selected:
     if not isinstance(copy,dict):blind("package.json не объект "+ident+" → "+location)
     if copy.get("name")!=name:blind("чужой пакет "+ident+" → "+location)
     targets.append((ident,root))
+# B-N-2121 (dsh-montazh 3.1.43, Заря; замысел ГОДЕН Вениамина 15:45 МСК 18.10): ОБЩАЯ копия — код одной копии исполняют службы
+#   многих учёток (/opt/claude-oauth: 16 служб, 14 учёток), «ровно одна привязка к дому агента» невыполнима по устройству. Признак —
+#   ЯВНОЕ поле записи реестра копии  obshchaya: {uchetka: <владелец корня, не root>, yunity: [образцы имён служб], ne_ispolnyayut: [точные имена]}  (как polka у
+#   SOURCE_ONLY: кладёт принимавший, правка реестра — через pravka). Проверки живьём, каждая — именованная СЛЕПОТА:
+#   · uchetka существует, ≠ root, ВЛАДЕЕТ корнем копии, у корня нет доступа прочим;
+#   · «пользователи кода» корня ищутся двумя способами разной природы: (1) все Exec* КАЖДОЙ загруженной службы (systemctl show — уже
+#     с drop-in: claude-oauth-gateway@varvara, 95-gost.conf, по шаблону — /opt/claude-oauth, на деле — гостевая копия) — довод-путь в корне («node <корень>/…», «/usr/bin/env node <корень>/…»), либо файл-обёртка ВНЕ корня (довод или path,
+#     обычный текстовый файл до 1 МиБ без NUL), чей текст называет корень; (2) живые процессы /proc: довод cmdline или exe в корне
+#     (относительный довод — от cwd процесса, только если файл есть) → служба по cgroup; процесс вне службы — СЛЕПОТА;
+#   · каждый пользователь обязан попасть под образец yunity, каждый образец — под ≥1 пользователя; пользователей 0 — СЛЕПОТА, не «0»;
+#   · поле obshchaya вместе с привязкой к дому агента — СЛЕПОТА «двойная привязка».
+#   НЕ ЛОВИТ: обёртку-бинарник или обёртку, вычисляющую путь (не называющую корень текстом), если её служба сейчас не запущена
+#   (живой процесс способ (2) находит); пользователя кода вне systemd без живого процесса; поведение каждого экземпляра в его среде.
+EXEC=("ExecCondition","ExecStartPre","ExecStart","ExecStartPost","ExecReload","ExecStop","ExecStopPost")   # все команды службы, уже с drop-in
+def polzovateli_koda(root):
+    """→ ({служба: [способы]}, {служба: User}, [процессы вне служб])."""
+    rr=root.resolve();naideno={};kto={};vne=[]
+    def v_korne(t,cwd=None):   # довод процесса бывает любым текстом (python3 -c '<код>'): ENAMETOOLONG и пр. — «не путь корня», не падение
+        if not t:return False
+        try:
+            if not t.startswith("/"):
+                if not cwd:return False
+                q=Path(cwd)/t
+                if not q.is_file():return False
+                t=str(q)
+            return Path(t).resolve().is_relative_to(rr)
+        except (OSError,RuntimeError,ValueError):return False
+    def obertka(t):
+        if not t.startswith("/") or v_korne(t):return False
+        try:
+            q=Path(t)
+            if not q.is_file() or q.stat().st_size>1048576:return False
+            b=q.read_bytes()
+        except OSError:return False
+        if b"\0" in b[:4096]:return False
+        return str(rr).encode() in b or str(root).encode() in b
+    def dobav(u,how):naideno.setdefault(u,[]);naideno[u].count(how) or naideno[u].append(how)
+    try:lu=subprocess.run(["systemctl","list-units","--type=service","--all","--plain","--no-legend","--no-pager"],capture_output=True,text=True,timeout=15,check=True).stdout
+    except (OSError,subprocess.SubprocessError):blind("общая копия: перечень служб не прочитан (systemctl list-units)")
+    units=sorted({l.split()[0] for l in lu.splitlines() if l.split() and l.split()[0].endswith(".service")})
+    if not units or len(units)>4096:blind("общая копия: служб "+str(len(units))+" — перечень пуст или больше 4096")
+    for i in range(0,len(units),200):
+        try:out=subprocess.run(["systemctl","show","-p","Id","-p","User",*[x for e in EXEC for x in ("-p",e)],"--no-pager","--",*units[i:i+200]],capture_output=True,text=True,timeout=60,check=True).stdout
+        except (OSError,subprocess.SubprocessError):blind("общая копия: ExecStart служб не прочитан (systemctl show)")
+        for blok in out.split("\n\n"):
+            pole={};ex=[]
+            for l in blok.splitlines():
+                k,_,v=l.partition("=")
+                if k in EXEC:ex.append((k,v))
+                else:pole[k]=v
+            u=pole.get("Id","")
+            if not u:continue
+            kto[u]=pole.get("User") or "root"
+            for k,v in ex:
+                for prog,argv in re.findall(r"path=(\S+) ; argv\[\]=(.*?) ; ignore_errors=",v):
+                    toks=[prog]+argv.split(" ")
+                    for t in toks:
+                        if v_korne(t):dobav(u,k+": "+t)
+                        elif obertka(t):dobav(u,k+": обёртка "+t)
+    for d in Path("/proc").iterdir():
+        if not d.name.isdigit():continue
+        try:
+            args=[x.decode("utf-8","replace") for x in (d/"cmdline").read_bytes().split(b"\0") if x]
+            cwd=os.readlink(d/"cwd")
+            try:exe=os.readlink(d/"exe")
+            except OSError:exe=""
+            cg=(d/"cgroup").read_text()
+        except (OSError,ValueError):continue
+        if not (any(v_korne(t,cwd) for t in args) or v_korne(exe.removesuffix(" (deleted)"))):continue
+        if str(os.getpid())==d.name:continue
+        sl=[c for c in cg.strip().split("/") if c.endswith(".service")]
+        if sl:dobav(sl[-1],"процесс "+d.name)
+        else:vne.append(d.name+" ("+cg.strip().split("::")[-1][:80]+")")
+    return naideno,kto,vne
+def obshchaya_plan(ident,root,row):
+    ob=row.get("obshchaya")
+    if not isinstance(ob,dict) or not {"uchetka","yunity"}<=set(ob)<={"uchetka","yunity","ne_ispolnyayut"}:
+        blind("копия "+ident+": поле obshchaya кривое — нужны uchetka и yunity, необязательно ne_ispolnyayut, других ключей нет")
+    akt,obr,neisp=ob["uchetka"],ob["yunity"],ob.get("ne_ispolnyayut",[])
+    if not isinstance(neisp,list) or len(neisp)>32 or any(not isinstance(x,str) or not re.fullmatch(r"[A-Za-z0-9_@.:-]+\.service",x) for x in neisp) or len(set(neisp))!=len(neisp):
+        blind("копия "+ident+": obshchaya.ne_ispolnyayut — список ТОЧНЫХ имён служб (без образцов), без повторов, до 32")
+    if not isinstance(akt,str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*",akt):blind("копия "+ident+": obshchaya.uchetka негодна")
+    if not isinstance(obr,list) or not obr or len(obr)>32 or any(not isinstance(x,str) or not re.fullmatch(r"[A-Za-z0-9_@.*:-]+\.service",x) for x in obr) or len(set(obr))!=len(obr):
+        blind("копия "+ident+": obshchaya.yunity — непустой список образцов «*.service» без пробелов и повторов, до 32")
+    if re.search(r"\s",str(root)):blind("копия "+ident+": пробел в корне общей копии")
+    try:pw=pwd.getpwnam(akt);st=root.stat()
+    except (KeyError,OSError):blind("копия "+ident+": учётка "+akt+" или корень "+str(root)+" не читается")
+    if pw.pw_uid==0 or akt=="root":blind("копия "+ident+": obshchaya.uchetka = root — стенды общей копии под root не гоняются (только строкой обходчика @root)")
+    if st.st_uid!=pw.pw_uid:blind("копия "+ident+": корень "+str(root)+" принадлежит uid "+str(st.st_uid)+", а не "+akt+" ("+str(pw.pw_uid)+")")
+    if st.st_mode&0o007:blind("копия "+ident+": у корня "+str(root)+" есть доступ прочим ("+oct(st.st_mode&0o777)+")")
+    import fnmatch
+    try:naideno,kto,vne=polzovateli_koda(root)
+    except Exception as e:blind("копия "+ident+": живой поиск пользователей кода упал — "+type(e).__name__+": "+str(e)[:200])
+    if vne:blind("копия "+ident+": код корня исполняет процесс вне службы — "+", ".join(vne[:5]))
+    if not naideno:blind("копия "+ident+": ни одна служба не исполняет код корня "+str(root)+" (ни ExecStart, ни обёртка, ни живой процесс) — общая копия без пользователей")
+    # Текстовый признак обёртки («файл называет корень») шире исполнения: сторож, читающий каталог, или комментарий тоже называют корень
+    #   (замер 18.10: 7 таких служб у /opt/claude-oauth). Их принимающий называет поимённо в ne_ispolnyayut; служба, найденная СТРОГИМ
+    #   способом (путь в Exec* или живой процесс), объявлением «не исполняет» не перекрывается.
+    strogo=lambda u:any(": обёртка " not in m for m in naideno[u])
+    neisp_strogie=sorted(u for u in naideno if u in neisp and strogo(u))
+    if neisp_strogie:blind("копия "+ident+": объявлена неисполняющей, а исполняет код корня: "+"; ".join(u+" ["+", ".join(naideno[u][:2])+"]" for u in neisp_strogie))
+    vne_obr=sorted(u for u in naideno if u not in neisp and not any(fnmatch.fnmatchcase(u,x) for x in obr))
+    if vne_obr:blind("копия "+ident+": неучтённый пользователь кода (вне yunity и ne_ispolnyayut): "+"; ".join(u+" ["+", ".join(naideno[u][:2])+"]" for u in vne_obr[:10]))
+    pustye=[x for x in obr if not any(fnmatch.fnmatchcase(u,x) for u in naideno if u not in neisp)]+[x for x in neisp if x not in naideno]
+    if pustye:blind("копия "+ident+": объявление отстало — не найден ни один пользователь по: "+", ".join(pustye))
+    isp=sorted(u for u in naideno if u not in neisp);uch=sorted({kto.get(u,"?") for u in isp})
+    print("ОБЩАЯ КОПИЯ "+ident+" → "+str(root)+": учётка стендов "+akt+"; исполняют код "+str(len(isp))+" служб от "+str(len(uch))+" учёток: "
+          +"; ".join(u+"("+kto.get(u,"?")+") ["+", ".join(naideno[u][:2])+"]" for u in isp)
+          +(" · называют корень, не исполняют (объявлено): "+", ".join(sorted(u for u in naideno if u in neisp)) if neisp else ""))
+    return akt
 if rezhim=="plan":
     if scope_set:
         # B-N-2019: владелец кода не User агента. Связь — зарегистрированный дом и загруженный юнит.
@@ -742,6 +899,11 @@ if rezhim=="plan":
                 home=intent.get("dom") if isinstance(intent,dict) else None
                 if not isinstance(home,str) or not home.startswith("/") or home=="/" or re.search(r"\s|\x00",home):blind("небезопасный dom в реестре агентов")
                 if root.resolve().is_relative_to(Path(home).resolve()):matches.append(intent)
+            row=all_ids[ident]
+            if "obshchaya" in row:
+                if matches:blind("копия "+ident+" → "+str(root)+": двойная привязка — поле obshchaya и дом агента ("+str(len(matches))+")")
+                akt=obshchaya_plan(ident,root,row)
+                print("ПЛАН: KOPIYA\t"+ident+"\t"+str(root)+"\t"+akt+"\t"+str(root)+"\tobshchaya");continue
             if len(matches)!=1:blind("копия "+ident+" → "+str(root)+": привязок к дому агента "+str(len(matches))+", нужна одна")
             intent=matches[0];actor=intent.get("polzovatel");unit=intent.get("sluzhba")
             if not isinstance(actor,str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*",actor):blind("копия "+ident+": не задан polzovatel")
@@ -795,6 +957,8 @@ IMYA_P=$(node -p 'require(require("path").resolve(process.argv[1])).name' "$KATA
 # B-N-1269: B-N-1050 снят — subscription-gateway с 0.4.20 имеет test/stend-podmena.mjs
 # в области обходчика (B-N-1266). Судим его как остальные пакеты; стенд использует заглушку.
 # Это проверка объявленной области, НЕ npm test, gateway-sdk status или живой канарейки.
+# NEP_PRINYATO (18.10): довод узкого пропуска для текста метки; заводится только веткой стендов ниже, не средой зовущего.
+NEP_OB=''
 # Явный STENDY_INACHE зовущего остаётся общим объявленным обходом, без льготы имени пакета.
 if [ -n "${STENDY_INACHE:-}" ]; then
   echo "⚠️ стенды пакета НЕ ПРОГНАНЫ: обход объявлен — «$STENDY_INACHE». Это не «стенды зелёные»."
@@ -837,6 +1001,9 @@ else
       if [ "$p" = "$put" ] || { [ -n "$hvost" ] && [[ "$p" == *"$hvost" ]]; }; then printf '%s\n' "${st#"$p" }"; return 0; fi
     done < <(grep -E '^/[^ ]+/stend-[^ /]+ @[^ ]+ /[^ ]+$' "$OBHODCHIK"); return 0; }
   PLAN_VYVOD=$(kopii_vypuska plan 2>&1); PLAN_KOD=$?; PLAN=$(printf '%s\n' "$PLAN_VYVOD" | grep '^ПЛАН: ') || PLAN=""
+  if [ "$PLAN_KOD" -eq 2 ] && { [[ "$PLAN_VYVOD" == *"СЛЕПОТА: копии выпуска: область не задана:"* ]] || [[ "$PLAN_VYVOD" == *"СЛЕПОТА: копии выпуска: неверный derevo.subdir"* ]]; }; then
+    printf '%s\n' "$PLAN_VYVOD" >&2; exit 2
+  fi
   # LOW Вениамина 07:2xZ (B-N-1914): VYPUSK_KOPII задан, а план не KOPIYA — сразу СЛЕПОТА, без отката к прежней области: иначе отчёт
   # успел бы показать зелёные стенды чужих копий (повод B-N-1905), а отказ держался бы только на втором вызове сверки ниже.
   # B-N-2033: VYPUSK_KOPII может выбирать и записи derevo (ID мест) — тогда план DEREVO по этим ID.
@@ -844,8 +1011,10 @@ else
     echo "СЛЕПОТА: VYPUSK_KOPII задан, а область стендов по нему не построена — стенды не гоняю (иначе прошли бы стенды чужих копий):" >&2
     printf '%s\n' "$PLAN_VYVOD" | grep -E 'СЛЕПОТА|ПЛАН' | head -5 | sed 's/^/   /' >&2; exit 2
   fi
+  # B-N-2121: строка плана общей копии (учётка стендов и поимённые пользователи кода) — в отчёт; без неё принимающий не видит, кого судили.
+  printf '%s\n' "$PLAN_VYVOD" | grep '^ОБЩАЯ КОПИЯ ' | sed 's/^/   /'
   KAT_ABS=$(realpath "$KATALOG"); STENDY_D=$(stendy_dereva "$KAT_ABS"); N_D=$(printf '%s' "$STENDY_D" | grep -c . || true)
-  OBL_V=""; : > "$VREM/perechen-vypuska"
+  OBL_V=""; OBSH_KORNI=""; : > "$VREM/perechen-vypuska"
   case "$PLAN" in
     "ПЛАН: DEREVO"*)
       IFS=$'\t' read -r _ DER_IDS DER_REG <<< "$PLAN"
@@ -869,8 +1038,9 @@ else
         [ -n "$pm" ] && OBL_V="$OBL_V$KAT_ABS/$rel $pm"$'\n' && echo "   стенд $rel — по строке обходчика: $pm"; done <<< "$STENDY_D"
       echo "ОБЛАСТЬ СТЕНДОВ ВЫПУСКА: SOURCE_ONLY (источник $SO_ID, копий нет) — стенды дерева выпуска $KAT_ABS: $N_D" ;;
     "ПЛАН: KOPIYA"*)
-      while IFS=$'\t' read -r _ pid proot pkto papp; do
+      while IFS=$'\t' read -r _ pid proot pkto papp pvid; do
         pabs=$(sudo -n realpath "$proot")
+        [ "$pvid" = obshchaya ] && OBSH_KORNI="$OBSH_KORNI$pid"$'\t'"$pabs"$'\n' && echo "   копия $pid — ОБЩАЯ: стенды под владельцем живой копии $pkto; слепок корня ДО и ПОСЛЕ стендов"
         [ -n "$pkto" ] && [ -n "$papp" ] && sudo -n -u "$pkto" test -d "$papp" || { echo "СЛЕПОТА: копия $pid ($pabs) — учётка/платформа агента не читается: $pkto $papp." >&2; exit 2; }
         OBL_V="$OBL_V$pabs/ @$pkto $papp"$'\n'
         printf '%s\n' "$STENDY_D" | grep . | sed "s#^#$pabs/#" >> "$VREM/perechen-vypuska"
@@ -918,10 +1088,48 @@ else
       [ "$u" = "$s" ] || { echo "СЛЕПОТА: /tmp зовущего ≠ /tmp службы — $p обходчику (systemd-run, /tmp PID 1) не виден (у зовущего $u, у службы ${s:-нет}): PrivateTmp зовущего? Задайте TMPDIR на общий путь (вне /tmp и /var/tmp); стенды не гоняю." >&2; exit 2; }
     done < <(printf '%s\n' "$VREM" "$OBL_V")
   fi
+  # B-N-2121 (условие Вениамина 1): стенды общей копии идут под ВЛАДЕЛЬЦЕМ живой копии — слепок всего корня (путь, вид, sha256
+  #   содержимого/цель ссылки, режим, владелец) ДО и ПОСЛЕ обходчика; разошёлся — ОТКАЗ «стенд изменил живую копию», раньше разбора
+  #   исхода стендов. Не снят — СЛЕПОТА. НЕ ЛОВИТ: запись вне корня (дома других учёток, /etc, /tmp) и изменение, вернувшее байты,
+  #   режим и владельца в прежнее (mtime/ctime не сравниваются — живая копия их не хранит как содержание).
+  slepok() { sudo -n python3 -I - "$1" "$2" <<'PYSLEPOK'
+import hashlib,os,stat,sys
+root,out=sys.argv[1:3];rows=[];n=0
+for d,dirs,files in os.walk(root,followlinks=False,onerror=lambda e:sys.exit("не читается: "+str(e))):
+    dirs.sort()
+    for name in sorted(dirs+files):
+        p=os.path.join(d,name);s=os.lstat(p);n+=1
+        if n>500000:sys.exit("больше 500000 путей")
+        if stat.S_ISREG(s.st_mode):
+            h=hashlib.sha256()
+            with open(p,"rb") as f:
+                for b in iter(lambda:f.read(1<<20),b""):h.update(b)
+            v="f\t"+h.hexdigest()
+        elif stat.S_ISLNK(s.st_mode):v="l\t"+os.readlink(p)
+        else:v=("d" if stat.S_ISDIR(s.st_mode) else "o")+"\t-"
+        rows.append(os.path.relpath(p,root)+"\t"+v+"\t"+oct(stat.S_IMODE(s.st_mode))+"\t"+str(s.st_uid)+":"+str(s.st_gid))
+open(out,"w").write("\n".join(rows)+"\n");print(len(rows))
+PYSLEPOK
+  }
+  N_OBSH=0
+  while IFS=$'\t' read -r oid okor; do [ -n "$oid" ] || continue; N_OBSH=$((N_OBSH+1))
+    k=$(slepok "$okor" "$VREM/slepok-do-$N_OBSH" 2>&1) || { echo "СЛЕПОТА: слепок общей копии $oid ($okor) ДО стендов не снят: $k — стенды не гоняю." >&2; exit 2; }
+    echo "   слепок общей копии $oid ДО стендов: путей $k"
+  done <<< "$OBSH_KORNI"
   OBH=$("${OBH_RUN[@]}" "$OBHODCHIK" 2>&1); OBH_KOD=$?
+  N_OBSH=0
+  while IFS=$'\t' read -r oid okor; do [ -n "$oid" ] || continue; N_OBSH=$((N_OBSH+1))
+    k=$(slepok "$okor" "$VREM/slepok-posle-$N_OBSH" 2>&1) || { echo "СЛЕПОТА: слепок общей копии $oid ($okor) ПОСЛЕ стендов не снят: $k — изменила ли её проба, неизвестно." >&2; exit 2; }
+    izm=$(sudo -n diff "$VREM/slepok-do-$N_OBSH" "$VREM/slepok-posle-$N_OBSH" | sed -n 's/^[<>] //p' | cut -f1 | LC_ALL=C sort -u)
+    if [ -n "$izm" ]; then
+      echo "🔴 ОТКАЗ: стенд изменил живую копию $oid → $okor: путей $(printf '%s\n' "$izm" | grep -c .) — $(printf '%s\n' "$izm" | head -20 | paste -sd, - | sed 's/,/, /g')" >&2
+      exit 1
+    fi
+    echo "   слепок общей копии $oid ПОСЛЕ стендов: путей $k — совпал с ДО"
+  done <<< "$OBSH_KORNI"
   echo "   окружение обходчика: ${OBH_ENV[*]} (вся среда юнита $OBH_SLUZHBA, не окружение зовущего) · uid=$(id -u) ($(id -un)); перечень и область — умолчания обходчика"
   echo "стенды пакета $IMYA_P в боевой раскладке ($OBHODCHIK, код $OBH_KOD):"
-  echo "$OBH" | sed 's/^/   /'
+  echo "$OBH" | sed -e '/^STEND-PROGNAN: /d' -e 's/^/   /'   # B-N-2062: факт прогона — данные суда меток, не отчёт
   # LOW Вениамина 08:0xZ (1.0.15): systemd-run отдаёт 1 и при гибели обходчика (RuntimeMaxSec, сигнал, OOM). Обходчик, вынесший
   # суждение, всегда печатает итог «ПОКРЫТИЕ:» (или «СЛЕПОТА ОХВАТА») — без него код 1 не «не зелёный», а «суждения не было».
   if [ "$OBH_KOD" -eq 1 ] && ! printf '%s\n' "$OBH" | grep -qE 'ПОКРЫТИЕ:|СЛЕПОТА ОХВАТА'; then
@@ -966,7 +1174,96 @@ else
     echo "  Объявленный обход: STENDY_INACHE=\"довод\" vypusk-tegom <каталог>" >&2
     exit 2
   fi
+  # B-N-2062 (Заря; решение Забавы 03:16Z, вариант А; LOW Вениамина к мосту 3.1.5): стенд, которому мерить нечего, говорит
+  #   «STEND-NEPRIMENIMO: <проба>: <причина>» и выходит кодом 0 — обходчик пропускает метку наружу с путём и учёткой. Проба,
+  #   «не применимая» на КАЖДОЙ копии пакета, где лежит этот стенд, не измерена нигде — СЛЕПОТА 2 с перечнем копий и причин.
+  #   Хоть одна копия без метки — проба измерена, суждения нет. Меток нет — ветка молчит (прежнее поведение).
+  #   Знаменатель — копии, где стенд ПРОГНАН: строки обходчика «STEND-PROGNAN: <путь>\t<учётка>\t<код>» (dsh-obhod-stendov 3.1.67,
+  #   LOW Вениамина 03:29Z). Строк нет (обходчик старше) — прежнее: каталоги «КАТАЛОГ ПАКЕТА:», где файл стенда есть (test -f).
+  #   НЕ ЛОВИТ: стенд, не печатающий метку (судится кодом, как прежде); со старым обходчиком — копию, где стенд лежит, но не прогнан.
+  # 18.10.2026 (замысел Вениамина 09:14 МСК, наряд Забавы 06:14Z, AP 0.1.10): УЗКИЙ ОБЪЯВЛЕННЫЙ ПРОПУСК одной пробы вместо общего
+  #   STENDY_INACHE. NEP_PRINYATO — строки «<стенд>:<проба>=<довод>»; <стенд> — путь от каталога пакета (test/stend-x.sh) или имя
+  #   файла. Пара совпала с НЕИЗМЕРЕННОЙ пробой — «не применимо по объявлению: …» в выводе и в тексте метки; прочие стенды пакета
+  #   гоняются и судятся как обычно. Любая другая неизмеренная проба — СЛЕПОТА 2, как прежде. Пара, не совпавшая ни с одной
+  #   неизмеренной пробой (опечатка, проба измерена, стенд меток не печатал, стенды не прогнаны), и строка не той формы — СЛЕПОТА 2
+  #   «объявление не применено»: опечатка не становится молчаливым пропуском.
+  #   НЕ ЛОВИТ: верность довода (печатается как дан); пробу, которая перестала быть «не применимой» по существу, но метку печатает.
+  NEP=$(printf '%s\n' "$OBH" | sed -n 's/^ *STEND-NEPRIMENIMO: //p')
+  if [ -n "$NEP" ]; then
+    PROGNAN=$(printf '%s\n' "$OBH" | sed -n 's/^ *STEND-PROGNAN: //p')
+    if ! NEP_SUD=$(KATALOGI="$KATALOGI" NEP="$NEP" PROGNAN="$PROGNAN" NEP_PRINYATO="${NEP_PRINYATO:-}" python3 - <<'PYNEP'
+import os, subprocess
+prinyato = {}
+for l in os.environ['NEP_PRINYATO'].splitlines():
+    if not l.strip(): continue
+    st, _, ost = l.partition(':'); proba, _, dovod = ost.partition('=')
+    if not (st.strip() and proba.strip() and dovod.strip()): print('СЛЕПОТА\tобъявление NEP_PRINYATO не той формы «<стенд>:<проба>=<довод>»: ' + l[:160]); continue
+    prinyato[(st.strip(), proba.strip())] = dovod.strip()
+primeneno = set()
+kats = [(l.split('\t') + [''])[:2] for l in os.environ['KATALOGI'].splitlines() if l.strip()]
+marks = {}
+for l in os.environ['NEP'].splitlines():
+    if not l.strip(): continue
+    chasti = l.split('\t', 2)
+    if len(chasti) != 3: print('СЛЕПОТА\tметка обходчика не разобрана: ' + l[:160]); continue
+    put, kto, ost = chasti
+    d = max((k for k, _ in kats if put.startswith(k)), key=len, default=None)
+    if d is None: print('СЛЕПОТА\tметка стенда вне каталогов пакета: ' + put); continue
+    proba, _, prichina = ost.partition(': ')
+    marks.setdefault((put[len(d):], proba), {})[d] = prichina
+prognany = set(l.split('\t', 1)[0] for l in os.environ.get('PROGNAN', '').splitlines() if l.strip())
+for (rel, proba), po in sorted(marks.items()):
+    est = []
+    for d, kto in kats:
+        if prognany:
+            if d + rel in prognany: est.append(d)
+            continue
+        cmd = ['test', '-f', d + rel]
+        if kto and kto != '-': cmd = ['sudo', '-n', '-u', kto] + cmd
+        if subprocess.run(cmd).returncode == 0: est.append(d)
+    # 3.1.30 (info Вениамина 04:10Z): копий, где стенд прогнан, 0 — не «измерено на остальных», а знаменатель не установлен.
+    #   С STEND-PROGNAN сейчас недостижимо (метка и факт прогона печатаются подряд с одним путём); достижимо со старым обходчиком
+    #   (test -f под учёткой каталога отказал на всех копиях: sudo -n не пускает, нет права чтения) или при будущем разводе двух строк.
+    if not est:
+        print('СЛЕПОТА\tметка «%s» стенда %s есть (копий с меткой %d), а копий, где он прогнан, 0 — %s; знаменатель не установлен'
+              % (proba, rel, len(po), 'строк STEND-PROGNAN для него нет' if prognany else 'файл стенда не найден ни в одном каталоге пакета (test -f)'))
+    elif all(d in po for d in est):
+        klyuch = next((k for k in ((rel, proba), (os.path.basename(rel), proba)) if k in prinyato), None)
+        if klyuch: primeneno.add(klyuch); print('PRINYATO\t%s\t%s\t%s' % (rel, proba, prinyato[klyuch]))
+        else: print('NEIZMERENO\t%s\t%s\t%d\t%s' % (rel, proba, len(est), ' · '.join(d + ': ' + po[d] for d in est)))
+    else:
+        print('IZMERENO\t%s\t%s\t%d\t%d' % (rel, proba, len(po), len(est)))
+for st, proba in sorted(set(prinyato) - primeneno):
+    print('NEPRIMENENO\t%s:%s' % (st, proba))
+PYNEP
+    ); then
+      echo "СЛЕПОТА: метки «не применимо» стендов пакета $IMYA_P не разобраны (разбор упал) — метку не подтверждаю." >&2; exit 2
+    fi
+    if printf '%s\n' "$NEP_SUD" | grep -q '^СЛЕПОТА'; then
+      echo "СЛЕПОТА: метки «не применимо» стендов пакета $IMYA_P (или объявление NEP_PRINYATO) не сводятся к каталогам и прогонам пакета — метку не подтверждаю:" >&2
+      printf '%s\n' "$NEP_SUD" | sed -n 's/^СЛЕПОТА\t/   /p' >&2; exit 2
+    fi
+    printf '%s\n' "$NEP_SUD" | awk -F'\t' '$1=="IZMERENO"{print "   не применимо на " $4 " из " $5 " копий: " $2 " · «" $3 "» — на остальных измерено"}'
+    if printf '%s\n' "$NEP_SUD" | grep -q '^NEPRIMENENO'; then
+      printf '%s\n' "$NEP_SUD" | awk -F'\t' '$1=="NEPRIMENENO"{print "СЛЕПОТА: объявление не применено: NEP_PRINYATO «" $2 "» не совпало ни с одной неизмеренной пробой пакета (опечатка, проба измерена или её нет)"}' >&2
+      echo "  метку не подтверждаю: объявление без предмета не становится пропуском." >&2
+      exit 2
+    fi
+    NEP_OB=$(printf '%s\n' "$NEP_SUD" | awk -F'\t' '$1=="PRINYATO"{printf "%s%s · «%s» — %s", (n++?"; ":""), $2, $3, $4}')
+    [ -z "$NEP_OB" ] || { NEP_OB="не применимо по объявлению: $NEP_OB"; echo "   $NEP_OB"; }
+    if printf '%s\n' "$NEP_SUD" | grep -q '^NEIZMERENO'; then
+      printf '%s\n' "$NEP_SUD" | awk -F'\t' '$1=="NEIZMERENO"{print "СЛЕПОТА: проба «" $3 "» стенда " $2 " НЕ ИЗМЕРЕНА ни на одной копии пакета (не применимо на всех " $4 "): " $5}' >&2
+      echo "  метку не подтверждаю: зелёный код стенда здесь не суждение. Объявленный обход: STENDY_INACHE=\"довод\" vypusk-tegom <каталог>" >&2
+      exit 2
+    fi
+  fi
 
+fi
+# NEP_PRINYATO задано, а применить не к чему: стенды не прогнаны (STENDY_INACHE) или ни один не напечатал «не применимо».
+NEP_P="${NEP_PRINYATO:-}"
+if [ -n "${NEP_P//[[:space:]]/}" ] && [ -z "$NEP_OB" ]; then
+  echo "СЛЕПОТА: объявление не применено: NEP_PRINYATO задано, а неизмеренных проб пакета $IMYA_P нет (стенды не прогнаны или меток «не применимо» не печатали) — метку не подтверждаю." >&2
+  exit 2
 fi
 
 # B-N-1823: the release scope is registry IDs, never "copies whose version already matches".
@@ -1003,6 +1300,8 @@ echo "частные имена: НЕ ПРОВЕРЯЛИСЬ — разряд в
 sled_vorot "$(basename "$KATALOG")-v${VERSIYA}" "${IMYA_P:-$(basename "$KATALOG")}" npm
 echo "$GALKA можно ставить ЛОКАЛЬНЫЙ тег (аннотированный; область — в сообщении):"
 SCOPE_MSG=$(sed -n 's/^АННОТАЦИЯ ОБЛАСТИ: //p' "$VREM/kopii-vypuska")
+# NEP_PRINYATO: довод узкого пропуска входит в КАЖДУЮ подсказку метки — какую ни возьми, он в тексте метки.
+SCOPE_MSG="${NEP_OB:+$NEP_OB; }$SCOPE_MSG"
 printf '   git tag -a <пакет>-v<версия> -m %q\n' "$SCOPE_MSG"
 
 # B-H-060 (low Вениамина 15:01): объявленный обход должен иметь ЧИТАТЕЛЯ после ворот — довод уходит в
@@ -1014,7 +1313,7 @@ fi
 if [ -n "${OZHIDAEMOE:-}" ]; then
   echo "   ⚠️ есть ОЖИДАЕМОЕ (исключения) — тег ставить АННОТИРОВАННЫЙ, перечень в сообщение:"
   # Одинарные кавычки, а не %q: %q экранирует каждый пробел, и перечень в совете нечитаем человеком.
-  printf "   git tag -a <пакет>-v<версия> -m '%s'\n" "ожидаемое по исключениям: $(printf '%s' "$OZHIDAEMOE" | tr '\n' ';' | sed "s/'/'\\\\''/g"); $SCOPE_MSG"
+  printf "   git tag -a <пакет>-v<версия> -m '%s'\n" "$(printf '%s' "ожидаемое по исключениям: $(printf '%s' "$OZHIDAEMOE" | tr '\n' ';'); $SCOPE_MSG" | sed "s/'/'\\\\''/g")"
 fi
 echo "   push НЕ делать: запрет владельца 06.09.2026 13:50, до выхода из альфы в бету."
 echo "   Признак выпуска — локальный тег + равенство дерева тега боевому диску."

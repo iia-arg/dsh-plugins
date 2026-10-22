@@ -1,0 +1,29 @@
+#!/bin/bash
+# razdacha-zdorova — healthcheck службы dsh-autopilot-razdacha (часть Д). Только чтение.
+# Три признака, все обязательны:
+#   1) юнит active;
+#   2) GET http://<адрес>:<порт>/__zhivoj → 200 «zhiv» (служба отвечает И её корень читаем);
+#   3) порт слушается ТОЛЬКО на <адрес> — не на 0.0.0.0 / [::] / ином адресе.
+# Коды: 0 — здорова · 1 — нездорова (названо, что именно) · 2 — проверить нечем (нет curl/ss/systemctl).
+# Настройка (переменные): RAZDACHA_YUNIT, RAZDACHA_ADRES, RAZDACHA_PORT — для стенда; по умолчанию боевые.
+# Чего НЕ ловит: верность содержимого панелей; доступность снаружи через nginx vps-ru (это проба части Г).
+# EN: healthcheck: unit active, /__zhivoj → 200, port bound to the mesh address only. 0 ok · 1 unhealthy · 2 blind.
+set -u
+YUNIT=${RAZDACHA_YUNIT:-dsh-autopilot-razdacha.service}
+ADRES=${RAZDACHA_ADRES:-192.168.99.6}
+PORT=${RAZDACHA_PORT:-8787}
+for k in curl ss systemctl; do command -v "$k" >/dev/null || { echo "СЛЕПОТА: нет $k — проверить нечем"; exit 2; }; done
+
+s=$(systemctl is-active "$YUNIT" 2>/dev/null)
+[ "$s" = active ] || { echo "НЕЗДОРОВА: юнит $YUNIT — $s"; exit 1; }
+
+otv=$(curl -sS --max-time 5 -o - -w '\n%{http_code}' "http://$ADRES:$PORT/__zhivoj" 2>&1); kod=${otv##*$'\n'}
+[ "$kod" = 200 ] || { echo "НЕЗДОРОВА: /__zhivoj → ${kod:-нет ответа} ($(printf '%s' "$otv" | head -1))"; exit 1; }
+
+slushaet=$(ss -ltnH "sport = :$PORT" | awk '{print $4}' | sort -u)
+[ -n "$slushaet" ] || { echo "НЕЗДОРОВА: порт $PORT никто не слушает (ответ выше пришёл не отсюда?)"; exit 1; }
+chuzhoe=$(printf '%s\n' "$slushaet" | command grep -vxF "$ADRES:$PORT")
+[ -z "$chuzhoe" ] || { echo "НЕЗДОРОВА: порт $PORT слушается не только на $ADRES: $(printf '%s' "$chuzhoe" | tr '\n' ' ')"; exit 1; }
+
+echo "здорова: $YUNIT active · /__zhivoj 200 · слушает только $ADRES:$PORT"
+exit 0

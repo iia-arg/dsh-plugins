@@ -1,6 +1,6 @@
 # dsh-podpiski — subscription switching and token access on sadik
 
-Версия · Version: 3.1.3
+Версия · Version: 3.1.5
 
 [Русский README](README.md). This is local service software, distributed as source files. The English documentation does not authorize external publication. There is no package.json or npm installer.
 
@@ -74,7 +74,7 @@ The 32 runtime/config/unit files in this source revision are:
 | `systemd/svesti-dostup-watch.service` | `/etc/systemd/system/svesti-dostup-watch.service` | 0644 root:root |
 | `systemd/svesti-dostup-watch.timer` | `/etc/systemd/system/svesti-dostup-watch.timer` | 0644 root:root |
 
-README, CHANGELOG and test fixtures stay in the source checkout. They are not copied into /usr/local as services. The package includes test/stend-audit-kraev.py and test/stend-b2023-receiver.py with its fixtures; older switching/ACL stands live in dsh-obhod-stendov.
+README, CHANGELOG and test fixtures stay in the source checkout. They are not copied into /usr/local as services. The package includes test/stend-audit-kraev.py, test/stend-b2023-receiver.py with its fixtures and test/stend-switch-bot.py (the receiver's own bot, run as root); older switching/ACL stands live in dsh-obhod-stendov.
 
 Install through the designated deployment window using the full manifest, backups and separate readback. Install the quota reader together with its /etc/default settings. Install services/drop-ins, reload systemd and verify the deployment before enabling their timers. **Keep svesti-dostup-watch.timer disabled until phase2 of B-N-1621 (“ПЕРЕШЛО”) is confirmed and svesti-dostup-podpisok --proverit succeeds.** Its early failure is expected before the ACL transition. Token copies and chmod/chgrp operations require an ACL reconciliation afterward.
 
@@ -85,7 +85,7 @@ Install through the designated deployment window using the full manifest, backup
 - dsh-trevogi: /usr/local/bin/agent-alert. dsh-storozha-sadik: dsh-alert, sadik-watch quota-refusal files at /var/lib/sadik-watch/otkaz-limita-* and vladelec-tg-id. dsh-storozha-mashiny: python-padenie-70 for watcher drop-ins. dsh-podyom: /usr/local/libexec/agent-hod/hod-sluzhby.
 - dsh-limity: /var/lib/dsh-limity/limity.db. This package supplies the reader and /etc/default/pereklyuchatel-podpiski-limity.
 - dsh-subscription-gateway and the host layout: gateway services/users, instance env files, token paths under /etc/claude-oauth, Codex homes and the installed Codex app-server /opt/claude-oauth/sdk-runtime/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex (CODEX_OBN_BIN for the refresher).
-- The receiver needs agent-switch, sudoers, /etc/dsh-alert.token, /usr/local/bin/vladelec-tg-id and trusted /etc/vladelec/telegram-id. No owner ID is substituted when that setting is unavailable.
+- The receiver needs agent-switch, sudoers, /etc/dsh-switch.token (640 root:agent-switch, its own bot @arg_dsh_switch_bot; since 3.1.4 not the alert bot), /usr/local/bin/vladelec-tg-id and trusted /etc/vladelec/telegram-id. No owner ID is substituted when that setting is unavailable.
 
 These external files are provisioned by the deployment administrator. Secrets are read from files; their values must not be placed in argv, logs or README examples.
 

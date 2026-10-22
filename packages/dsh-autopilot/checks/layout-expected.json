@@ -1,0 +1,1218 @@
+{
+  "version": "0.1.1",
+  "rows": [
+    {
+      "path": "/etc/systemd/system/dsh-autopilot-key-check.service",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "8e39e4d244c61a047b3110e420453777e483a521058d57f62db21c2911624dcf"
+    },
+    {
+      "path": "/etc/systemd/system/dsh-autopilot-key-check.timer",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "d498a883abd8697a2d87ca04d0d426082c7be61fdf457e84ca55d5cbdcd8b8c1"
+    },
+    {
+      "path": "/etc/systemd/system/dsh-autopilot-razdacha.service",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "3eb496d739bc67372b6847590012ddd53167254ac09e4561e1ceda66c51832e5"
+    },
+    {
+      "path": "/opt/agent-skills/autopilot",
+      "kind": "link",
+      "mode": 511,
+      "uid": 0,
+      "gid": 0,
+      "target": "../autopilot/current/skill"
+    },
+    {
+      "path": "/opt/autopilot",
+      "kind": "dir",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0
+    },
+    {
+      "path": "/opt/autopilot/current",
+      "kind": "link",
+      "mode": 511,
+      "uid": 0,
+      "gid": 0,
+      "target": "releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2"
+    },
+    {
+      "path": "/opt/autopilot/packages",
+      "kind": "dir",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/B-ACCEPTANCE.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "1c0395500bf45bfcb50840669da1fed3503cb0fa9dc7dd4747d6059cf5c66168"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/B-README.en.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "ec859e32be8d224fef9573a6744eeff2560bcc21d5ec9dbde5819e82dd167bc7"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/B-README.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "3bc07db236d5fc6e3e12ab6b5a122f5417aaa24e49f3e22d96f20bdfb6e5e6e1"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/CHANGELOG.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "a1a4c2a49446bccfb47d4c34b0a22205c8a2d6ceb2d1b6c7a50a035e91d778fb"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/LICENSE",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "fd310d6460ba643a6c8bad2a94be8e4ec0293e40000c1c604bad3d0872dcd8c6"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/OVERLAY-INTEGRATION.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "514a323baf6a1ef5f6404362b809aab5ff80270842868673933d611e9e6cd27a"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/README-PILOT.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "287ae3bb6fc69d739f0fdd7c9d1be8849b1cb5d606090229621215faa2b14ea6"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/README.en.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "3417395ee01b0f6d50f194c6c0bc5e9ec4738b3e3ba6d242f07c5d7c9e9cc726"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/README.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "9f76af87d7cfa08522861445a5a3acff63678e80bf6c5cb8500181166390212a"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/install.sh",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "840e2364c8393e86eab1e90eed2d2918d5857b5e214a1bcd1b89d6a5c942c1d2"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/lib/credential.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "49bc72c0fa81f3204d374a4b96a9d504ecbd328ca0ab1cf3668a2ddc2e644c70"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/lib/install.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "00e5bedf2f63d27ecee7fb4e4bb862ca744b920a6b500994dc69676823ef884e"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/lib/pilot-install-proposal.patch",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "1e5933066a6e4efdd55821c882bccd5fc3ad73bdb72d65ae50b7533a413a6561"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/lib/pilot-main.json",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "c704848118f07dab8a3de86f616958a37fef06941178ea83fed0649052e835a9"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/lib/pilot_archive.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "6b1036ba0af647adced289a7ebea84fdc4ade23dc933bc5d3adf877af4cce481"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/lib/pilot_layout.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "57fe466b6f12df0c6242ff9144a0970e7813dd4c8aa2bb1b8087ac96d8f15144"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/lib/pilot_mail.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "9fe03e7c00a51c3c7e049a5e52ccd9cebc2f301877e2b8202c9c63cc81d65e84"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/lib/public_tree.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "b73bf7f54011df2d0a8bf71be49b4835589a4b7c0c90c7f5f0541bceb751ad62"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/lib/runtime-guard.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "2b43c63ce0cb1adf5810b6671863d87e8f6913309037cb24427d49999c289f4f"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/overlay/phases/0-instruments.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "3bec3a8b6b8033f2d065e97a5fa534e570647f5ae7f31fd2b30339fa12da883c"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/overlay/phases/0-preflight.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "4ca50f7c9d8ce4c3259aea776843473b9c968ebf2025fa014ad9d36f3f46828b"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/overlay/phases/0-resume.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "dff0495c17c3bc7250a1cc65f741c55ae8358bd91fac76c2d8c7975c28192f4c"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/overlay/phases/4-plan.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "e6cdb00fc8acbe1b38e0131e86eb92668443677b97d54ab527dc119e2ec98634"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/overlay/phases/5-subagents.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "fc0d0756a48b6fbd02dbd57bc747c7dd4ad30068c17a3323f6d6c524565f0914"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/overlay/phases/8-final.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "20d7fda677edc11748e69070822827e36110d0c4e95c64123620e8c90a23ff21"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/overlay/tools/ap.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "7ba6c32e51f1daa61838a08f863a3e1ae4d1107fb755326647038c94c49c6f3d"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/package.json",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "e3e6039341daa17901c5b53209bff2940c235440ad4f5ad0dec6f7703d5327c3"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/part-b-lock.json",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "27076cc8d8df6e3da884db6869e2b8c24e3ab270aa7399597656fcb91f3b6896"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/patches/part-b-upstream.patch",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "01a2cef3baf70c11c93f0726442889315e5a4f914c0dea81888aed83674e41d6"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/runtime/ap_sadik.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "133bd0b312386732fad9e8199ca070419ba83172f9d5be4159bab7891e5f4c9c"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/runtime/part_b_layout.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "fc7abc3cd34abcccfa9dc73674f3e6954b59473df94b3f067810635c1975ca49"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/skill/dsh-autopilot/SKILL.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "0a9100e70c75077c2a4d07ebee748489c556806a727bb0883d5961fb3e08a4ff"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/skill/dsh-autopilot/reference/PUT-B-rukami.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "007533d9cd5e3956ac45ad44557a85d766625959d0fca6dd768c97aef2ce856d"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/skill/dsh-autopilot/reference/REZHIMY-po-kodu.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "67a5f271e021a9a71ddef4a222d5eb0569669bcdc65c4ace14f8a430c134b865"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/skill/dsh-autopilot/scripts/01-predpolyot.sh",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "49e4ae0d55d6a9f1a744314c5e7de60960bf7250fd18f4637ea91ee9e01a9d4a"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/skill/dsh-autopilot/scripts/02-polka.sh",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "1963357d5e478174c309e5a0808f932a377768099980ec40c58535f8e9398df3"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/skill/dsh-autopilot/scripts/03-operator-kontrol.sh",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "1e1b828bb65906b3e9c220570e0ea8f174fb91d1d99ebcd00e47330af47e66f8"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/skill/dsh-autopilot/scripts/04-razdacha.sh",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "4b525cd7a05ad117441cdbb94112be76f4e624f9894eb7bff90b2e6237b3041d"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/skill/dsh-autopilot/scripts/05-operator-proverki.sh",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "e698656cca3e3d0e19d122d7550003069c336bcdace16ceb9dd7900e8a79eca4"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/skill/dsh-autopilot/scripts/06-zakrytie.sh",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "f6e4b107822972283381f75b4768b44464527bb7863ad136d635aed1b7170b10"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/skill/dsh-autopilot/scripts/PARAMS.obrazec.env",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "fe5019448cd5b7f5f76e4ae2d5a0deb260b6b76cf1a830b5cc884115aeb99bdd"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/skill/dsh-autopilot/scripts/obshchee.sh",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "0919b5b936974c03460bcc5f014594407de5c5d62e1b2dd091d1a934979e9d52"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/skill/dsh-autopilot/scripts/otkat.sh",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "253ba0f26f2db58c1b029e960e69ddff991ddbec03f502b666b54c3c021026bc"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/skill/dsh-autopilot/scripts/rotaciya-klyucha.sh",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "b3545a41e6a053720b8715acd6273e2f15d92209b99588f2f73148817653e56f"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/source-lock.json",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "a65b6863c19525bf05f236cafcd5bb17d048de07993ed8f767bb4d6f9e40fbb7"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/test/browser_probe.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "04c624457ff17a8a11448eaaaf582fd1f19e5e27a70c24fd8f61353973f1a8b9"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/test/proby-obertki.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "5fb3b0bb630194efa9a9154ad69c082f777e7b85c38622cc90a6f5d0ac8de5b2"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/test/stend-dsh-autopilot.sh",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "b29257b30f4a25be3a5c23236d1d0839eb8959b5b42866b01bb67178c738803f"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/test/test_composition.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "c5e9024a4a0cc998c8ea10bd4c409f2e3ab5c488f08c7dcab2542f8c4b81b24f"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/test/test_g4.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "a27dba92654a87282a4718a2084abbad1ab987b54ff6c4d4924445181ee01a95"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/test/test_install.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "8a97fd63631e2793b10cabe0b5f9c6fb666d653329bb4089be7958724260cd1e"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/test/test_mail_pilot.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "d6053c5781d6adde11f206a718ccd75fb93e9be6e2f7376a7929069d3a71f887"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/test/test_part_b_layout.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "6421a642ea01b40296c7eaafca743c05f0137d33d429f3d494340219fa49be60"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/test/test_pilot_scope_limits.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "fac238696636897b46984bd942aedc453b9621b968eafcae954619b3cd5394ec"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/test/test_privileged.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "95aa5f139655e3a4392d94fd5df443ca6eebe92f4890e29fc6a4c39532175339"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/test/test_sadik.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "c6bbc3c32a8a9d9a08299791e4fde97447dd85599f29bf80b692db00b6a321bc"
+    },
+    {
+      "path": "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb/vendor/autopilot-46060c3.tar.gz",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "1ba0afd82057fb27a71f473664254528ca331bfaad571fec8f284937dec0ed29"
+    },
+    {
+      "path": "/opt/autopilot/releases",
+      "kind": "dir",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/pilot/README.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "287ae3bb6fc69d739f0fdd7c9d1be8849b1cb5d606090229621215faa2b14ea6"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/pilot/pilot-main.json",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "c704848118f07dab8a3de86f616958a37fef06941178ea83fed0649052e835a9"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/pilot/pilot_archive.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "a932e58d7c8bd64489c38fb82bb97789ba4316b1dbbaf4e025df4cb8c67baeb1"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/pilot/pilot_mail.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "f46245fd7b80919ae6ef361a4768b329b3cef6b916a8bdbf63d295c7a3aefe74"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/release.json",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "ffcdf7ebbbac29dc1fd0aca433e6118e49f99da154083ac208480a2dddf7fb6a"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/SKILL.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "9e1ba66825b354143338dfb30abd982bcb05c732454642f12a357e1718a56153"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/0-instruments.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "3bec3a8b6b8033f2d065e97a5fa534e570647f5ae7f31fd2b30339fa12da883c"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/0-memory.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "66f131d4b2dc91216bd49ea2333a6b3a7958428a77c99c4f877ff5d03bfc77a4"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/0-modes.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "2b9b5b40c4ca5a5812e12a22994ac993887da8d8f7e17866ef889a7a13ec0f80"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/0-preflight.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "4ca50f7c9d8ce4c3259aea776843473b9c968ebf2025fa014ad9d36f3f46828b"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/0-resume.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "dff0495c17c3bc7250a1cc65f741c55ae8358bd91fac76c2d8c7975c28192f4c"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/1-manifest.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "8f9296d27817341968ebec6772fd747aa20037fe4b36b11a3438f5786f610375"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/2-adversarial.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "c407bc783cac0a1bc81f528ccd45c146a19edbb9899df3c9b30b15145f73235f"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/2-briefing.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "4384a39297a49964c46bf164fa3d522007c5a56b83d747b34ed0f01a62fad398"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/3-spec.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "1114100f0c370129048fc9284b934bd774cce2d595e873d1c3f834aef0c62365"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/4-plan.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "e6cdb00fc8acbe1b38e0131e86eb92668443677b97d54ab527dc119e2ec98634"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/5-repair.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "efc7da968ef95528f5a95a0c7349cf48672664b36a8f3d23b6cc1e881cfecd1c"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/5-subagents.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "fc0d0756a48b6fbd02dbd57bc747c7dd4ad30068c17a3323f6d6c524565f0914"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/6-review.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "6c12194127fce772f79d08c47ce1098217dd4423f1d7ae4ef038fb36c6fd2e5a"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/8-final.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "20d7fda677edc11748e69070822827e36110d0c4e95c64123620e8c90a23ff21"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/9-memory.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "2844d9bed331f8f17a66d5d8089836b6e541024351986218f44cf523d17f15c7"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/dashboard-template.html",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "c9e1f01f50e505143fa79689fb1f30257c43736b4217678fbbb1752b9841e215"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/rationalizations.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "afba8831ac7c6fbf37e8516087ca59641324fd3fc5beb25e3daca11c56ae7ca4"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/prompts/executor.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "c02d02e842321277c62fa7be36369a4c85adba4c7b95d097d1b16a8dad9f83b3"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/prompts/review.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "2c662517e19380d6c7bf0208c7710f84cf5d2fb0dc71447615bf97e009bbdf9c"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/tools/ap.py",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "9a2fb814aedbb5ca9440b0dd1191dc8b24c64bb8d76f96aa9d96939d3f578ba5"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/tools/ap_sadik.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "050040e15c7d2282d218afe312dd45a928a9ae26d87cac84607fdb6eed86b08e"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/tools/measure-run.py",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "ff61d049f9fb5717082357d2d2ad7611024b746827b4b8ff81a673831e1e1571"
+    },
+    {
+      "path": "/opt/autopilot/sources",
+      "kind": "dir",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/.agents/skills/autopilot",
+      "kind": "link",
+      "mode": 511,
+      "uid": 0,
+      "gid": 0,
+      "target": "../../skills/autopilot"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/.claude/skills/autopilot",
+      "kind": "link",
+      "mode": 511,
+      "uid": 0,
+      "gid": 0,
+      "target": "../../.agents/skills/autopilot"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/.gitignore",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "f4482d506321eed06201b4006a4f5f468e2c2e099f7a2ea206d552f8813ffe0d"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/CHANGELOG.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "a2ca8b65b9ecd28650f7214e73ae1e292c0fb31a1cfc4628a63f8b74ec3d2535"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/LICENSE",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "1017ee8a84ea04cc564eadcf8d974e85c8b9c7c632e89386deefecf3eac680f4"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/README.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "1e9a2d7e8b96ae647b1e35045f27dad7b6c54ec8946e295e20d8e371bc5b68ea"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/README.ru.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "3db7879c1276a29181dea62ca24a16a404dc7760c878d5c886f2ea97bb97ef3e"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/assets/autopilot-dashboard.png",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "8297127ca9a086f4b6737eadc1abf4f61b060665121055bc729ad19c861125dd"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/assets/autopilot-logo-dark.png",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "c059bbff97ea1ba357f7bbc2867990091a3bc5d45067d29e2749c644e410f4f7"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/assets/autopilot-logo-light.png",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "d5761eff72a2a2021d357ecb3195528f4ff44799a35885490621f16dff71c3b3"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/assets/dash-done.png",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "3275a4e0aeae5643c951904d6a9f9a6bdc86b25a36d4ad1737655a3ffab04c8f"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/assets/dash-now.png",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "6082cce5306ff8a3d5ad4ba6c952a59654b18f4673f49f050c40d3ef501d8363"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/assets/dash-pane.png",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "3f1e71f54448bf4274e1ae3a689cece71172477f0f323518a351f2605864c096"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/assets/dash-tasks.png",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "70c06206fde0cf00fc0312a290a1b2288e378d5ca6bb2029404d61db42f82e25"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/assets/dash-waiting.png",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "89261375f2114f1c9b99ddba6d876d9f2208024d51b16245700c69ef2240423c"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/assets/dash-words.png",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "e058453cc638184841c9408d9c063c6cfa21e1bd1095312c3152c7b7e6edd915"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/assets/ru/autopilot-dashboard.png",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "64bf6e6d431ed8d5fb78a19b2c46a27c5a1b5b6f5453866cebd69f3e2f31b86d"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/assets/ru/dash-done.png",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "abd78bde4af0d53a3d2e52424b32f0aadb1b4b6f07e428cf6098c4af012d7e61"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/assets/ru/dash-now.png",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "b6edb079638f17a6e0e12fe14444128ed7cc573c429032336ddca84016aea631"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/assets/ru/dash-pane.png",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "e4e5b765437af204668ad13cfb1c3535eb21337a9014c9c88616a8d650ed1adb"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/assets/ru/dash-tasks.png",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "7d258a11e21246b489d240e0789c26733a061264a0029f58cb44001f608dd576"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/assets/ru/dash-waiting.png",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "67f114a9f274432af107352462f65840626f425a15dcbb1353b5fd86ff2ab722"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/assets/ru/dash-words.png",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "99b92f75c0f449f0a94a204867b81af10c648505c50e9111d2b884c41433dae8"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/docs/audit-2026-08-17.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "859047646f918e7df7d6ab7f93bc82ba8988cd66aad0a46c760644c217aa04df"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/docs/autopilot/benchmark.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "f7f79fa61f4b61f0f57e1276220e47ce19acd9d91e6987527070da07311f64e8"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/docs/autopilot/design.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "71e3c01cabe1c6c7e3a11ea6f9ee7f256bec5681119fe3af46845eb0e254cf4b"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills-lock.json",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "d89b7b345964ccae3c06be5954eb4ae1ccc74b536e0242695d8d09070b2589ff"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/SKILL.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "9e1ba66825b354143338dfb30abd982bcb05c732454642f12a357e1718a56153"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/0-instruments.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "ad0430bea2679f8871d0e27969d4b59f3b2a83f15a35a6668c070409be3dfb01"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/0-memory.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "66f131d4b2dc91216bd49ea2333a6b3a7958428a77c99c4f877ff5d03bfc77a4"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/0-modes.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "2b9b5b40c4ca5a5812e12a22994ac993887da8d8f7e17866ef889a7a13ec0f80"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/0-preflight.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "a1fe78e2ba45fb99ff9d7d7dc5f023a848ce19181af778ac2a7c30d09201f956"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/0-resume.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "4a1efe74d32e28df348bda14035f0b195c2a8f8dccb954b35bf68d178c0ee3f8"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/1-manifest.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "8f9296d27817341968ebec6772fd747aa20037fe4b36b11a3438f5786f610375"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/2-adversarial.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "c407bc783cac0a1bc81f528ccd45c146a19edbb9899df3c9b30b15145f73235f"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/2-briefing.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "4384a39297a49964c46bf164fa3d522007c5a56b83d747b34ed0f01a62fad398"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/3-spec.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "1114100f0c370129048fc9284b934bd774cce2d595e873d1c3f834aef0c62365"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/4-plan.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "b86a8740c3e8bc122728be045060e9cb3437c0f54f297bf62f6384d626066fc1"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/5-repair.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "efc7da968ef95528f5a95a0c7349cf48672664b36a8f3d23b6cc1e881cfecd1c"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/5-subagents.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "1ddcc81b1b12e67910c71ed3b7f97b21624b8946dfea761b5f5e83eeff033ed4"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/6-review.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "6c12194127fce772f79d08c47ce1098217dd4423f1d7ae4ef038fb36c6fd2e5a"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/8-final.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "9a6b6fd09b9dbb30c6f53e184e52aec5b09562eb0b139638961a75bb4d38b7c6"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/9-memory.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "2844d9bed331f8f17a66d5d8089836b6e541024351986218f44cf523d17f15c7"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/dashboard-template.html",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "c9e1f01f50e505143fa79689fb1f30257c43736b4217678fbbb1752b9841e215"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/phases/rationalizations.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "afba8831ac7c6fbf37e8516087ca59641324fd3fc5beb25e3daca11c56ae7ca4"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/prompts/executor.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "c02d02e842321277c62fa7be36369a4c85adba4c7b95d097d1b16a8dad9f83b3"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/prompts/review.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "2c662517e19380d6c7bf0208c7710f84cf5d2fb0dc71447615bf97e009bbdf9c"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/skills/autopilot/tools/ap.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "74999d94a0d0de29f7242d1433244d7973029d60e90f2f21d41dea250b13e07e"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/tests/test_ap.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "cbeaa18fa9e791780892a5b251d58c5c37f2489c3d08994d417355d33db59339"
+    },
+    {
+      "path": "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd/tools/measure-run.py",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "2e6b615e7c2ed74bc343e2bc58c73df730e63d8b678ea298cfdefd3c909ddb94"
+    },
+    {
+      "path": "/usr/local/bin/razdacha-zdorova",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "c4bec154ae1383c8d4cb23d0cf31f69e143cc09eff12035a02f3a90f8b38275a"
+    },
+    {
+      "path": "/usr/local/libexec/dsh-autopilot/key-check.py",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "4eaddc056937d65118840412b44d69cedc035edefc650e6ce06375888da39d3f"
+    },
+    {
+      "path": "/usr/local/libexec/dsh-autopilot/key-health.py",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "b2c1d6ac7d26eda8744fc39e3b0326069941cf5b4e9263451b24a4d9c411bc6d"
+    },
+    {
+      "path": "/usr/local/libexec/dsh-autopilot/layout-check.py",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "f74ae501083cf4b038269223384fcfa3afbe0eb95621a237cb8358b712a333f1"
+    },
+    {
+      "path": "/usr/local/libexec/dsh-autopilot/measure-run-codex.py",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "5ee037f3a256bd6edda98226accf7c2c63fe3268082e7b008b0066f916ede404"
+    },
+    {
+      "path": "/usr/local/libexec/dsh-autopilot/razdacha.py",
+      "kind": "file",
+      "mode": 493,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "ec0f179bf3ec8a93d4cb8beab960733252ff3f4e37085f3771cd289f098bc5ee"
+    },
+    {
+      "path": "/usr/local/share/doc/dsh-autopilot/README-measure-run-codex.md",
+      "kind": "file",
+      "mode": 420,
+      "uid": 0,
+      "gid": 0,
+      "sha256": "9849b03d4ed9b410ef53884202cd374a83de29d670babab47c2f57b0baecb847"
+    }
+  ],
+  "public": {
+    "operator": "master",
+    "group": "autopilot-view"
+  },
+  "managed": [
+    "/opt/autopilot/sources/46060c3efc19a3e5cb740415cdfb601d126c29fd",
+    "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2",
+    "/opt/autopilot/packages/204ac46545c035da1e71db30ba13acf2c683fccb"
+  ]
+}

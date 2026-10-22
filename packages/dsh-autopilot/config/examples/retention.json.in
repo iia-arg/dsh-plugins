@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "sweep_interval_seconds": 60,
+  "batch_refs": 100,
+  "budget_ms": 2000,
+  "limits": {
+    "max_live_body_bytes": 16777216,
+    "max_pending_per_sender": 200,
+    "warn_percent": 80,
+    "recover_percent": 70,
+    "max_live_db_bytes": 134217728
+  },
+  "agents": {
+    "__OPERATOR_UNIX__": {
+      "outgoing": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      },
+      "incoming": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      }
+    },
+    "__WORKER_1_UNIX__": {
+      "outgoing": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      },
+      "incoming": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      }
+    },
+    "__WORKER_2_UNIX__": {
+      "outgoing": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      },
+      "incoming": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      }
+    },
+    "__WORKER_3_UNIX__": {
+      "outgoing": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      },
+      "incoming": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      }
+    },
+    "__REVIEWER_UNIX__": {
+      "outgoing": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      },
+      "incoming": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      }
+    },
+    "__WORKER_4_UNIX__": {
+      "outgoing": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      },
+      "incoming": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      }
+    },
+    "__WORKER_5_UNIX__": {
+      "outgoing": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      },
+      "incoming": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      }
+    }
+  }
+}

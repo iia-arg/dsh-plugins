@@ -435,37 +435,68 @@ def zhurnal(kursor):
     «dsh-pamyat-nudzh перешагнул 85%» — про пакет, а не про того, чьё окно кончается.
     Поймано пробой до боя. Служба же не меняется от версии пакета.
     """
-    cmd = ["journalctl", "--no-pager", "-q", "-o", "json"]
+    # 🔴 COMPACT-WATCH-1017 (17.10.2026, Аврора; наряд Забавы 06:46:55Z): вывод — ПОТОКОМ и только нужные поля.
+    #   Было: capture_output копил весь вывод в памяти (байты → строка → splitlines → разбор). 17.10 06:10–06:23Z
+    #   в юните coder-gateway@beta легло ~23,8 тыс. строк sudo (29 МБ JSON); такт с рубежа 06:20:15Z брал 31,9 МБ,
+    #   python3 дорастал до ~163 МБ anon и убивался пределом 160M (70-predely.conf) КАЖДЫЙ такт: убитый такт
+    #   рубеж не пишет, следующий читает то же и больше — сам не выходит никогда.
+    #   Стало: строки разбираются по одной; поля — только MESSAGE и _SYSTEMD_UNIT (__CURSOR и __REALTIME_TIMESTAMP
+    #   journalctl отдаёт всегда): 31,9 → 12,6 МБ на том же окне. Срок 120 с прежний — таймер убивает journalctl
+    #   и молчащим (LOW Вениамина 07:08Z: проверка «на очередной строке» зависший journalctl не останавливала).
+    #   ⚠️ НЕ ЛОВИТ: рост самих записей (zapisi держат текст каждой строки) — при окне в сотни тысяч строк память
+    #   снова упрётся в предел; предела по числу строк здесь нет.
+    cmd = ["journalctl", "--no-pager", "-q", "-o", "json", "--output-fields=MESSAGE,_SYSTEMD_UNIT"]
     for sl in SLUZHBY:
         cmd += ["-u", sl]
     cmd += ["--after-cursor", kursor] if kursor else ["--since", "-2min"]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    if r.returncode != 0:
-        raise RuntimeError(f"journalctl код {r.returncode}: {r.stderr.strip()[:200]}")
+    import tempfile
+    err = tempfile.TemporaryFile()
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, text=True)
+    import threading
+    srok_vyshel = threading.Event()
+    def _srok():
+        srok_vyshel.set()
+        p.kill()
+    tajmer = threading.Timer(120, _srok)
+    tajmer.daemon = True
+    tajmer.start()
     zapisi, novyj = [], kursor
-    for ln in r.stdout.splitlines():
-        if not ln.strip():
-            continue
-        try:
-            d = json.loads(ln)
-        except Exception:
-            continue
-        novyj = d.get("__CURSOR", novyj)
-        ts = d.get("__REALTIME_TIMESTAMP")
-        kogda = (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(ts) / 1_000_000))
-                 if ts else "?")
-        # 🔴 B-N-1060 (26.09.2026, Заря): строку НЕ в UTF-8 journald хранит байтами, и `-o json` отдаёт MESSAGE
-        #   СПИСКОМ ЧИСЕЛ, а не строкой. Одна такая строка (запись sudo о `grep -cF '…рабо<обрезанный байт>'`
-        #   в шлюзе Искры, 08:18:51Z) роняла такт TypeError'ом в okna_takta ДО записи рубежа — и каждый следующий
-        #   такт перечитывал её снова: журнальная часть мертва с 08:20Z, 71 падение за 6 ч. Байты — с заменой.
-        msg = d.get("MESSAGE", "")
-        if not isinstance(msg, str):
+    # COMPACT-WATCH-1017 r3 (мелочь Вениамина 07:58Z): исключение разбора не оставляет journalctl жить до таймера.
+    try:
+        for ln in p.stdout:
+            if not ln.strip():
+                continue
             try:
-                msg = bytes(msg).decode("utf-8", "replace")
-            except (TypeError, ValueError):
-                msg = str(msg)
-        zapisi.append((d.get("_SYSTEMD_UNIT", "?"), kogda, msg,
-                       int(ts) / 1_000_000 if ts else None))
+                d = json.loads(ln)
+            except Exception:
+                continue
+            novyj = d.get("__CURSOR", novyj)
+            ts = d.get("__REALTIME_TIMESTAMP")
+            kogda = (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(ts) / 1_000_000))
+                     if ts else "?")
+            # 🔴 B-N-1060 (26.09.2026, Заря): строку НЕ в UTF-8 journald хранит байтами, и `-o json` отдаёт MESSAGE
+            #   СПИСКОМ ЧИСЕЛ, а не строкой. Одна такая строка (запись sudo о `grep -cF '…рабо<обрезанный байт>'`
+            #   в шлюзе Искры, 08:18:51Z) роняла такт TypeError'ом в okna_takta ДО записи рубежа — и каждый следующий
+            #   такт перечитывал её снова: журнальная часть мертва с 08:20Z, 71 падение за 6 ч. Байты — с заменой.
+            msg = d.get("MESSAGE", "")
+            if not isinstance(msg, str):
+                try:
+                    msg = bytes(msg).decode("utf-8", "replace")
+                except (TypeError, ValueError):
+                    msg = str(msg)
+            zapisi.append((d.get("_SYSTEMD_UNIT", "?"), kogda, msg,
+                           int(ts) / 1_000_000 if ts else None))
+    finally:
+        tajmer.cancel()
+        if p.poll() is None:
+            p.kill()
+            p.wait()
+    if srok_vyshel.is_set():
+        p.wait()
+        raise RuntimeError("journalctl не уложился в 120 с — оборван, записи такта отброшены")
+    if p.wait() != 0:
+        err.seek(0)
+        raise RuntimeError(f"journalctl код {p.returncode}: {err.read().decode('utf-8', 'replace').strip()[:200]}")
     return zapisi, novyj
 
 

@@ -1,5 +1,61 @@
 # История изменений · Change history
 
+## 3.1.15 — 21.10.2026 · Claude: строка расхода хода для счётчиков Автопилота
+
+- RU: Claude: строка расхода хода для счётчиков Автопилота; participant = unix-учётка; одна строка на ход; ключ эпохи сессии. Писатель завершённого хода суммирует usage в памяти и пишет `ap-usage-hodov-v1.jsonl` рядом с ledger, 0600. Input включает cache read/write, reasoning повторно к output не прибавляется. Обрыв хода не создаёт строку; повтор callback/end не дописывает дубль. Новый sessionCreated в том же объекте Session открывает новую эпоху. Негодное ASCII-имя учётки даёт один notice на процесс, без записи. Принятый компонент Альфы `1d332cad`; сборщик и витрина Автопилота — отдельный компонент.
+- EN: Claude turn-usage row for Autopilot counters; participant is the Unix account; one row per turn; deduplication includes the session epoch. Completed turns aggregate usage in memory and append `ap-usage-hodov-v1.jsonl` beside the ledger, mode0600. Input includes cache reads/writes; reasoning is not added to output twice. Aborted turns emit no row; repeated end callbacks do not duplicate it. A new sessionCreated on the same Session opens a new epoch. Invalid ASCII account names emit one notice per process and no row. Accepted Alfa component `1d332cad`; Autopilot collection/rendering is separate.
+
+## 3.1.14 — 18.10.2026 · писатель R: обрезка и устойчивость (кандидат Альфы, к окну А AP 0.1.10)
+
+- R-журнал ограничен по размеру общей policy (`docs/usage-runtime-policy.json` → `/etc/dsh-telegram-multiagent/usage-runtime-policy.json`, c752def4): при пределе — атомарная замена пустым файлом; недоступная policy во время записи — именованный отказ `R_POLICY_INVALID`, без fallback (e1925947, ГОДНО Вениамина 19:50:51 МСК).
+- Запись больше `recordMaxBytes` пропускается с `[usage] R_RECORD_TOO_LARGE skipped=N`; после починки policy следующая запись перечитывает её без рестарта; `R_RESET_FAILED` остаётся залипающим (5e459f6f, ГОДНО 20:23:25 МСК; П7 a68cd351).
+- README RU/EN и USAGE-RUNTIME: граница гонки policy и инкрементального читателя; при смене inode — пометка возможной потери (f8d57db7, ГОДНО 19:49:46 МСК).
+- Новые стенды `test/stend-usage-runtime-reset.mjs`, `test/stend-usage-runtime-recovery.mjs` (+ фикстуры `usage-runtime-policy-fixture.mjs`, `usage-runtime-reset-child.mjs`). Выпуск — Искра; метка — в окне по листу А.
+
+## 3.1.13 — 17.10.2026 · AP usage producer R (кандидат)
+
+Неблокирующий raw-журнал actual DSH request/session/turn и native claim/end. Delivery ID — только ссылка для root-проверки почтой; metadata модели не источник. Ошибка/потеря native boundary — source_gap, без отказа исполнения. AP-normalizer/G и live окно отдельно.
+
+## 3.1.12 — 2026-10-16 · edited_message обсуждения Анны (кандидат Альфы 2a026ad9, ГОДНО Вениамина 13:47Z; выпуск Искра)
+
+- Единственный Telegram poller Анны с opt-in social принимает `edited_message` своего discussion. Редакция комментария сохраняется отдельным `kind=comment` с явной пометкой в тексте; первоначальное событие и принятый DSH input не заменяются.
+- ID редакции содержит discussion/message/edit_date/update_id: повтор того же update не добавляет input, разные правки одной секунды различаются. Автопересылка поста канала сохраняет общий `edited_post` ID с `edited_channel_post`.
+- Новый `test/stend-social-edited-message.mjs` проверяет настоящий тракт до durable DSH input на локальной платформе. Публикации и второй getUpdates не добавлены; живое подключение Анны и B-N-2027 вне кандидата. Версия package.json остаётся основой 3.1.11 до назначения общего выпуска.
+
+
+## 3.1.11 — 2026-10-15 · кандидат AP-notice на линии3.1.10
+
+- Opt-in AP ID-notice с отдельной durable-сессией, Master сохраняет primary, у шести только AP. Traffic: строгие свои имя/@ник, context0; копии не проходят admission.
+- Ранний publisher/is_bot отказ ограничен AP-режимом. Без AP сохранён прежний SocialIngress, включая discussion-комментарии Channel_Bot/GroupAnonymousBot; проверки на реальном handleUpdate/SocialIngress.
+- Основа3.1.10 (0a061a3b): сохранены простой Гаммы и held_by_replace Беты; native/смежные стенды проверяются на этой линии.
+
+
+## 3.1.10 — 15.10.2026 · BETA-RCPT: удержанная replace-STOP почта · Replace-held mail
+
+- Квитанция unclaimed письма из backlog завершённого replace-STOP получает `held_by_replace`; очередь и незавершённый исход сохраняются. Status показывает control-id и время; WakeGate не будит удержанное письмо.
+- При первой классификации существующий outbox уведомляет отправителя; audit исключает второе уведомление. Неизвестный обратный адрес остаётся в суточной сводке reviewer. События для классификации читаются лениво после точного backlog-сопоставления.
+- An unclaimed letter held by a completed replace-STOP receives `held_by_replace`, retaining its queue entry and unfinished outcome. Status shows the control and time; WakeGate respects the hold. The existing outbox notifies the sender once, deduplicated by audit. Unknown return addresses remain in the daily reviewer summary; classification events are read lazily after the exact backlog match.
+- Новая таблица/оператор не вводятся; повторной подачи нет. Локальное продолжение без публикации в npm. / No new table or operator and no replay. Local continuation, not published to npm.
+
+## 3.1.9 — 15.10.2026 · сторож простоя видит все завершённые ходы · Idle log sees all completed turns
+
+- Момент последнего `turn/end` ставится до выходов `managedTurn` и отсутствующего `chatId`. Прежде управляемые квитанцией ходы (включая Telegram) и legacy без адреса оставляли «ходов с подъёма НЕ БЫЛО».
+- Смысл простоя сохранён: давность завершения любого хода в процессе, `Math.round` минут, порог 30 минут; строка раз в 20 успешных циклов опроса. Ошибочное завершение тоже считается; chunk/message/start отметку не обновляют. После перезапуска история начинается с null.
+- `test/stend-prostoya.mjs`: настоящий обработчик и цикл в одном контексте, девять сценариев. Старый код даёт 2/9, кандидат 9/9; внешние IO изолированы. Это журнал, отдельная отправка тревоги не добавляется; зависший опрос и ход до первого завершения вне этой проверки.
+- Record completion before receipt/chat routing returns. The existing 30-minute idle log and 20-successful-poll cadence are unchanged; no network alert is added. Isolated regression harness covers managed/legacy routes, threshold and recovery.
+
+## 3.1.8 — 15.10.2026 · входящее от бота отбрасывается · Inbound bot messages are dropped (Гамма; наряд Забавы; ворота Вениамина 01:44 МСК)
+
+- `handleUpdate` (`src/index.js`): сообщение с `from.is_bot === true` отбрасывается ДО допуска, очереди, ответа и разбора медиа —
+  одна строка журнала «отброшено: сообщение бота <id> в чате <chat>». Защита от петли бот↔бот в общих чатах (зеркало почты команды
+  пишет ботами отправителей). Сообщения людей — как прежде, в том числе пересланный текст бота и ответ на сообщение бота.
+- 🔴 Граница: обновления, которые забирает `SocialIngress` Анны (посты канала, callback, обсуждение соцсетей), идут своим путём
+  и фильтром НЕ покрыты; залп от ЛЮДЕЙ в группе без записи `groups` фильтр тоже не гасит — для этого режим рабочего чата.
+- Новый стенд `test/stend-from-is-bot.mjs` (Гамма): 15 проб на настоящем теле `handleUpdate`; на основе 3.1.7 — 7 проб
+  «бот отброшен» красные, 5 проб «человек доходит» зелёные.
+- A message whose `from.is_bot` is true is dropped before admission/queue/reply/media with one log line. Human messages are unchanged.
+  Updates routed to Anna's SocialIngress are outside the filter; a human-driven group volley needs the working-chat `groups` record.
+
 ## 3.1.7 — 14.10.2026 · B-N-2021: дефис в учётке spool · Hyphenated spool accounts; подготовка к публикации · release prep
 
 - `spoolSender` разбирает полное имя курьера по хвостам a2a-pochtalon (v1 hex/PID, ownerall, v2 SHA256), сохраняя дефисы. Битое имя не получает подсказку отправителя и не считается показанным почтальоном.

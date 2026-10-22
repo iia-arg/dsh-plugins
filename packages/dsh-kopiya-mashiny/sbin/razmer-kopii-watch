@@ -129,14 +129,43 @@ svobodno = int(env("RKW_DF_AVAIL", str(shutil.disk_usage(POLKA).free)))
 
 bedy = []
 # 1) ступенька
-if not prezhnie:
-    stupen = f"ступенька НЕ мерена: на полке нет архива раньше {imya}"
+# 22.10.2026 Михалыч (наряд Забавы 09:55 МСК; полка 2 → 1 с 18.10, 20-hranenie-2.conf): при хранении 1 прежнего архива на полке
+#   нет НИКОГДА, и ступенька 19–22.10 каждое утро говорила «НЕ мерена» владельцу. Основа без полки — свой кэш KESH: суммы
+#   прежнего архива, снятые его же листингом, когда он лежал на полке (имя, сжатый размер, несжатые суммы). Чтобы кэш был,
+#   текущий архив листается ВСЕГДА (раньше — только при наличии прежнего). Кэш берётся лишь от архива не старше 2 суток по имени
+#   (KESH_SUTOK): ступенька за неделю — не ночная ступенька. ЧЕГО НЕ ЛОВИТ: кэш, записанный по архиву, который потом подменили
+#   на полке (кэш ключуется именем и размером только при чтении с полки; из кэша без полки размер сверять не с чем).
+KESH_SUTOK = 2
+def iz_kesha(imya_tek):
+    """(имя, сжатый размер, (vsya, bez, zhur)) самого молодого закэшированного архива раньше imya_tek, не старше KESH_SUTOK; иначе None."""
+    m_tek = re.match(r"own-chain-(\d{4}-\d{2}-\d{2})", imya_tek)
+    if not m_tek: return None
+    import datetime
+    d_tek = datetime.date.fromisoformat(m_tek.group(1))
+    try:
+        kand = sorted((k for k in KESH.glob(PRISTAVKA + "*.tar.gz.json") if k.name[:-5] < imya_tek), key=lambda k: k.name)
+    except Exception: return None
+    for k in reversed(kand):
+        m = re.match(r"own-chain-(\d{4}-\d{2}-\d{2})", k.name)
+        if not m or (d_tek - datetime.date.fromisoformat(m.group(1))).days > KESH_SUTOK: return None
+        try:
+            d = json.loads(k.read_text())
+            return k.name[:-5], int(d["size"]), (int(d["vsya"]), int(d["bez"]), int(d["zhur"]))
+        except Exception: continue
+    return None
+sn_tek = summy(POLKA / imya) if (POLKA / imya).is_file() else None   # всегда: завтрашняя основа
+osnova_kesh = None if prezhnie else iz_kesha(imya)
+if not prezhnie and not osnova_kesh:
+    stupen = f"ступенька НЕ мерена: на полке нет архива раньше {imya} и в кэше {KESH} нет прежнего не старше {KESH_SUTOK} сут"
     bedy.append(stupen)
 else:
-    pr = prezhnie[-1]; pr_razmer = pr.stat().st_size
+    if prezhnie:
+        pr = prezhnie[-1]; pr_imya, pr_razmer = pr.name, pr.stat().st_size; sp = summy(pr); otkuda = "полка"
+    else:
+        pr_imya, pr_razmer, sp = osnova_kesh; otkuda = f"кэш {KESH} (полка хранит {retain})"
     d = (razmer - pr_razmer) / pr_razmer if pr_razmer else float("inf")
-    stupen = f"вся копия (сжато): {imya} {razmer/GB:.1f} ГБ против {pr.name} {pr_razmer/GB:.1f} ГБ ({d*100:+.0f}%)"
-    sn, sp = summy(POLKA / imya) if (POLKA / imya).is_file() else None, summy(pr)
+    stupen = f"вся копия (сжато): {imya} {razmer/GB:.1f} ГБ против {pr_imya} {pr_razmer/GB:.1f} ГБ ({d*100:+.0f}%; основа — {otkuda})"
+    sn = sn_tek
     if sn and sp and sp[1]:
         db = (sn[1] - sp[1]) / sp[1]
         stupen2 = (f"без рабочих зон и журналов (несжато): {sn[1]/GB:.2f} ГБ против {sp[1]/GB:.2f} ГБ ({db*100:+.1f}%, порог ±{POROG*100:.0f}%); "

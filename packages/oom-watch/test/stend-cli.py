@@ -75,7 +75,13 @@ with open(os.environ['PROBE_ALERT_TRACE'],'a') as f:f.write(str(len(text))+'\\n'
                       ('separator',['--']),('version-assignment',['--version=2']),('help-assignment',['--help=all'])]:
         trial(name,args,0 if a.baseline else 2,scan=a.baseline)
     trial('unknown-no-state',['--dry-run'],0 if a.baseline else 2,scan=a.baseline,fresh=True)
-    version='oom-watch '+('2.2.0' if a.baseline else '3.1.2')
+    # 3.1.4: номер выпуска — из CHANGELOG пакета этого стенда (первый заголовок «## X.Y.Z»), не литералом: 14.10 номер
+    # поднят до 3.1.3, а литерал остался 3.1.2 — стенд краснел на исправном. Из дерева, а не из a.root: ночной обход
+    # гоняет бой (/usr/local) — так он заодно ловит «бой отстал от выпуска дерева».
+    import re as _re
+    _vyp=_re.search(r'^## (\d+\.\d+\.\d+) ',(Path(__file__).resolve().parents[1]/'CHANGELOG.md').read_text(encoding='utf-8'),_re.M)
+    if not _vyp: print('СЛЕПОТА: номер выпуска в CHANGELOG пакета не найден'); sys.exit(2)
+    version='oom-watch '+('2.2.0' if a.baseline else _vyp.group(1))
     trial('version',['--version'],0,output=version)
     trial('version-no-state',['--version'],0,output=version,fresh=True)
     trial('help',['--help'],0,scan=a.baseline,output=None if a.baseline else '--version')

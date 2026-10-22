@@ -1,6 +1,7 @@
 """Step 2 actual producer/helper/copy/VOW contracts, with private roots only."""
 import hashlib
 import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -210,6 +211,216 @@ class CopyWindows(unittest.TestCase):
         selector.write_text(json.dumps({'package': 'fixture', 'version': '1.0.0',
                                         'copies': ['release-fixture', 'release-second']}))
         return other, second, selector
+
+    def external_file_fixture(self):
+        f = self.fixture
+        self.external = f.r / 'usr/local/sbin/fixture-watch.sh'
+        self.external.parent.mkdir(parents=True)
+        self.external.write_text('old external\n')
+        (f.source / self.external.name).write_text('new external\n')
+        source = f.repo / 'packages/fixture' / self.external.name
+        source.write_text('new external\n')
+        for args in [('add', '.'), ('-c', 'user.name=Fixture', '-c', 'user.email=fixture@sadik',
+                                  'commit', '-qm', 'external owned file')]:
+            subprocess.run(['git', '-C', str(f.repo), *args], check=True, capture_output=True)
+        f.new_c = subprocess.check_output(['git', '-C', str(f.repo), 'rev-parse', 'HEAD'], text=True).strip()
+        subprocess.run(['git', '-C', str(f.repo), 'tag', '-f', 'fixture-v1.0.0'], check=True, capture_output=True)
+        f.release_entry.update(source={'type': 'git', 'address': str(f.repo)},
+            derevo={'address': str(f.repo), 'ref': 'fixture-v1.0.0', 'subdir': 'packages/fixture',
+                    'files': [{'local': str(f.target), 'remote': 'x'},
+                              {'local': str(self.external), 'remote': self.external.name}]})
+        f.reg.write_text(json.dumps({'plugins': [f.release_entry], 'services': []}))
+        return self.publish()
+
+    def install_external(self, record, filename=None, new=False):
+        f = self.fixture
+        return subprocess.run(['bash', str(f.smf), str(f.source), str(self.external.parent),
+                               filename or self.external.name, '--punkt', record['task'],
+                               '--v-boj', '--okno-id', record['id'],
+                               *(['--novyj', '--mode=644', '--owner=0:0'] if new else [])],
+                              env={**f.env, 'FIXTURE_TARGET': str(self.external.parent / (filename or self.external.name))},
+                              capture_output=True, text=True, timeout=20)
+
+    def backup_from_output(self, result):
+        match = re.search(r'страховка легла: (.+) · sha256\[:16\] ([0-9a-f]{16})', result.stdout)
+        self.assertIsNotNone(match, result.stdout + result.stderr)
+        return Path(match[1]), match[2]
+
+    def test_backup_success_keeps_archive_and_matches_printed_disk_hash(self):
+        record = self.external_file_fixture()
+        result = self.install_external(record)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        archive, short_hash = self.backup_from_output(result)
+        self.assertTrue(archive.is_file())
+        self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest()[:16], short_hash)
+        with tarfile.open(archive) as saved:
+            self.assertEqual(saved.extractfile(str(self.external).lstrip('/')).read(), b'old external\n')
+        self.assertNotIn('ОТКАЗ: страховка', result.stderr)
+
+    def refused_backup_join(self):
+        f = self.fixture
+        record = self.external_file_fixture()
+        for check in record['checks']:
+            if check['kind'] == 'registry':
+                check['expected']['version'] = '0.9.0'
+        path = f.state / (record['id'] + '.json')
+        original = path.read_bytes()
+        path.write_text(json.dumps(record))
+        changed = path.read_bytes()
+        self.assertNotEqual(hashlib.sha256(original).digest(), hashlib.sha256(changed).digest())
+        self.assertEqual(subprocess.check_output(['grep', '-cF', '"version": "0.9.0"', str(path)], text=True).strip(), '1')
+        print('CORRUPTION join expected.version replacements=1 literal_count=1 sha256=' +
+              hashlib.sha256(original).hexdigest() + '->' + hashlib.sha256(changed).hexdigest())
+        return record, path, changed
+
+    def test_backup_join_refusal_reports_removed_archive_on_stderr(self):
+        record, path, before = self.refused_backup_join()
+        result = self.install_external(record)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn('producer is outside immutable plan', result.stderr)
+        archive, _ = self.backup_from_output(result)
+        self.assertFalse(archive.exists())
+        self.assertEqual(self.external.read_text(), 'old external\n')
+        self.assertEqual(path.read_bytes(), before)
+        self.assertIn('ОТКАЗ: страховка СНЯТА/УДАЛЕНА: ' + str(archive), result.stderr)
+
+    def test_backup_join_refusal_reports_archive_retained_when_cleanup_fails(self):
+        record, _, _ = self.refused_backup_join()
+        f = self.fixture
+        command = f.b / 'rm'
+        command.write_text('#!/bin/sh\nfor arg do case "$arg" in *.tar) exit 1;; esac; done\nexec /usr/bin/rm "$@"\n')
+        command.chmod(0o755)
+        result = self.install_external(record)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        archive, _ = self.backup_from_output(result)
+        self.assertTrue(archive.is_file())
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        self.assertIn('ОТКАЗ: страховка ОСТАЛАСЬ: ' + str(archive) + ' · sha256 ' + digest, result.stderr)
+        self.assertNotIn('страховка СНЯТА/УДАЛЕНА', result.stderr)
+        self.assertEqual(self.external.read_text(), 'old external\n')
+
+    def test_backup_failed_replace_reports_retained_archive_and_keeps_window_failure(self):
+        record = self.external_file_fixture()
+        self.fixture.env['FAIL_TARGET_MV'] = '1'
+        result = self.install_external(record)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        archive, _ = self.backup_from_output(result)
+        self.assertTrue(archive.is_file())
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        self.assertIn('ОТКАЗ: страховка ОСТАЛАСЬ: ' + str(archive) + ' · sha256 ' + digest, result.stderr)
+        self.assertEqual(self.fixture.records()[0]['phase'], 'failed')
+        self.assertEqual(self.external.read_text(), 'old external\n')
+
+    def test_release_copy_joins_owned_external_file_without_weakening_plan(self):
+        f = self.fixture
+        before = self.external_file_fixture()
+        pinned = [c for c in before['checks'] if c['kind'] == 'registry']
+        self.assertEqual(len(pinned), 1)
+        self.assertEqual(pinned[0]['expected']['path'], str(f.live))
+        self.assertEqual(pinned[0]['expected']['source.type'], 'git')
+        self.assertEqual(pinned[0]['expected']['source.address'], str(f.repo))
+        self.assertNotIn('file:' + str(self.external), before['subjects'])
+        result = self.install_external(before)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.external.read_text(), 'new external\n')
+        after = f.records()[0]
+        self.assertEqual(after['subjects'], before['subjects'] + ['file:' + str(self.external)])
+        self.assertEqual(after['checks'][:-1], before['checks'])
+        self.assertEqual(after['checks'][-1], dict(kind='file', path=str(self.external),
+            sha256=hashlib.sha256(b'new external\n').hexdigest(), uid=0, gid=0, mode=0o644))
+        self.assertEqual({k: v for k, v in after.items() if k not in ('subjects', 'checks', 'rollback_plan')},
+                         {k: v for k, v in before.items() if k not in ('subjects', 'checks', 'rollback_plan')})
+        self.assertEqual(after['rollback_plan']['subjects'], before['rollback_plan']['subjects'] + ['file:' + str(self.external)])
+        self.assertEqual(after['rollback_plan']['checks'][:-1], before['rollback_plan']['checks'])
+        self.assertEqual(after['rollback_plan']['checks'][-1], dict(kind='file', path=str(self.external),
+            sha256=hashlib.sha256(b'old external\n').hexdigest(), uid=0, gid=0, mode=0o644))
+        rows = [json.loads(line) for line in (f.r / 'mv.log').read_text().splitlines()]
+        self.assertTrue(any(row['target'] == str(self.external) and row['active_before_mv'] for row in rows))
+
+    def test_release_copy_joins_new_owned_external_file_with_absent_rollback(self):
+        f = self.fixture
+        record = self.external_file_fixture()
+        self.external.unlink()
+        result = self.install_external(record, new=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.external.read_text(), 'new external\n')
+        current = f.records()[0]
+        self.assertEqual(current['rollback_plan']['checks'][-1], dict(kind='absent', path=str(self.external)))
+        self.assertEqual(current['rollback_plan']['checks'][:-1], record['rollback_plan']['checks'])
+
+    def test_release_copy_rollback_requires_restoring_joined_external_file(self):
+        f = self.fixture
+        record = self.external_file_fixture()
+        result = self.install_external(record)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for name in ('package.json', 'x', 'CHANGELOG.md'):
+            raw = subprocess.check_output(['git', '-C', str(f.repo), 'show', f.old_c + ':packages/fixture/' + name])
+            (f.live / name).write_bytes(raw)
+        def rollback():
+            return subprocess.run([str(PKG / 'sbin/montazh-okno'), 'otkat-proveren', record['id']],
+                                  env=f.env, capture_output=True, text=True, timeout=20)
+        refused = rollback()
+        self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+        self.assertEqual(f.records()[0]['phase'], 'open')
+        self.external.write_text('old external\n')
+        accepted = rollback()
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        self.assertEqual(f.records()[0]['phase'], 'rolled_back')
+
+    def test_release_copy_rejects_external_file_outside_owned_files(self):
+        f = self.fixture
+        record = self.external_file_fixture()
+        outside = self.external.with_name('unowned.sh')
+        outside.write_text('unowned before\n')
+        (f.source / outside.name).write_text('unowned after\n')
+        before = (f.state / (record['id'] + '.json')).read_bytes()
+        result = self.install_external(record, outside.name)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('producer is outside immutable plan', result.stdout + result.stderr)
+        self.assertEqual(outside.read_text(), 'unowned before\n')
+        self.assertEqual((f.state / (record['id'] + '.json')).read_bytes(), before)
+
+    def test_release_copy_rejects_changed_registry_binding_before_external_write(self):
+        f = self.fixture
+        record = self.external_file_fixture()
+        path = f.state / (record['id'] + '.json')
+        before = path.read_bytes()
+        original = json.loads(json.dumps(f.release_entry))
+        for key in ('path', 'source.type', 'source.address', 'id', 'derevo.address',
+                    'derevo.subdir', 'derevo.files'):
+            with self.subTest(key=key):
+                entry = json.loads(json.dumps(original))
+                if key == 'derevo.files':
+                    entry['derevo']['files'][1]['remote'] = 'other-remote'
+                elif '.' in key:
+                    parent, child = key.split('.')
+                    entry[parent][child] += '-changed'
+                else:
+                    entry[key] += '-changed'
+                f.reg.write_text(json.dumps({'plugins': [entry], 'services': []}))
+                result = self.install_external(record)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('producer is outside immutable plan', result.stdout + result.stderr)
+                self.assertEqual(self.external.read_text(), 'old external\n')
+                self.assertEqual(path.read_bytes(), before)
+        f.reg.write_text(json.dumps({'plugins': [original], 'services': []}))
+        result = self.install_external(record)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_release_copy_does_not_infer_other_missing_expected_fields(self):
+        f = self.fixture
+        record = self.external_file_fixture()
+        for check in record['checks']:
+            if check['kind'] == 'registry':
+                check['expected']['version'] = '0.9.0'
+        path = f.state / (record['id'] + '.json')
+        path.write_text(json.dumps(record))
+        before = path.read_bytes()
+        result = self.install_external(record)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('producer is outside immutable plan', result.stdout + result.stderr)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(self.external.read_text(), 'old external\n')
 
     def test_common_plan_predeclares_all_roots_and_join_keeps_record_immutable(self):
         f = self.fixture

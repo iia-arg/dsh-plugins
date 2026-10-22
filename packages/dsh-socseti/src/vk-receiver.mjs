@@ -1,3 +1,4 @@
+import {cycleReporter} from './cycle-log.mjs';
 import {createHash} from 'node:crypto';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {VkApi,VK_GROUP,vkSession,readVkToken} from './vk-api.mjs';
@@ -65,8 +66,9 @@ export function createVkReceiver(store,config,{api,wallApi,log=record=>console.l
    session.ts=store.cursor(SOURCE);phase='connecting';return;
   }catch(e){const detail=describe(e,stage,'groups.getLongPollServer','groupToken');log({event:'vk_start_failed',attempt,...detail});if(attempt===3){phase='halted';throw new VkStartupFailure(detail)}await pause(2000)}}
  }
+ const reportCycle=cycleReporter('vk','poll',log);
  async function tick(){
-  if(stopping||phase==='halted')return;if(polling)throw Error('VK poll already running');polling=true;let stage='read',method='groups.getLongPollServer';
+  if(stopping||phase==='halted')return;if(polling)throw Error('VK poll already running');polling=true;let stage='read',method='groups.getLongPollServer';const started=store.now(),begin=performance.now();let cycleOK=false;
   try{
    if(!session)await start();method='long_poll';const result=await api.poll(session,session.ts);stage='page';
    if(result?.failed){
@@ -83,8 +85,8 @@ export function createVkReceiver(store,config,{api,wallApi,log=record=>console.l
    };
    stage='storage';if(result.ts!==expectedCursor)store.ingestBatch('anna',{source:SOURCE,expectedCursor,cursor:result.ts,events},updateState);
    else {if(events.length)throw Error('VK no-progress events rejected');store.tx(updateState)}
-   session.ts=result.ts;phase='receiving';failures=0;
-  }catch(e){log({event:'vk_poll_blocked',...describe(e,stage,method,'groupToken')});if(e.message?.includes('capacity'))phase='backpressure';else if(phase!=='halted'&&++failures>=3)phase='halted';throw e}finally{polling=false}
+   session.ts=result.ts;phase='receiving';failures=0;cycleOK=true;
+  }catch(e){log({event:'vk_poll_blocked',...describe(e,stage,method,'groupToken')});if(e.message?.includes('capacity'))phase='backpressure';else if(phase!=='halted'&&++failures>=3)phase='halted';throw e}finally{polling=false;reportCycle({started,finished:store.now(),elapsed:performance.now()-begin,result:cycleOK?'ok':phase==='halted'?'halted':'blocked'})}
  }
  async function backfill({maxPages=100}={}){
   if(stopping||get('until')===null)return;if(backfilling)throw Error('VK backfill already running');if(!Number.isSafeInteger(maxPages)||maxPages<1||maxPages>100)throw Error('VK page budget rejected');backfilling=true;const deadline=performance.now()+120000;

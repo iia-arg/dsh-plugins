@@ -98,6 +98,33 @@ class Vow(unittest.TestCase):
  def test_informational_copy_is_not_deferred_or_counted_twice(self):
   self.unpublished();self.env['VYPUSK_INFO_KORNI']=str(self.r/'copies');q=self.invoke(True)
   self.assertEqual(q.returncode,0,q.stdout+q.stderr);self.assertNotIn('ОТЛОЖЕНО',q.stdout);self.assertNotIn('распределены дважды',q.stdout);self.assertNotIn('ОХВАТ НЕ СОШЁЛСЯ',q.stdout+q.stderr)
+ # B-N-1978: слепота записи derevo (not_installed нет в метке — вид ложных 14.10 dsh-pochta/dsh-montazh) в окне монтажа
+ def slepaya_zapis(self,vid='razryv'):
+  # vid: razryv — not_installed нет в метке (:657) · metki-net — ref на метку, которой нет (:624) · dubl — структурная, дубль remote (:648) ·
+  #      smes — razryv + структурная expected_diff_files (:659)
+  self.env['VYPUSK_KORNI']=str(self.r/'empty');self.reg=self.r/'registry';user=pwd.getpwuid(os.getuid()).pw_name
+  f1=dict(local=str(self.live/'src/x'),remote='src/x',mode='0644',owner=user+':'+user);f2=dict(local=str(self.live/'package.json'),remote='package.json',mode='0644',owner=user+':'+user)
+  if vid=='dubl': f2=dict(f2,remote='src/x')
+  d=dict(id='fixture-entry',derevo=dict(address=str(self.repo),ref='fixture-v9.9.9' if vid=='metki-net' else 'fixture-v1.0.0',subdir='packages/fixture',files=[f1,f2],not_installed=['CHANGELOG.md']+(['net-v-metke.txt'] if vid in ('razryv','smes') else []),expected_diff_files=['net-v-files'] if vid=='smes' else [],links=[]))
+  self.reg.write_text('services: '+json.dumps([d])+'\n');self.env['VYPUSK_REESTR']=str(self.reg)
+ def okno_zapisi(self,entry,istekshee=False):
+  p=self.window(['entry:'+entry],[dict(kind='registry',path=str(self.reg),id=entry,expected={'derevo.ref':'fixture-v1.0.0'})])
+  if istekshee:
+   d=json.loads(p.read_text());d['deadline_ns']=time.clock_gettime_ns(time.CLOCK_BOOTTIME)-1;d['opened_ns']=d['deadline_ns']-1800*10**9;p.write_text(json.dumps(d))
+ def test_b1978_entry_blindness_deferred_only_in_window_naming_entry(self):
+  self.slepaya_zapis();q=self.invoke(True);self.assertEqual(q.returncode,2,q.stdout+q.stderr);self.assertIn('net-v-metke.txt',q.stdout+q.stderr);self.assertTrue((self.r/'alerts').exists())
+  (self.r/'alerts').unlink();(self.r/'sost.slepota').unlink(missing_ok=True)
+  self.okno_zapisi('fixture-entry');q=self.invoke(True);self.assertEqual(q.returncode,4,q.stdout+q.stderr);self.assertIn('entry:fixture-entry',q.stdout);self.assertNotIn('поздняя слепота',q.stdout+q.stderr);self.assertFalse((self.r/'alerts').exists())
+ def test_b1978_entry_blindness_not_hidden_by_other_entry_window(self):
+  self.slepaya_zapis();self.okno_zapisi('drugaya-zapis');q=self.invoke(True);self.assertEqual(q.returncode,2,q.stdout+q.stderr);self.assertNotIn('ОТЛОЖЕНО',q.stdout);self.assertTrue((self.r/'alerts').exists())
+ def test_b1978_structural_blindness_red_in_own_window(self):
+  self.slepaya_zapis('dubl');self.okno_zapisi('fixture-entry');q=self.invoke(True);self.assertEqual(q.returncode,2,q.stdout+q.stderr);self.assertIn('повторён',q.stdout+q.stderr);self.assertNotIn('ОТЛОЖЕНО',q.stdout);self.assertTrue((self.r/'alerts').exists())
+ def test_b1978_missing_tag_deferred_in_own_window(self):
+  self.slepaya_zapis('metki-net');self.okno_zapisi('fixture-entry');q=self.invoke(True);self.assertEqual(q.returncode,4,q.stdout+q.stderr);self.assertIn('entry:fixture-entry',q.stdout);self.assertFalse((self.r/'alerts').exists())
+ def test_b1978_mixed_blindness_red_in_own_window(self):
+  self.slepaya_zapis('smes');self.okno_zapisi('fixture-entry');q=self.invoke(True);self.assertEqual(q.returncode,2,q.stdout+q.stderr);self.assertIn('expected_diff_files',q.stdout+q.stderr);self.assertNotIn('ОТЛОЖЕНО',q.stdout);self.assertTrue((self.r/'alerts').exists())
+ def test_b1978_entry_blindness_expired_window_strict(self):
+  self.slepaya_zapis();self.okno_zapisi('fixture-entry',istekshee=True);q=self.invoke(True);self.assertEqual(q.returncode,2,q.stdout+q.stderr);self.assertNotIn('ОТЛОЖЕНО',q.stdout);self.assertTrue((self.r/'alerts').exists())
 if __name__=='__main__':
  if os.geteuid()!=0:print('СЛЕПОТА: стенд окна требует root для root-owned подставных записей');sys.exit(2)
  if not HELPER.is_file() or not os.access(HELPER,os.X_OK):print('СЛЕПОТА: helper montazh-okno недоступен: '+str(HELPER));sys.exit(2)

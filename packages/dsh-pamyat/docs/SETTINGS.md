@@ -70,6 +70,6 @@ The "composition names its method" probe requires the first four fields. The "to
 
 ## Пути в `dependencies` · Paths in `dependencies`
 
-С A-N-1873 зависимости `package.json` — точные номера, путей полки в них нет. До выпуска 3.1.4 `npm install` набора из дерева завершается кодом 0, не поставив ни одного члена: члены ставятся по отдельности с `--install-links` (см. README). Полка (`STEND_POLKA`) нужна только стенду — сверить суммы архивов под этими номерами.
+Зависимости `package.json` — точные пины выбранного состава из `sostav.json`, без путей полки. В npm доступна редакция `3.1.4` (замер 15.10.2026, `npm view dsh-pamyat version`); последующие изменения ведутся локально без перепубликации. Для локального состава члены устанавливаются из дерева по одному с `--install-links` (см. README). Полка (`STEND_POLKA`) нужна только стенду для сверки сумм выбранных архивов.
 
-Since A-N-1873 the `package.json` dependencies are exact versions with no shelf paths. Until release 3.1.4, `npm install` of the set from the tree exits with code 0 without installing a single member: members are installed one by one with `--install-links` (see README). The shelf (`STEND_POLKA`) is needed only by the stand, to verify archive checksums under these versions.
+The `package.json` dependencies pin the selected composition from `sostav.json`, without shelf paths. npm provides `3.1.4` (checked on 2026-10-15 with `npm view dsh-pamyat version`); subsequent changes are maintained locally without republication. For the local composition, install the members individually from the tree with `--install-links` (see README). The shelf (`STEND_POLKA`) is used only by the stand to verify the selected archive checksums.

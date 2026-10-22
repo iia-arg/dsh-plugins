@@ -1,0 +1,50 @@
+Third-party notices for dsh-autopilot
+====================================
+
+Autopilot was created by Nick Vels (Nikita Veles).
+This plugin applies his Autopilot solution on DeepSeek Harness (DSH) servers.
+
+Upstream repository: https://github.com/nick-vels/skills
+Upstream ref: refs/heads/main
+Pinned upstream commit: 9fc898cbe941d5b8a369f1dd657e9119676eb44f
+License source: vendor/autopilot-9fc898cb.tar.gz -> upstream/LICENSE
+
+Derived upstream files, modified by Aleksandr Argelander and contributors:
+- overlay/phases/0-instruments.md <- skills/autopilot/phases/0-instruments.md
+- overlay/phases/0-preflight.md <- skills/autopilot/phases/0-preflight.md
+- overlay/phases/0-resume.md <- skills/autopilot/phases/0-resume.md
+- overlay/phases/4-plan.md <- skills/autopilot/phases/4-plan.md
+- overlay/phases/5-subagents.md <- skills/autopilot/phases/5-subagents.md
+- overlay/phases/8-final.md <- skills/autopilot/phases/8-final.md
+- overlay/tools/ap.py <- skills/autopilot/tools/ap.py
+- overlay/phases/dashboard-template.html <- skills/autopilot/phases/dashboard-template.html
+- patches/part-b-upstream.patch: combined upstream-to-overlay diff for the eight files above.
+
+The vendored archive retains the upstream LICENSE. The package's LICENSE
+identifies the license for local contributions; the original upstream notice
+and permission text are reproduced verbatim below.
+
+Upstream MIT license (verbatim)
+------------------------------
+
+MIT License
+
+Copyright (c) 2026 Nick Vels
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

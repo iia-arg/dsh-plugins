@@ -8,10 +8,13 @@
 # файлы в «бою» и страховки — только у --v-boj); вызовы мимо инструмента.
 set -u
 TOOL=${SMV_TOOL:-/usr/local/sbin/smontirovat-vypusk}
+FIXTURE=$(dirname -- "$0")/smv_fixture.py
+[ -r "$FIXTURE" ] || { echo "СЛЕПОТА: нет fixture $FIXTURE"; exit 2; }
+SOURCE_GIT=(sudo -n -u "$(stat -c %U /opt/iskra/workspace/dsh-plugins)" git -C /opt/iskra/workspace/dsh-plugins)
 [ -r "$TOOL" ] || { echo "СЛЕПОТА: предмета нет: $TOOL"; exit 2; }
 grep -q 'SMV_MONTAZH' "$TOOL" || { echo "СЛЕПОТА: предмет не знает SMV_MONTAZH — --v-boj задел бы /var/backups/montazh; не запускаю"; exit 2; }
 M=0a11d7c; P=packages/dsh-pamyat
-git -C /opt/iskra/workspace/dsh-plugins cat-file -e "$M^{commit}" 2>/dev/null || { echo "СЛЕПОТА: коммита $M в дереве нет"; exit 2; }
+"${SOURCE_GIT[@]}" cat-file -e "$M^{commit}" 2>/dev/null || { echo "СЛЕПОТА: коммита $M в дереве нет"; exit 2; }
 [ "$(id -u)" = 0 ] || { echo "СЛЕПОТА: нужен root — с B-N-2025 окно монтажа публикует только root (montazh-okno: writer requires root), обход зовёт @root"; exit 2; }
 W=$(mktemp -d /tmp/stend-smv-args-XXXXXX) || exit 2
 trap 'rm -rf "$W"' EXIT
@@ -23,7 +26,7 @@ ok=0; bed=0; vsego=0
 sud(){ vsego=$((vsego+1)); if [ "$2" = 1 ]; then ok=$((ok+1)); echo "  ✅ $1"; else bed=$((bed+1)); echo "  🔴 $1 — $3"; fi; }
 # run <имя> <аргументы…>: свежий «бой» и каталог страховок; печатает код; след — файлов в бою и страховок
 run(){ local n=$1; shift; rm -rf "$W/boj" "$W/mont"; rm -f "$MO_STATE_DIR"/*.json; mkdir -p "$W/boj" "$W/mont"
-  SMV_MONTAZH=$W/mont SMF_RUKA='Stend <stend@sadik>' bash "$TOOL" "$@" > "$W/out-$n" 2>&1; echo $?; }
+  SMV_MONTAZH=$W/mont SMF_RUKA='Stend <stend@sadik>' python3 -B "$FIXTURE" "$W" "$TOOL" "$M" "$P" "$W/boj" -- "$@" > "$W/out-$n" 2>&1; echo $?; }
 sled(){ echo "$(find "$W/boj" -type f | wc -l)/$(find "$W/mont" -type f | wc -l)"; }   # файлов в бою / страховок
 B=$W/boj
 echo "== стенд разбора аргументов smontirovat-vypusk $(date -u +%H:%M:%SZ) · предмет $(sha256sum "$TOOL" | cut -c1-8)"

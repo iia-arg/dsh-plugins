@@ -64,6 +64,9 @@ if koren:
     if st.st_uid == 0: slepo(f'.git {koren} принадлежит root — git от root по чужому конфигу не зову')
     VLADELEC = (st.st_uid, st.st_gid, dom)
     kod, repo, err = git(katalog, 'rev-parse', '--show-toplevel')
+    # LOW Альфы 16.10 (Вениамин 12:06:33 МСК): .git НАЙДЕН, а git от его владельца не ответил (dubious ownership — каталог дерева
+    # чужой учётки) — это слепота, а не «вне git»: прежде уходило в код 4 «БЕЗ СЛЕДА», и ворота давали ПРОБНЫЙ 0 вместо отказа.
+    if kod != 0 or not repo: slepo(f'.git найден ({koren}), но git от владельца .git не ответил (код {kod}): {err[:200]} — это не «вне git»')
 else: kod, repo = 1, ''
 if kod != 0 or not repo:
     print(f'БЕЗ СЛЕДА: каталог {katalog} вне git — метку по этому прогону сторож не примет'); sys.exit(4)

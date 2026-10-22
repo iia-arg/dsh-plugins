@@ -2,7 +2,7 @@ Russian version: [README.md](README.md) · English below
 
 # dsh-podyom — restarting an agent service through the gates, with instruments before and after the restart
 
-Версия · Version: 3.1.3
+Версия · Version: 3.1.4
 
 ## Purpose
 
@@ -24,7 +24,7 @@ Paths and permissions were checked against the `dsh-podyom` entry in `/etc/agent
 | `bin/podyom-uzla` | `/usr/local/bin/podyom-uzla` | 0755 root:root | root manually; `podyom-mimo-vorot-watch` (`--oblast`) |
 | `bin/pered-podyomom.mjs` | `/usr/local/bin/pered-podyomom.mjs` | 0755 root:root | `podyom-uzla` (variable `PRIBOR`) before and after the restart; `kvitanciya-podyoma`; manually |
 | `bin/kvitanciya-podyoma` | `/usr/local/bin/kvitanciya-podyoma` | 0755 root:root | `podyom-uzla` after a successful restart of `iskra.service` (`sudo -n -u iskra`) |
-| `bin/proverit-podyom-kodera` | `/usr/local/bin/proverit-podyom-kodera` | 0755 root:root | root manually (`sudo -n`) right before `systemctl restart` of coder alfa/beta/gamma/marc/anna |
+| `bin/proverit-podyom-kodera` | `/usr/local/bin/proverit-podyom-kodera` | 0755 root:root | root manually (`sudo -n`) right before `systemctl restart` of coder alfa/beta/gamma/marc/anna/master/vintik/shpuntik/gayka/shurup/tumbler |
 | `libexec/agent-hod/hod-sluzhby` | `/usr/local/libexec/agent-hod/hod-sluzhby` | 0755 root:root | `podyom-uzla`, `proverit-podyom-kodera`, `smontirovat-fajly`, `pereklyuchatel-podpiski`, `mail-stop-hold` |
 | `libexec/podyom-uzla/check-sled.py` | `/usr/local/libexec/podyom-uzla/check-sled.py` | 0644 root:root | `podyom-uzla` via `/usr/bin/python3 -I -S -B` (restart lock and trace check); it loads nothing from the package itself — `baseline.py` loads it as a module |
 | `libexec/podyom-uzla/snapshot.cjs` | `/usr/local/libexec/podyom-uzla/snapshot.cjs` | 0755 root:root | `podyom-uzla`: `sudo -n node snapshot.cjs <база> <снимок>` (snapshot by `VACUUM INTO`) |
@@ -130,7 +130,7 @@ Environment variables and flags are taken from the code. Override variables acce
 | `KVITANCIYA_SLUZHBA` | `iskra.service` | whose start goes into the receipt |
 | `KVITANCIYA_PRIBOR` | `/usr/local/bin/pered-podyomom.mjs` | instrument, called with `--posle --cel-s-diska` |
 
-**`proverit-podyom-kodera <юнит>`** — the unit is one of `alfa.service`, `beta.service`, `gamma.service`, `marc.service`, `anna.service`. It has no variables of its own: it sets `HOD_SYSTEMCTL` and `HOD_JOURNALCTL` for the child `hod-sluzhby` itself. Each external command is limited to 10 s and 16 MiB of output.
+**`proverit-podyom-kodera <юнит>`** — the unit is one of `alfa.service`, `beta.service`, `gamma.service`, `marc.service`, `anna.service`, `master.service`, `vintik.service`, `shpuntik.service`, `gayka.service`, `shurup.service`, `tumbler.service`. It has no variables of its own: it sets `HOD_SYSTEMCTL` and `HOD_JOURNALCTL` for the child `hod-sluzhby` itself. Each external command is limited to 10 s and 16 MiB of output.
 
 **`hod-sluzhby <юнит>`**
 

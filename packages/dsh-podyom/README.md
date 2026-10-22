@@ -2,7 +2,7 @@
 
 # dsh-podyom — подъём службы агента через ворота и приборы до и после подъёма
 
-Версия · Version: 3.1.3
+Версия · Version: 3.1.4
 
 ## Назначение
 
@@ -24,7 +24,7 @@
 | `bin/podyom-uzla` | `/usr/local/bin/podyom-uzla` | 0755 root:root | рука root; `podyom-mimo-vorot-watch` (`--oblast`) |
 | `bin/pered-podyomom.mjs` | `/usr/local/bin/pered-podyomom.mjs` | 0755 root:root | `podyom-uzla` (переменная `PRIBOR`) до и после подъёма; `kvitanciya-podyoma`; рука |
 | `bin/kvitanciya-podyoma` | `/usr/local/bin/kvitanciya-podyoma` | 0755 root:root | `podyom-uzla` после удачного подъёма `iskra.service` (`sudo -n -u iskra`) |
-| `bin/proverit-podyom-kodera` | `/usr/local/bin/proverit-podyom-kodera` | 0755 root:root | рука root (`sudo -n`) прямо перед `systemctl restart` кодера alfa/beta/gamma/marc/anna |
+| `bin/proverit-podyom-kodera` | `/usr/local/bin/proverit-podyom-kodera` | 0755 root:root | рука root (`sudo -n`) прямо перед `systemctl restart` кодера alfa/beta/gamma/marc/anna/master/vintik/shpuntik/gayka/shurup/tumbler |
 | `libexec/agent-hod/hod-sluzhby` | `/usr/local/libexec/agent-hod/hod-sluzhby` | 0755 root:root | `podyom-uzla`, `proverit-podyom-kodera`, `smontirovat-fajly`, `pereklyuchatel-podpiski`, `mail-stop-hold` |
 | `libexec/podyom-uzla/check-sled.py` | `/usr/local/libexec/podyom-uzla/check-sled.py` | 0644 root:root | `podyom-uzla` через `/usr/bin/python3 -I -S -B` (замок подъёма и сверка следа); сам ничего из пакета не грузит — его как модуль загружает `baseline.py` |
 | `libexec/podyom-uzla/snapshot.cjs` | `/usr/local/libexec/podyom-uzla/snapshot.cjs` | 0755 root:root | `podyom-uzla`: `sudo -n node snapshot.cjs <база> <снимок>` (снимок `VACUUM INTO`) |
@@ -130,7 +130,7 @@
 | `KVITANCIYA_SLUZHBA` | `iskra.service` | чей старт ставится в квитанцию |
 | `KVITANCIYA_PRIBOR` | `/usr/local/bin/pered-podyomom.mjs` | прибор, зовётся с `--posle --cel-s-diska` |
 
-**`proverit-podyom-kodera <юнит>`** — юнит из `alfa.service`, `beta.service`, `gamma.service`, `marc.service`, `anna.service`. Своих переменных нет: дочернему `hod-sluzhby` он сам ставит `HOD_SYSTEMCTL` и `HOD_JOURNALCTL`. Каждая внешняя команда ограничена 10 с и 16 МиБ вывода.
+**`proverit-podyom-kodera <юнит>`** — юнит из `alfa.service`, `beta.service`, `gamma.service`, `marc.service`, `anna.service`, `master.service`, `vintik.service`, `shpuntik.service`, `gayka.service`, `shurup.service`, `tumbler.service`. Своих переменных нет: дочернему `hod-sluzhby` он сам ставит `HOD_SYSTEMCTL` и `HOD_JOURNALCTL`. Каждая внешняя команда ограничена 10 с и 16 МиБ вывода.
 
 **`hod-sluzhby <юнит>`**
 

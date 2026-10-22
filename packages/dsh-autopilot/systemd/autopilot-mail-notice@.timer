@@ -1,0 +1,11 @@
+[Unit]
+Description=Start/recover Autopilot notice worker for %i
+
+[Timer]
+OnBootSec=5
+OnUnitInactiveSec=5
+AccuracySec=1
+Unit=autopilot-mail-notice@%i.service
+
+[Install]
+WantedBy=timers.target

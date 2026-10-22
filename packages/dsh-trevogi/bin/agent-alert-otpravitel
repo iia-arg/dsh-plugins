@@ -1,0 +1,376 @@
+#!/usr/bin/env python3
+"""RU: Отправитель спула тревог (способ 2, B-N-2055) — root. Без доводов: разобрать vhod/ до пустоты. Каждый файл
+переносится rename в закрытый work/ (700 root) ДО любой проверки; принимается обычный файл с одной ссылкой; учётка —
+владелец ОТКРЫТОГО дескриптора (fstat, dev:ino сверены с записью), не имя и не текст. Квота по учётке (не root),
+HTML учётки не-root — только из перечня тегов без атрибутов, префикс «✉ <учётка>» ставит отправитель. Шлёт тем же
+agent-alert прямым путём (root читает токен). Итог — itog/<имя> (код и причина, владелец — учётка, 0600).
+Коды итога: 0 доставлено · 1 отказ Telegram/сети (код agent-alert) · 65 не обычный файл/ссылки/формат · 66 больше
+64 КиБ · 69 квота. *.chk — проба клиента, удаляется молча. Иное имя — отказ без чтения.
+--storozh: очередь стоит (файл во vhod/ старше 3 мин), path-юнит не active, или в журнале agent-alert строки
+«исход=нет-пути»/«исход=нет-итога» с прошлого прогона → тревога ПРЯМЫМ путём (от отправителя не зависит); код 1.
+Новый набор бед — сразу, тот же — не чаще раза в 6 ч, беды ушли — одно «восстановлено». Оборванный разбор:
+*.msg в work/ старше 1 ч → итог 75 «прерван».
+Чего НЕ ловит: заявленный источник — со слов отправителя; голый URL Telegram подсветит; общий отказ канала (токен,
+Telegram) — тогда мёртв и прямой путь.
+EN: Root sender of the alert spool (method 2). Drains vhod/; owner from fstat; per-account quota; HTML allowlist for
+non-root; sender-built prefix; delivery via agent-alert; result file per request. --storozh watches the queue.
+"""
+import html
+import json
+import os
+import pwd
+import re
+import stat
+import subprocess
+import sys
+import time
+
+# RU: B-N-2067 (15.10.2026): pyc не писать — рукой от root (sudo, шебанг без -B) импорт nastrojki оставлял
+#     /usr/local/lib/dsh-trevogi/__pycache__ в бою (15.10 00:43:16Z, «agent-alert-otpravitel --help»). Действует при любом
+#     способе запуска, в отличие от -B юнита. EN: never write bytecode — a manual root run left __pycache__ in production.
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'lib', 'dsh-trevogi'))
+import nastrojki  # noqa: E402
+
+OTPRAVKA = os.environ.get('AGENT_ALERT_OTPRAVKA_BIN', '/usr/local/bin/agent-alert')
+PATH_YUNIT = 'agent-alert-otpravitel.path'
+PREDEL_BAJT = 64 * 1024
+RAZRESHENO = {'b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'code', 'pre', 'blockquote'}
+IMYA_OK = re.compile(r'[0-9A-Za-z._-]{1,200}')
+SVEZHEST_OCHEREDI = 180      # с: старше — очередь стоит
+ZHIZN_ITOGA = 3600           # с: невостребованный итог и брошенный tmp — в чистку
+POVTOR_STOROZHA = 6 * 3600   # с: тот же набор бед сторож повторяет не чаще (как соседние сторожа; LOW-1)
+# строка отказа КЛИЕНТА (klient.py) — с начала сообщения; подстрока где угодно ловила бы и строку доставки самой
+# тревоги сторожа («исход=доставлено … текст[0:120]=🔴 спул тревог: … исход=нет-…») — самоподпитка
+KLIENT_OTKAZ = re.compile(r'🔴 исход=нет-(?:пути|итога) учётка=([0-9A-Za-z._-]{1,32}) ')
+DINAMICHESKIE_UID = range(61184, 65520)  # DynamicUser= systemd: имя разрешается только пока служба жива
+PREDEL_PRERVANNOGO = 3600    # с: *.msg в work/ старше — разбор был оборван (TimeoutStartSec) — итог 75 (LOW-2)
+
+
+def zhurnal(stroka):
+    print(stroka, flush=True)
+
+
+def uchetka(uid):
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except KeyError:
+        return f'uid-{uid}'
+
+
+def chistyj_env():
+    e = {k: v for k, v in os.environ.items() if k != 'AGENT_ALERT_CHEREZ_SPUL'}
+    return e
+
+
+def otpravit_pryamo(tekst, plain):
+    """Прямой путь agent-alert (root). → (код, причина)."""
+    argv = [OTPRAVKA] + (['--plain'] if plain else []) + ['--']
+    try:
+        p = subprocess.run(argv, input=tekst, text=True, capture_output=True, timeout=600, env=chistyj_env())
+    except (OSError, subprocess.SubprocessError) as e:
+        return 1, f'agent-alert не вызван: {type(e).__name__}'
+    prichina = ' '.join((p.stdout + ' ' + p.stderr).split())[:300]
+    return (0 if p.returncode == 0 else (p.returncode or 1)), (prichina or 'доставлено')
+
+
+def filtr_html(t):
+    def zamena(m):
+        if m.group(2).lower() in RAZRESHENO and not m.group(3).strip():
+            return m.group(0)
+        return html.escape(m.group(0), quote=False)
+    return re.sub(r'<(/?)([A-Za-z][A-Za-z0-9-]*)([^>]*)>', zamena, t)
+
+
+class Kvota:
+    def __init__(self, put, za10, zasutki):
+        self.put, self.za10, self.zasutki = put, za10, zasutki
+        try:
+            with open(put, encoding='utf-8') as f:
+                self.d = json.load(f)
+        except (OSError, ValueError):
+            self.d = {}
+
+    def sohranit(self):
+        vr = self.put + '.tmp'
+        with open(vr, 'w', encoding='utf-8') as f:
+            json.dump(self.d, f)
+        os.replace(vr, self.put)
+
+    def proverit(self, uid, imya, pervaya_stroka):
+        """→ None (можно) или причина отказа; отметку ставит сама. Сводка — одна на окно 10 мин."""
+        seichas = time.time()
+        z = self.d.setdefault(str(uid), {'t': [], 'svodka_do': 0})
+        z['t'] = [x for x in z['t'] if seichas - x < 86400]
+        za10 = sum(1 for x in z['t'] if seichas - x < 600)
+        if za10 >= self.za10 or len(z['t']) >= self.zasutki:
+            prichina = f'квота учётки {imya}: {self.za10} за 10 мин / {self.zasutki} за сутки'
+            if z['svodka_do'] <= seichas:
+                z['svodka_do'] = seichas + 600
+                self.sohranit()
+                otpravit_pryamo(f'✉ квота спула тревог: учётка {imya} — тревоги сверх {self.za10} за 10 мин / '
+                                f'{self.zasutki} за сутки отбрасываются (следующая сводка — не раньше чем через 10 мин). '
+                                f'Первая отброшенная: {pervaya_stroka[:200]}', plain=True)
+            self.sohranit()
+            return prichina
+        z['t'].append(seichas)
+        self.sohranit()
+        return None
+
+
+def obrabotat(w, kvota):
+    """→ (код, причина, uid)."""
+    st = os.lstat(w)
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+        return 65, 'не обычный файл или лишние жёсткие ссылки — не читаю', st.st_uid
+    fd = os.open(w, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        fs = os.fstat(fd)
+        if (fs.st_dev, fs.st_ino) != (st.st_dev, st.st_ino) or not stat.S_ISREG(fs.st_mode):
+            return 65, 'файл подменён между проверкой и открытием', st.st_uid
+        uid = fs.st_uid
+        dannye = b''
+        while len(dannye) <= PREDEL_BAJT:
+            kusok = os.read(fd, 65536)
+            if not kusok:
+                break
+            dannye += kusok
+    finally:
+        os.close(fd)
+    if len(dannye) > PREDEL_BAJT:
+        return 66, f'больше {PREDEL_BAJT} байт', uid
+    tekst = dannye.decode('utf-8', 'replace')
+    shapka, razdel, telo = tekst.partition('\n\n')
+    polya = dict(s.partition('=')[::2] for s in shapka.split('\n'))
+    fmt = polya.get('format')
+    if not razdel or fmt not in ('html', 'plain') or set(polya) != {'format', 'istochnik'} or not telo.strip():
+        return 65, 'неверный вид файла спула (шапка format/istochnik и текст)', uid
+    imya = uchetka(uid)
+    istochnik = ' '.join(polya['istochnik'].split())[:200]
+    if uid != 0:
+        prichina = kvota.proverit(uid, imya, telo.strip().split('\n')[0])
+        if prichina:
+            return 69, prichina, uid
+    if fmt == 'html':
+        if uid != 0:
+            telo = filtr_html(telo)
+        golova = f'✉ <b>{html.escape(imya)}</b>' + (f' (со слов: {html.escape(istochnik)})' if istochnik else '')
+    else:
+        golova = f'✉ {imya}' + (f' (со слов: {istochnik})' if istochnik else '')
+    kod, prichina = otpravit_pryamo(f'{golova} ·\n{telo}', plain=(fmt == 'plain'))
+    return kod, prichina, uid
+
+
+def zapisat_itog(itog, baza, uid, kod, prichina):
+    vr = os.path.join(itog, f'.{baza}.tmp')
+    with open(vr, 'w', encoding='utf-8') as f:
+        f.write(f'{kod}\n{" ".join(prichina.split())[:300]}\n')
+    os.chown(vr, uid, -1)
+    os.chmod(vr, 0o600)
+    os.replace(vr, os.path.join(itog, baza))
+
+
+def chistka(papka, srok):
+    seichas = time.time()
+    try:
+        for imya in os.listdir(papka):
+            p = os.path.join(papka, imya)
+            try:
+                if seichas - os.lstat(p).st_mtime > srok:
+                    os.unlink(p)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+def prervannye(work, itog):
+    """LOW-2: прежний разбор оборван (TimeoutStartSec) — его *.msg остались в work/. Старше PREDEL_PRERVANNOGO —
+    итог 75 «прерван» владельцу файла и удалить; иначе они висели бы в work/ вечно."""
+    seichas = time.time()
+    for imya in os.listdir(work):
+        if not imya.endswith('.msg'):
+            continue
+        w = os.path.join(work, imya)
+        try:
+            st = os.lstat(w)
+            if seichas - st.st_mtime <= PREDEL_PRERVANNOGO:
+                continue
+            zapisat_itog(itog, imya[:-4], st.st_uid, 75, 'разбор прерван (отправитель оборван), тревога не отправлена')
+            os.unlink(w)
+            zhurnal(f'исход=75 файл={imya} — прерванный разбор, убран из work/')
+        except OSError as e:
+            zhurnal(f'прерванный {imya} не убран: {e.strerror}')
+
+
+def razobrat(S):
+    spul = S['AGENT_ALERT_SPUL']
+    vhod, itog, work, tmp = (os.path.join(spul, x) for x in ('vhod', 'itog', 'work', 'tmp'))
+    os.makedirs(work, mode=0o700, exist_ok=True)
+    os.chmod(work, 0o700)
+    kvota = Kvota(os.path.join(work, 'kvota.json'), int(S['AGENT_ALERT_KVOTA_10MIN']), int(S['AGENT_ALERT_KVOTA_SUTKI']))
+    prervannye(work, itog)
+    for _ in range(1000):
+        imena = sorted(os.listdir(vhod))
+        if not imena:
+            break
+        for imya in imena:
+            if not IMYA_OK.fullmatch(imya) or imya.startswith('.'):
+                w = os.path.join(work, f'nedopustimoe-{time.time_ns()}')
+                try:
+                    os.rename(os.path.join(vhod, imya), w)
+                    os.unlink(w)
+                except OSError:
+                    pass
+                zhurnal(f'исход=65 недопустимое имя во vhod/: {imya!r} — убрано без чтения')
+                continue
+            w = os.path.join(work, imya)
+            try:
+                os.rename(os.path.join(vhod, imya), w)
+            except OSError:
+                continue
+            if imya.endswith('.chk'):
+                os.unlink(w)
+                continue
+            if not imya.endswith('.msg'):
+                os.unlink(w)
+                zhurnal(f'исход=65 файл без .msg во vhod/: {imya} — убран без чтения')
+                continue
+            baza = imya[:-4]
+            try:
+                kod, prichina, uid = obrabotat(w, kvota)
+            except OSError as e:
+                kod, prichina, uid = 65, f'не прочитан: {e.strerror}', 0
+            zhurnal(f'исход={kod} учётка={uchetka(uid)} файл={imya} {prichina[:200]}')
+            try:
+                zapisat_itog(itog, baza, uid, kod, prichina)
+            except OSError as e:
+                zhurnal(f'итог {baza} не записан: {e.strerror}')
+            try:
+                os.unlink(w)
+            except OSError:
+                pass
+    chistka(itog, ZHIZN_ITOGA)
+    chistka(tmp, ZHIZN_ITOGA)
+    return 0
+
+
+def svoj_uid(imya, uid_zapisi):
+    """LOW Вениамина 03:08: «учётка=X» в строке журнала — со слов строки, logger может любая учётка. Верим строке,
+    только если _UID записи (его ставит journald) = uid учётки X; имя не разрешается (DynamicUser вне работы) —
+    только если _UID в диапазоне динамических учёток systemd (обычная учётка его не получит)."""
+    try:
+        return pwd.getpwnam(imya).pw_uid == uid_zapisi
+    except KeyError:
+        return uid_zapisi in DINAMICHESKIE_UID
+
+
+def storozh(S):
+    """Беды — с ключом (ochered, path, zhurnal, …): новый набор ключей — тревога сразу; тот же набор — не чаще
+    POVTOR_STOROZHA; беды ушли — одно «восстановлено». Отметка — work/storozh.otmetka.json (LOW-1 Вениамина)."""
+    spul = S['AGENT_ALERT_SPUL']
+    vhod, work = os.path.join(spul, 'vhod'), os.path.join(spul, 'work')
+    bedy = {}
+    seichas = time.time()
+    try:
+        starye = [i for i in os.listdir(vhod) if seichas - os.lstat(os.path.join(vhod, i)).st_mtime > SVEZHEST_OCHEREDI]
+        if starye:
+            bedy['ochered'] = f'очередь стоит: во {vhod} файлов старше {SVEZHEST_OCHEREDI // 60} мин — {len(starye)}'
+    except OSError as e:
+        bedy['vhod-nechitaem'] = f'{vhod} не читается: {e.strerror}'
+    try:
+        aktiven = subprocess.run(['systemctl', 'is-active', PATH_YUNIT], capture_output=True, text=True,
+                                 timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as e:
+        aktiven = f'не спрошен ({type(e).__name__})'
+    if aktiven != 'active':
+        bedy['path'] = f'{PATH_YUNIT}: {aktiven or "нет ответа"}'
+    kursor = os.path.join(work, 'storozh.kursor')
+    okno = ['--cursor-file', kursor] if os.path.exists(kursor) else ['--since', '-10min', '--cursor-file', kursor]
+    try:
+        p = subprocess.run(['journalctl', '-t', 'agent-alert', '-o', 'json', '--no-pager', *okno],
+                           capture_output=True, text=True, timeout=60)
+        stroki = []
+        for z in p.stdout.splitlines():
+            try:
+                zap = json.loads(z)
+                s = zap.get('MESSAGE', '')
+                if isinstance(s, list):  # не UTF-8 — journald отдаёт байты массивом
+                    s = bytes(s).decode('utf-8', 'replace')
+                uid_zapisi = int(zap.get('_UID', -1))
+            except (ValueError, TypeError):
+                continue
+            m = KLIENT_OTKAZ.match(s)
+            if not m:
+                continue
+            if svoj_uid(m[1], uid_zapisi):
+                stroki.append(s)
+            else:
+                zhurnal(f'чужой uid: строка отказа «учётка={m[1]}» записана uid {uid_zapisi} — не считается: {s[:160]}')
+        if p.returncode != 0:
+            bedy['zhurnal-slep'] = f'журнал agent-alert не прочитан: код {p.returncode}'
+        elif stroki:
+            # ключ по учётке (LOW Вениамина 02:54): общий ключ скрыл бы второго отказавшего отправителя на 6 ч
+            po_uchetkam = {}
+            for s in stroki:
+                m = KLIENT_OTKAZ.match(s)
+                po_uchetkam.setdefault(m[1] if m else '?', []).append(s)
+            for u, ss in po_uchetkam.items():
+                bedy[f'zhurnal:{u}'] = f'отправитель {u} без пути/итога: строк {len(ss)}, последняя: {ss[-1][:200]}'
+    except (OSError, subprocess.SubprocessError) as e:
+        bedy['zhurnal-slep'] = f'журнал не прочитан: {type(e).__name__}'
+    otmetka_put = os.path.join(work, 'storozh.otmetka.json')
+    try:
+        with open(otmetka_put, encoding='utf-8') as f:
+            otmetka = json.load(f)
+    except (OSError, ValueError):
+        otmetka = {'nabor': [], 'kogda': 0}
+    nabor = sorted(bedy)
+    if not bedy:
+        if otmetka.get('nabor'):
+            k, prichina = otpravit_pryamo(f'✅ спул тревог: восстановлено (были: {", ".join(otmetka["nabor"])})', plain=True)
+            if k == 0:
+                zhurnal('спул тревог: восстановлено — сказано один раз')
+                otmetka = {'nabor': [], 'kogda': 0}
+            else:
+                zhurnal(f'спул тревог: «восстановлено» не доставлено ({prichina}) — повтор в следующий прогон')
+        else:
+            zhurnal('спул тревог: чисто')
+        kod = 0
+    else:
+        tekst = '🔴 спул тревог: ' + '; '.join(bedy[k] for k in nabor)
+        zhurnal(tekst)
+        if nabor != otmetka.get('nabor') or seichas - otmetka.get('kogda', 0) >= POVTOR_STOROZHA:
+            k, prichina = otpravit_pryamo(tekst, plain=True)
+            if k == 0:
+                otmetka = {'nabor': nabor, 'kogda': seichas}
+            else:
+                zhurnal(f'тревога сторожа не доставлена ({prichina}) — отметка не ставится, повтор в следующий прогон')
+        else:
+            zhurnal(f'повтор того же набора ({", ".join(nabor)}) подавлен до {POVTOR_STOROZHA // 3600} ч')
+        kod = 1
+    vr = otmetka_put + '.tmp'
+    with open(vr, 'w', encoding='utf-8') as f:
+        json.dump(otmetka, f)
+    os.replace(vr, otmetka_put)
+    return kod
+
+
+def main():
+    a = sys.argv[1:]
+    if a not in ([], ['--storozh']):
+        print('ОТКАЗ: agent-alert-otpravitel [--storozh]', file=sys.stderr)
+        return 2
+    if os.geteuid() != 0:
+        print('СЛЕПОТА: отправитель спула работает только от root (учётку берёт fstat, итог — chown)', file=sys.stderr)
+        return 2
+    try:
+        S = nastrojki.load()
+    except ValueError as e:
+        print(f'dsh-trevogi: {e}', file=sys.stderr)
+        return 2
+    return storozh(S) if a else razobrat(S)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

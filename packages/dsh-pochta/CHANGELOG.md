@@ -1,5 +1,10 @@
 # История изменений dsh-pochta
 
+## 3.1.6 — 14.10.2026 · команда Мастера: +5 ledger в охвате receipt-watch (наряд Забавы 14.10 20:35:04Z; Искра)
+
+- `systemd/receipt-watch.service.d/ohvat.conf`: RECEIPT_LEDGER_PATHS + `/opt/{vintik,shpuntik,gayka,shurup,sova,tumbler}/workspace/.message-receipts/receipts.sqlite` — 18 путей. README: число путей. `mail-stop-hold` не тронут (почтового стопа у команды нет). · Master team: five ledger paths added (17 total); README counts; mail-stop-hold untouched.
+- ⚠️ Ставить ПОСЛЕ появления всех пяти ledger: отсутствующий — СЛЕПОТА, код 2, `receipt-watch-failed` тревожит каждый час. · Install only after all five ledgers exist: a missing one is blindness (exit 2) and an hourly alarm.
+
 ## 3.1.5 — 14.10.2026 · документация: актуальные номера
 
 - README/доки: номера приведены к выпуску (Аврора, ветка nomera-v-dokah, fd070a17); номер пакета +1.

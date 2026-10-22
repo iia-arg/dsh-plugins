@@ -1,6 +1,6 @@
 # dsh-pamyat-obsluzhivanie
 
-**Версия:** 3.1.4
+**Версия:** 3.1.5
 
 ## Назначение · Purpose
 
@@ -72,14 +72,14 @@ Where these end up on the machine:
 
 1. Скопировать `src/heartbeat.py` и `src/prepare_key.py` в `/usr/local/lib/dsh-pamyat-obsluzhivanie/` (`root:root`, 0644). В этот каталог может писать только root.
 2. Скопировать `systemd/dsh-pamyat-obsluzhivanie.service` и `.timer` в `/usr/local/lib/systemd/system/`.
-3. Положить вставку машины с `LoadCredential=alert-token:…`, `LoadCredential=alert-chat:…`, `Environment=AGENTS_REGISTRY=…`, `OBSL_KLYUCH_HOME=…`, `OBSL_KLYUCH_HRANILISHCHE=…`, `OBSL_RUNNER=<путь к src/runner.py>`.
+3. Положить вставку машины с `Environment=AGENTS_REGISTRY=…`, `OBSL_KLYUCH_HOME=…`, `OBSL_KLYUCH_HRANILISHCHE=…`, `OBSL_RUNNER=<путь к src/runner.py>` и доступом службы к спулу тревог `agent-alert` (на sadik — `SupplementaryGroups=agent-button`). Токен бота тревог службе не выдаётся (`LoadCredential` не нужен): `agent-alert` от `omega` токен не читает и сдаёт тревогу в спул, её шлёт root-отправитель (клиентский путь `agent-alert`, B-N-2055).
 4. Выполнить `systemctl daemon-reload` и включить таймер (`systemctl enable --now dsh-pamyat-obsluzhivanie.timer`).
 
 The package is published to npm as `dsh-pamyat-obsluzhivanie`, like every package with a `package.json`; until then it is installed from the local shelf as described below. The license is MIT, Aleksandr Argelander: the `license` field in `package.json` and the `LICENSE` file. `/opt/agent-plugins/package.json` lists it as `file:../agent-plugins-tarbally/dsh-pamyat-obsluzhivanie-<version>.tgz`, and npm installs it into `/opt/agent-plugins/node_modules/` according to `/opt/agent-plugins/package-lock.json`. The version comes from the package's `package.json` and the lock entry. The only npm script in the package is `test`, so npm runs nothing during installation, and the units and root copies are installed separately, by hand:
 
 1. Copy `src/heartbeat.py` and `src/prepare_key.py` to `/usr/local/lib/dsh-pamyat-obsluzhivanie/` (`root:root`, 0644). Only root can write to this directory.
 2. Copy `systemd/dsh-pamyat-obsluzhivanie.service` and `.timer` to `/usr/local/lib/systemd/system/`.
-3. Add a machine drop-in with `LoadCredential=alert-token:…`, `LoadCredential=alert-chat:…`, `Environment=AGENTS_REGISTRY=…`, `OBSL_KLYUCH_HOME=…`, `OBSL_KLYUCH_HRANILISHCHE=…`, `OBSL_RUNNER=<path to src/runner.py>`.
+3. Add a machine drop-in with `Environment=AGENTS_REGISTRY=…`, `OBSL_KLYUCH_HOME=…`, `OBSL_KLYUCH_HRANILISHCHE=…`, `OBSL_RUNNER=<path to src/runner.py>` and service access to the `agent-alert` spool (on sadik — `SupplementaryGroups=agent-button`). The alert bot token is not given to the service (no `LoadCredential`): `agent-alert` running as `omega` cannot read the token and drops the alert into the spool; the root sender delivers it (the `agent-alert` client path, B-N-2055).
 4. Run `systemctl daemon-reload` and enable the timer (`systemctl enable --now dsh-pamyat-obsluzhivanie.timer`).
 
 Как юниты стоят на машине (по `systemctl cat`):
@@ -87,7 +87,7 @@ The package is published to npm as `dsh-pamyat-obsluzhivanie`, like every packag
 - `dsh-pamyat-obsluzhivanie.service` — `static`, `Type=oneshot`, `User=omega`, `Group=omega`.
   - `ExecStartPre=+/usr/bin/python3 -I -S -B /usr/local/lib/dsh-pamyat-obsluzhivanie/prepare_key.py prepare`; `ExecStopPost=+… prepare_key.py remove`. Обе команды выполняются от root.
   - `ExecStart=/opt/omega/venv/bin/python3 -B ${OBSL_RUNNER} --run`. `OBSL_RUNNER=/opt/agent-plugins/node_modules/dsh-pamyat-obsluzhivanie/src/runner.py` задан в `20-ferma.conf`.
-  - Юнит задаёт `DEEPSEEK_CREDENTIAL_FILE=/run/dsh-pamyat-obsluzhivanie-key/deepseek`, `AGENT_ALERT_TOKEN_FILE=%d/alert-token`, `AGENT_ALERT_CHAT_FILE=%d/alert-chat`, `HOME=/var/lib/omega`, `OMEGA_HOME=/var/lib/omega/.omega`, `OMEGA_EMBEDDING_*` (модель `bge-m3`, размер 1024), `HF_HUB_OFFLINE=1`, `OMEGA_RERANKER_AUTODOWNLOAD=0`, `PYTHONDONTWRITEBYTECODE=1`, `OPENBLAS_NUM_THREADS=1`.
+  - Юнит задаёт `DEEPSEEK_CREDENTIAL_FILE=/run/dsh-pamyat-obsluzhivanie-key/deepseek`, `HOME=/var/lib/omega`, `OMEGA_HOME=/var/lib/omega/.omega`, `OMEGA_EMBEDDING_*` (модель `bge-m3`, размер 1024), `HF_HUB_OFFLINE=1`, `OMEGA_RERANKER_AUTODOWNLOAD=0`, `PYTHONDONTWRITEBYTECODE=1`, `OPENBLAS_NUM_THREADS=1`.
   - Пределы и защита: `TimeoutStartSec=60min`, `TimeoutStopSec=90s`, `MemoryMax=4G`, `Nice=10`, `KillMode=control-group`, `Restart=no`, `UMask=0077`, `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=full`, `StateDirectoryMode=0700`.
   - Файл `/usr/local/lib/systemd/system/dsh-pamyat-obsluzhivanie.service` побайтно совпадает с `systemd/dsh-pamyat-obsluzhivanie.service`. Данные машины приходят только из вставок.
 - `dsh-pamyat-obsluzhivanie.timer` — `enabled`, `OnCalendar=*-*-* 04:00:00 Europe/Moscow`, `Persistent=true`, `AccuracySec=1min`, `WantedBy=timers.target`. Совпадает с `systemd/dsh-pamyat-obsluzhivanie.timer`.
@@ -97,7 +97,7 @@ How the units are set up on the machine (per `systemctl cat`):
 - `dsh-pamyat-obsluzhivanie.service` — `static`, `Type=oneshot`, `User=omega`, `Group=omega`.
   - `ExecStartPre=+/usr/bin/python3 -I -S -B /usr/local/lib/dsh-pamyat-obsluzhivanie/prepare_key.py prepare`; `ExecStopPost=+… prepare_key.py remove`. Both run as root.
   - `ExecStart=/opt/omega/venv/bin/python3 -B ${OBSL_RUNNER} --run`. `OBSL_RUNNER=/opt/agent-plugins/node_modules/dsh-pamyat-obsluzhivanie/src/runner.py` comes from `20-ferma.conf`.
-  - The unit sets `DEEPSEEK_CREDENTIAL_FILE=/run/dsh-pamyat-obsluzhivanie-key/deepseek`, `AGENT_ALERT_TOKEN_FILE=%d/alert-token`, `AGENT_ALERT_CHAT_FILE=%d/alert-chat`, `HOME=/var/lib/omega`, `OMEGA_HOME=/var/lib/omega/.omega`, `OMEGA_EMBEDDING_*` (model `bge-m3`, dimension 1024), `HF_HUB_OFFLINE=1`, `OMEGA_RERANKER_AUTODOWNLOAD=0`, `PYTHONDONTWRITEBYTECODE=1`, `OPENBLAS_NUM_THREADS=1`.
+  - The unit sets `DEEPSEEK_CREDENTIAL_FILE=/run/dsh-pamyat-obsluzhivanie-key/deepseek`, `HOME=/var/lib/omega`, `OMEGA_HOME=/var/lib/omega/.omega`, `OMEGA_EMBEDDING_*` (model `bge-m3`, dimension 1024), `HF_HUB_OFFLINE=1`, `OMEGA_RERANKER_AUTODOWNLOAD=0`, `PYTHONDONTWRITEBYTECODE=1`, `OPENBLAS_NUM_THREADS=1`.
   - Limits and hardening: `TimeoutStartSec=60min`, `TimeoutStopSec=90s`, `MemoryMax=4G`, `Nice=10`, `KillMode=control-group`, `Restart=no`, `UMask=0077`, `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=full`, `StateDirectoryMode=0700`.
   - The file `/usr/local/lib/systemd/system/dsh-pamyat-obsluzhivanie.service` is byte-identical to `systemd/dsh-pamyat-obsluzhivanie.service`. Machine data comes only from drop-ins.
 - `dsh-pamyat-obsluzhivanie.timer` — `enabled`, `OnCalendar=*-*-* 04:00:00 Europe/Moscow`, `Persistent=true`, `AccuracySec=1min`, `WantedBy=timers.target`. Identical to `systemd/dsh-pamyat-obsluzhivanie.timer`.
@@ -132,12 +132,12 @@ Environment variables the code reads:
 
 Код пакета сам не читает следующие переменные. Их задаёт юнит, а получают дочерние процессы или пакет `omega`:
 - `OBSL_RUNNER` читает systemd (`ExecStart`).
-- `AGENT_ALERT_TOKEN_FILE` и `AGENT_ALERT_CHAT_FILE` читает `/usr/local/bin/agent-alert`.
+- Тревоги: `/usr/local/bin/agent-alert` берёт пути токена и чата из своей настройки (`/etc/dsh-trevogi/dsh-trevogi.conf`), юнит их не задаёт (3.1.5); учётке `omega` токен не читается — тревога идёт через спул.
 - `HOME`, `OMEGA_HOME`, `OMEGA_EMBEDDING_*`, `HF_HUB_OFFLINE`, `OMEGA_RERANKER_AUTODOWNLOAD` читает пакет `omega`. Писатель уроков принимает только вектор длины 1024 (`lessons_store.checked_embedding`).
 
 The package code does not read the following variables itself. The unit sets them, and child processes or the `omega` package use them:
 - systemd reads `OBSL_RUNNER` (`ExecStart`).
-- `/usr/local/bin/agent-alert` reads `AGENT_ALERT_TOKEN_FILE` and `AGENT_ALERT_CHAT_FILE`.
+- Alerts: `/usr/local/bin/agent-alert` takes the token and chat paths from its own settings (`/etc/dsh-trevogi/dsh-trevogi.conf`); the unit no longer sets them (3.1.5); the `omega` account cannot read the token, so the alert goes through the spool.
 - The `omega` package reads `HOME`, `OMEGA_HOME`, `OMEGA_EMBEDDING_*`, `HF_HUB_OFFLINE` and `OMEGA_RERANKER_AUTODOWNLOAD`. The lesson writer accepts only vectors of length 1024 (`lessons_store.checked_embedding`).
 
 Файлы:

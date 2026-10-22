@@ -23,6 +23,17 @@ if [ "$route_ready" -ne 1 ]; then
   exit 1
 fi
 
+# 15.10.2026 (Михалыч; находка 15 строк sadik-reply в mangle, подтверждена Забавой uniq -c): зовущих семь — sadik-set,
+# NM 50-sadik-set, ExecStartPost четырёх awg-quick, — и они идут ОДНОВРЕМЕННО (загрузка, событие NM). «Снять все с меткой → -A»
+# не атомарно: два экземпляра оба снимают, оба добавляют → копии копятся. С этого места — один экземпляр за раз.
+# Замок ПОСЛЕ ожидания шлюза (LOW Вениамина 15.10): цикл B-N-1242 идемпотентен и держит до 79 с — под замком он заставил бы
+# остальных уйти по таймауту, и правил не поставил бы никто. Здесь замок держится доли секунды; 60 с — с большим запасом.
+exec 9>/run/sadik-reply-routing.lock
+if ! flock -w 60 9; then
+  echo "ОТКАЗ: другой sadik-reply-routing держит /run/sadik-reply-routing.lock дольше 60 с — правила не меняю" >&2
+  logger -t sadik-reply-routing "ОТКАЗ: блокировка занята дольше 60 с"; exit 1
+fi
+
 # сносим ВСЕ правила этих трёх ролей, где бы awg-quick их ни поставил
 while ip rule del priority "$P_REPLY" 2>/dev/null; do :; done
 for p in $(ip rule show | grep -E "suppress_prefixlength|lookup $TUN_TABLE" | grep -oP '^\K[0-9]+'); do
@@ -77,7 +88,9 @@ for CH in PREROUTING OUTPUT; do
     iptables -t mangle -D "$CH" "$N" || break
   done
 done
-iptables -t mangle -A PREROUTING -i "$EXT_IF" -m conntrack --ctstate NEW -j CONNMARK --set-mark "$MARK" -m comment --comment "$TAG"
+# 15.10.2026 (Михалыч; замер bclaude → 5.17.7.155:38888 — 4 SYN, ни одного SYN-ACK): соседей по стойке (5.17.7.144/28) НЕ метим.
+# Иначе ответ соседу уходит по правилу 40 (раньше 50 «соседи напрямую») через шлюз .145, а тот в сегмент не разворачивает.
+iptables -t mangle -A PREROUTING -i "$EXT_IF" ! -s 5.17.7.144/28 -m conntrack --ctstate NEW -j CONNMARK --set-mark "$MARK" -m comment --comment "$TAG"
 iptables -t mangle -A PREROUTING -j CONNMARK --restore-mark -m comment --comment "$TAG"
 # 2026-08-16 (Михалыч): "-m connmark ! --mark 0x0" ОБЯЗАТЕЛЕН. Без него restore-mark
 # затирал НУЛЁМ метку 0xa2c9, поставленную nft ru_split (у нового исходящего соединения

@@ -17,11 +17,14 @@ if [ "$#" = 1 ]; then
 else TOOL=${SMV_TOOL:-/usr/local/sbin/smontirovat-vypusk}; fi
 [ "$(id -u)" = 0 ] || { echo "СЛЕПОТА: нужен root для синтетической пробы UID/GID"; exit 2; }
 MODE_TEST=$(dirname -- "$0")/smv-atomic-probe.py
+FIXTURE=$(dirname -- "$0")/smv_fixture.py
+[ -r "$FIXTURE" ] || { echo "СЛЕПОТА: нет fixture $FIXTURE"; exit 2; }
+SOURCE_GIT=(sudo -n -u "$(stat -c %U /opt/iskra/workspace/dsh-plugins)" git -C /opt/iskra/workspace/dsh-plugins)
 [ -r "$MODE_TEST" ] || { echo "СЛЕПОТА: нет helper $MODE_TEST"; exit 2; }
 [ -r "$TOOL" ] || { echo "СЛЕПОТА: предмета нет: $TOOL"; exit 2; }
 grep -q 'SMV_MONTAZH' "$TOOL" || { echo "СЛЕПОТА: предмет не знает SMV_MONTAZH — прогон задел бы /var/backups/montazh; не запускаю"; exit 2; }
 M=telegram-multiagent-v2.5.81; P=packages/telegram-multiagent
-git -C /opt/iskra/workspace/dsh-plugins rev-parse -q --verify "$M^{commit}" >/dev/null || { echo "СЛЕПОТА: метки $M в дереве нет"; exit 2; }
+"${SOURCE_GIT[@]}" rev-parse -q --verify "$M^{commit}" >/dev/null || { echo "СЛЕПОТА: метки $M в дереве нет"; exit 2; }
 W=$(mktemp -d /tmp/stend-smv-rez-XXXXXX) || exit 2
 trap 'rm -rf "$W"' EXIT
 # B-N-2046: окна монтажа и замок — ЧАСТНЫЕ. С B-N-2025 smontirovat-vypusk берёт ${SMV_ZAMOK:-/run/lock/smontirovat-fajly.lock} и
@@ -30,7 +33,7 @@ trap 'rm -rf "$W"' EXIT
 export MO_STATE_DIR=$W/okna SMV_ZAMOK=$W/zamok; mkdir -m 0755 "$MO_STATE_DIR" || exit 2
 zel=0; kras=0
 ok(){ echo "✅ $1"; zel=$((zel+1)); }; no(){ echo "❌ $1"; kras=$((kras+1)); }
-run(){ rm -f "$MO_STATE_DIR"/*.json; (umask 002; SMV_MONTAZH=$W/mont SMF_RUKA='Stend <stend@sadik>' bash "$1" "$M" "$P" "$2" --v-boj "$3" > "$W/out-$3" 2>&1); echo $?; }
+run(){ rm -f "$MO_STATE_DIR"/*.json; (umask 002; SMV_MONTAZH=$W/mont SMF_RUKA='Stend <stend@sadik>' python3 -B "$FIXTURE" "$W" "$1" "$M" "$P" "$2" -- "$M" "$P" "$2" --v-boj "$3" > "$W/out-$3" 2>&1); echo $?; }
 rezhimy(){ (cd "$1" && find . -type f -printf '%m\n' | sort | uniq -c | tr -s ' ' | tr '\n' ' '); }
 echo "== стенд прав smontirovat-vypusk $(date -u +%H:%M:%SZ) · предмет $(sha256sum "$TOOL" | cut -c1-8)"
 

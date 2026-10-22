@@ -6,6 +6,9 @@
 Offset сохраняется до исполнения. Новые пути: точные sudo systemctl start --wait
 sadik-switch@a/b.service; root-исполнитель пишет результат в /var/lib/sadik-switch.
 Токен только из файла, не в argv. SADIK_* подменяются только с SADIK_STEND=1.
+B-N-2055 №1 (слово владельца 15.10 01:40 МСК): свой бот @arg_dsh_switch_bot и свой токен /etc/dsh-switch.token —
+не бот тревог: токен тревог читают многие учётки, а getUpdates этого бота — команды владельца. Offset — свой файл
+(нумерация update_id у каждого бота своя). Токен бота тревог приёмник больше не читает.
 Числовой интерфейс ispolnit сохранён для прежнего стенда, из Telegram не вызывается.
 """
 import json, os, subprocess, sys, time, urllib.parse, urllib.request, urllib.error
@@ -14,9 +17,9 @@ import json, os, subprocess, sys, time, urllib.parse, urllib.request, urllib.err
 # «ПОДМЕНЕНО: <имена>»; без ключа SADIK_* игнорируются (строка «ИГНОРИРУЮ» в stderr), берутся боевые значения;
 # иное значение ключа — отказ кодом 2 до любых действий. Юнит sadik-komandy SADIK_* не подаёт (Environment пуст).
 BOJ = {
-    "SADIK_BOT_TOKEN_FILE": "/etc/dsh-alert.token",
+    "SADIK_BOT_TOKEN_FILE": "/etc/dsh-switch.token",
     "SADIK_OWNER_FILE": "/etc/vladelec/telegram-id",
-    "SADIK_OFFSET_FILE": "/var/lib/sadik-komandy/offset",
+    "SADIK_OFFSET_FILE": "/var/lib/sadik-komandy/offset-switch-bot",
     "SADIK_UNIT_PREFIX": "pereklyuchatel-podpiski@",
     "SADIK_ITOG_FILE": "/var/lib/pereklyuchatel-podpiski/last-itog.txt",
     "SADIK_SYSTEMCTL": "/usr/bin/systemctl",
@@ -114,6 +117,7 @@ def send(tok, chat, text):
 # Слово владельца 03.10 20:55 МСК: пара для Codex — /switch-2 без проверок (toggle-force), /switch-b с проверкой живости цели.
 # B-N-1499 (слово владельца 03.10 21:10 МСК, решение Забавы 18:15Z): /sss и /sss_on — выключатель чата сайта ↔ Варвара,
 # независимый от процесса Варвары (тот же файл-состояние, что /sss в её чате). LOW Вениамина 18:06Z: «без проверки живости».
+BOT_IMYA = "@arg_dsh_switch_bot"   # суффикс команды «/switch-1@<бот>» — имя СВОЕГО бота (B-N-2055 №1)
 KOMANDY = {"/switch-1": "1", "/switch-a": "a", "/switch-2": "2", "/switch-b": "b", "/sss": "sss", "/sss_on": "sss-on"}
 PODSKAZKA = ("Команды без аргументов (переключения — туда-обратно):\n"
              "/switch-1 — Claude по кругу 1→2→3→1 без проверки живости\n"
@@ -130,8 +134,8 @@ def razobrat(text):
     if not parts:
         return None
     command = parts[0]
-    if command.endswith("@arg_dsh_alert_bot"):
-        command = command.removesuffix("@arg_dsh_alert_bot")
+    if command.endswith(BOT_IMYA):
+        command = command.removesuffix(BOT_IMYA)
     if command not in KOMANDY:
         return "usage"
     return [KOMANDY[command]] if len(parts) == 1 else "usage"

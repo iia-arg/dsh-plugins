@@ -1,0 +1,9 @@
+[Unit]
+Description=Autopilot: check key every60 seconds
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=60
+AccuracySec=1s
+Unit=dsh-autopilot-key-check.service
+[Install]
+WantedBy=timers.target

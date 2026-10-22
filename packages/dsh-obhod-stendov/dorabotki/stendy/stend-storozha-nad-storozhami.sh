@@ -50,6 +50,16 @@ progon() { rm -f "$T/trevogi"; sudo -n env PATH="$T/shim:/usr/local/sbin:/usr/lo
   SADIK_WATCH_SOST="$T/sost" SADIK_ALERT_BIN="${ALERT_BIN:-$T/alert}" SADIK_A2A_BIN="$T/a2a" SADIK_SUTOCHNYE="${1:-$T/perechen}" "$SW" > "$T/vyvod" 2>&1; }
 sud() { if [ "$2" = ok ]; then ok=$((ok+1)); echo "  ok    $1"; else bad=$((bad+1)); echo "  FAIL  $1 — $3"; fi; }
 est() { grep -qF -- "$1" "$2" 2>/dev/null; }
+# B-N-2064 (3), 15.10: счёт полноты — ЧИСЛАМИ по имени поля из последней строки «наших таймеров», а не строкой целиком:
+#   sadik-watch с 13.10 вставил между полями «замаскировано N» и «служба не определена N» — строка разошлась, числа верны.
+#   Поля нет — пусто ≠ числу → FAIL (не молчаливый проход). ЧЕГО НЕ ЛОВИТ: новые поля счёта — их стенд не судит.
+schet_polnoty() {  # ФАЙЛ НАШИХ ИСКЛЮЧЕНО БЕЗ_СТРОКИ
+  local s; s=$(grep -a 'наших таймеров' "$1" 2>/dev/null | tail -1)
+  [ -n "$s" ] &&
+  [ "$(sed -n 's/.*наших таймеров \([0-9][0-9]*\).*/\1/p' <<<"$s")" = "$2" ] &&
+  [ "$(sed -n 's/.*исключено «!» \([0-9][0-9]*\).*/\1/p' <<<"$s")" = "$3" ] &&
+  [ "$(sed -n 's/.*без строки \([0-9][0-9]*\).*/\1/p' <<<"$s")" = "$4" ]
+}
 # 1 оба свежие
 printf 'proba-a.service %s\nproba-b.service %s\n' $((SEY-3600)) $((SEY-7200)) > "$T/ts"; : > "$T/failed"; progon
 ! est "СТОРОЖ НАД СТОРОЖАМИ" "$T/vyvod" && ! est "СТОРОЖ НАД СТОРОЖАМИ" "$T/trevogi" && est "суточный сторож proba-a.service: прогон состоялся 1 ч назад" "$T/vyvod" \
@@ -92,13 +102,13 @@ rm -f "$T/a2a-kod"; rm -rf "$T/sost"; mkdir -p "$T/sost"
 rm -rf "$T/sost"; mkdir -p "$T/sost"; : > "$T/failed"
 printf 'proba-a.service %s\nproba-b.service %s\n' $((SEY-3600)) $((SEY-3600)) > "$T/ts"
 tajmery proba-a /etc/systemd/system proba-b /etc/systemd/system proba-c /etc/systemd/system; progon
-est "proba-c.service — таймер proba-c.timer наш (/etc/systemd/system/proba-c.timer), строки в перечне НЕТ" "$T/trevogi" && est "наших таймеров 3 · исключено «!» 0 · без строки 1" "$T/vyvod" \
+est "proba-c.service — таймер proba-c.timer наш (/etc/systemd/system/proba-c.timer), строки в перечне НЕТ" "$T/trevogi" && schet_polnoty "$T/vyvod" 3 0 1 \
   && sud "11 наш таймер без строки — тревога с именем, счёт 3/0/1" ok || sud "11 полнота" fail "$(grep -a 'полнота' "$T/vyvod" | head -1) | $(head -c 200 "$T/trevogi" 2>/dev/null)"
 cp "$T/perechen" "$T/perechen-isk"; echo '!proba-c.service проба стенда' >> "$T/perechen-isk"; rm -rf "$T/sost"; mkdir -p "$T/sost"; progon "$T/perechen-isk"
-! est "строки в перечне НЕТ" "$T/trevogi" && ! est "строки в перечне НЕТ" "$T/vyvod" && ! est "строка перечня негодна" "$T/vyvod" && est "наших таймеров 3 · исключено «!» 1 · без строки 0" "$T/vyvod" \
+! est "строки в перечне НЕТ" "$T/trevogi" && ! est "строки в перечне НЕТ" "$T/vyvod" && ! est "строка перечня негодна" "$T/vyvod" && schet_polnoty "$T/vyvod" 3 1 0 \
   && sud "11б «!proba-c.service причина» — молчит, «!»-строка не судится как срок" ok || sud "11б исключение" fail "$(grep -a 'полнота\|негодна\|НЕТ' "$T/vyvod" | head -2)"
 tajmery proba-a /etc/systemd/system proba-b /etc/systemd/system proba-c /usr/lib/systemd/system; rm -rf "$T/sost"; mkdir -p "$T/sost"; progon
-! est "строки в перечне НЕТ" "$T/trevogi" && est "наших таймеров 2 · исключено «!» 0 · без строки 0" "$T/vyvod" \
+! est "строки в перечне НЕТ" "$T/trevogi" && schet_polnoty "$T/vyvod" 2 0 0 \
   && sud "11в чужой таймер (/usr/lib) без строки — молчит" ok || sud "11в чужой" fail "$(grep -a 'полнота' "$T/vyvod" | head -1)"
 : > "$T/tajmery"; : > "$T/fragmenty"; rm -rf "$T/sost"; mkdir -p "$T/sost"; progon
 est "полнота перечня НЕ проверена: список таймеров пуст" "$T/trevogi" && sud "11г список таймеров пуст — тревога-слепота, не «всё внесено»" ok || sud "11г слепота" fail "$(head -c 200 "$T/trevogi" 2>/dev/null)"

@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat-obsluzhivanie",
-  "version": "3.1.4",
+  "version": "3.1.5",
   "description": "Ночное обслуживание памяти агентов: счёт, перенос уроков, судья-модель только с предложениями, сухая чистка, heartbeat · Nightly agent-memory maintenance: count, lesson transfer, proposal-only judge model, dry cleanup, heartbeat",
   "keywords": [
     "dsh",

@@ -1,0 +1,45 @@
+{
+  "at": "2026-10-20T15:45:31.737850+00:00",
+  "machine": "sadik",
+  "hand": "gamma",
+  "note": "same installed executable, isolated new process, not historical gateway child or live subscription",
+  "results": [
+    {
+      "label": "gateway-default",
+      "originatorOverride": "codex_sdk_ts",
+      "rc": 0,
+      "userAgent": "codex_sdk_ts/0.162.1 (Ubuntu 24.4.0; x86_64) unknown (subscription-gateway; 3.1.9)",
+      "replySHA256": "2cef51db7ec215bcaf842096e7bd6023ed6f234adff72ad05b208e4a4a814f65",
+      "stdoutLines": 2,
+      "stderrBytes": 178,
+      "noNetwork": true,
+      "home": "private tmpfs",
+      "methods": [
+        "initialize"
+      ]
+    },
+    {
+      "label": "no-override",
+      "originatorOverride": null,
+      "rc": 0,
+      "userAgent": "subscription-gateway/0.162.1 (Ubuntu 24.4.0; x86_64) unknown (subscription-gateway; 3.1.9)",
+      "replySHA256": "bb4e7deff2f178284ee6f5e83174d28a93e26e6c815d15abe93629ca67f40d87",
+      "stdoutLines": 2,
+      "stderrBytes": 178,
+      "noNetwork": true,
+      "home": "private tmpfs",
+      "methods": [
+        "initialize"
+      ]
+    },
+    {
+      "label": "external-override",
+      "originatorOverride": "ap014_external",
+      "userAgent": "ap014_external/0.162.1 (Ubuntu 24.4.0; x86_64) unknown (subscription-gateway; 3.1.10)",
+      "at": "2026-10-20T17:20:39.831Z",
+      "source": "actual installed CLI0.162.1, isolated local provider-sink, after clientVersion3.1.10",
+      "sourceEvidenceSHA256": "0c64d87f15e7ef6e7f0ea2adf4301a2ebce6c676b6460e88066dc451cd052603",
+      "noExternalNetwork": true
+    }
+  ]
+}

@@ -61,9 +61,12 @@ inline-game/inaccessible callback не разрешают публикацию. 
 20сек long poll, HTTP срок25сек, ответ≤2MiB. Временная неудача getUpdates не
 останавливает worker: status.telegram.reason=poll_failed, в журнале один раз
 telegram_poll_degraded, опрос повторяется с отступом 1/2/4/8/16сек (потолок16сек),
-после удачи — telegram_poll_recovered. halted до ручного перезапуска дают только
-401/403/409, негодная пачка updates (invalid_update_batch) и непредвиденный сбой
-цикла (worker_failed). При halted
+после удачи — telegram_poll_recovered. 409 на getUpdates (с 3.1.10) — сначала повтор:
+событие telegram_poll_conflict (attempt, limit), пауза 30сек (больше HTTP срока опроса), halted —
+на третьем 409 подряд; счёт обнуляет только удачный опрос. halted до ручного перезапуска дают только
+401/403, третий 409 подряд, негодная пачка updates (invalid_update_batch) и непредвиденный сбой
+цикла (worker_failed). telegram_halted и telegram_poll_degraded несут error_code и description
+ответа Telegram (до 200 знаков) или kind транспортного сбоя. При halted
 MCP/status продолжает отвечать. Журнал содержит ID action/тип/состояние,
 не текст/токен/URL с токеном. Один tick берёт максимум20 карточек/10 отправок.
 

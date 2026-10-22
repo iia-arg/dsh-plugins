@@ -1,0 +1,5 @@
+# E05: отдельный AP fragment systemd-tmpfiles, не замена общего ACL-файла.
+# Заполни __POSTMAN_UNIX__ по INSTALL-NOTES.md; затем установи fragment
+# root:root0644 и вызови systemd-tmpfiles --create только для него.
+a+ /var/spool/dsh-trevogi/tmp  - - - - u:__POSTMAN_UNIX__:wx
+a+ /var/spool/dsh-trevogi/vhod - - - - u:__POSTMAN_UNIX__:wx

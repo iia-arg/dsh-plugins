@@ -15,6 +15,7 @@ function cancellationReturn(row,ledger,{spoolDir,a2aDir,remoteReturnRecipients={
   const first=envelope?.text?.replace(/^From:\s*\S+\r?\n/,'').split('\n')[0];
   if(envelope?.expectsReply===false&&/^письмо [a-f0-9-]{36} от .+(?: отменено командой \/new владельца, не исполнялось|: ход ранее прерван; дальнейшее исполнение отменено командой \/new владельца)\.$/u.test(first??''))return {kind:'none',reason:'квитанция на квитанцию не создаётся'};
   if(envelope?.expectsReply===false&&/^агент на паузе(?: по \/stop с [^,\n]+)?, письмо [a-f0-9-]{36} в очереди[;( ]/u.test(first??''))return {kind:'none',reason:'квитанция на квитанцию не создаётся'};
+  if(envelope?.expectsReply===false&&/^письмо [a-f0-9-]{36} НЕ исполнено: удержано replace-STOP /u.test(first??''))return {kind:'none',reason:'квитанция на квитанцию не создаётся'};
   const origin=ledger.db.prepare('SELECT path FROM sources WHERE receipt_id=? ORDER BY rowid LIMIT 1').get(row.id)?.path;
   const sender=row.sender;
   if(inside(spoolDir,origin)&&/^[a-z][a-z0-9_-]*$/.test(sender??'')&&sender!==sharedSenderName)return {kind:'local',recipient:sender};

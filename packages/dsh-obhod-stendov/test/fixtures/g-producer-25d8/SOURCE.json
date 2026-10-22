@@ -1,0 +1,23 @@
+{
+  "commit": "25d8092059192ee3a456d99fd7e91123955d21cb",
+  "repo": "/opt/coders/gamma/workspace/AP010-G-WRITER-LIMITS-ONLY-20261018/repo",
+  "subdir": "packages/dsh-subscription-gateway",
+  "files": [
+    {
+      "path": "usage-producer.mjs",
+      "sha256": "10dd152e64cbaef7eb993f4f075cc0670691a6fa06c4e4bd28d2a42f903ad220"
+    },
+    {
+      "path": "usage-segments.mjs",
+      "sha256": "749afa2d12471757616d0cf5b1444420a3b527a988f230923223b5dd1137561a"
+    },
+    {
+      "path": "usage-limits.json",
+      "sha256": "84d88b527afbc003f5931e90b1c43cd1be134e5c8d982773b4b1edde2282e0d4"
+    },
+    {
+      "path": "engine-process.mjs",
+      "sha256": "d927f22800a84f2a77df27e23051a059ac136958e5912e1378be84d8d38dfb1c"
+    }
+  ]
+}

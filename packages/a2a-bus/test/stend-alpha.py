@@ -7,12 +7,14 @@ All writes/transport/logger use private fixtures; missing prerequisites exit 2.
 import os,sys,pathlib,tempfile,subprocess,json,pwd,hashlib,importlib.util,unittest,shutil
 sys.dont_write_bytecode=True
 PACKAGE=pathlib.Path(os.environ.get('M08_PACKAGE', pathlib.Path(__file__).resolve().parents[1])).resolve()
+# B-N-2071: agent-registry и шаблоны раскладки — в соседнем пакете dsh-reestr (реестр агентов отделён от почты).
+REESTR_PKG=pathlib.Path(os.environ.get('M08_REESTR_PACKAGE', PACKAGE.parent/'dsh-reestr')).resolve()
 def blind(reason):
  print('СЛЕПОТА: '+reason,file=sys.stderr);raise SystemExit(2)
 if importlib.util.find_spec('yaml') is None:blind('нужен python3-yaml')
 if os.geteuid()!=0:blind('нужен root для проверки root-почтальона в частном каталоге')
 V2_SOURCE=pathlib.Path(os.environ.get('STEND_A2A_V2_SOURCE', PACKAGE.parent/'dsh-pochta/libexec/a2a-v2.py')).resolve()
-for source in [PACKAGE/'bin/agent-registry', PACKAGE/'bin/a2a-send', PACKAGE/'sbin/a2a-pochtalon.py', PACKAGE/'lib/a2a-bus/outgoing_mirror.py', PACKAGE/'lib/a2a-bus/v2_with_mirror.py', V2_SOURCE]:
+for source in [REESTR_PKG/'bin/agent-registry', PACKAGE/'bin/a2a-send', PACKAGE/'sbin/a2a-pochtalon.py', PACKAGE/'lib/a2a-bus/outgoing_mirror.py', PACKAGE/'lib/a2a-bus/v2_with_mirror.py', V2_SOURCE]:
  if not source.is_file() or not os.access(source,os.R_OK):blind('источник не читается: '+str(source))
 
 class Audit(unittest.TestCase):
@@ -30,14 +32,14 @@ with open(os.environ['M08_NOTICE'],'a') as f:f.write(json.dumps({'kind':kind,'bo
 '''
   for name in ['tell','alert','sudo','logger']:
    p=shim/name;p.write_text(transport);p.chmod(0o755)
-  self.env={'PATH':str(shim)+':/usr/local/bin:/usr/bin:/bin','HOME':str(self.home),'DSH_HOME':str(self.home/'.dsh'),'LC_ALL':'C.UTF-8','AGENTS_REGISTRY':str(self.registry),'A2A_REESTR_BIN':str(PACKAGE/'bin/agent-registry'),'A2A_TELL_BIN':str(shim/'tell'),'A2A_ALERT_BIN':str(shim/'alert'),'M08_NOTICE':str(self.log),'M08_USER':self.user}
+  self.env={'PATH':str(shim)+':/usr/local/bin:/usr/bin:/bin','HOME':str(self.home),'DSH_HOME':str(self.home/'.dsh'),'LC_ALL':'C.UTF-8','AGENTS_REGISTRY':str(self.registry),'A2A_REESTR_BIN':str(REESTR_PKG/'bin/agent-registry'),'A2A_TELL_BIN':str(shim/'tell'),'A2A_ALERT_BIN':str(shim/'alert'),'M08_NOTICE':str(self.log),'M08_USER':self.user}
  def save(self):self.registry.write_text(json.dumps(self.data))
  def send(self,text='body',args=None,cwd=None):
   self.save();return subprocess.run(['bash',str(PACKAGE/'bin/a2a-send'),'target',*(args or [])],input=text,text=True,capture_output=True,env=self.env,cwd=cwd or self.home/'workspace',timeout=20)
  def notices(self):return [json.loads(s) for s in self.log.read_text().splitlines() if json.loads(s)['kind']=='tell'] if self.log.exists() else []
  def visible(self):return list(self.box.glob('*.txt'))
  def module(self):
-  spec=importlib.util.spec_from_file_location('postman'+str(id(self)),PACKAGE/'sbin/a2a-pochtalon.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);m.REESTR=str(PACKAGE/'bin/agent-registry');return m
+  spec=importlib.util.spec_from_file_location('postman'+str(id(self)),PACKAGE/'sbin/a2a-pochtalon.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);m.REESTR=str(REESTR_PKG/'bin/agent-registry');return m
  def test_06_missing_channel_keeps_legacy_notice(self):
   del self.data['agenty'][0]['namerenie']['kanal'];r=self.send();self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(len(self.visible()),1);self.assertEqual(len(self.notices()),1)
  def test_06_unknown_irregular_home_skips(self):
@@ -81,18 +83,18 @@ with open(os.environ['M08_NOTICE'],'a') as f:f.write(json.dumps({'kind':kind,'bo
   def go(body):return subprocess.run(['bash',str(PACKAGE/'bin/a2a-send'),'--v2'],input=body,text=True,capture_output=True,env=self.env,cwd=self.home/'workspace',timeout=10)
   r=go('x'*600);self.assertEqual(r.returncode,3,r.stderr);self.assertEqual(list(self.box.iterdir()),[]);r=go('hello');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(len(self.visible()),1)
  def test_10_shared_account_never_first_agent(self):
-  self.data['agenty'].append({'imya':'second','namerenie':{'polzovatel':self.user}});self.save();r=subprocess.run([str(PACKAGE/'bin/agent-registry'),'kto',self.user],env=self.env,capture_output=True,text=True);self.assertEqual(r.returncode,3);self.assertEqual(r.stdout,'')
+  self.data['agenty'].append({'imya':'second','namerenie':{'polzovatel':self.user}});self.save();r=subprocess.run([str(REESTR_PKG/'bin/agent-registry'),'kto',self.user],env=self.env,capture_output=True,text=True);self.assertEqual(r.returncode,3);self.assertEqual(r.stdout,'')
   m=self.module();old=os.environ.get('AGENTS_REGISTRY');os.environ['AGENTS_REGISTRY']=str(self.registry)
   try:self.assertEqual(m.imya_agenta(self.user),self.user)
   finally:
    if old is None:os.environ.pop('AGENTS_REGISTRY')
    else:os.environ['AGENTS_REGISTRY']=old
  def test_10_unique_account_and_unknown(self):
-  self.data['agenty'][1]['namerenie']['polzovatel']='receiver-fixture';self.save();r=subprocess.run([str(PACKAGE/'bin/agent-registry'),'kto',self.user,'--json'],env=self.env,capture_output=True,text=True);self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(json.loads(r.stdout),'sender');r=subprocess.run([str(PACKAGE/'bin/agent-registry'),'kto','no-such'],env=self.env,capture_output=True,text=True);self.assertEqual(r.returncode,3);self.assertEqual(r.stdout,'')
+  self.data['agenty'][1]['namerenie']['polzovatel']='receiver-fixture';self.save();r=subprocess.run([str(REESTR_PKG/'bin/agent-registry'),'kto',self.user,'--json'],env=self.env,capture_output=True,text=True);self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(json.loads(r.stdout),'sender');r=subprocess.run([str(REESTR_PKG/'bin/agent-registry'),'kto','no-such'],env=self.env,capture_output=True,text=True);self.assertEqual(r.returncode,3);self.assertEqual(r.stdout,'')
  def test_15_missing_yaml_reports_dependency_and_no_write(self):
-  self.save();before=set(self.root.iterdir());r=subprocess.run(['/usr/bin/python3','-S',str(PACKAGE/'bin/agent-registry'),'list'],env=self.env,capture_output=True,text=True);self.assertEqual(r.returncode,2);self.assertIn('python3-yaml',r.stderr);self.assertEqual(r.stdout,'');self.assertEqual(set(self.root.iterdir()),before)
+  self.save();before=set(self.root.iterdir());r=subprocess.run(['/usr/bin/python3','-S',str(REESTR_PKG/'bin/agent-registry'),'list'],env=self.env,capture_output=True,text=True);self.assertEqual(r.returncode,2);self.assertIn('python3-yaml',r.stderr);self.assertEqual(r.stdout,'');self.assertEqual(set(self.root.iterdir()),before)
  def test_15_sender_reports_upstream_dependency_failure(self):
-  shim=self.root/'no-yaml';shim.write_text('#!/bin/sh\nexec /usr/bin/python3 -S "$M08_REAL_REGISTRY" "$@"\n');shim.chmod(0o755);self.env['M08_REAL_REGISTRY']=str(PACKAGE/'bin/agent-registry');self.env['A2A_REESTR_BIN']=str(shim);r=self.send();self.assertEqual(r.returncode,3);self.assertIn('код 2',r.stderr);self.assertNotIn('нет агента',r.stderr);self.assertEqual(list(self.box.iterdir()),[])
+  shim=self.root/'no-yaml';shim.write_text('#!/bin/sh\nexec /usr/bin/python3 -S "$M08_REAL_REGISTRY" "$@"\n');shim.chmod(0o755);self.env['M08_REAL_REGISTRY']=str(REESTR_PKG/'bin/agent-registry');self.env['A2A_REESTR_BIN']=str(shim);r=self.send();self.assertEqual(r.returncode,3);self.assertIn('код 2',r.stderr);self.assertNotIn('нет агента',r.stderr);self.assertEqual(list(self.box.iterdir()),[])
  def test_22_partial_write_cleanup(self):
   hook=self.root/'bash-env';hook.write_text("printf() { local caller_pid=\"$BASHPID\"; local target; target=\"$(readlink /proc/$caller_pid/fd/1)\"; if [[ \"$target\" = \"$M08_BOX\"/.* ]]; then builtin printf '%s' partial; return 1; fi; builtin printf \"$@\"; }\n");self.env['BASH_ENV']=str(hook);self.env['M08_BOX']=str(self.box);r=self.send();self.assertEqual(r.returncode,1,r.stderr);self.assertEqual(list(self.box.iterdir()),[],'failed printf must not leave hidden partial letter')
 
@@ -108,7 +110,7 @@ sys.stdout.buffer.write(r.stdout)
 for line in r.stderr.decode().splitlines():
  print(line if line.startswith('agent-registry-error:') else 'localized human explanation',file=sys.stderr)
 sys.exit(r.returncode)
-''');wrap.chmod(0o755);self.env['M08_REAL_REGISTRY']=str(PACKAGE/'bin/agent-registry');self.env['A2A_REESTR_BIN']=str(wrap);self.env['DSH_HOME']=str(self.root/'unregistered'/'.dsh');r=self.send();self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(len(self.visible()),1);self.assertEqual(len(self.notices()),1)
+''');wrap.chmod(0o755);self.env['M08_REAL_REGISTRY']=str(REESTR_PKG/'bin/agent-registry');self.env['A2A_REESTR_BIN']=str(wrap);self.env['DSH_HOME']=str(self.root/'unregistered'/'.dsh');r=self.send();self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(len(self.visible()),1);self.assertEqual(len(self.notices()),1)
  def test_24_registry_failure_stays_closed(self):
-  fake=self.root/'failure';fake.write_text('#!/bin/sh\nif [ "$2" = sender ]; then echo registry-broken >&2; exit 2; fi\nexec "$M08_REAL_REGISTRY" "$@"\n');fake.chmod(0o755);self.env['M08_REAL_REGISTRY']=str(PACKAGE/'bin/agent-registry');self.env['A2A_REESTR_BIN']=str(fake);r=self.send();self.assertEqual(r.returncode,4);self.assertEqual(len(self.visible()),1);self.assertEqual(self.notices(),[])
+  fake=self.root/'failure';fake.write_text('#!/bin/sh\nif [ "$2" = sender ]; then echo registry-broken >&2; exit 2; fi\nexec "$M08_REAL_REGISTRY" "$@"\n');fake.chmod(0o755);self.env['M08_REAL_REGISTRY']=str(REESTR_PKG/'bin/agent-registry');self.env['A2A_REESTR_BIN']=str(fake);r=self.send();self.assertEqual(r.returncode,4);self.assertEqual(len(self.visible()),1);self.assertEqual(self.notices(),[])
 if __name__=='__main__':unittest.main(verbosity=2)

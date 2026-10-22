@@ -83,7 +83,7 @@ from datetime import datetime
 # EN: Reason: the script is installed by copying, and nothing else is left on the machine
 # EN: to tell the installed version from a released one. A number kept in a separate
 # EN: metadata file never arrives with this way of installing.
-__version__ = "3.1.3"
+__version__ = "3.1.4"
 
 # RU: Каталог состояния; в нём один файл — cursor (позиция в ядерном журнале).
 # RU: Создаётся сам (os.makedirs ниже); от root — права на /var/lib есть.

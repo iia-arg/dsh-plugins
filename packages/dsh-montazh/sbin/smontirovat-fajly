@@ -203,7 +203,7 @@ OKNO_ID=""; OKNO_PLAN=""
 declare -A OSN=()   # B-N-1848: файл → сумма основы
 while [ $# -gt 0 ]; do
   case "$1" in
-    --okno-id|--okno-plan) [ $# -ge 2 ] || otkaz "$1 без значения"; if [ "$1" = --okno-id ]; then OKNO_ID=$2; else OKNO_PLAN=$2; fi; shift 2 ;;
+    --okno-id|--okno-plan) [ $# -ge 2 ] || otkaz "$1 без значения"; if [ "$1" = --okno-id ]; then OKNO_ID=$2; [ -n "$OKNO_ID" ] || otkaz "--okno-id без значения"; else OKNO_PLAN=$2; fi; shift 2 ;;
     --punkt) [ $# -ge 2 ] || otkaz "--punkt без значения"; PUNKT=$2; shift 2 ;;
     --progon) PROGON=1; shift ;;
     --v-boj) VBOJ=1; shift ;;
@@ -237,6 +237,37 @@ RE_RUKA='^[^<>]+ <[^<> ]+@[^<> ]+>$'
 [ "$RUKA_KLYUCH_ZADAN" = 0 ] || [[ "$RUKA_KLYUCH" =~ $RE_RUKA ]] || otkaz "--ruka «${RUKA_KLYUCH:0:60}» — нужна форма «Имя <имя@машина>» (B-N-1551)"
 [ "$NA_HODU_ZADAN" = 0 ] || [ -n "${NA_HODU//[[:space:]]/}" ] || otkaz "--profil-na-hodu= с ПУСТОЙ причиной — назовите её словами (B-N-1014)"
 [[ "$PUNKT" =~ ^[A-Za-z0-9-]+$ ]] || otkaz "пункт «$PUNKT» обязателен: латиница, цифры, дефис"
+# B-N-2111 (23): task сверяем ДО страховки, временных файлов и замка; podgotovit зовётся позже.
+# Только join по --okno-id; однократное чтение <=2 MiB, без записи/повторов. Это не полная проверка окна.
+if [ -n "$OKNO_ID" ]; then
+  if ! python3 -B - "$OKNO_ID" "$PUNKT" "${MO_STATE_DIR:-/var/lib/montazh-okna}" <<'PY_TASK'
+import json, os, re, stat, sys
+from pathlib import Path
+ident, punkt, root = sys.argv[1:]
+def unique(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value: raise ValueError('повтор поля окна')
+        value[key] = item
+    return value
+try:
+    if not re.fullmatch(r'[0-9a-f]{32}', ident): raise ValueError('негодный --okno-id')
+    fd = os.open(Path(root) / (ident + '.json'), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'rb') as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode): raise ValueError('запись окна не обычный файл')
+        raw = stream.read(2 * 1024 * 1024 + 1)
+    if len(raw) > 2 * 1024 * 1024: raise ValueError('запись окна больше 2 MiB')
+    record = json.loads(raw, object_pairs_hook=unique)
+    if not isinstance(record, dict): raise ValueError('запись окна не объект')
+    task = record.get('task', '<отсутствует>')
+    if not isinstance(task, str) or not task or task != punkt:
+        raise ValueError('task окна=' + repr(task) + ' не совпадает с --punkt=' + repr(punkt))
+except (OSError, ValueError, TypeError) as error:
+    print('ОТКАЗ: --okno-id ' + ident + ', --punkt=' + repr(punkt) + ': ' + str(error), file=sys.stderr)
+    sys.exit(2)
+PY_TASK
+  then otkaz "проверка task окна $OKNO_ID не пройдена"; fi
+fi
 # B-N-1817: --mode/--owner — только с --novyj и только для новых файлов; неизвестная форма — отказ.
 if [ -n "$MODE_KL$OWNER_KL" ]; then
   [ "$NOVYJ" = 1 ] || otkaz "--mode/--owner задают права НОВЫХ файлов и действуют только вместе с --novyj (B-N-1817)"
@@ -373,6 +404,21 @@ v_spiske_nashi() {
   grep -qF -- "|$c|" "$NASHI_EFF" && return 0
   return 1
 }
+# B-N-2111 п31(в): итог страховки в stderr при ЛЮБОМ ненулевом выходе после её создания.
+# Смотрим диск после cleanup; исход вызова и существующее снятие страховки не меняем.
+strahovka_ishod() {
+  local code=$? sum
+  if [ "$code" -ne 0 ] && [ -n "${STR:-}" ]; then
+    if [ ! -e "$STR" ] && [ ! -L "$STR" ]; then
+      echo "ОТКАЗ: страховка СНЯТА/УДАЛЕНА: $STR" >&2
+    elif [ -f "$STR" ] && sum=$(sha256sum -- "$STR" 2>/dev/null) && [[ "${sum:0:64}" =~ ^[a-f0-9]{64}$ ]]; then
+      echo "ОТКАЗ: страховка ОСТАЛАСЬ: $STR · sha256 ${sum:0:64}" >&2
+    else
+      echo "СЛЕПОТА: судьба страховки не установлена (не обычный файл или сумма не прочитана): $STR" >&2
+    fi
+  fi
+  return "$code"
+}
 # Страховка затрагиваемых файлов (монтаж и снятие — ОДНА, B-N-1026): CLENY — пути без «/», STR и KOR заданы.
 strahovat() {
   mkdir -p -- "$KOR/$PUNKT" || otkaz "нет каталога $KOR/$PUNKT"
@@ -385,6 +431,7 @@ strahovat() {
   done
   rm -rf -- "$PR"
   ln -- "$CH" "$STR" 2>/dev/null || { rm -f -- "$CH"; otkaz "страховка $STR уже есть — не затираю"; }
+  trap strahovka_ishod EXIT
   rm -f -- "$CH"
   echo "страховка легла: $STR · sha256[:16] $(sha "$STR" | cut -c1-16) · членов ${#CLENY[@]}"
 }
@@ -762,7 +809,7 @@ okno_ishod() {
   fi
   return "$code"
 }
-trap okno_ishod EXIT
+trap 'okno_ishod; strahovka_ishod' EXIT
 
 # ── 3. mv; сбой → откат переложенных ───────────────────────────────────────────────────────────
 for ((i = 0; i < N; i++)); do

@@ -453,6 +453,12 @@ print(json.dumps(d,ensure_ascii=False))"; exit 0 ;;
     bolshoj) "$real" pokrytie --json --s-nepolnymi | python3 -c "
 import sys,json; d=json.load(sys.stdin); d['polnoe']=True; d['nepolnye']=[]; d['_dobavka_proby_c9']='x'*140000
 print(json.dumps(d,ensure_ascii=False))"; exit 0 ;;
+    # B-N-2101 (17.10.2026, Искра): prizrak — полная рамка + общий образец БЕЗ маски, которого нет на машине (16.10: priyomka и
+    #   .config пятерых сняты с машины, разметка осталась). Копия взять его не могла — вердикт «неполна по составу», не «не восстановима».
+    prizrak) "$real" pokrytie --json --s-nepolnymi | python3 -c "
+import sys,json; d=json.load(sys.stdin); d['polnoe']=True; d['nepolnye']=[]
+d.setdefault('obshchee',[]).append({'put':'/net-takogo-puti-stend-b2101','zachem':'проба B-N-2101'})
+print(json.dumps(d,ensure_ascii=False))"; exit 0 ;;
   esac
 fi
 exec "$real" "$@"
@@ -493,6 +499,45 @@ CH
   [[ "$K" == 0 ]] && grep -q 'состав: все' "$T/vyvod" \
     && sud ok "34 ответ реестра > 128 КиБ -> состав проверен" "код 0" \
     || sud fail "34 ответ реестра > 128 КиБ -> состав проверен" "код $K — $(grep -m1 -o 'НЕ СОСТОЯЛАСЬ.*' "$T/vyvod")"
+  # 39–44 (B-N-2101 r2, ворота Вениамина 04:58Z): мягкий код 3 — ТОЛЬКО путь, которого нет в копии и на машине И который сборщик
+  # ЭТОЙ копии назвал отсутствующим при сборке (backup-coverage.json: «в реестре есть, на диске нет»). Иначе — код 1.
+  # 🔴 r1 был зелёным на копии БЕЗ манифеста — лёгкий вход: в настоящей копии манифест есть, и 5в дал бы код 1 (16.10 так и вышло бы).
+  s_manif(){ local d; d=$(mktemp -d "$T/manif.XXXXXX"); tar xzf "$1" -C "$d" 2>/dev/null; printf '%s' "$3" > "$d/backup-coverage.json"; ( cd "$d" && tar czf "$2" . 2>/dev/null ); rm -rf "$d"; }
+  PZ=/net-takogo-puti-stend-b2101
+  s_manif "$POLN_T/polnaya.tar.gz" "$POLN_T/prizrak-nazvan.tar.gz" '{"format":"sadik-backup-coverage-v1","polnaya":false,"nepokrytye":[],"propushcheno":[{"istochnik":"'"$PZ"'","prichina":"в реестре есть, на диске нет"}]}'
+  s_manif "$POLN_T/polnaya.tar.gz" "$POLN_T/prizrak-ne-nazvan.tar.gz" '{"format":"sadik-backup-coverage-v1","polnaya":true,"nepokrytye":[],"propushcheno":[]}'
+  s_manif "$POLN_T/polnaya.tar.gz" "$POLN_T/prizrak-i-dostup.tar.gz" '{"format":"sadik-backup-coverage-v1","polnaya":false,"nepokrytye":[],"propushcheno":[{"istochnik":"'"$PZ"'","prichina":"в реестре есть, на диске нет"},{"istochnik":"/net-dostupa-stend-b2101","prichina":"нет доступа к источнику"}]}'
+  pa(){ FAKE_REZHIM=prizrak CHITATEL="$T/chitatel" AGENTS_REGISTRY="$T/reestr.yaml" "$INSTR" "$1" >"$T/vyvod" 2>&1; echo $?; }
+  K=$(pa "$POLN_T/prizrak-nazvan.tar.gz")
+  if [[ "$K" == 3 ]] && grep -q 'НЕПОЛНА ПО СОСТАВУ' "$T/vyvod" && grep -q "$PZ" "$T/vyvod" \
+     && ! grep -q 'НЕ ВОССТАНОВИМА\|КОПИЯ НЕПОЛНА\|не восстановима' "$T/vyvod"; then
+    sud ok "39 не было при сборке (слово сборщика) и нет сейчас -> 3" "путь назван, 5в не повторил отказ"
+  else
+    sud fail "39 не было при сборке (слово сборщика) и нет сейчас -> 3" "код $K, «НЕПОЛНА ПО СОСТАВУ» $(grep -c 'НЕПОЛНА ПО СОСТАВУ' "$T/vyvod"), «не восстановима/КОПИЯ НЕПОЛНА» $(grep -c 'НЕ ВОССТАНОВИМА\|КОПИЯ НЕПОЛНА\|не восстановима' "$T/vyvod")"
+  fi
+  # 42: записи сборщика в копии нет — мягкого вердикта нет, код 1.  43: сборщик путь НЕ назвал (был при сборке, не взят, удалён) — код 1.
+  K=$(pa "$POLN_T/polnaya.tar.gz")
+  [[ "$K" == 1 ]] && grep -q 'отсутствия при сборке не объявил' "$T/vyvod" && grep -q "$PZ" "$T/vyvod" \
+    && sud ok "42 записи сборщика нет -> код 1, возможна потеря" "$PZ" \
+    || sud fail "42 записи сборщика нет -> код 1, возможна потеря" "код $K"
+  K=$(pa "$POLN_T/prizrak-ne-nazvan.tar.gz")
+  [[ "$K" == 1 ]] && grep -q 'отсутствия при сборке не объявил' "$T/vyvod" && grep -q "$PZ" "$T/vyvod" \
+    && sud ok "43 сборщик путь не назвал (взят не был, потом удалён) -> код 1" "$PZ" \
+    || sud fail "43 сборщик путь не назвал (взят не был, потом удалён) -> код 1" "код $K"
+  # 44: сверх «нет на диске» сборщик объявил иной пропуск — 5в держит код 1 «ПО СЛОВУ СОБРАВШЕГО».
+  K=$(pa "$POLN_T/prizrak-i-dostup.tar.gz")
+  [[ "$K" == 1 ]] && grep -q 'ПО СЛОВУ СОБРАВШЕГО' "$T/vyvod" \
+    && sud ok "44 призрак + иной пропуск сборщика -> код 1 по слову собравшего" "5в держит" \
+    || sud fail "44 призрак + иной пропуск сборщика -> код 1 по слову собравшего" "код $K"
+  K=$(pn "")
+  [[ "$K" == 0 ]] && grep -q 'состав: все' "$T/vyvod" && ! grep -q 'net-takogo-puti-stend-b2101' "$T/vyvod" \
+    && sud ok "40 возврат: призрак снят -> код 0" "состав: все" \
+    || sud fail "40 возврат: призрак снят -> код 0" "код $K"
+  # 41: призрак + НАСТОЯЩАЯ пропажа (образец на машине есть, в копии нет) ⇒ код 1, оба названы — разделение не смягчает пропажу.
+  K=$(FAKE_REZHIM=prizrak CHITATEL="$T/chitatel" AGENTS_REGISTRY="$T/reestr.yaml" "$INSTR" "$POLN_T/porcha.tar.gz" >"$T/vyvod" 2>&1; echo $?)
+  [[ "$K" == 1 ]] && grep -q 'данных, которые есть на машине, в копии нет' "$T/vyvod" && grep -q "$UB" "$T/vyvod" && grep -q 'net-takogo-puti-stend-b2101' "$T/vyvod" \
+    && sud ok "41 призрак + пропажа -> код 1, оба названы" "$UB" \
+    || sud fail "41 призрак + пропажа -> код 1, оба названы" "код $K, пропажа $(grep -c "$UB" "$T/vyvod"), призрак $(grep -c net-takogo-puti-stend-b2101 "$T/vyvod")"
 else
   sud slep "полнота состава" "реестр не отдал klyuch_gpg — случаи не состоялись"
   sud slep "вход с неполными (3 пробы)" "то же"
@@ -505,13 +550,19 @@ else
   sud slep "32 нераскрывшийся образец" "то же"
   sud slep "33 пустая разметка" "то же"
   sud slep "34 ответ реестра > 128 КиБ" "то же"
+  sud slep "39 пути нет на машине" "то же"
+  sud slep "40 возврат призрака" "то же"
+  sud slep "41 призрак + пропажа" "то же"
+  sud slep "42 записи сборщика нет" "то же"
+  sud slep "43 сборщик путь не назвал" "то же"
+  sud slep "44 призрак + иной пропуск" "то же"
 fi
 
 # ── Канарейка: точное число, а не «не меньше» ──────────────────────────────
 # Порог «не меньше N» слеп к убыли, которая умещается в запас, и при этом
 # выглядит строже точного числа. Здесь случаи перечислены поимённо, значит
 # и ждать надо ровно столько.
-ZHDYOM=38   # 30 + пробы 31/32 (B-N-873) + 33 (C-H-490) + 34 (B-N-1435 (3), C9 Зари) + 35–38 (B-N-1957)
+ZHDYOM=44   # 30 + пробы 31/32 (B-N-873) + 33 (C-H-490) + 34 (B-N-1435 (3), C9 Зари) + 35–38 (B-N-1957) + 39–44 (B-N-2101 r2)
 VSEGO=$((ok+bad+slep))
 echo
 echo "  ok=$ok  FAIL=$bad  СЛЕПОТА=$slep   (всего $VSEGO, ждём $ZHDYOM)"

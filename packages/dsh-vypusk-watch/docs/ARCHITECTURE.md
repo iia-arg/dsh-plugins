@@ -43,7 +43,9 @@ Named inventory of 15 entry points; a shell wrapper and its Python body count on
 flowchart TB
     A["старт · start"] --> B{"есть доводы? · arguments?"}
     B -- иной · unsupported --> X3["ОТКАЗ, код 3 · REFUSAL, exit 3"]
-    B -- нет/--avto-montazh · none/--avto-montazh --> C{"дерево с .git есть? · tree with .git?"}
+    B -- нет/--avto-montazh · none/--avto-montazh --> R0{"VYPUSK_REPO непуст? · nonempty?"}
+    R0 -- нет · no --> X3
+    R0 -- да · yes --> C{"дерево с .git есть? · tree with .git?"}
     C -- нет · no --> S2["слепота → тревога, код 2 · blindness → alarm, exit 2"]
     C -- да · yes --> D["корни: основные, добавочные, чужие; исключения CHANGELOG · roots: main, extra, foreign; CHANGELOG exceptions"]
     D --> E["для каждого пакета дерева · for each tree package"]
@@ -117,7 +119,7 @@ User=root
 ExecStart=/usr/local/sbin/vypusk-okno-watch.sh
 # 1 — расхождение, 2 — слепота: это находки, а не сбой службы · 1 is divergence, 2 is blindness: findings, not a service failure
 SuccessExitStatus=0 1 2
-# «-»: нет файла — служба стартует, а сторож сам скажет СЛЕПОТУ «не задана настройка» · "-": no file — the service starts and the watchdog itself reports blindness "setting not set"
+# «-»: нет файла/REPO — сторож откажет3 без канала; oneshot неуспешен · "-": missing file/REPO — refusal3 without alerts; oneshot fails
 EnvironmentFile=-/etc/vypusk-okno-watch.env
 
 # /etc/vypusk-okno-watch.env — восемь обязательных настроек и явный путь исключений; пусто выключает необязательную проверку · eight required settings and an explicit exception path; empty disables optional checks
@@ -164,6 +166,8 @@ VYPUSK_SSYLKI="/srv/plugins/linkA=../demo
 `--avto-montazh` — единственный разрешённый ключ, включает адресную отсрочку через `MONTAZH_OKNO_BIN` (умолчание `/usr/local/sbin/montazh-okno`, пакет `dsh-montazh`). Ручной вызов без ключа остаётся строгим. В Ш2 отсрочка применяется к обычному расхождению полной copy-записи, невыпущенной версии копии и разрешённым расхождениям сумм `derevo`, когда каждый предмет покрыт действующим окном; права, владельцы и другие строгие дефекты не откладываются. Код 4 — «отложено», не «сошлось»; код 1/2 имеет приоритет. При смене срока/поколения — максимум один пересъём, повторная смена даёт слепоту 2. `SuccessExitStatus=4` не добавляется: адресную отсрочку читает helper по текущей invocation и сроку.
 
 `--avto-montazh` is the only accepted flag; it enables addressed deferral through `MONTAZH_OKNO_BIN` (default `/usr/local/sbin/montazh-okno`, supplied by `dsh-montazh`). Manual invocation stays strict. In Step 2, ordinary differences with a complete copy record, an unreleased copy version and eligible `derevo` checksum differences may be deferred when every subject has an active window; permissions, ownership and other strict defects remain strict. Exit 4 means deferred, not matched; exit 1/2 takes precedence. Expiry/generation changes permit at most one resample; another change is blindness 2. Do not add `SuccessExitStatus=4`: the helper reads addressed deferral using the current invocation and deadline.
+
+Слепота записи `derevo` (3.1.8, B-N-1978) откладывается иначе и уже, чем расхождение: расхождение — только целиком из DIFF consistency и с `--require file:<путь>` на каждый файл; слепота — одним `entry:<id>`, но лишь если ВСЕ её строки — причины разрыва «файлы → метка → запись» (поле `razryv` строки SLEP: метки нет · subdir нет в метке · файл метки не в files · files.remote / not_installed нет в метке). Структурная слепота (две записи на каталог, package.json не прочитан, prezhnie_imena, строка files без полей, дубль remote, expected_diff_files нет в files, local не читается, отказ git) и строка без пометки — красные сразу. До 3.1.8 эта ветка окно не спрашивала (14.10: 5 ложных «поздняя слепота» за сутки в окнах, назвавших запись; все пять — разрывные). Окно с другой записью или истёкшее — прежняя слепота, код 2. · Registry-entry blindness (3.1.8) is deferred by a single `entry:<id>` only when every blindness line is a files → tag → record gap cause (`razryv`); structural blindness stays red at once.
 
 ## Shared strict consumer — B-N-2043 Ш2
 

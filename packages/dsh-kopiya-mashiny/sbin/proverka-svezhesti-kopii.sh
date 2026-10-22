@@ -39,6 +39,7 @@
 #
 # КОДЫ: 0 passed+checkpoint | 1 failed | 2 unknown | 4 passed без checkpoint
 # 5 failed+notification failed | 6 unknown+notification failed | 7 passed без checkpoint+notification failed | 8 partial
+# 9 incomplete: восстановима, путей из реестра нет ни в копии, ни на машине (B-N-2101; при недоставке — 9 и notification=failed)
 # 3 зарезервирован: прежний общий отказ уведомления; больше не выдаётся.
 set -uo pipefail
 
@@ -79,6 +80,7 @@ itog_priyomki() {
     2) verdict=unknown; checkpoint=not_attempted ;;
     4) verdict=passed; checkpoint=unconfirmed ;;
     8) verdict=partial; checkpoint=not_attempted ;;
+    9) verdict=incomplete; checkpoint=not_attempted ;;
     *) code=2; verdict=unknown; checkpoint=not_attempted ;;
   esac
   if [ "$NOTIFICATION" = failed ]; then
@@ -358,8 +360,18 @@ case "$RC" in
      vyhod 4 "УЧЁТ НЕ ПОДТВЕРЖДЁН: копия прошла проверку, отметка не сохранена" ;;
   2) skazat_ili_upast "⚠️ копия sadik: приёмка НЕ СОСТОЯЛАСЬ на $IMYA — проверка не смогла измерить, копия не подтверждена"
      vyhod 2 "СЛЕПОТА: приёмка не состоялась" ;;
-  1) skazat_ili_upast "🔴 копия sadik НЕГОДНА: $(grep -m1 '🔴' "$RAB/priyomka.log" || echo 'приёмка отказала')  (архив $IMYA)"
+  # B-N-2101 r2 (ворота Вениамина 04:58Z): «не восстановима» — только не читается / ключ не поднялся / базы не открылись.
+  # Отказ по составу (приёмка печатает «КОПИЯ НЕПОЛНА») — «неполна»: секреты при этом открылись. Код и тревога те же.
+  1) if grep -qF 'КОПИЯ НЕПОЛНА' "$RAB/priyomka.log"; then
+       skazat_ili_upast "🔴 копия sadik НЕПОЛНА: $(grep -m1 -F 'КОПИЯ НЕПОЛНА' "$RAB/priyomka.log" | sed 's/^ *//')  (архив $IMYA)"
+       vyhod 1 "ОТКАЗ: копия неполна — данных, объявленных реестром, в ней нет (перечень выше)"
+     fi
+     skazat_ili_upast "🔴 копия sadik НЕГОДНА: $(grep -m1 '🔴' "$RAB/priyomka.log" || echo 'приёмка отказала')  (архив $IMYA)"
      vyhod 1 "ОТКАЗ: копия не восстановима" ;;
+  # B-N-2101: восстановима (секреты, базы, ACL, подключения прошли), но пути из разметки нет ни в копии, ни на машине.
+  # Не «НЕГОДНА»: копия взяла всё, что было. Тревога остаётся (юнит failed, код 9): реестр или машину надо чинить.
+  3) skazat_ili_upast "🟠 копия sadik ВОССТАНОВИМА, но НЕПОЛНА ПО СОСТАВУ — в реестре есть, на машине нет: $(awk '/^🟠 НЕПОЛНА ПО СОСТАВУ/{f=1;next} f&&/^    /{print;next} f{exit}' "$RAB/priyomka.log" | tr -s ' ' | paste -sd ',' | cut -c1-600)  (архив $IMYA)"
+     vyhod 9 "НЕПОЛНА ПО СОСТАВУ: копия восстановима; путей из реестра нет ни в копии, ни на машине (перечень выше)" ;;
   8) vyhod 8 "ЧАСТИЧНО: выбранный профиль проверен, полная приёмка $IMYA не проводилась" ;;
   *) skazat_ili_upast "⚠️ приёмка $IMYA вернула неожиданный код $RC; годность не установлена"
      vyhod 2 "СЛЕПОТА: неожиданный код дочернего процесса $RC" ;;

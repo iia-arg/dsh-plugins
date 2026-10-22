@@ -1,3 +1,16 @@
+## 3.1.8 — 15.10.2026 · слепота записи в окне монтажа · registry-entry blindness inside a deployment window (Аврора; B-N-1978, наряд Забавы 03:13:57Z)
+
+- `src/vypusk-okno-watch.sh`, `proverit_derevo`: слепота записи `derevo` теперь спрашивает окно (`montazh_otlozhit "entry:<id>"`) — только если все её строки помечены причиной разрыва (`razryv`: метки нет · subdir нет в метке · файл метки не в files · files.remote / not_installed нет в метке); структурная слепота — красная сразу (LOW-1/LOW-2 Вениамина 03:51Z). Замер 14.10: 5 ложных «поздняя слепота» за сутки в открытых окнах, назвавших запись (dsh-pochta ×2, dsh-montazh, socseti-anna ×2). · Entry blindness now asks the window, like the mismatch branch.
+- `test/stend-montazh-okno.py`: шесть проб — окно своей записи откладывает разрыв (not_installed, «метки нет»: код 4, канал не звался); структурная (дубль remote) и смешанная слепота в окне своей записи — код 2 и тревога; окно другой записи и истёкшее — код 2. 17 проб.
+
+## 3.1.7 — 2026-10-14 · №22: безопасный ручной вход
+
+Без непустого VYPUSK_REPO — отказ вызова3 до helper окна, канала и состояния, включая --avto-montazh. Остальные ошибки при заданном дереве сохраняют слепоту2. Дополнены четыре подслучая test_27, обновлены договор настроек и документация; исходные26находок аудита уже вошли3.1.1, сверены на текущей основе без повторного наложения старой ветки.
+
+Missing/empty VYPUSK_REPO refuses3 before helper/alerts/state (also --avto-montazh). Other errors with an explicit tree remain blindness2. Adds four test_27 subcases and updates the settings contract/docs; the26 original audit fixes already shipped in3.1.1 and are preserved on the current base.
+
+Читатель кода 3 / Exit 3 reader: `vypusk-okno-watch.service` (`SuccessExitStatus=0 1 2` ⇒ `failed`) → `storozha-sutochnye.txt:53` (`vypusk-okno-watch.service 1`) → `sadik-watch` (`is-failed`, раз в 10 минут / every 10 minutes) → `FAILED` владельцу / to owner, кроме подтверждённой отсрочки окном монтажа / except confirmed deployment-window deferral; запись перечня сохраняется / preserve the list entry.
+
 ## 3.1.6 — 2026-10-14 · стенды и документация · stands and documentation
 
 - Состав и перечень стендов RU/EN дополнены общим consumer и его двумя Python-телами; стенд пустой записи извлекает единственный `PY_CHANGELOG` из `copy-compare.sh` и отвергает ошибку исполнения блока. Код watcher/consumer не менялся.

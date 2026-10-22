@@ -2,8 +2,9 @@
 """Real release installer on a disposable package/repo. Only fixed R is rebound.
 No production control flow is mocked; failure cases interpose one failing syscall.
 """
-import hashlib,json,os,pwd,shlex,stat,subprocess,sys,tempfile
+import hashlib,json,os,pwd,stat,subprocess,sys,tempfile
 from pathlib import Path
+from smv_fixture import prepare
 
 reader=Path(sys.argv[1]); case=sys.argv[2] if len(sys.argv)>2 else 'healthy'
 assert case in ('healthy','mode_policy','copy_failure','publish_failure')
@@ -21,15 +22,14 @@ with tempfile.TemporaryDirectory(prefix='beta-B-N-1746-') as tmp:
     (source/'package.json').write_text(json.dumps(manifest)+'\n');(source/'SKILL.md').write_bytes(new)
     (source/'a-new').mkdir();(source/'a-new/first.txt').write_text('NEW-FIRST\n');(source/'zz-last.txt').write_text('NEW-LAST\n')
     run(['git','init','-q'],repo);run(['git','add','.'],repo);run(['git','-c','user.name=Beta','-c','user.email=beta@sadik','commit','-qm','B-N-1746 synthetic package'],repo)
-    src=reader.read_bytes();needle=b'R=/opt/iskra/workspace/dsh-plugins\n';assert src.count(needle)==1
-    bound=src.replace(needle,('R='+shlex.quote(str(repo))+'\n').encode()); tool=w/'smv-bound';tool.write_bytes(bound)
-    print(json.dumps({'case':case,'reader':str(reader),'sourceSha':sha(src),'repoBindingOnly':True,'boundSha':sha(bound)}),flush=True)
     boj=w/'boj';boj.mkdir();(boj/'SKILL.md').write_bytes(old);(boj/'package.json').write_text('{"name":"old"}\n');(boj/'outside.txt').write_text('UNCHANGED\n')
     old_mode=0o664 if case=='mode_policy' else 0o640
     owner=pwd.getpwnam('varvara');os.chown(boj/'SKILL.md',owner.pw_uid,owner.pw_gid);os.chmod(boj/'SKILL.md',old_mode)
     os.chmod(boj/'package.json',0o600)
     snapshot=tree(boj); before=int(subprocess.check_output(['stat','-c','%i',str(boj/'SKILL.md')])); held=open(boj/'SKILL.md','rb')
-    env=dict(os.environ,SMV_MONTAZH=str(w/'insurance'),SMF_RUKA='Beta <beta@sadik>')
+    tool,env=prepare(w,reader,'HEAD','packages/proba',boj,repo)
+    env['SMF_RUKA']='Beta <beta@sadik>'
+    print(json.dumps({'case':case,'reader':str(reader),'sourceSha':sha(reader.read_bytes()),'repoBindingOnly':True,'boundSha':sha(tool.read_bytes())}),flush=True)
     if case in ('copy_failure','publish_failure'):
         wrappers=w/'wrappers';wrappers.mkdir(); command='cp' if case=='copy_failure' else 'mv'
         if command=='cp':condition='[[ "${@: -2:1}" == */zz-last.txt ]]'
@@ -61,7 +61,7 @@ with tempfile.TemporaryDirectory(prefix='beta-B-N-1746-') as tmp:
         require('INJECTED_' in child.stderr,'injected failure not reached')
         require(tree(boj)==snapshot,'failure left mixed files/metadata/directories')
         require(old_fd==old,'failure modified old inode')
-    backups=list((w/'insurance').rglob('*.tgz'));require(len(backups)==1,'insurance not created exactly once')
+    backups=list((w/'mont').rglob('*.tgz'));require(len(backups)==1,'insurance not created exactly once')
     import tarfile
     if len(backups)==1:
         with tarfile.open(backups[0]) as tar:
@@ -72,7 +72,8 @@ with tempfile.TemporaryDirectory(prefix='beta-B-N-1746-') as tmp:
     if case in ('copy_failure','publish_failure'):
         # Remove the injected syscall failure and re-run on THE SAME recovered target.
         wrapper.unlink();assert not wrapper.exists()
-        clean=dict(os.environ,SMV_MONTAZH=str(w/'insurance'),SMF_RUKA='Beta <beta@sadik>')
+        tool,clean=prepare(w,reader,'HEAD','packages/proba',boj,repo)
+        clean['SMF_RUKA']='Beta <beta@sadik>'
         retried=subprocess.run(['bash',str(tool),'HEAD','packages/proba',str(boj),'--v-boj','B-N-1746-PROBE-RESTORED'],env=clean,capture_output=True,text=True,timeout=60)
         print(retried.stdout,end='');print(retried.stderr,end='')
         assert retried.returncode==0,retried.stderr

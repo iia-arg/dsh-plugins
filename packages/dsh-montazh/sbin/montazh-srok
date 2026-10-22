@@ -1,6 +1,7 @@
 #!/bin/bash
-# montazh-srok — уборщик страховок монтажей на sadik по сроку 14 суток (B-N-1169, Михалыч 29.09.2026;
-# слово владельца 29.09 12:41 МСК «Согласен, 14 суток нормально»; наряд Забавы 12:44 МСК).
+# montazh-srok — уборщик страховок монтажей на sadik по сроку 3 суток (B-N-1169, Михалыч 29.09.2026;
+# слово владельца 29.09 12:41 МСК «14 суток»; r2 17.10.2026: слово владельца 19:18 МСК — 3 суток, «откатываем сразу или
+# на следующий день, третий день — резерв; бэкапы каждый день»; наряд Забавы sadik-ДИСК, дополнение 3).
 # ЗАЧЕМ: /var/backups/montazh рос без предела (552 объекта, 2–3 ГБ, стенды с копиями omega.db и node_modules)
 # и каждую ночь целиком едет в копию sadik.
 # ЧТО: в корнях KORNI объект = файл верхнего уровня ЛИБО элемент второго уровня (внутри каталога пункта).
@@ -14,14 +15,25 @@
 #   Рождение неизвестно (0) → объект НЕ трогается (неизвестное — в отказ, а не в удаление).
 # ГДЕ НЕ ПРИМЕНЯЕТСЯ: всё вне KORNI (в т.ч. страховки Искры strahovki* и /opt/*/workspace — не трогаются по построению);
 #   символические ссылки в корне и корень не root:root — отказ.
-# ИСКЛЮЧЕНИЯ: список ISKLYUCHENIYA (имена верхнего уровня), сейчас пуст — поимённо и с причиной, если понадобится.
-# ЧЕГО НЕ ЛОВИТ: страховку, которую ещё нужна после 14 суток (решение владельца: «в бэкапе возьмём»);
-#   рост ВНУТРИ срока (за 14 суток может накопиться снова — это видит сторож копии).
+# ИСКЛЮЧЕНИЯ: список ISKLYUCHENIYA (имена верхнего уровня) — поимённо и с причиной.
+# ОТКРЫТЫЕ ОКНА (r2): страховки открытого или оборванного окна монтажа (/var/lib/montazh-okna/*.json, phase=open|failed) не трогаются. Окно не хранит
+#   пути своих страховок (subjects — боевые файлы), поэтому различитель двойной: (а) объект родился НЕ РАНЬШЕ открытия самого
+#   старого открытого окна; (б) имя пункта содержит номер задачи открытого окна (task). Каталог окон не читается или JSON
+#   битый → удаление не идёт вовсе (сбой с тревогой): неизвестное — в отказ.
+# ПОМЕТКА «ХРАНИТЬ» (r3, слово владельца 17.10 19:28 МСК: улики, ценные документы, журналы — бережно, пока надобность не пройдёт).
+#   Рядом с объектом файл <имя>.HRANIT, либо .HRANIT внутри каталога; действует и пометка всего пункта (<пункт>.HRANIT в корне
+#   или <пункт>/.HRANIT). Текст: «do: ГГГГ-ММ-ДД» (включительно) ЛИБО «do: poka <условие словами>»; «kto: <рука>»; «zachem: <строка>».
+#   Помеченное НЕ удаляется никогда этим скриптом. «do:» с датой истёк → не удаляется, а тревога «срок хранения истёк» (в --boj).
+#   «do: poka …» или без даты → держится; по понедельникам в --boj — перечень таких одной тревогой. Нет kto/zachem → держится,
+#   в выводе «пометка неполная». Сами файлы *.HRANIT и .HRANIT скрипт не удаляет.
+#   В имени исключения ISKLYUCHENIYA не ставить [ ] без умысла: сравнение — маска (glob).
+# ЧЕГО НЕ ЛОВИТ: страховку, которая ещё нужна после 3 суток (решение владельца: «в бэкапе возьмём»); страховку окна,
+#   закрытого, но по которому откат ещё возможен; рост ВНУТРИ срока (это видит сторож копии).
 # Режимы: --suho (перечень и объём, ничего не удаляет) · --boj (удаляет) · иное → ОТКАЗ, код 2.
 # Коды: 0 сделано · 1 сбой (тревога ушла через agent-alert) · 2 отказ по вводу.
 # Подмены окружением — ТОЛЬКО для проб, о каждой пишется в stderr: MONTAZH_SROK_SEK, MONTAZH_KORNI, MONTAZH_ALERT.
 set -uo pipefail
-SROK=$((14*86400)); KORNI=(/var/backups/montazh /var/backups/montazh-s-klyuchom); ALERT=/usr/local/bin/agent-alert
+SROK=$((3*86400)); KORNI=(/var/backups/montazh /var/backups/montazh-s-klyuchom); ALERT=/usr/local/bin/agent-alert
 [ -n "${MONTAZH_SROK_SEK:-}" ] && { SROK=$MONTAZH_SROK_SEK; echo "⚠️ ПОДМЕНА срок=$SROK с" >&2; }
 [ -n "${MONTAZH_KORNI:-}" ] && { read -r -a KORNI <<< "$MONTAZH_KORNI"; echo "⚠️ ПОДМЕНА корни=${KORNI[*]}" >&2; }
 [ -n "${MONTAZH_ALERT:-}" ] && { ALERT=$MONTAZH_ALERT; echo "⚠️ ПОДМЕНА тревога=$ALERT" >&2; }
@@ -34,29 +46,73 @@ if [ -n "${MONTAZH_SROK_SEK:-}" ] || [ -n "${MONTAZH_KORNI:-}" ]; then
     r=$(realpath -m -- "$K"); case "$r" in /var/tmp/?*) ;; *) echo "ОТКАЗ: подменённый корень «$K» ($r) не под /var/tmp/"; exit 2 ;; esac
   done
 fi
-ISKLYUCHENIYA=()
+ISKLYUCHENIYA=(
+  UBORKA-VOSSTANOVLENIE-20261016   # ACL-MONTAZH.md — на него ссылается скилл install-dsh-harness:159 (до переноса хозяином)
+  B-N-2096-izvlecheno              # наряд Искры B-N-2096 открыт, срок 25.10
+  DISK-20261017                    # опись наряда sadik-ДИСК 17.10
+  '*-ulika'                        # УЛИКИ, не страховки (находка Вениамина 17.10: AP016-RUN-b1830a05-ulika, AP017-S3B-03-ulika — носители
+                                   #   доказательств B-N-2058); слово владельца «страховки 3 суток» их не покрывает; решение о сроке — его
+)
+OKNA=${MONTAZH_OKNA:-/var/lib/montazh-okna}
 case "${1:-}" in --suho) BOJ=0 ;; --boj) BOJ=1 ;; *) echo "ОТКАЗ: режим «${1:-}» (--suho | --boj)"; exit 2 ;; esac
 [ "$(id -u)" = 0 ] || { echo "ОТКАЗ: нужен root"; exit 2; }
 SEJCHAS=$(date +%s); POROG=$((SEJCHAS - SROK)); SBOI=()
+# r2: открытые окна → OTKR_S (рождение не раньше — оставить) и OTKR_ZADACHI (имена задач). Сбой чтения → не удаляем ничего.
+OKNA_VYVOD=$(python3 - "$OKNA" <<'PY'
+import json,glob,sys,os
+d=sys.argv[1]
+if not os.path.isdir(d): print('ERR нет каталога окон'); sys.exit()
+t=[];z=[]
+for f in glob.glob(d+'/*.json'):
+    try: j=json.load(open(f))
+    except Exception as e: print('ERR',f,e); sys.exit()
+    if j.get('phase') in ('open','failed'):   # failed — монтаж оборвался посередине, страховка — единственная точка возврата (условие Вениамина 17.10)
+        import datetime
+        # opened_ns/deadline_ns — монотонное время (boot_id), не настенное: настенное открытие = expires_utc − (deadline − opened)
+        e=datetime.datetime.fromisoformat(j['expires_utc']).timestamp()
+        t.append(int(e-(int(j['deadline_ns'])-int(j['opened_ns']))/10**9)); z.append(str(j.get('task','')))
+print('OK',min(t) if t else 0,' '.join(x for x in z if x))
+PY
+)
+case "$OKNA_VYVOD" in OK*) read -r _ OTKR_S OTKR_ZADACHI <<< "$OKNA_VYVOD"; read -r -a OTKR_ZADACHI <<< "${OTKR_ZADACHI:-}" ;;
+  *) echo "🔴 СБОЙ: окна монтажа не прочитаны ($OKNA_VYVOD) — ничего не удаляю"; "$ALERT" --plain -- "🔴 montazh-srok на $(hostname): окна монтажа не прочитаны — уборка не шла" || true; exit 1 ;; esac
+echo "открытых окон: ${#OTKR_ZADACHI[@]} (${OTKR_ZADACHI[*]:-—}); раньше $([ "$OTKR_S" = 0 ] && echo — || date -u -d @$OTKR_S +%FT%TZ) не трогаю"
 sboj() { SBOI+=("$1"); echo "🔴 СБОЙ: $1"; }
 svezhee_rozhdenie() {   # самое свежее max(btime, ctime) в дереве объекта; 0 если хоть у одного btime неизвестен
   find "$1" -xdev -exec stat -c '%W %Z' {} + 2>/dev/null | awk 'BEGIN{m=0;z=0} {if($1==0)z=1; t=($2>$1?$2:$1); if(t>m)m=t} END{print (z?0:m)}'
 }
-N_UD=0; N_OST=0; N_NEIZV=0; B_UD=0
+N_UD=0; N_OST=0; N_NEIZV=0; B_UD=0; N_HR=0; ISTEKLO=(); POKA=(); SEGODNYA=$(date -u +%F)
+pometka() {   # $1 объект, $2 его пункт (или пусто) → путь пометки, если есть
+  local m; for m in "$1.HRANIT" "$1/.HRANIT" ${2:+"$2.HRANIT"} ${2:+"$2/.HRANIT"}; do [ -f "$m" ] && { echo "$m"; return 0; }; done; return 1
+}
 for K in "${KORNI[@]}"; do
   [ -e "$K" ] || { echo "корня $K нет — пропуск"; continue; }
   [ -L "$K" ] && { sboj "$K — символическая ссылка, не трогаю"; continue; }
   [ "$(stat -c '%U:%G' "$K")" = root:root ] || { sboj "$K не root:root ($(stat -c '%U:%G' "$K")) — не трогаю"; continue; }
-  OBJ=()
+  OBJ=(); PUNKT=()
   while IFS= read -r -d '' e; do
-    n=$(basename "$e"); for x in "${ISKLYUCHENIYA[@]}"; do [ "$n" = "$x" ] && continue 2; done
+    n=$(basename "$e"); for x in "${ISKLYUCHENIYA[@]}"; do [[ "$n" == $x ]] && continue 2; done   # r2: маска (glob), не только имя
     if [ -d "$e" ] && [ ! -L "$e" ]; then
-      while IFS= read -r -d '' c; do OBJ+=("$c"); done < <(find "$e" -mindepth 1 -maxdepth 1 -print0)
-    else OBJ+=("$e"); fi
+      while IFS= read -r -d '' c; do OBJ+=("$c"); PUNKT+=("$e"); done < <(find "$e" -mindepth 1 -maxdepth 1 -print0)
+    else OBJ+=("$e"); PUNKT+=(""); fi
   done < <(find "$K" -mindepth 1 -maxdepth 1 -print0)
-  for o in "${OBJ[@]}"; do
+  for i in "${!OBJ[@]}"; do
+    o=${OBJ[$i]}; pu=${PUNKT[$i]}; on=$(basename "$o")
+    case "$on" in *.HRANIT|.HRANIT) N_OST=$((N_OST+1)); continue ;; esac
+    if m=$(pometka "$o" "$pu"); then
+      N_HR=$((N_HR+1)); N_OST=$((N_OST+1))
+      do_=$(sed -n 's/^do:[[:space:]]*//p' "$m" | head -1); kto=$(sed -n 's/^kto:[[:space:]]*//p' "$m" | head -1); zachem=$(sed -n 's/^zachem:[[:space:]]*//p' "$m" | head -1)
+      nep=""; { [ -z "$kto" ] || [ -z "$zachem" ]; } && nep=" · пометка неполная"
+      if [[ "$do_" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && [[ "$SEGODNYA" > "$do_" ]]; then
+        ISTEKLO+=("$o (до $do_; kto ${kto:-?}; zachem ${zachem:-?})"); echo "h  СРОК ХРАНЕНИЯ ИСТЁК $do_ — не удаляю, тревога: $o [$m]$nep"
+      elif [[ "$do_" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then echo "h  хранить до $do_: $o [$m]$nep"
+      else POKA+=("$o (${do_:-без срока}; kto ${kto:-?})"); echo "h  хранить ${do_:-без срока}: $o [$m]$nep"; fi
+      continue
+    fi
     b=$(svezhee_rozhdenie "$o")
     if [ "${b:-0}" = 0 ]; then N_NEIZV=$((N_NEIZV+1)); echo "?  рождение неизвестно — оставляю: $o"; continue; fi
+    if [ "$OTKR_S" != 0 ] && [ "$b" -ge "$OTKR_S" ]; then N_OST=$((N_OST+1)); echo "o  открыто окно — оставляю: $o"; continue; fi
+    for zd in "${OTKR_ZADACHI[@]}"; do case "${o,,}" in *"${zd,,}"*) N_OST=$((N_OST+1)); echo "o  задача открытого окна $zd — оставляю: $o"; continue 2 ;; esac; done
     if [ "$b" -lt "$POROG" ]; then
       r=$(du -sb --one-file-system "$o" 2>/dev/null | cut -f1); r=${r:-0}
       echo "−  $(( (SEJCHAS-b)/86400 )) сут  $((r/1048576)) МБ  $o"
@@ -72,7 +128,13 @@ for K in "${KORNI[@]}"; do
   done < <(find "$K" -mindepth 1 -maxdepth 1 -type d ! -type l -print0)
 done
 RE=$([ $BOJ = 1 ] && echo "удалено" || echo "К УДАЛЕНИЮ (сухо)")
-echo "итог: $RE $N_UD, объём $((B_UD/1048576)) МБ · оставлено $N_OST · рождение неизвестно $N_NEIZV · срок $((SROK/86400)) сут ($SROK с)"
+echo "итог: $RE $N_UD, объём $((B_UD/1048576)) МБ · оставлено $N_OST (из них по пометке .HRANIT $N_HR; срок хранения истёк ${#ISTEKLO[@]}) · рождение неизвестно $N_NEIZV · срок $((SROK/86400)) сут ($SROK с)"
+if [ $BOJ = 1 ] && [ ${#ISTEKLO[@]} -gt 0 ]; then
+  "$ALERT" --plain -- "🟡 montazh-srok на $(hostname): срок хранения по пометке .HRANIT истёк у ${#ISTEKLO[@]} — НЕ удалено, решите: ${ISTEKLO[*]:0:5}" || echo "🔴 тревога об истёкших пометках НЕ доставлена"
+fi
+if [ $BOJ = 1 ] && [ ${#POKA[@]} -gt 0 ] && [ "$(date -u +%u)" = 1 ]; then
+  "$ALERT" --plain -- "ℹ️ montazh-srok на $(hostname): хранится по пометке без даты ${#POKA[@]}: ${POKA[*]:0:10}" || echo "🔴 недельный перечень НЕ доставлен"
+fi
 if [ ${#SBOI[@]} -gt 0 ]; then
   "$ALERT" --plain -- "🔴 montazh-srok на $(hostname): сбоев ${#SBOI[@]} — ${SBOI[0]}$([ ${#SBOI[@]} -gt 1 ] && echo " (и ещё $(( ${#SBOI[@]}-1 )))")" \
     || echo "🔴 тревога НЕ доставлена"

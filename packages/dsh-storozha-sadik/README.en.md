@@ -2,9 +2,27 @@ Russian version: [README.md](README.md) · English below
 
 # dsh-storozha-sadik — watchers of the sadik machine that did not go into dsh-storozha-mashiny, and their alert channels
 
-Версия · Version: 3.1.10
+Версия · Version: 3.1.28
 
 Current version — see the heading of `CHANGELOG.md` (the package has no `package.json`) and the tag `dsh-storozha-sadik-v<номер>` in the tree.
+
+## Persistent notice liveness (3.1.28)
+
+`<unit> active` requires a loaded service, ActiveState=active and a nonzero MainPID. Activating has a30-second startup grace, matching the AP notice window; later it is a named alarm. Unreadable, incomplete or unknown state is BLIND. One systemctl snapshot is bounded by3s plus1s kill grace. Numeric deadlines and explicit ! exemptions retain their prior behavior. Install reader3.1.28 before workers; change seven notice rows alongside the worker transition. This detects stopped services at watch ticks, not mail delivery, an active hang or an outage entirely between ticks.
+
+## Autostart scope in 3.1.22
+
+Collect includes `ENABLED_AP_SCOPE|N|M` in its machine stdout. After validating the unit snapshot, the reader writes `AP: юнитов N, получателей M` through the existing log function to the unit journal. The outer SREZ capture discards stderr, so it is not the logging path. Missing/invalid summary is logged as unmeasured; scope shrinkage adds no separate alert or history.
+
+The caller remains `sadik-watch.service`: `collect`, then `sadik_enabled_check`, with the existing `service-autostart` alert group. Agents and gateways retain the active-without-persistent-enable rule. Required Autopilot units must be **enabled regardless of active state**; enabled-runtime is insufficient.
+
+AP declarations come from `dsh-autopilot` in `/etc/agent-registry/plugins.yaml`: installed `path/MAIL-LAYOUT.json` → `system_units`, plus live-unit paths in `derevo.files`. Expected `[Install]` comes from installed package source files, not enable symlinks or already enabled instances. Notice recipients come from agent-registry intent `namerenie.raskladka.autopilot_pochta: true`; no recipient list is stored in code.
+
+`autopilot-mail-notice@.timer` is a template expanded into the declared recipients' instances. Other installable templates need a declared `DefaultInstance`; an unknown expansion is blindness. Definitions without an `[Install]` boot binding are reported as template/static and do not require enabled. Unknown schemas, empty/incomplete scope, missing sources and systemctl failures produce named blindness. Types other than service/timer are unsupported and refused rather than reported healthy.
+
+Collection has a 15 s deadline plus 1 s until forced termination; each of three bulk systemctl calls has 5 s, within the caller's 60 s limit. No retries or automatic enable/start. The narrow command `bash libexec/sadik-watch-enabled.sh autopilot --root /absolute/physical/root` reads the same AP scope in a private tree; it neither installs nor changes enable symlinks. Unknown arguments, including `--dry-run` and `-n`, are refused.
+
+Does not prove a successful reboot, running-code health, static-unit presence/operation, units outside the declared sources, or authorization to remove a declaration/recipient flag. Intent changes alter coverage; this watcher does not authorize them. `test/stend-enabled.py` runs the real collector/reader through an alert stub, including native `systemctl --root` healthy → disabled instance → restored and repeated silent health.
 
 ## Purpose
 
@@ -27,7 +45,7 @@ What is inside and who calls it:
   see below). Once every 7 days it says «жив» (alive) on its own. Alerts go through `dsh-alert`; if that fails, as an
   a2a letter to the agent `iskra`.
 - `gruppy-prav-watch` + the reference `gruppy-prav.conf` — members of the permission gateway groups (`limity-vhod`,
-  `agent-button`, `claudeoauth`) against the reference: `m` lines in `sysusers.d` or an explicit list with a
+  `agent-button`, `claudeoauth`, `a2a-pochta`) against the reference: `m` lines in `sysusers.d` or an explicit list with a
   justification for each member (B-N-1913). It checks both supplementary members (`/etc/group`) and members by
   primary group (`/etc/passwd`). It writes nothing outward and changes nothing: `sadik-watch` calls it every cycle,
   and an extra or missing member is an alert naming the account and the group.
@@ -68,7 +86,9 @@ What is inside and who calls it:
   `/opt/agent-plugins/node_modules`. If it fails, `pamyat-seam-failed@` sends an alert to `agent-alert`.
 - `agent-button-daemon.sh` — the "button": a permanent service that executes commands from the list
   `/etc/agent-button/allowed.conf` on a request file in `/var/lib/agent-button/pending/`. It exists so an agent can
-  restart itself: a process outside the agent's process tree does it.
+  restart itself: a process outside the agent's process tree does it. Authority follows the account owning the request
+  file (fstat of the open descriptor): with full sudo (`(ALL) NOPASSWD: ALL` in `sudo -l -U`, taken per request) — any
+  listed command; without it — only `restart-<own account>` and `restart-gateway-<own>`, anything else — code 77 in `done/`.
 
 The results are read by the owner (Telegram), the coordinator (letters from `chitatel-obhoda`) and `sadik-watch`
 itself: it sees a failed service of any watcher in the daily list as «failed» or «просрочен» (overdue).
@@ -98,6 +118,7 @@ under `/etc/systemd/system/`, and `etc/` (the group reference `gruppy-prav.conf`
 | `libexec/pamyat-seam/stand.mjs` | `/usr/local/libexec/pamyat-seam/stand.mjs` | 0644 root:root | `run.sh` (via `/usr/local/bin/node`) |
 | `libexec/pamyat-seam/failed-v2.sh` | `/usr/local/libexec/pamyat-seam/failed-v2.sh` | 0755 root:root | `pamyat-seam-failed@.service` |
 | `libexec/gruppy-prav-watch` | `/usr/local/libexec/gruppy-prav-watch` | 0755 root:root | sadik-watch, step «группы прав» (`python3 -ISB`) |
+| `libexec/sadik-watch-enabled.sh` | `/usr/local/libexec/sadik-watch-enabled.sh` | 0755 root:root | sadik-watch: `collect` in the snapshot (60 s limit) and the agent/AP autostart reader (sourced as `. ../libexec/…`); installed BEFORE `sbin/sadik-watch` |
 | `etc/gruppy-prav.conf` | `/etc/agent-registry/gruppy-prav.conf` | 0644 root:agent-registry | gruppy-prav-watch (reference for the membership of the gateway groups) |
 | `systemd/sadik-watch.service` | `/etc/systemd/system/sadik-watch.service` | 0644 root:root | systemd; sets the `SADIK_WATCH_*` environment |
 | `systemd/sadik-watch.timer` | `/etc/systemd/system/sadik-watch.timer` | 0644 root:root | systemd, `*:2/10` (every 10 min), enabled |
@@ -127,6 +148,7 @@ under `/etc/systemd/system/`, and `etc/` (the group reference `gruppy-prav.conf`
 | `systemd/pamyat-seam.timer` | `/etc/systemd/system/pamyat-seam.timer` | 0644 root:root | systemd, 06:20 UTC, enabled |
 | `systemd/pamyat-seam-failed@.service` | `/etc/systemd/system/pamyat-seam-failed@.service` | 0644 root:root | systemd via `OnFailure=` of `pamyat-seam.service` |
 | `systemd/agent-button.service` | `/etc/systemd/system/agent-button.service` | 0644 root:root | systemd, `WantedBy=multi-user.target`, `Restart=always`, enabled |
+| `systemd/agent-button.tmpfiles` | `/etc/tmpfiles.d/agent-button.conf` | 0644 root:root | systemd-tmpfiles: pending3770 + .git/.codex/.agents/.aws root0755; Codex0.162.1 |
 
 Not installed into production: `README.md`, `CHANGELOG.md`, all stands from `test/` and the sample
 `etc/default/chitatel-obhoda.example`. As of 10.10 the registry record's `not_installed` names `README.md`,
@@ -235,6 +257,24 @@ checksums, mode and owner.
    A masked timer (`systemctl mask`) needs no line: it goes into the count «замаскировано N: <имена>» (masked N: <names>)
    of the completeness line, not red. A timer whose service is «-» in `list-timers --all` without a mask is a red line
    «служба не определена: <таймер>» (service not defined: <timer>).
+
+The seven AP notice timer instances use `etc/storozha-sutochnye-autopilot.fragment`:
+explicit `autopilot-mail-notice@<agent>.service 1` records for master, vintik, shpuntik,
+gayka, sova, shurup and tumbler. This is input for an operator to append to the existing
+machine list, not a replacement list or an automatically loaded path. The assigned operator
+prepares a full AFTER against a pinned BEFORE, preserves its existing bytes, and mounts it
+after review. Existing records or exemptions for these names require a new candidate.
+The reader matches exact names; an uninstantiated template does not cover instances, and
+an exemption disables both failure and freshness checks. The one-hour threshold follows
+the existing frequent-timer rule. Failed state is sampled every 10 minutes, reminders use
+6 hours, recovery changes the group once and then stays quiet about that notice.
+The notice timer uses `OnUnitActiveSec=5`, and the service is `oneshot`: the next activation,
+nominally every 5 seconds, resets `failed`. The list detects sustained failure and `StartLimit`;
+isolated failures cleared by the next activation between sadik-watch samples (10 minutes)
+are outside its coverage by construction. Successful exit does not prove delivery.
+Run `python3 -B test/stend-autopilot-notice-sutochnye.py` for local fixtures without root,
+real systemd, journal access or outbound alerts. Do not mount the fragment as the whole list.
+
 5. In the `dsh-storozha-sadik` registry record, move `version` (the `installed_check` fingerprint) and `ref` to the
    new tag. The registry is edited only through `agent-plugins pravka`: `sadik-watch` itself catches edits that bypass
    it.
@@ -308,8 +348,8 @@ The reference `gruppy-prav.conf` has one line per group, `#` starts a comment:
 
 A malformed line, an empty reference or a repeated group (blindness with the numbers of both lines) — blindness. The
 group owner (the same-named account) is not counted as extra either by primary group or among supplementary members.
-In production: `limity-vhod sysusers`, `agent-button spisok` (8 accounts, a justification for each — in the file's
-comments), `claudeoauth spisok -`. Group membership is changed by editing the reference line (the deploying hand),
+In production: `limity-vhod sysusers`, `agent-button spisok` (15 accounts: nine + the six of the Master team since the KNOPKA-MASTER window 16.10, a justification for each — in the file's
+comments), `claudeoauth spisok -`, `a2a-pochta spisok` (9 accounts; the Master team are not members). Group membership is changed by editing the reference line (the deploying hand),
 otherwise an alert. Output: the lines `ok <группа>: …`, `ЛИШНИЙ <учётка> в <группа> (…)`,
 `НЕДОСТАЁТ <учётка> в <группа> (…)`, `СЛЕПОТА: …`; the last line is `СОСТАВ: <ключи>` (empty — clean).
 
@@ -474,8 +514,12 @@ touched; it runs as the account or under `sudo` (then the mark is in a root 0600
 argument it judges the neighbouring `../sbin/agent-button-daemon.sh`. 6 probes: healthy request executed · a symbolic
 link to someone else's file — 65, no text · a hard link — 65 · a FIFO does not hang the button, the neighbouring
 request is executed · the text of a refused request is not repeated · a newline in the request name does not forge a
-journal line.
-Stand exit codes: 0, 1 — a mismatch, 2 — not assembled. The nightly and weekly runs do not call it yet: it is not in
+journal line. Since 3.1.12, as root, 7 more authority probes (requests dropped as `master` and `iskra` via `runuser`,
+live sudo check, execution proven by a trace file): master → `restart-master`, `restart-gateway-master` executed ·
+master → `reboot-server`, `restart-iskra` — 77, not executed · forged request name naming another account, owner
+master — 77 · the refusal reason names the account · iskra → `reboot-server`, `restart-master`, `restart-memory`
+executed. Not root — these 7 are skipped: BLINDNESS, exit 2.
+Stand exit codes: 0, 1 — a mismatch, 2 — not assembled or authority blindness. The nightly and weekly runs do not call it yet: it is not in
 the list of stands.
 
 There are no stands for `sessiya-uderzhana-watch`, `socseti-watch`, `pamyat-fill-watch.py` (it has a `--check` mode:
@@ -574,3 +618,36 @@ B-N-2023: manual probes must also set SADIK_VLADELEC_WATCH_BIN=/bin/true or isol
 B-N-2023 R3: the package ships only `etc/vladelec/telegram-id.example`, never a real owner ID. The deployment operator creates the root-owned 0644 setting separately. The helper has a nonblocking lock, reads for up to 3 seconds, and makes one bounded courier attempt (5 seconds plus 1 second to kill). Its test-only state override is `VLADELEC_WATCH_STATE_DIR`. Tests under `test/stend-b2023-*.py` use private settings and fake external IO, requiring sudo for mount namespaces and root fixtures.
 
 Reason and attempt time are stored atomically in `/var/lib/sadik-watch/vladelec-tg-id.json` before the courier. Attempts, including failed delivery, for the same reason are limited to one per 6 hours; changed reasons notify immediately; recovery notifies once. Invalid JSON is kept in one `.invalid` file and monitoring resumes. State filesystem errors return 2 and remain visible in the journal; they require the operator.
+
+### B-N-2063: shared registry check
+
+The normal watcher and narrow pravki-mimo stand call `libexec/sadik-watch-pravka.sh`. The stand reads the real channel/group function definitions without executing the watcher main, machine snapshot or owner helper. Its registry, state and channels are private. All nine checks and `_UID=0` filtering remain. The helper is installed as `/usr/local/libexec/sadik-watch-pravka.sh`, 0644 root:root, in derevo.files before the caller/stand. The source itself performs no IO. Run `python3 packages/dsh-obhod-stendov/test/test_pravki_isolation.py` from the tree with sudo available for A1–A4. This checks the real caller with isolated machine IO, never live delivery. The check does not cover agents.yaml, root forgery or semantic correctness of an accepted pravka.
+
+### B-N-2063: один срез окна отказов
+
+OTKAZDLINA и OTKAZLIMIT используют один `journalctl -u UNIT --since -$OKNO_OTKAZA -o short-unix` вместо 2–3 чтений. Прежние фильтры, окна и строки результата сохранены. Срез держится только в памяти текущего UNIT, без файла с содержимым журнала; память зависит от его объёма. Пустой/недоступный журнал остаётся SLEPOTA; частичный stdout при отказе разбирается как прежде — эта дельта не расширяет старую диагностику отказов.
+
+Регресс: `python3 test/test_otkazy_single_read.py` из каталога пакета; frozen fixture — точный прежний блок производства, результаты на одинаковом вводе сравниваются побайтно. 14 входов: пустой, No entries, отказ, частичный отказ, пустая строка, нормальный текст, Prompt, лимит, подложный текст, несколько отказов, три агентных входа и отдельное окно 17min. Проверяется и один запрос на UNIT. Полный живой такт/доставка вне этой пробы.
+
+Both consumers reuse one short-unix journal snapshot per UNIT. Output, filters and configured window remain unchanged. The snapshot stays in memory for the current UNIT only. The regression compares the original and candidate production consumers byte for byte, including empty/error inputs; partial-output failure keeps the old behavior. Live delivery is outside this regression.
+
+
+### Button: persistent Codex metadata mount targets (B-N-2088)
+
+The daemon creates pending at startup with mkdir-p and polls only pending/*.cmd. Install agent-button.tmpfiles as
+/etc/tmpfiles.d/agent-button.conf and run systemd-tmpfiles --create on that file before the first button/Codex start;
+on an existing host coordinate an idle window for the five Codex callers. It keeps pending root:agent-button3770 and creates
+four empty root:root0755 directories: .git .codex .agents .aws. Do not clear queue requests or take over unexpected objects.
+Codex0.162.1 otherwise creates/removes these targets per writable root; sticky sharing can panic AFTER a command ran.
+Only tmpfiles/data directories change, so no button/gateway restart or daemon-reload is required. Boot tmpfiles recreates
+missing directories; type-d with age '-' does not configure cleanup. A new real Codex self-button call is still required.
+
+Root test: python3 -I -B test/stend-knopki-tmpfiles.py (disposable tree, package daemon with inert ping, never live ExecStart).
+Before a Codex update repeat a native sandbox model under the real actor credentials: same pending owner/mode/ACL, rc0,
+.cmd writes40/40 and cleanup-panics0/40 for two users20+20. The four names were measured for0.162.1; future extra names and
+removal between boot/checks are outside this partial fix. No new persistent watcher is installed.
+
+
+### Active/MainPID limitation
+
+A worker crash loop remains outside this check: the timer starts it again after five seconds, so the watcher will usually see an active process with a new PID. It neither remembers PID changes nor counts timer starts. This does not detect renewed journal flooding. StartLimit in [Unit] remains a separate ticket; the 3.1.28 runtime is unchanged.

@@ -50,7 +50,7 @@ try{
  });
  await check('actual polling loop after persistence: pending voice before a2a intake',async()=>{
   const f=await fixture();try{f.receiveVoice();f.advance(1);const file=f.mail();f.complete('ГОЛОС ИЗ ОЧЕРЕДИ');const run={alive:true};
-   Object.assign(f.context,{A2A_IN:f.input,SPOOL_IN:null,attachmentStore:{tick:async()=>{}},receiptTick:async()=>{},
+   Object.assign(f.context,{apNotices:null,A2A_IN:f.input,SPOOL_IN:null,attachmentStore:{tick:async()=>{}},receiptTick:async()=>{},
     pollA2A:()=>f.poll(f.input,'a2a'),pollSpool:async()=>{},errDetail:e=>e.message,botKto:async()=>f.context.tg.whoAmI()});
    f.context.tg.whoAmI=async()=>({id:777});f.context.tg.poll=async()=>{run.alive=false;return[];};
    const loop=vm.runInContext('('+extractFunction(source,'loop')+')',f.context);let watchdog;try{await Promise.race([loop(run),new Promise((_,reject)=>watchdog=setTimeout(()=>{run.alive=false;reject(Error('loop timeout: '+f.logs.join(' | ')));},5000))]);}finally{clearTimeout(watchdog);}

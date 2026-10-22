@@ -1,6 +1,6 @@
 # Устройство oom-watch · oom-watch architecture
 
-Автор · Author: Aleksandr Argelander · Лицензия · License: MIT · Код · Code: `bin/oom-watch` 3.1.3
+Автор · Author: Aleksandr Argelander · Лицензия · License: MIT · Код · Code: `bin/oom-watch` 3.1.4
 
 Этот документ описывает, из чего состоит сторож, как идут данные от ядра до тревоги и как живёт курсор. Всё ниже выведено из кода `bin/oom-watch` и юнитов `systemd/`.
 

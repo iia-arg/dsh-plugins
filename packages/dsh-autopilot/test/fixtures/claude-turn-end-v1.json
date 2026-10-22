@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "kind": "turn_end",
+  "participant": "master",
+  "engine": "claude",
+  "ts": "2026-10-21T11:00:00.000Z",
+  "sessionCreated": 1792580000000,
+  "turn": 17,
+  "status": "completed",
+  "input": 1150,
+  "cached": 100,
+  "cache_write": 50,
+  "output": 200,
+  "vyzovov": 2,
+  "polnota": "parent_only",
+  "thread": "sample-session-id"
+}

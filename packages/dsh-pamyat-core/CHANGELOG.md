@@ -1,10 +1,20 @@
-# 0.1.0-alpha.103 · Обезличивание / Anonymization
 
 Публичная схема SQL без исторических комментариев; нейтральные литералы стендов и явные допуски синтетических секретов. Поля базы, настройки и поведение записи не меняются; принятые RU/EN документы и комментарии сведены после проверки исходных токенов.
 
 Public SQL schema without historical comments; neutral test literals and explicit synthetic-secret allowances. Database fields, settings and write behavior are unchanged; accepted RU/EN documentation and comments are integrated after verifying source tokens.
 
 # История изменений · Change history
+
+## 3.1.3 — 14.10.2026 · npm 12: состав публикации через `npm-sostav` (B-N-2048)
+
+- `test/stend-readme.mjs`: вывод `npm pack --dry-run --json` разбирает помощник `npm-sostav --files` (`dsh-pribory` 3.1.2) —
+  одним правилом для npm 11 (массив) и npm 12 (объект); прежний `JSON.parse(…)[0].files` под npm 12 слеп. Под npm 11.17.0
+  и 12.2.0 стенд даёт тот же счёт.
+- Стенду нужен `npm-sostav` в PATH (на sadik — `/usr/local/bin`); нет его — стенд сразу выходит кодом 2 «СЛЕПОТА: npm-sostav
+  не найден — нужен dsh-pribory ≥ 3.1.2», не красным и не зелёным.
+- `package.json`: необязательный peer `dsh-pribory ^3.1.2` (`peerDependenciesMeta.optional`) — объявляет требование стенда и ничего
+  не ставит: обязательный peer под npm 11 и 12 офлайн-установкой не ставится (код 1, `dsh-pribory` в реестре только 3.1.1).
+- Код пакета не менялся.
 
 ## 3.1.2 — 14.10.2026 · подготовка к публикации: оформление
 

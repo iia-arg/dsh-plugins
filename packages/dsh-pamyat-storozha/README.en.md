@@ -1,6 +1,6 @@
 # dsh-pamyat-storozha
 
-**Version:** 3.1.3
+**Version:** 3.1.8
 
 ## Purpose
 
@@ -21,7 +21,7 @@ What `apply(ctx, config)` registers (per the code in `src/index.js`):
 
 What the plugin reads and writes at run time:
 
-- log: every line via `ctx.logger.info` (fallback — `console.log`) prefixed with `[dsh-pamyat-storozha <version from package.json>]`;
+- log: event lines via `ctx.logger.info` (fallback — `console.log`); startup directly to process stdout prefixed with `[dsh-pamyat-storozha <version from package.json>]`;
 - external sink: the `komandaStoka` command asynchronously via `/bin/sh -c`, text on stdin; shell timeout 5 s;
 - the reported-stages file `$DSH_HOME/storages/storozha-stupeni.json` (or the path in `STOROZHA_STUPENI_FAJL`), written through a temporary file and `rename`;
 - the compaction threshold — via `chitatPorogD` from `dsh-pamyat-kompakt/porogi.mjs` (agent name — `KOMPAKT_AGENT`, directory — `KOMPAKT_NASTROJKI_KATALOG`, `dsh-pamyat-kompakt` default — `/etc/dsh-pamyat/agenty`);
@@ -67,7 +67,7 @@ The first four units live in `/etc/systemd/system`, `session-agent-preset-watch`
 The plugin is installed by npm in `/opt/agent-plugins` from the lock file; `/opt/agent-plugins/package.json` lists it as `"dsh-pamyat-storozha": "file:../agent-plugins-tarbally/dsh-pamyat-storozha-<version>.tgz"`. What must be next to it:
 
 - `@deepseek-ai/cordis` and `@deepseek-ai/schemastery` — `peerDependencies`, located in `/opt/agent-plugins/node_modules/@deepseek-ai/`;
-- `dsh-pamyat-kompakt` version `^3.1.1` — a mandatory peer: the `porogi.mjs` function is imported at load time. `file:../dsh-pamyat-kompakt` in devDependencies serves the local stands. For a working installation, supply the sibling's archive together with the guard's archive, as well as compatible cordis/schemastery peers. Example of a local installation: `npm install --offline ./dsh-pamyat-kompakt-3.1.2.tgz ./dsh-pamyat-storozha-3.1.3.tgz`; the other peers must already be available locally. `--legacy-peer-deps`/`--force` bypass the dependency check and do not prove a successful import.
+- `dsh-pamyat-kompakt` version `^3.1.1` — a mandatory peer: the `porogi.mjs` function is imported at load time. `file:../dsh-pamyat-kompakt` in devDependencies serves the local stands. For a working installation, supply the sibling's archive together with the guard's archive, as well as compatible cordis/schemastery peers. Example of a local installation: `npm install --offline ./dsh-pamyat-kompakt-3.1.2.tgz ./dsh-pamyat-storozha-3.1.6.tgz`; the other peers must already be available locally. `--legacy-peer-deps`/`--force` bypass the dependency check and do not prove a successful import.
 
 Node: the plugin needs Node 18+; the tools and full suite using `node:sqlite` need Node 22.13+ (on Node 22 an ExperimentalWarning is expected; that is not an import failure). Use 22.13+ for the complete package.
 
@@ -198,7 +198,7 @@ Run `npm test` without `DSH_HOME` and `STOROZHA_STUPENI_FAJL` in the environment
 
 Do not run without substitutions or without understanding the consequences:
 
-- `stend-pravki-postavki-omega.sh`, `stend-svodki-doveriya.sh` — per their header "not for the daily round": sudo and a copy of the production OMEGA (about 1–2 min);
+- `stend-pravki-postavki-omega.sh`, `stend-svodki-doveriya.sh` — in the nightly round since A-N-1711 (07.10; arguments — the vse-stendy-boevye.sh table), 10–20 s at night; need sudo, copy of the production OMEGA; the last step reads the production install and systemctl: red at night is live state, not a stand defect (the former "not for the daily round" withdrawn 17.10);
 - `stend-istochnika-rashoda.mjs`, `stend-vygruzki.mjs`, `stend-primenimosti-prune.mjs` and the whole `npm test` — with `DSH_HOME` set they write into the agent's stage file;
 - `bin/stendy-vseh-paketov.sh` — runs the stands of all `dsh-pamyat-*` packages without reading their headers, including stands that touch production;
 - `bin/proverka-opory.mjs --zapisat`, `bin/pamyat-vernut-povtor` — write to the production `pamyat.db`; `bin/chitatel-otklonennyh.mjs` without `--suho` writes decision files;
@@ -287,3 +287,21 @@ The summary always, even at zero, prints the line "ОХВАТ ПО СЕССИЯ�
 | **🔴 What its silence means** | "the session sends events" **and** "the guard is not mounted" **and** "there were no events at all". In normal operation a process sees one session, so the category is usually silent on the merits, not because of health. |
 
 The guard retains coverage of the last 128 sessions by most recent event; eviction is reported in the summary. The stage file retains no more than 128 sessions by the time of the last stage send/reset (kogda). Old entries are trimmed on load/write. When an evicted session returns, a stage may be reported again; this is bounded dedup, not a permanent archive. Without events, in-memory cleanup is not triggered. This cap does not bound the other unfinished-compaction maps.
+
+## Квитанция подъёма · Startup receipt
+
+Строка подъёма `[dsh-pamyat-storozha <version>] подъём: …` идёт один раз непосредственно в stdout процесса, независимо от exporter Cordis: его logger может принять строку только в буфер. Версия фиксируется из package.json при импорте; неизвестная версия не заменяется выдуманной. Читатель — pered-podyomom --posle, затем kvitanciya-podyoma (только rc0). Это признак загрузки, не доказательство исправности всех сторожей; ошибка stdout сохраняет прежнюю границу «печать не роняет пакет». Остальные сообщения сохраняют logger-путь. После монтажа нужен назначенный подъём; старый процесс новую строку не получит.
+
+The startup line `[dsh-pamyat-storozha <version>] подъём: …` goes once directly to process stdout, independently of Cordis exporters, which may only buffer logger messages. The version is read at module import; an unknown version is not invented. The reader is pered-podyomom --posle, then kvitanciya-podyoma (rc0 only). This proves loading, not all guard behavior. Output failure retains the no-crash boundary. Other messages keep their logger route; an assigned restart is required after deployment.
+
+`node test/stend-startup-journal.mjs` — настоящий Cordis без exporter: stdout/version + remount; не запуск живой службы. · Actual Cordis without exporter: stdout/version + remount; no live service.
+
+## TEAM-003: first-start session gap / первый подъём
+
+`session-agent-preset-watch` (root oneshot → timer) distinguishes an absent session root before a service's first observable start. The canonical unit comes from `namerenie.sluzhba`. Only a loaded, inactive unit with empty ActiveEnterTimestamp, ExecMainStartTimestamp and InvocationID AND an empty retained all-boot journal is counted as `agents_not_started`, separately from `agents_scanned`. No alarm is sent for that case; JSON, journal and state name the waiting agents. The existing registry remains the denominator; waiting agents are not counted as inspected sessions.
+
+Ненулевой/неполный/недоступный systemd или journalctl, timeout/не-root, неизвестная unit, существующий пустой root сессий — прежняя слепота2, не разрешение пропуска. След запуска/InvocationID/журнала при отсутствующем root — тревога. Заголовки без agentPreset по-прежнему провал1. У каждого запроса предел5с в общем бюджете60с. В историю читаются только служебные поля, не MESSAGE. Отсутствие следов означает отсутствие в текущем manager и сохранённом журнале, не восстановление удалённой истории; при одновременной утрате всех прежних свидетельств прошлый запуск не доказать этой проверкой.
+
+Зовущий — `session-agent-preset-watch.service --watch`; читатель проблем — прежний agent-alert, оператор видит ожидание первого подъёма через --json/журнал/last.json. Права, таймер и антидублирование не меняются. `test/stend-preset-lifecycle.mjs` — @root,12 temp-fixture методов, systemd/journal/alert явно подставные; никаких живых служб/сессий/моделей/тревог стенд не вызывает.
+
+Для окна команды выбран второй вариант документации: при ещё старом стороже между записью новых агентов в agents.yaml (Z5) и их первым подъёмом (Z9/Z10) поимённые FileNotFoundError этих новых session-root являются ожидаемой стадией окна. Остальные ошибки этим не оправданы, сторож/канал не выключаются. На bclaude/spark исправленный выпуск ставится принятой рукой ДО Z5; приёмка сессий удерживается до настоящего первого хода. Это порядок будущей установки, не выполненный автором монтаж.

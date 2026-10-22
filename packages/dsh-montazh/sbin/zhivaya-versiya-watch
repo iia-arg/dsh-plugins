@@ -7,17 +7,23 @@
 Файл на диске сменили, а службы не подняли: процесс живёт на старом коде. 25.09 шлюз 0.4.7 и 0.4.8
 монтировались, а avrora/spartak/iskra жили на 0.4.6 — поднимали только zarya. Диск это не видит
 по построению: vypusk-okno-watch сверяет диск с меткой, sadik-watch — жива ли служба.
-Различает только журнал ЖИВОГО pid: какую версию процесс сам назвал после старта.
+Версию различает журнал ЖИВОГО pid. Если история подъёма утрачена, сравнивается время старта с ctime всей копии; это отдельный признак, не версия.
 
 ЧТО ДЕЛАЕТ. Раз в час. Службы находит ПО УСТРОЙСТВУ, а не по списку имён:
   - шлюз: работающая служба, в argv которой есть /opt/claude-oauth/gateway.mjs; диск —
     /opt/claude-oauth/package.json; живая версия — последняя «(dsh-)subscription-gateway X.Y.Z» (обе формы, A-N-1948);
   - мост и адаптер: работающая служба агента DSH (argv: …/@deepseek-ai/dsh/lib/bin.js web или …/.bin/dsh web);
     дом — HOME из окружения службы, иначе дом учётки; диск — <дом>/plugins/<пакет>/package.json;
-    живая версия — последняя «[<пакет> X.Y.Z]».
+    живая версия — последняя «[<пакет> X.Y.Z]»;
+  - общий каталог (B-N-2111 (25), 17.10.2026, Искра; наряд Забавы): пакет из OBSHCHIE (сейчас только
+    dsh-telegram-multiagent) — диск /opt/agent-plugins/<пакет>/package.json, один на все службы, что его грузят
+    (ссылкой из профиля). Пара — службе агента DSH, в срезе живого pid которой есть строка подъёма
+    «[<пакет> X.Y.Z · …] подъём» (перед ней бывает имя агента); живая версия — последняя такая строка.
+    Список служб — по журналу, НЕ из used_by реестра (там отставал: 12 против 18, замер Авроры 17.10).
+  Служба агента DSH без единой пары — строка «служба без пар: K — <службы>» (печатается всегда, и при 0).
   Живая = в журнале _PID=MainPID начиная с момента старта службы (--since старт: pid с прошлой
   загрузки не спутается).
-ВИДЫ: сошлось · РАЗОШЛОСЬ (живая ≠ диск) · СЛЕПОТА (в журнале живого pid нет строки версии —
+ВИДЫ: ВРЕМЯ (по ctime, не по версии) · ПОДОЗРЕНИЕ (процесс старше файлов) · сошлось · РАЗОШЛОСЬ (живая ≠ диск) · СЛЕПОТА (в журнале живого pid нет строки версии —
   «не знаю», а не «сошлось»; или диск не читается) · ИНСТРУМЕНТ (B-N-1979, см. ниже).
 ИНСТРУМЕНТ (B-N-1979, 10.10.2026, Аврора; замысел — ворота Вениамина): мост при негодной настройке ostrovApi не
   ставит инструмент ostrov_api, работает дальше и пишет в журнал своего процесса одну строку
@@ -32,33 +38,52 @@
 ТРЕВОГА: agent-alert (с «--»), при СМЕНЕ картины (набор расхождений и слепот) — сразу; та же картина —
   повтор раз в сутки; картина опустела — одна строка «сошлось снова». Состояние пишется при КАЖДОМ
   прогоне, если доставка не сорвалась; тревога не ушла — состояние прежнее, повтор на следующем прогоне.
-ОСТАНОВКА (условие Вениамина): каждый вызов systemctl/journalctl/getent/date — не дольше SH_PREDEL_S (20 с);
+ОСТАНОВКА (условие Вениамина): каждый вызов systemctl/journalctl/getent/date/ps — не дольше SH_PREDEL_S (20 с);
   зависший вызов — СЛЕПОТА с названием в картине, а не тишина. Юнит — TimeoutStartSec=10min.
   🔴 B-N-928 (26.09.2026, Аврора; ворота Вениамина 25.09): предел на вызов НЕ ограничивал прогон — вызовов по одному на
   каждую работающую службу и по паре на носитель, 60 с × десятки ≫ 10 мин: systemd убил бы прогон РАНЬШЕ тревоги
   «зависло» (упавший юнит без текста). Теперь ОБЩИЙ СРОК OBSHCHIJ_SROK_S = 420 с (= 10 мин юнита − 120 с на канал − запас):
   после него вызовы не делаются, в картину — «СЛЕПОТА: общий срок исчерпан, пропущено вызовов N». Итог считает ПАРЫ
   отдельно от строк «зависло» (прежде зависшая пара давала две строки: знаменатель 48 при 24 парах).
-ИСХОД: 0 всё сошлось · 1 есть расхождение · 2 слепота или отказ канала · 3 неверный вызов.
+ИСХОД: 0 нет тревожащих проблем (ВРЕМЯ отдельно от версии) · 1 расхождение/подозрение · 2 слепота/канал · 3 неверный вызов.
   --avto-montazh: код 4 — адресная отсрочка окна, не зелёный результат.
 ЧЕГО НЕ ЛОВИТ:
   - при --avto-montazh настоящая ошибка версии внутри окна может быть отложена до 1800с;
     без ключа проверка строгая; ошибки инструмента/слепота/чужие предметы не откладываются.
   - службу, которая НЕ РАБОТАЕТ (inactive): живой версии нет — это предмет sadik-watch;
   - версию, одинаковую по номеру при разном коде (номер не различает) — это предмет vypusk-okno-watch;
-  - носители, не перечисленные здесь (только шлюз, мост, адаптер); новый носитель — правка SHLYUZ_*/PLAGINY;
-  - строку версии, вытесненную из журнала ротацией при давнем старте, — выйдет СЛЕПОТОЙ, не ложью.
+  - носители, не перечисленные здесь (шлюз, мост и адаптер в доме агента, общий каталог только для OBSHCHIE);
+    новый носитель — правка SHLYUZ_*/PLAGINY/OBSHCHIE; пакет общего каталога без строки «[<пакет> X.Y.Z · …] подъём»
+    в журнале своего процесса так не взять — пару ему не построить;
+  - службу, которая грузит пакет общего каталога, но строки подъёма в срезе живого pid нет (вытеснена ротацией,
+    пакет упал до подъёма, строка иной формы): пары по этому носителю нет МОЛЧА; если других пар у службы нет —
+    она в «служба без пар», если есть — пропажа по общему каталогу не названа;
+  - «служба без пар» — только строка вывода и число в итоге (journal службы, logger): в картину и тревогу не
+    идёт, исход не меняет; служба не агента DSH (не подходит под RX_AGENT и не шлюз) не считается вовсе;
+  - начало процесса раньше головы семейства его UID в текущей загрузке: сравниваем старт с max ctime
+    ВСЕЙ копии, включая node_modules, inode ссылок и их цели, каталоги. Старт позже — ВРЕМЯ
+    («сошлось по времени запуска»), отдельно от совпадения версии; раньше — ПОДОЗРЕНИЕ с тревогой.
+    Равная секунда/ошибка чтения/смена PID — СЛЕПОТА. Недоступная целиком копия помечается
+    ИСТОРИЯ внутри слепоты (с тревогой), а не тихим успехом. ВРЕМЯ не удостоверяет номер/bytes.
+    Не ловит: старый код из другого пути и вмешательство root, умеющего менять время/носитель;
+    самоперезагрузку модулей не доказывает. Изменение chmod/chown может дать безопасную ложную тревогу.
+    Тихий первый лог отдельной службы границей ротации не считается. Обход копии — изолированный
+    дочерний Python, 20с и оставшаяся часть общего срока 420с; неполный обход не даёт зелёного.
   - ИНСТРУМЕНТ: блок ostrovApi пропал или enabled: false — мост выходит молча, строки нет; инструмент поставлен, но
     вызов падает (ключ не читается, API недоступен, неверный botId); мост не поднялся вовсе (тогда СЛЕПОТА версии);
     строки другого pid (дочерние процессы, bash агента) — срез _PID=MainPID их не берёт намеренно; задержка до часа.
     Служба остановлена — её пары нет, вид уходит и придёт «снова в порядке»: остановку ловит sadik-watch.
 Намеренное расхождение (Искра-шлюз ждёт подъёма) краснеет честно: исключений нет, повтор раз в сутки.
 """
-import argparse, json, os, re, subprocess, sys, time
+import argparse, glob, json, os, re, subprocess, sys, time
 
 SHLYUZ_FAJL = '/opt/claude-oauth/gateway.mjs'
 SHLYUZ_DISK = '/opt/claude-oauth/package.json'
 PLAGINY = ('dsh-tool-bridge', 'dsh-subscription-adapter')
+# B-N-2111 (25): общий каталог — один package.json на все службы агентов, что грузят пакет (ссылкой из профиля).
+# Пара — только у службы, в срезе живого pid которой есть строка подъёма пакета; список служб — из журнала, не из used_by.
+OBSHCHIJ_KOREN = '/opt/agent-plugins'
+OBSHCHIE = ('dsh-telegram-multiagent',)
 SOST = '/var/lib/zhivaya-versiya-watch/kartina.json'
 ALERT = '/usr/local/bin/agent-alert'
 TEG = 'zhivaya-versiya-watch'
@@ -83,17 +108,101 @@ OBSHCHIJ_SROK_S = 420
 SROK_DO = time.monotonic() + OBSHCHIJ_SROK_S
 ZAVISLO = []
 PROPUSHCHENO = [0]
+JOURNAL_FIRST = {}
+JOURNAL_DIRS = ('/var/log/journal', '/run/log/journal')
+
+# Isolated child: include directories, link inodes and linked dependencies.
+# Parent sh() bounds the whole traversal by 20s and the remaining 420s budget.
+CTIME_SCAN = r'''
+import json, os, stat, sys
+try:
+    with os.scandir(sys.argv[1]):
+        pass
+except OSError:
+    print(json.dumps(dict(unavailable=True)))
+    sys.exit(0)
+latest, name, count, links = 0, '', 0, 0
+
+def note(st, path):
+    global latest, name
+    if st.st_ctime_ns > latest:
+        latest, name = st.st_ctime_ns, path
+
+def resolve(path):
+    global links
+    if not os.path.isabs(path):
+        raise ValueError('absolute copy path required')
+    # Keep kernel semantics for file/.., file/. and trailing slash; the manual
+    # pass below gathers intermediate link ctimes that stat() does not expose.
+    expected = os.stat(path)
+    parts, prefix, hops = path.split('/'), '/', 0
+    while parts:
+        part = parts.pop(0)
+        if part in ('', '.'):
+            continue
+        if part == '..':
+            prefix = os.path.dirname(prefix)
+            continue
+        current = os.path.join(prefix, part)
+        st = os.lstat(current)
+        if stat.S_ISLNK(st.st_mode):
+            note(st, current)
+            hops += 1
+            links += 1
+            if hops > 40:
+                raise OSError('link chain exceeds 40')
+            target = os.readlink(current)
+            after = os.lstat(current)
+            if not target or (st.st_dev, st.st_ino, st.st_ctime_ns) != (after.st_dev, after.st_ino, after.st_ctime_ns):
+                raise OSError('link changed during read')
+            if os.path.isabs(target):
+                prefix = '/'
+            parts = target.split('/') + parts
+        else:
+            prefix = current
+    st = os.lstat(prefix)
+    if (st.st_dev, st.st_ino, st.st_ctime_ns) != (expected.st_dev, expected.st_ino, expected.st_ctime_ns):
+        raise OSError('target changed during resolution')
+    note(st, prefix)
+    return prefix, st
+
+todo = [resolve(sys.argv[1])]
+seen = set()
+while todo:
+    path, st = todo.pop()
+    count += 1
+    note(st, path)
+    if stat.S_ISDIR(st.st_mode):
+        key = (st.st_dev, st.st_ino)
+        if key not in seen:
+            seen.add(key)
+            with os.scandir(path) as entries:
+                for entry in entries:
+                    est = entry.stat(follow_symlinks=False)
+                    note(est, entry.path)
+                    todo.append(resolve(entry.path) if stat.S_ISLNK(est.st_mode) else (entry.path, est))
+if not latest:
+    raise ValueError('empty ctime scan')
+print(json.dumps(dict(ctime_ns=latest, path=name, entries=count, links=links)))
+'''
 
 
-def sh(*a):
+def sh(*a, checked=False):
     ost = SROK_DO - time.monotonic()
     if ost <= 0:
         PROPUSHCHENO[0] += 1
+        if checked:
+            raise subprocess.CalledProcessError(124, a)
         return ''
     try:
-        return subprocess.run(list(a), capture_output=True, text=True, timeout=min(SH_PREDEL_S, ost)).stdout
+        p = subprocess.run(list(a), capture_output=True, text=True, timeout=min(SH_PREDEL_S, ost))
+        if checked:
+            p.check_returncode()
+        return p.stdout
     except subprocess.TimeoutExpired:
         ZAVISLO.append(' '.join(a[:4])[:80])
+        if checked:
+            raise subprocess.CalledProcessError(124, a)
         return ''
 
 
@@ -115,9 +224,89 @@ def zhivaya(unit, rx):
         e = sh('date', '-u', '-d', st_real, '+%s').strip()
         if e.isdigit():
             since = ['--since', '@' + e]
-    out = sh('journalctl', f'_PID={pid}', '--no-pager', '-o', 'cat', *since)
+    try:
+        out = sh('journalctl', f'_PID={pid}', '--no-pager', '-o', 'cat', *since, checked=True)
+    except (OSError, subprocess.CalledProcessError):
+        return None, None, ''
     naj = rx.findall(out)
     return pid, (naj[-1] if naj else None), out
+
+
+def utrachena_istoriya(unit, pid):
+    """Use the retained head of the process UID journal family in this boot.
+
+    A quiet unit's first message is not a journal retention boundary.
+    Compare whole seconds conservatively: systemctl's timestamp drops fractions. Unknown
+    metadata or a replaced process must retain the ordinary blindness outcome.
+    """
+    try:
+        if not pid or sh('systemctl', 'show', '-p', 'MainPID', '--value', unit, checked=True).strip() != pid:
+            return None
+        start = sh('systemctl', 'show', '-p', 'ExecMainStartTimestamp', '--value', unit, checked=True).strip()
+        if not start:
+            return None
+        start = sh('date', '-u', '-d', start, '+%s%6N', checked=True).strip()
+        if not start.isdigit():
+            return None
+        uid = sh('ps', '-p', pid, '-o', 'uid=', checked=True).strip()
+        if not uid.isascii() or not uid.isdigit():
+            return None
+        family = 'user-' + str(int(uid)) if int(uid) >= 1000 else 'system'
+        if family not in JOURNAL_FIRST:
+            first = None
+            try:
+                # Match the exact UID, including active and archived files; not user-10110.
+                files = sorted({p for root in JOURNAL_DIRS
+                                for p in glob.glob(root + '/*/' + family + '[.@]*journal')})
+                if files:
+                    head = json.loads(sh('journalctl', *['--file=' + p for p in files],
+                                         '-b', '--no-pager', '-o', 'json',
+                                         '--output-fields=__REALTIME_TIMESTAMP', '-n', '+1', checked=True))
+                    stamp = head.get('__REALTIME_TIMESTAMP')
+                    if isinstance(stamp, str) and stamp.isascii() and stamp.isdigit() and int(stamp) > 0:
+                        first = int(stamp)
+            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                pass
+            JOURNAL_FIRST[family] = first
+        first = JOURNAL_FIRST[family]
+        if first is not None and int(start) // 1000000 < first // 1000000:
+            if sh('systemctl', 'show', '-p', 'MainPID', '--value', unit, checked=True).strip() == pid:
+                return first
+        return None
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def vremya_kopii(unit, pid, root):
+    """Time proxy for a copy whose startup log is no longer available.
+
+    This does not assert the loaded version. Equal seconds stay unknown.
+    Failure to read any dependency is blindness, never a quiet success.
+    """
+    try:
+        start = sh('systemctl', 'show', '-p', 'ExecMainStartTimestamp', '--value', unit, checked=True).strip()
+        if not start:
+            raise ValueError('начало процесса не прочитано')
+        start = sh('date', '-u', '-d', start, '+%s', checked=True).strip()
+        if not start.isdigit():
+            raise ValueError('начало процесса не прочитано')
+        copy = json.loads(sh(sys.executable, '-I', '-B', '-c', CTIME_SCAN, root, checked=True))
+        if copy.get('unavailable') is True:
+            return 'СЛЕПОТА', f'ИСТОРИЯ: файлы копии недоступны; ctime не прочитан ({root})'
+        if type(copy.get('ctime_ns')) is not int or copy['ctime_ns'] <= 0:
+            raise ValueError('ctime не прочитан')
+        if sh('systemctl', 'show', '-p', 'MainPID', '--value', unit, checked=True).strip() != pid:
+            raise ValueError('MainPID сменился')
+        path = ''.join(c if c.isprintable() else '?' for c in str(copy.get('path', root)))[:200]
+        ns = copy['ctime_ns']
+        detail = f'pid {pid}, старт @{start}, max ctime @{ns // 1000000000}.{ns % 1000000000:09d} ({path})'
+        if int(start) == copy['ctime_ns'] // 1000000000:
+            return 'СЛЕПОТА', 'равная секунда старта/ctime; ' + detail
+        if int(start) > copy['ctime_ns'] // 1000000000:
+            return 'ВРЕМЯ', 'сошлось по времени запуска; ' + detail
+        return 'ПОДОЗРЕНИЕ', 'процесс старше своих файлов; ' + detail
+    except (OSError, subprocess.CalledProcessError, ValueError, TypeError, AttributeError):
+        return 'СЛЕПОТА', f'ctime копии/начало процесса не прочитаны или PID сменился ({root})'
 
 
 def ostrov_beda(out):
@@ -161,7 +350,8 @@ def main():
     started = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
     edinicy = sh('systemctl', 'list-units', '--type=service', '--state=running', '--no-legend', '--no-pager', '--plain')
     edinicy = [l.split()[0] for l in edinicy.splitlines() if l.strip()]
-    stroki, problemy, instr, deferred = [], [], [], []
+    stroki, problemy, instr, deferred, bez_par, history, by_time = [], [], [], [], [], [], []
+    sluzhb = 0
     for u in edinicy:
         argv = sh('systemctl', 'show', '-p', 'ExecStart', '--value', u)
         pary = []
@@ -178,6 +368,14 @@ def main():
                 d = os.path.join(dom or '/nonexistent', 'plugins', pk, 'package.json')
                 if os.path.exists(d):
                     pary.append((pk, d, re.compile(r'\[' + re.escape(pk) + ' ' + VER + r'\]')))
+            for pk in OBSHCHIE:
+                rx = re.compile(r'\[' + re.escape(pk) + ' ' + VER + r'(?: · [^\]]*)?\] подъём')
+                if rx.search(zhivaya(u, rx)[2]):
+                    pary.append((pk, os.path.join(OBSHCHIJ_KOREN, pk, 'package.json'), rx))
+            if not pary:
+                bez_par.append(u)   # B-N-2111 (25): служба агента без единой пары — называется, а не выпадает молча
+        if SHLYUZ_FAJL in argv or RX_AGENT.search(argv):
+            sluzhb += 1
         for imya, disk, rx in pary:
             vd = versiya_diska(disk)
             pid, vz, srez = zhivaya(u, rx)
@@ -198,7 +396,15 @@ def main():
             if vd is None:
                 vid = 'СЛЕПОТА'; pr = f'диск не читается ({disk})'
             elif vz is None:
-                vid = 'СЛЕПОТА'; pr = f'в журнале живого pid {pid} нет строки версии'
+                first = utrachena_istoriya(u, pid)
+                if first is not None:
+                    vid, pr = vremya_kopii(u, pid, os.path.dirname(disk))
+                    if vid == 'ВРЕМЯ':
+                        by_time.append((u, imya))
+                    elif pr.startswith('ИСТОРИЯ:'):
+                        history.append((u, imya))
+                else:
+                    vid = 'СЛЕПОТА'; pr = f'в журнале живого pid {pid} нет строки версии'
             elif vz != vd:
                 if (u, imya) in deferred:
                     continue
@@ -206,9 +412,10 @@ def main():
             else:
                 vid = 'сошлось'; pr = f'{vz}'
             stroki.append(f'{vid:9} {u} · {imya} · {pr}')
-            if vid != 'сошлось':
+            if vid not in ('сошлось', 'ВРЕМЯ'):
                 problemy.append(f'{vid} {u} · {imya} · {pr}')
     raz = sum(p.startswith('РАЗОШЛОСЬ') for p in problemy); sl = sum(p.startswith('СЛЕПОТА') for p in problemy)
+    podoz = sum(p.startswith('ПОДОЗРЕНИЕ') for p in problemy)
     for u, imya in deferred:
         package = 'gateway' if imya == 'шлюз' else imya
         subject = 'unit:' + u + ':' + package
@@ -220,7 +427,7 @@ def main():
                 print('ПЕРЕСНИМАЮ: срок/поколение окна изменились перед итогом')
                 return main()
             print('СЛЕПОТА: повторная смена предмета после пересъёма'); return 2
-    pary_n = len(stroki); soshlos = pary_n - len(problemy) - len(deferred)   # Отсрочка не считается совпадением.
+    pary_n = len(stroki); soshlos = pary_n - len(problemy) - len(deferred) - len(by_time)
     problemy += instr   # B-N-1979: вид ИНСТРУМЕНТ — в ту же картину (уже подано / повтор раз в сутки / «снова»); ПОСЛЕ счёта пар
     zav = [f'СЛЕПОТА   зависло дольше {SH_PREDEL_S} с: {z}' for z in ZAVISLO]
     if PROPUSHCHENO[0]:
@@ -231,13 +438,16 @@ def main():
     if ZAVISLO:
         svod.append(f'СЛЕПОТА зависло дольше {SH_PREDEL_S} с: вызовов {len(ZAVISLO)}, первые: ' + '; '.join(ZAVISLO[:3]))
     problemy += svod
-    itog = (f'пар служба×носитель {pary_n} · сошлось {soshlos} · разошлось {raz} · слепота {sl}'
+    itog = (f'пар служба×носитель {pary_n} · служб {sluzhb} · без пар {len(bez_par)} · сошлось {soshlos} · разошлось {raz} · слепота {sl}'
+            + f' · история недоступна {len(history)} (в слепоте)'
+            + f' · по времени {len(by_time)} · подозрение {podoz}'
             + (f' · отложено {len(deferred)}' if deferred else '')
             + (f' · зависло/не успело {len(zav)}' if zav else '')
             + (f' · инструмент не поставлен {len(instr)}' if instr else ''))
     for s in sorted(stroki) + instr + zav: print(s)
+    print(f'служба без пар: {len(bez_par)}' + (' — ' + ', '.join(bez_par) if bez_par else ''))
     print(itog)
-    ishod = 2 if sl or zav or not stroki else 1 if raz or instr else 4 if deferred else 0
+    ishod = 2 if sl or zav or not stroki else 1 if raz or podoz or instr else 4 if deferred else 0
     if not stroki:
         problemy = ['СЛЕПОТА: ни одной пары служба×носитель не найдено — искать было не в чем'] + svod
     if a.tolko_pechat or ishod == 4:
@@ -260,7 +470,7 @@ def main():
                  + '\n'.join(pokaz[:12]) + ('\n…' if len(pokaz) > 12 else '')
                  + f'\n{itog}\nчинить: РАЗОШЛОСЬ — поднять перечисленные службы (или подтвердить, что ждут подъёма намеренно);'
                  + ' ИНСТРУМЕНТ — поле в ostrovApi профиля (через реестр), затем перезапуск службы')
-    elif not kartina and prezhde.get('kartina'):
+    elif not kartina and prezhde.get('kartina') and not history and not by_time:
         tekst = f'✅ sadik: живые процессы общих носителей снова в порядке · {itog}'
     ushlo = True
     if tekst:
@@ -270,7 +480,7 @@ def main():
             ushlo = False
     if ushlo:
         os.makedirs(os.path.dirname(a.sost), exist_ok=True)
-        novoe = {'kartina': kartina, 'kogda': seyc if tekst else prezhde.get('kogda', 0)}
+        novoe = {'kartina': kartina, 'kogda': seyc if tekst else prezhde.get('kogda', 0), 'history': history, 'by_time': by_time}
         with open(a.sost + '.chast', 'w') as f:
             json.dump(novoe, f, ensure_ascii=False)
         os.replace(a.sost + '.chast', a.sost)

@@ -1,0 +1,20 @@
+{
+  "agentName": "__MEMBER_UNIX__",
+  "autopilotMail": {
+    "noticeDir": "__MEMBER_NOTICE_DIRECTORY_ABSOLUTE_PATH__",
+    "trafficChatId": "__TRAFFIC_CHAT_ID_NEGATIVE_INTEGER__",
+    "publisherBotIds": [
+      "__OPERATOR_BOT_USER_ID_INTEGER__",
+      "__WORKER_1_BOT_USER_ID_INTEGER__",
+      "__WORKER_2_BOT_USER_ID_INTEGER__",
+      "__WORKER_3_BOT_USER_ID_INTEGER__",
+      "__REVIEWER_BOT_USER_ID_INTEGER__",
+      "__WORKER_4_BOT_USER_ID_INTEGER__",
+      "__WORKER_5_BOT_USER_ID_INTEGER__"
+    ],
+    "names": [
+      "__MEMBER_DISPLAY_NAME__",
+      "__MEMBER_MENTION__"
+    ]
+  }
+}

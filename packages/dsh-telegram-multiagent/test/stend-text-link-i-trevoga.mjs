@@ -57,7 +57,7 @@ function stend(config, allowedList) {
   const s = { toChat: [], log: [] };
   const allowed = new Set(allowedList);
   const ORIGIN_MARK = vm.runInNewContext(markText);
-  const ctx = {ownerChatId:()=>resolveOwnerId(config,{},allowed,m=>s.log.push(m)),
+  const ctx = {autopilot:null,ownerChatId:()=>resolveOwnerId(config,{},allowed,m=>s.log.push(m)),
     settings: () => ({}), config, log: (m) => s.log.push(m),
     nastrojkaGruppy: M.nastrojkaGruppy, obrashchenie: M.obrashchenie, bezNikaKomandy: M.bezNikaKomandy,
     kontekstChata: new M.KontekstChata(), botKto: async () => ME,

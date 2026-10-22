@@ -3,7 +3,7 @@
 // EN: Operator CLI for inspection and targeted hold decisions; status is read-only and mutations require explicit arguments. The /proc writer check applies only to rollback-v1 and is not an exclusion lock.
 import path from 'node:path';import fs from 'node:fs';
 import {DatabaseSync} from 'node:sqlite';
-import {MessageReceipts} from './message-receipts.js';
+import {MessageReceipts,receiptHoldStatus} from './message-receipts.js';
 
 
 // RU: assertLedgerClosed: Операторский CLI для просмотра/разрешения удержанных квитанций. Проверяет, что живой читатель не владеет ledger, и требует явное действие; ошибку доступа/схемы не превращает в разрешение.
@@ -53,7 +53,7 @@ try {
       ? db.prepare('SELECT id,source_key,received_at,hold_notices,blocked,claimed_turn,finished_at,outcome FROM receipts LEFT JOIN sources ON receipts.id=sources.receipt_id ORDER BY received_at').all()
       : db.prepare('SELECT receipts.id,source_key,received_at,hold_notices,blocked,claimed_turn,finished_at,outcome,protocol_envelopes.state AS envelope_state,protocol_envelopes.reason AS envelope_reason,deadline_at,hold_duration_ms,exit_reason FROM receipts LEFT JOIN protocol_envelopes ON receipts.id=protocol_envelopes.receipt_id LEFT JOIN sources ON receipts.id=sources.receipt_id ORDER BY received_at').all();
     const outbox=db.prepare('SELECT id,attempts,sent_at,error FROM outbox WHERE sent_at IS NULL').all();
-    console.log(JSON.stringify({reader:db.prepare("SELECT value FROM meta WHERE key='receipt_reviewer'").get()?.value??'координатор',version,records,outbox},null,2));
+    console.log(JSON.stringify({reader:db.prepare("SELECT value FROM meta WHERE key='receipt_reviewer'").get()?.value??'координатор',version,records:receiptHoldStatus(db,records),outbox},null,2));
     db.close();db=null;
   } else {
     if(db.prepare("SELECT value FROM meta WHERE key='root'").get()?.value!==path.resolve(root))throw Error('Ledger другого дома; отказ');

@@ -5,7 +5,7 @@
 # RU: Зовущий нужен с sudo -n (помощник журнала и сторож — под root, как в бою). Ожидание каждой пробы — в её строке до запуска.
 # RU: Пробы (Вениамин, п.6): метка воротами → молчит · ручная метка → красное по имени · перенос исторической → красное ·
 # RU: грязный каталог → отказ код 2 · помощник не записал → нет «✅», код 2 · индекс дерева не тронут; к каждой порче — возврат.
-# RU: Доводы: $1 — ворота (по умолчанию ../bin/vypusk-tegom рядом), $2 — помощник, $3 — сторож. Коды: 0 все сошлись · 1 нет · 2 слепота.
+# RU: Доводы: $1 — ворота (по умолчанию ../bin/vypusk-tegom рядом), $2 — помощник, $3 — сторож, $4 — montazh-okno (B-N-1978). Коды: 0 все сошлись · 1 нет · 2 слепота.
 set -u
 K=$(cd "$(dirname "$0")/.." && pwd)
 VOROTA="${1:-$K/bin/vypusk-tegom}"; ZAPIS="${2:-$K/libexec/vypusk-tegom/zhurnal-zapis}"; STOROZH="${3:-$K/sbin/metki-mimo-vorot-watch}"
@@ -105,6 +105,21 @@ otv=$(sudo -n "$ZAPIS" --metka proba-paket-v9.9.9 --paket proba-paket --rezhim d
 proba "вне git: помощник — код 4 БЕЗ СЛЕДА" 4 "БЕЗ СЛЕДА" "" "$otv" "$kod"
 N1=$(sudo -n wc -l < "$ZD/zhurnal.tsv")
 proba "вне git: журнал не вырос ($N0 → $N1)" 0 "" "" "" "$([ "$N0" = "$N1" ] && echo 0 || echo 1)"
+# 8. LOW Альфы 16.10 (Вениамин 12:06:33 МСК): .git НАЙДЕН, а git от его владельца отказал (dubious ownership: каталог дерева — чужой
+#    учётки, .git — свой) → СЛЕПОТА код 2 с причиной, а не «вне git» код 4 (иначе ворота дают ПРОБНЫЙ 0 вместо отказа).
+#    Свой журнал ZD8 — общий ZD не растёт. Порча = чужой хозяин дерева; возврат = свой хозяин → след.
+R8="$B/chuzhoj"; ZD8="$B/zh8"; sudo -n install -d -o root -g root -m 0755 "$ZD8"; git clone -q "$R" "$R8"
+sudo -n chown nobody "$R8"; echo "     порча: хозяин дерева $(stat -c %U "$R8"), хозяин .git $(stat -c %U "$R8/.git")"
+otv=$(sudo -n "$ZAPIS" --metka=proba-paket-v8.8.8 --paket=proba-paket --rezhim=derevo --katalog="$R8/packages/proba-paket" --vyvod="$REG" --zhurnal-dir="$ZD8" 2>&1); kod=$?
+proba "8 .git найден, git не ответил (чужой хозяин дерева) → СЛЕПОТА 2, не «БЕЗ СЛЕДА»" 2 "это не «вне git»" "БЕЗ СЛЕДА" "$otv" "$kod"
+proba "8 в причине — ответ git (dubious ownership)" 0 "dubious ownership" "" "$otv" 0
+#    Ворота целиком: их git идёт от зовущего — без доверия к чужому дереву они отказали бы сами (другой причиной). Класс Альфы —
+#    зовущий доверяет (safe.directory окружением GIT_CONFIG_*), помощник окружение сбрасывает и зовёт git от владельца .git.
+otv=$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' VYPUSK_REPO="$R8" VYPUSK_REESTR="$REG" STENDY_INACHE="стенд LOW Альфы" VYPUSK_ZHURNAL_DIR="$ZD8" VYPUSK_ZHURNAL_ZAPIS="$ZAPIS" "$VOROTA" "$R8/packages/proba-paket" 2>&1); kod=$?
+proba "8 ворота: зовущий доверяет, помощник нет → код 2 с причиной, не ПРОБНЫЙ 0" 2 "это не «вне git»" "можно ставить" "$otv" "$kod"
+sudo -n chown "$(id -un)" "$R8"; echo "     возврат: хозяин дерева $(stat -c %U "$R8")"
+otv=$(sudo -n "$ZAPIS" --metka=proba-paket-v8.8.8 --paket=proba-paket --rezhim=derevo --katalog="$R8/packages/proba-paket" --vyvod="$REG" --zhurnal-dir="$ZD8" 2>&1); kod=$?
+proba "8 возврат: хозяин свой → след" 0 "СЛЕД ЗАПИСАН: proba-paket-v8.8.8" "" "$otv" "$kod"
 # 7. git помощника — от ВЛАДЕЛЬЦА .git (условие Вениамина 09:46Z п.2): хук core.fsmonitor репозитория исполняется НЕ от root.
 #    Помощник — напрямую (через ворота хук раньше исполнил бы сам зовущий, и владелец файла пробы был бы не о помощнике).
 printf '#!/bin/sh\ntouch "%s"\nexit 1\n' "$B/fsm-proba" > "$B/fsm-hook.sh"; chmod 755 "$B/fsm-hook.sh"; git -C "$R" config core.fsmonitor "$B/fsm-hook.sh"
@@ -122,5 +137,38 @@ printf '# Изменения\n\n## 0.0.5-b2027-notices2 — проба (B-N-2029
 otv=$(vorota); kod=$?; proba "2029 дефис в pre-release: ворота → «✅» и след с полным номером" 0 "СЛЕД ЗАПИСАН: proba-paket-v0.0.5-b2027-notices2" "" "$otv" "$kod"
 G tag -a proba-paket-v0.0.5-b2027-notices2 -m "по воротам"
 otv=$(storozh); kod=$?; proba "2029 метка с дефисом по воротам → сторож молчит" 0 "чисто" "🔴" "$otv" "$kod"
+# B-N-1978 (Аврора, наряд Забавы 15.10 03:13Z): «РЕЕСТР ССЫЛАЕТСЯ НА МЕТКУ, КОТОРОЙ НЕТ» в ОТКРЫТОМ окне монтажа, назвавшем
+#   entry:<id>, — отсрочка (промежуток «файлы → метка → запись»). Окно — НАСТОЯЩИЙ montazh-okno ($4, по умолчанию ../sbin рядом) с
+#   подставным каталогом окон (root, как в бою); прогон сторожа — в юните с защитой боевого (ZASHCHITA, как 6б).
+MO="${4:-$K/sbin/montazh-okno}"; [ -x "$MO" ] || { echo "СЛЕПОТА: не исполняется $MO"; exit 2; }
+OKNA="$B/okna"; sudo -n install -d -o root -g root -m 0755 "$OKNA"
+okno() { # entry · истекло(0/1) — запись окна root 0644, срок 1800 с (TTL montazh-okno)
+  sudo -n python3 -B - "$OKNA" "$1" "$2" "$REG" <<'PYOKNO'
+import json,sys,time,datetime,os
+d,e,ist=sys.argv[1],sys.argv[2],sys.argv[3]=='1'; i='7'*32; now=time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+op=now-1801*10**9 if ist else now; r=dict(schema=1,id=i,task='B-N-1978-stend',actor='stend',boot_id=open('/proc/sys/kernel/random/boot_id').read().strip(),
+ opened_ns=op,deadline_ns=op+1800*10**9,expires_utc=datetime.datetime.now(datetime.timezone.utc).isoformat(),phase='open',subjects=['entry:'+e],
+ checks=[dict(kind='registry',path=sys.argv[4],id=e,expected={'derevo.ref':'x'})])
+p=os.path.join(d,i+'.json'); open(p,'w').write(json.dumps(r)); os.chmod(p,0o644)
+PYOKNO
+}
+# канал — заглушка, пишущая в $SD: под ProtectSystem=strict юнит пишет только туда (иначе «канал не звался» — слепая проба)
+ALOGZ="$SD/alert.log"; printf '#!/bin/sh\nprintf "%%s\\n---\\n" "$*" >> %s\n' "$ALOGZ" > "$B/alert-z"; chmod 755 "$B/alert-z"
+storozh_z() { sudo -n systemd-run --quiet --wait --pipe --collect "${ZASHCHITA[@]}" -E MMV_REESTR="$REG" -E MMV_ZHURNAL_DIR="$ZD" -E MMV_ALERT="$B/alert-z" -E MMV_STATE="$SD" -E MMV_MONTAZH_OKNO="$MO" -E MO_STATE_DIR="$OKNA" "$STOROZH" 2>&1; }
+sbros() { sudo -n rm -f "$SD/skazano.txt" "$OKNA"/*.json "$ALOGZ"; }   # журнал заглушки пишет root — сброс его рукой
+cp "$REG" "$B/reestr.bez-ref"; sed -i 's/derevo: {address: "\([^"]*\)", subdir/derevo: {address: "\1", ref: proba-paket-v9.9.9, subdir/' "$REG"
+proba "1978 контроль: в записи появился ref на несуществующую метку" 0 "ref: proba-paket-v9.9.9" "" "$(cat "$REG")" 0
+sbros; otv=$(storozh_z); kod=$?
+proba "1978 М1 без окна: реестр → метки нет — красное, как прежде" 3 "РЕЕСТР ССЫЛАЕТСЯ НА МЕТКУ, КОТОРОЙ НЕТ: proba-paket → proba-paket-v9.9.9" "ОТЛОЖЕНО" "$otv" "$kod"
+proba "1978 М1 тревога ушла в канал (заглушка)" 0 "proba-paket-v9.9.9" "" "$(sudo -n cat "$ALOGZ" 2>/dev/null)" 0
+sbros; okno proba-paket 0; otv=$(storozh_z); kod=$?
+proba "1978 М2 окно открыто и названа entry:proba-paket → отсрочка, молчит" 0 "ОТЛОЖЕНО" "РЕЕСТР ССЫЛАЕТСЯ" "$otv" "$kod"
+proba "1978 М2 канал не звался" 0 "" "" "" "$(sudo -n test -s "$ALOGZ" && echo 1 || echo 0)"
+sbros; okno drugaya-zapis 0; otv=$(storozh_z); kod=$?
+proba "1978 М3 окно названо на ДРУГУЮ запись → красное не спрятано" 3 "РЕЕСТР ССЫЛАЕТСЯ НА МЕТКУ, КОТОРОЙ НЕТ" "ОТЛОЖЕНО" "$otv" "$kod"
+sbros; okno proba-paket 1; otv=$(storozh_z); kod=$?
+proba "1978 М4 окно истекло → красное (о несданном окне — montazh-okno watch)" 3 "РЕЕСТР ССЫЛАЕТСЯ НА МЕТКУ, КОТОРОЙ НЕТ" "ОТЛОЖЕНО" "$otv" "$kod"
+sbros; cp "$B/reestr.bez-ref" "$REG"; otv=$(storozh_z); kod=$?
+proba "1978 возврат: запись без ref → чисто" 0 "чисто" "🔴" "$otv" "$kod"
 echo "ИТОГО: сошлось $OK, расхождений $FAIL"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

@@ -1,6 +1,6 @@
 # dsh-reestr — реестр вмешательств машины с агентами DSH и приборы, которые держат его честным
 
-Версия · Version: 3.1.3
+Версия · Version: 3.1.10
 
 *English version — [below](#english).*
 
@@ -21,6 +21,8 @@
 | файл в пакете | место на sadik | режим / владелец | кто исполняет / читает |
 |---|---|---|---|
 | `bin/agent-plugins` | `/usr/local/bin/agent-plugins` | 0755 root:root | люди, агенты, ворота и монтаж; `registry-watchdog` (`VERIFY_CMD`, `HEALTH_CMD`) |
+| `bin/agent-registry` | `/usr/local/bin/agent-registry` | 0755 root:root | реестр АГЕНТОВ (с 3.1.4, из a2a-bus): почта, сторожа, сборка раскладки, рука |
+| `share/agent-registry/shablony-raskladki/{codex,sdk-claude}/*.tmpl` | `/etc/agent-registry/shablony-raskladki/<семейство>/*.tmpl` | 0644 root:agent-registry | `agent-registry sobrat`/`verify` (с 3.1.4, из a2a-bus) |
 | `bin/agent-plugins-lock-check` | `/usr/local/sbin/agent-plugins-lock-check` | 0755 root:root | рука |
 | `bin/registry-watchdog.sh` | `/usr/local/sbin/registry-watchdog.sh` | 0755 root:root | `registry-watchdog.timer` (юнит — вне пакета) |
 | `bin/nezafiksirovano-watch` | `/usr/local/sbin/nezafiksirovano-watch` | 0755 root:root | `nezafiksirovano-watch.timer` (юнит — вне пакета) |
@@ -82,6 +84,50 @@ sudo smontirovat-fajly --punkt <пункт> --v-boj  <каталог канди�
 
 Коды самих команд — `docs/GUARDS.md`, «Коды по командам».
 
+## Реестр агентов: agent-registry · Agent registry (с 3.1.4)
+
+Перенесён из `a2a-bus` (B-N-2071, слово владельца 15.10 14:18 МСК: «реестр агентов обязателен — ставится вместе с платформой или
+одним из наших пакетов»). Почта a2a от него зависит, а не наоборот: машине с одним агентом без почты реестр нужен всё равно.
+Справка по подкомандам — `agent-registry --help`.
+
+Новая машина (от root, каталог `/etc/agent-registry` создаёт установка: права и группа — её решение, `init` их не выдумывает):
+
+```sh
+agent-registry init --mashina <имя> --iz <копия agents.yaml машины-образца>   # отказ, если файл уже есть
+agent-registry zavesti <агент> --po-obrazcu <образец> --iz <копия реестра-образца> \
+  --pole namerenie.port=<порт> --pole namerenie.dom=/opt/<агент> --pole namerenie.polzovatel=<учётка> \
+  --pole namerenie.sluzhba=<агент>.service --pole namerenie.zhurnal_sessij=/opt/<агент>/.dsh/sessions \
+  --pole namerenie.kanal.nastrojka_dostavki_sha256=<sha256 JSON доставки> --kuda /etc/agent-registry/agents.yaml.kandidat
+```
+
+`zavesti` пишет ПОЛНЫЙ кандидат реестра в `--kuda` (новый файл); в бой он идёт монтажом (`smontirovat-fajly`). Отказ (код 1):
+неизвестное поле в `--pole`; агент уже есть; любое поле-тождество (`port`, `dom`, `polzovatel`, `sluzhba`, `zhurnal_sessij`,
+`kanal.nastrojka_dostavki_sha256` в `namerenie`) совпало с другим агентом целевого реестра или с образцом ТОЙ ЖЕ машины.
+Образец с другой машины (`--iz`, `mashina.imya` различается) тождествами совпадать может — на новой машине команда та же
+(`master`, `/opt/master`, порты): это печатается «совпадает с образцом другой машины: поля …», не отказ. Строки записи, где
+осталось имя образца, печатаются предупреждением — их проверяет рука (это не отказ: часть путей бывает общей).
+
+Признак установки: `agent-registry pole <агент> sluzhba --json` даёт службу; `agent-registry sobrat --kuda <новый каталог>` —
+«по смыслу равно»; `agent-registry verify` — без расхождений.
+
+«Владелец-тревог» в `verify` (с 3.1.4) — правило самого пакета TG 3.1.11 (`resolveOwnerId`): `ownerChatId` из JSON доставки
+(`settingsFile`, иначе `tokenFile` с `.token`→`.json`), если ключ там есть, иначе из конфига; целое > 0 и ∈ `allowedUsers`.
+`mergeChatIntoA2A` владельца не задаёт. JSON не читается рукой — СЛЕПОТА; JSON нет или не объект — расхождение.
+
+Стенды: `test/stend-init-zavesti.py` (init/zavesti/владелец-тревог, 30 проб, не от root), `test/stend-ap-pochta.py`,
+`test/stend-obratno-granica.py`, `test/stend-yashchik-rezhim.py` (перенесены из a2a-bus), `test/stend-soc-anna.py` (с 3.1.5).
+
+Соцприём Анны (с 3.1.5, B-N-2027): `namerenie.raskladka.socpriyom` {`serviceUrl`, `keyFile`, `channelId`, `discussionId`} — ровно
+ключи `config.social` канала TG — даёт в A `agentName: "anna"` (имя записи латиницей строчными, как требует канал) и блок `social`.
+Только у записи `anna`; вместе с `autopilot_pochta`, негодной формой или отличием — отказ сборки. Без признака A прежняя.
+TG менять не нужно: канал 3.1.11 принимает соцприём ровно у «anna». Прежний код на новых
+шаблонах и новый на прежних отказывают («блок …: параметра нет»).
+
+Since 3.1.4 `agent-registry` and the layout templates ship here (moved from `a2a-bus`; host paths unchanged). New: `init`
+(minimal `agents.yaml`, refuses an existing file) and `zavesti` (new agent record from a sample, writes a full candidate; refuses
+unknown fields and identity fields equal to the sample's or another agent's). `verify` judges the alarm owner by the TG 3.1.11 rule.
+Since 3.1.5 `raskladka.socpriyom` on the `anna` record gives A `agentName: "anna"` plus `social` (TG 3.1.11 accepts it as is).
+
 ## Окно монтажа · Deployment window
 
 Сохранён договор B-N-2025/B-N-2032: `verify --avto-montazh`, `list --health --avto-montazh` и `registry-watchdog --avto-montazh` возвращают 4 («ОТЛОЖЕНО»), когда расхождение покрыто живым адресным окном. Без ключа сверка строгая. Слепота и расхождение вне состава окна не откладываются; при совместных исходах слепота 2 сильнее расхождения 1, а 4 возвращается только при одной отсрочке. Окно максимум 1800 секунд; перед итогом срок и поколение сверяются повторно, разрешён один свежий прогон, повторная смена — 2. Это временная отсрочка проверки состава, не проверка живости службы. Машинный `REGWD_CONF` сильнее окружения: `VERIFY_CMD`, `HEALTH_CMD` и непустой `DORABOTKI_CMD` должны передавать ключ тем читателям, которым разрешён автоматический монтаж.
@@ -127,6 +173,8 @@ The package includes a registry-watchdog service template and the installed cras
 | file in the package | location on sadik | mode / owner | who runs / reads it |
 |---|---|---|---|
 | `bin/agent-plugins` | `/usr/local/bin/agent-plugins` | 0755 root:root | people, agents, gate and deployment; `registry-watchdog` (`VERIFY_CMD`, `HEALTH_CMD`) |
+| `bin/agent-registry` | `/usr/local/bin/agent-registry` | 0755 root:root | AGENT registry (since 3.1.4, moved from a2a-bus): mail, watchdogs, layout assembly, hand |
+| `share/agent-registry/shablony-raskladki/{codex,sdk-claude}/*.tmpl` | `/etc/agent-registry/shablony-raskladki/<family>/*.tmpl` | 0644 root:agent-registry | `agent-registry sobrat`/`verify` (since 3.1.4, from a2a-bus) |
 | `bin/agent-plugins-lock-check` | `/usr/local/sbin/agent-plugins-lock-check` | 0755 root:root | by hand |
 | `bin/registry-watchdog.sh` | `/usr/local/sbin/registry-watchdog.sh` | 0755 root:root | `registry-watchdog.timer` (unit outside the package) |
 | `bin/nezafiksirovano-watch` | `/usr/local/sbin/nezafiksirovano-watch` | 0755 root:root | `nezafiksirovano-watch.timer` (unit outside the package) |

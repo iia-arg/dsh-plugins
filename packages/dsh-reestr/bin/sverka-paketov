@@ -1,0 +1,346 @@
+#!/usr/bin/python3 -I
+# sverka-paketov — сверка реестров пакетов МЕЖДУ машинами (живёт на bclaude). Михалыч 20.10.2026.
+# Основание: слово владельца 20.10 20:18 и 23:06 МСК («сразу сравниваем 3 сервера … конфиг пишем, серверов будет больше»);
+# замысел SVERKA-PAKETOV r3 0e3abcd5 (ГОДЕН, Вениамин 23:00), решения Забавы 22:56 / 22:59 / 23:06.
+#
+# ЧТО ДЕЛАЕТ: по списку машин из НАСТРОЙКИ (в коде имён нет) берёт снимки `agent-plugins snimok` — свой с диска, чужие
+# `ssh sverka@<mesh>` (там принудительная команда cat снимка), проверяет каждый (JSON читается, поля на месте, свежий ≤26 ч,
+# verify_kod 0, имя машины в снимке = имя строки — иначе СЛЕПОТА машины поимённо), сводит записи по id и даёт исходы:
+#   РАЗОШЛОСЬ   — одна метка (или версия) и разное содержимое: отпечаток или commit;
+#   ОТСТАЁТ     — по номеру метки/версии (semver) у кого-то старше; рекомендация «X ← Y» и update источника ТЕКСТОМ;
+#   НЕЛЬЗЯ СРАВНИТЬ — значения разные, номера не semver; ТОЛЬКО НА — запись не на всех машинах и её нет в ожидаемых;
+#   СЛЕПОТА     — машина из настройки без годного снимка; ЛИШНИЙ СНИМОК — пришёл снимок другой машины.
+# Каждая сводка несёт покрытие поимённо: содержимое сверено X из Y, только версия Z, без сверки W, commit сверен C.
+# Тревога — agent-alert --plain только о НОВОМ/ИЗМЕНИВШЕМСЯ и о закрытом; открытое — одной строкой раз в сутки.
+# Находка с участием машины, ослепшей сейчас, НЕ закрывается: «не проверено (слепота X)», без тревоги (ворота 23:15).
+# ЧЕГО НЕ ДЕЛАЕТ: ничего не ставит, не копирует, не правит реестры, update не исполняет (текст человеку).
+# ЧЕГО НЕ ЛОВИТ: пакеты вне реестров; верность самой метки; права и владельцев файлов; различия из списка ожидаемых
+#   (молчат по построению); «новее» — только по номеру метки, проверки предков нет (решение Забавы 22:59);
+#   commit сравним лишь между машинами, у которых есть дерево меток (на 20.10 оно одно — sadik, значит commit не сверяется).
+# КОДЫ: 0 — сошлось · 1 — находки · 2 — слепота · 3 — ошибка вызова/настройки · 4 — тревога НЕ доставлена (не успех для systemd). ОСТАНОВКА: один прогон на вызов, без повторов.
+# РЕЖИМЫ: без доводов — боевой (тревога + состояние); --pechat — только печать, тревога и состояние не трогаются.
+import datetime, json, os, re, socket, subprocess, sys, time
+
+NASTROJKA = os.environ.get("SVERKA_NASTROJKA", "/etc/sverka-paketov/mashiny.conf")
+OZHIDAEMYE = os.environ.get("SVERKA_OZHIDAEMYE", "/etc/sverka-paketov/ozhidaemye.list")
+SOST = os.environ.get("SVERKA_SOST", "/var/lib/sverka-paketov/sostoyanie.json")
+NAHODKI = os.environ.get("SVERKA_NAHODKI", "/var/lib/sverka-paketov/nahodki.json")
+AA = os.environ.get("SVERKA_AGENT_ALERT", "/usr/local/bin/agent-alert")
+SSH = os.environ.get("SVERKA_SSH", "ssh")                                # подмена — только для стенда
+KLYUCH = os.environ.get("SVERKA_KLYUCH", "/etc/sverka-paketov/klyuch")  # закрытый ключ сравнителя, 0600 root
+KNOWN = os.environ.get("SVERKA_KNOWN", "/etc/sverka-paketov/known_hosts")
+SVOYA = os.environ.get("SVERKA_SVOYA", socket.gethostname())            # своя машина: её снимок читается с диска
+SEJCHAS = float(os.environ.get("SVERKA_SEJCHAS", "0")) or time.time()   # подмена «сейчас» — только для стенда
+VOZRAST = 26 * 3600
+OBYAZ = ("snimok_versiya", "mashina", "vremya", "reestr_sha256", "verify_kod", "zapisi")
+SEKRET = re.compile(r"ghp_|github_pat_|sk-[A-Za-z0-9]{16,}|://[^\s/:@]+:[^\s/@]+@|Bearer\s+\S{12,}|AKIA[0-9A-Z]{12}|"
+                    r"(?<![\w/.-])[A-Za-z0-9+_]{32,}={0,2}(?![\w/.-])")   # длинное без / . - : пути и имена пакетов не трогает
+
+
+def chitat_nastrojku():
+    """строка на машину: <имя> <адрес mesh[:порт]> <путь снимка> <дерево: da|net>; # — комментарий"""
+    out, oshibki = [], []
+    with open(NASTROJKA, encoding="utf-8") as f:
+        for n, s in enumerate(f, 1):
+            s = s.split("#", 1)[0].split()
+            if not s:
+                continue
+            if len(s) != 4 or s[3] not in ("da", "net") or any(m["imya"] == s[0] for m in out):
+                oshibki.append(f"строка {n}: {' '.join(s)}")
+                continue
+            out.append({"imya": s[0], "adres": s[1], "put": s[2], "derevo": s[3] == "da"})
+    return out, oshibki
+
+
+def vzyat(m):
+    if m["imya"] == SVOYA:
+        with open(m["put"], encoding="utf-8") as f:
+            return f.read()
+    host, _, port = m["adres"].partition(":")
+    p = subprocess.run([SSH, "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "IdentitiesOnly=yes", "-i", KLYUCH,
+                        "-o", f"UserKnownHostsFile={KNOWN}", "-o", "StrictHostKeyChecking=yes", "-p", port or "38888", f"sverka@{host}"],
+                       capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
+    if p.returncode != 0:
+        raise OSError(f"ssh rc {p.returncode}: {(p.stderr or '').strip()[:160]}")
+    return p.stdout
+
+
+def proverit(tekst):
+    """(снимок, None) или (None, причина СЛЕПОТЫ)"""
+    try:
+        d = json.loads(tekst)
+    except ValueError as e:
+        return None, f"снимок не JSON ({str(e)[:80]})"
+    if not isinstance(d, dict) or any(k not in d for k in OBYAZ) or not isinstance(d["zapisi"], list):
+        return None, "снимок неполный (нет обязательных полей)"
+    if d["snimok_versiya"] != 1:
+        return None, f"снимок версии {d['snimok_versiya']!r} — не знаю такой"
+    if any(not isinstance(z, dict) or not isinstance(z.get("id"), str) for z in d["zapisi"]):
+        return None, "запись снимка без id"
+    try:
+        t = datetime.datetime.strptime(str(d["vremya"]), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
+    except ValueError:
+        return None, f"время снимка не читается: {d['vremya']!r}"
+    if SEJCHAS - t > VOZRAST:
+        return None, f"снимок старше 26 ч ({d['vremya']})"
+    if d["verify_kod"] != 0:
+        return None, f"verify на машине не зелёный (код {d['verify_kod']}: {str(d.get('verify_itog', ''))[:120]})"
+    return d, None
+
+
+def semver(s):
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$", s or "")
+    return (int(m[1]), int(m[2]), int(m[3]), 0 if m[4] else 1, m[4] or "") if m else None
+
+
+def chitat_ozhidaemye():
+    """строка: <id> | <машины, на которых запись ЕСТЬ, через запятую> | <причина> | <кто решил, ГГГГ-ММ-ДД>
+    Строка без четырёх полей или без даты в поле «кто решил» НЕГОДНА: не применяется и называется находкой поимённо."""
+    out, negodnye = {}, []
+    try:
+        with open(OZHIDAEMYE, encoding="utf-8") as f:
+            for n, s in enumerate(f, 1):
+                if not s.strip() or s.lstrip().startswith("#"):
+                    continue
+                c = [x.strip() for x in s.split("|")]
+                d = re.search(r"\d{4}-\d{2}-\d{2}", c[3]) if len(c) >= 4 else None
+                if not d or not c[0]:
+                    negodnye.append({"vid": "НЕГОДНАЯ СТРОКА", "id": f"{OZHIDAEMYE}:{n}", "mashiny": [],
+                                     "tekst": f"ожидаемые различия, строка {n} ({c[0] or '—'}): нет четырёх полей через | или даты "
+                                              f"ГГГГ-ММ-ДД в поле «кто решил» — строка не применена"})
+                    continue
+                out[c[0]] = {"mashiny": {x.strip() for x in c[1].split(",") if x.strip()}, "data": d[0]}
+    except FileNotFoundError:
+        pass
+    return out, negodnye
+
+
+def tekst_update(z):
+    u = str(z.get("update") or "—")
+    return "(скрыто: похоже на секрет — поправить реестр)" if SEKRET.search(u) else u[:300]
+
+
+def sravnit(snimki, s_derevom, ozh):
+    mashiny = sorted(snimki)
+    po_id = {}
+    for m in mashiny:
+        for z in snimki[m]["zapisi"]:
+            po_id.setdefault(z["id"], {})[m] = z
+    nah, pokr = [], {"soderzhimoe": [], "versiya": [], "net": [], "commit": []}
+    for eid in sorted(po_id):
+        est = po_id[eid]
+        if set(est) != set(mashiny) and not (eid in ozh and ozh[eid]["mashiny"] == set(est)):
+            nah.append({"vid": "ТОЛЬКО НА", "id": eid, "tekst": f"{eid}: есть только на {', '.join(sorted(est))}, нет на "
+                        f"{', '.join(sorted(set(mashiny) - set(est)))} (в ожидаемых различиях не значится)"})
+        if len(est) < 2:
+            continue
+        z = list(est.values())
+        fp_vse = all(x.get("fingerprint_fakt") for x in z)
+        (pokr["soderzhimoe"] if fp_vse else pokr["versiya"] if all(x.get("version") for x in z) else pokr["net"]).append(eid)
+        s_commit = {m: x["derevo_commit"] for m, x in est.items() if m in s_derevom and x.get("derevo_commit")}
+        if len(s_commit) >= 2:
+            pokr["commit"].append(eid)
+        refs = {m: x.get("derevo_ref") for m, x in est.items()}
+        klyuch, chto = (refs, "метки") if all(refs.values()) else ({m: x.get("version") for m, x in est.items()}, "версии")
+        if len(set(klyuch.values())) == 1:
+            raznoe = []
+            if fp_vse and len({x["fingerprint_fakt"] for x in z}) > 1:
+                raznoe.append("отпечаток " + ", ".join(f"{m}={x['fingerprint_fakt']}" for m, x in sorted(est.items())))
+            if len(set(s_commit.values())) > 1:
+                raznoe.append("commit " + ", ".join(f"{m}={c[:12]}" for m, c in sorted(s_commit.items())))
+            if raznoe:
+                nah.append({"vid": "РАЗОШЛОСЬ", "id": eid, "tekst": f"{eid}: {chto} одинаковы ({next(iter(klyuch.values()))}),"
+                            f" содержимое разное — {'; '.join(raznoe)}"})
+            continue
+        nomera = {m: semver(v) for m, v in klyuch.items()}
+        if all(nomera.values()):
+            st = max(nomera.values())
+            ist = sorted(m for m, n in nomera.items() if n == st)[0]
+            ots = sorted(m for m, n in nomera.items() if n < st)
+            nah.append({"vid": "ОТСТАЁТ", "id": eid, "tekst": f"{eid}: по номеру {chto} старше на {ist} ({klyuch[ist]}); "
+                        f"отстаёт {', '.join(f'{m} ({klyuch[m]})' for m in ots)}. Рекомендация: {', '.join(ots)} ← {ist}. "
+                        f"Как обновляют на {ist} (текст реестра, НЕ исполнять): {tekst_update(est[ist])}"})
+        else:
+            nah.append({"vid": "НЕЛЬЗЯ СРАВНИТЬ", "id": eid, "tekst": f"{eid}: {chto} разные ("
+                        f"{', '.join(f'{m}={v}' for m, v in sorted(klyuch.items()))}), по номеру старшинство не понять"})
+    for m in sorted(s_derevom & set(mashiny)):
+        if not any(z.get("derevo_commit") for z in snimki[m]["zapisi"]):
+            nah.append({"vid": "НЕЛЬЗЯ СРАВНИТЬ", "id": f"commit@{m}", "tekst": f"{m}: в настройке дерево меток есть, а в снимке "
+                        f"ни одного commit — сверка commit для неё слепа"})
+    return nah, pokr
+
+
+def pokrytie(pokr, s_derevom, mashiny):
+    y = len(pokr["soderzhimoe"]) + len(pokr["versiya"]) + len(pokr["net"])
+    sp = lambda l: (": " + ", ".join(l[:15]) + (f" … ещё {len(l) - 15}" if len(l) > 15 else "")) if l else ""
+    der = sorted(s_derevom & set(mashiny))
+    return (f"покрытие (записи на ≥2 машинах, Y={y}): содержимое сверено {len(pokr['soderzhimoe'])} из {y}; "
+            f"только версия {len(pokr['versiya'])}{sp(pokr['versiya'])}; без сверки {len(pokr['net'])}{sp(pokr['net'])}.\n"
+            f"commit сверен {len(pokr['commit'])} из {y}; дерево меток у: {', '.join(der) or 'ни у кого'}"
+            + (" — commit между машинами не сравнить, пока дерево меньше чем у двух" if len(der) < 2 else ""))
+
+
+PORYADOK = ("СЛЕПОТА", "ЛИШНИЙ СНИМОК", "РАЗОШЛОСЬ", "ОТСТАЁТ", "НЕЛЬЗЯ СРАВНИТЬ", "НЕГОДНАЯ СТРОКА")
+PREDEL = 3800
+ZAPAS_HVOSTU = 500   # знаков, которые важная часть оставляет блоку «ТОЛЬКО НА»
+
+
+def vid_k(k):
+    return k.split("|", 1)[0]
+
+
+def ves(k):
+    return (PORYADOK.index(vid_k(k)) if vid_k(k) in PORYADOK else 99, k)
+
+
+def korotko(tekst, lim):
+    """только для тревоги: хвост update после «НЕ исполнять): » — до lim знаков (0 — без текста, отсылка к nahodki.json)"""
+    a, sep, upd = tekst.partition("(текст реестра, НЕ исполнять): ")
+    if not sep or len(upd) <= lim:
+        return tekst
+    return a + sep + (upd[:lim] + "… " if lim else "") + "(полностью — nahodki.json)"
+
+
+def tekst_trevogi(novye, zakryto, napomnit, teper, pereneseno, snimki, pokr, n_mash, svod):
+    """Текст тревоги (наряд Забавы 23:45): 1) строка счёта; 2) новое по важности (СЛЕПОТА … НЕГОДНАЯ СТРОКА), update
+    ОТСТАЁТ — самый длинный из 300/120/80/40/0 знаков, при котором важное укладывается с запасом хвосту; 3) закрытое;
+    4) сводка без строки имён покрытия; 5) «ТОЛЬКО НА» последним — строка на набор машин, только имена.
+    Обрезается ТОЛЬКО хвост «ТОЛЬКО НА»; если и важное не влезло — режется оно, с припиской (не должно случаться)."""
+    vse_k = list(teper) + list(pereneseno)
+    y = len(pokr["soderzhimoe"]) + len(pokr["versiya"]) + len(pokr["net"])
+    schet = (f"машин {len(snimki)} из {n_mash} · " + " · ".join(f"{v} {sum(vid_k(k) == v for k in vse_k)}" for v in
+             ("ОТСТАЁТ", "НЕЛЬЗЯ СРАВНИТЬ", "РАЗОШЛОСЬ", "СЛЕПОТА", "ТОЛЬКО НА"))
+             + f" · содержимое сверено {len(pokr['soderzhimoe'])} из {y}")
+    vazhnoe = sorted((k for k in novye if vid_k(k) != "ТОЛЬКО НА"), key=ves)
+    pripiska = f"\n… обрезано; полностью — {NAHODKI} на bclaude"
+
+    def golova(lim):
+        g = ["📦 Сверка пакетов между машинами", schet]
+        if vazhnoe:
+            g.append("\n🔴 НОВОЕ/ИЗМЕНИЛОСЬ:\n" + "\n".join(f"• {vid_k(k)}: {korotko(teper[k]['tekst'], lim)}" for k in vazhnoe))
+        if zakryto:
+            g.append("\n✅ закрыто: " + "; ".join(zakryto))
+        if napomnit:
+            g.append(f"\n⏳ открыто {len(vse_k)}: " + "; ".join(
+                k.replace("|", " ") + (" — не проверено (слепота)" if k in pereneseno else "")
+                for k in sorted(vse_k, key=ves) if vid_k(k) != "ТОЛЬКО НА")
+                + f"; ТОЛЬКО НА {sum(vid_k(k) == 'ТОЛЬКО НА' for k in vse_k)} (имена — {NAHODKI} на bclaude)")
+        g.append("\n" + "\n".join(svod.split("\n")[1:]))
+        return "\n".join(g)
+
+    for lim in (300, 120, 80, 40, 0):
+        tekst = golova(lim)
+        if len(tekst) <= PREDEL - ZAPAS_HVOSTU:
+            break
+    if len(tekst) > PREDEL - len(pripiska):
+        return tekst[:PREDEL - len(pripiska) - 40] + "\n… обрезано (важное не влезло целиком)" + pripiska
+    gruppy = {}
+    for k in novye:
+        if vid_k(k) == "ТОЛЬКО НА":
+            eid = k.split("|", 1)[1]
+            est = tuple(sorted(m for m in snimki if any(z["id"] == eid for z in snimki[m]["zapisi"])))
+            gruppy.setdefault(est, []).append(eid)
+    if not gruppy:
+        return tekst
+    tekst += "\n\n🟡 НОВОЕ «ТОЛЬКО НА» (в ожидаемых различиях не значится):"
+    for est, ids in sorted(gruppy.items(), key=lambda g: (len(g[1]), g[0])):   # малые группы первыми: они реже и содержательнее, большая «только на sadik» — в хвост
+        h = f"только на {', '.join(est)} (нет на {', '.join(sorted(set(snimki) - set(est)))}) — {len(ids)}: " + ", ".join(sorted(ids))
+        mesto = PREDEL - len(pripiska) - len(tekst) - 1
+        if len(h) > mesto:
+            if mesto > 60:
+                tekst += "\n" + h[:mesto - 1] + "…"
+            return tekst + pripiska
+        tekst += "\n" + h
+    return tekst
+
+
+def zapisat(put, dan):
+    os.makedirs(os.path.dirname(put) or ".", exist_ok=True)
+    with open(put + ".new", "w", encoding="utf-8") as f:
+        json.dump(dan, f, ensure_ascii=False, indent=1); f.flush(); os.fsync(f.fileno())
+    os.replace(put + ".new", put)
+
+
+def main():
+    argv = sys.argv[1:]
+    if argv not in ([], ["--pechat"]):
+        print(f"ОТКАЗ: неизвестный довод «{' '.join(argv)}»; допустимо: (без доводов) | --pechat", file=sys.stderr)
+        return 3
+    try:
+        mash, oshibki = chitat_nastrojku()
+    except OSError as e:
+        print(f"ОТКАЗ: нет настройки {NASTROJKA}: {e}", file=sys.stderr)
+        return 3
+    if oshibki or not mash:
+        print(f"ОТКАЗ: настройка {NASTROJKA} негодна ({'; '.join(oshibki) or 'пусто'}); "
+              "формат строки: <имя> <адрес[:порт]> <путь снимка> <da|net>", file=sys.stderr)
+        return 3
+    snimki, slep = {}, []
+    for m in mash:
+        try:
+            d, prich = proverit(vzyat(m))
+        except Exception as e:
+            d, prich = None, f"снимок не получен ({e.__class__.__name__}: {str(e)[:160]})"
+        if d and d["mashina"] != m["imya"]:
+            slep.append({"vid": "ЛИШНИЙ СНИМОК", "id": str(d["mashina"]), "mashiny": [m["imya"]], "tekst": f"по строке «{m['imya']}» ({m['adres']}) "
+                         f"пришёл снимок машины «{d['mashina']}» — в сверку не взят"})
+            d, prich = None, f"вместо её снимка пришёл снимок «{d['mashina']}»"
+        if d:
+            snimki[m["imya"]] = d
+        else:
+            slep.append({"vid": "СЛЕПОТА", "id": m["imya"], "mashiny": [m["imya"]],
+                         "tekst": f"машина {m['imya']}: {prich} — её пакеты не сверены"})
+    s_derevom = {m["imya"] for m in mash if m["derevo"]}
+    ozh, negodnye = chitat_ozhidaemye()
+    nah, pokr = sravnit(snimki, s_derevom, ozh) if len(snimki) >= 2 else ([], {"soderzhimoe": [], "versiya": [], "net": [], "commit": []})
+    for n in nah:   # находка сравнения зависит от ВСЕХ машин сверки: отсутствие на одной — тоже её свойство
+        n["mashiny"] = sorted(snimki)
+    nah += negodnye
+    vse = slep + nah
+    slepye = {n["id"] for n in slep if n["vid"] == "СЛЕПОТА"}
+    starye = sum(1 for o in ozh.values() if o["data"] and SEJCHAS - datetime.datetime.strptime(o["data"], "%Y-%m-%d")
+                 .replace(tzinfo=datetime.timezone.utc).timestamp() > 30 * 86400)
+    svod = (f"машин в сверке {len(snimki)} из {len(mash)} ({', '.join(sorted(snimki)) or '—'}); "
+            + pokrytie(pokr, s_derevom, sorted(snimki)) + f"\nожидаемых различий {len(ozh)}, из них старше 30 суток {starye}")
+    print(svod)
+    for n in vse:
+        print(f"{n['vid']}: {n['tekst']}")
+    if not vse:
+        print("сошлось — в пределах покрытия выше")
+    kod = 2 if slep else 1 if nah else 0
+    if argv == ["--pechat"]:
+        return kod
+    try:
+        with open(SOST, encoding="utf-8") as f:
+            st = json.load(f)
+        assert isinstance(st.get("otkryto"), dict)
+    except (OSError, ValueError, AssertionError):
+        st = {"otkryto": {}, "napomnil": ""}
+    # УСЛОВИЕ ворот Вениамина 23:15: ослепшая машина не закрывает находки. Открытая находка, в которой участвовала
+    # машина, ослепшая сейчас, не закрывается и не тревожит заново — переносится «не проверено (слепота X)».
+    # Закрывается только когда все её машины снова в сверке и находки нет.
+    staroe = {k: (v if isinstance(v, dict) else {"tekst": v, "mashiny": []}) for k, v in st["otkryto"].items()}
+    teper = {f"{n['vid']}|{n['id']}": {"tekst": n["tekst"], "mashiny": n.get("mashiny", [])} for n in vse}
+    novye = [k for k, v in teper.items() if staroe.get(k, {}).get("tekst") != v["tekst"]]
+    pereneseno = {k: v for k, v in staroe.items() if k not in teper and slepye & set(v["mashiny"])}
+    zakryto = [f"{k.split('|', 1)[1]} ({k.split('|', 1)[0]})" for k in staroe if k not in teper and k not in pereneseno]
+    for k, v in pereneseno.items():
+        print(f"НЕ ПРОВЕРЕНО (слепота {', '.join(sorted(slepye & set(v['mashiny'])))}): {v['tekst']}")
+    den = time.strftime("%Y-%m-%d", time.gmtime(SEJCHAS))
+    napomnit = not novye and not zakryto and bool(teper or pereneseno) and st.get("napomnil") != den
+    if novye or zakryto or napomnit:
+        tekst = tekst_trevogi(novye, zakryto, napomnit, teper, pereneseno, snimki, pokr, len(mash), svod)
+        p = subprocess.run([AA, "--plain", "--", tekst], capture_output=True, text=True, timeout=120)
+        if p.returncode != 0:
+            print(f"🔴 ТРЕВОГА НЕ ДОСТАВЛЕНА (agent-alert код {p.returncode}); состояние не сдвигаю", file=sys.stderr)
+            return 4
+        st["napomnil"] = den
+    st["otkryto"] = {**teper, **pereneseno}
+    zapisat(SOST, st)
+    zapisat(NAHODKI, {"vremya": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(SEJCHAS)), "kod": kod, "svod": svod,
+                      "nahodki": vse, "ne_provereno": [dict(v, klyuch=k) for k, v in pereneseno.items()], "pokrytie": pokr})
+    return kod
+
+
+if __name__ == "__main__":
+    sys.exit(main())

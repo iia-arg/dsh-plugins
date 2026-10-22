@@ -1,0 +1,15 @@
+    vsego=$($S journalctl -u $u --since "-'"$OKNO_OTKAZA"'" --no-pager 2>/dev/null | grep -cv "^-- No entries --$")
+    d=$($S journalctl -u $u --since "-'"$OKNO_OTKAZA"'" --no-pager -o short-unix 2>/dev/null | grep -i "Prompt is too long" | tail -1 | awk "{print \$1}" | cut -d. -f1)
+    if [ "${vsego:-0}" -eq 0 ]; then
+      printf "OTKAZDLINA|%s|SLEPOTA\n" "$u"
+    else
+      printf "OTKAZDLINA|%s|%s\n" "$u" "${d:-нет}"
+    fi
+    # B-P-114 (25.09.2026, Заря): ОБРЫВ ПО ЛИМИТУ ПОДПИСКИ — событием из журнала шлюза, а не счётом в памяти шлюза: счёт «3 отказа подряд»
+    # (gateway.mjs) обнуляется перезапуском — Марк упёрся в «usage limit» 4 раза за 24–25.09, тревога не ушла ни разу. Строка — только СВОЯ
+    # строка шлюза («node[pid]: [subscription-gateway …] 🔴 сбой вызова: …»): чужие sudo-команды с тем же текстом в журнале шлюза не в счёт.
+    # Длительность хода — от последнего «мост подключён»/«подсказка:» до отказа: лимит обрывает ход за секунды, а снаружи это похоже на работу.
+    case "$u" in *gateway*)
+      lim=$($S journalctl -u $u --since "-'"$OKNO_OTKAZA"'" --no-pager -o short-unix 2>/dev/null | awk -v IGNORECASE=1 "/node\\[[0-9]+\\]: \\[(dsh-)?subscription-gateway [^]]*\\] (мост подключён|подсказка:)/ {s=\$1} /node\\[[0-9]+\\]: \\[(dsh-)?subscription-gateway [^]]*\\] 🔴 сбой вызова: .*(hit your (session|usage|weekly)|usage limit|rate limit|try again at|resets [0-9])/ {f=\$1; st=s; t=\$0} END {if (f) {sub(/.*сбой вызова: /, \"\", t); gsub(/[|;]/, \"/\", t); printf \"%s;%s;%s\", f, st, substr(t, 1, 200)}}")
+      printf "OTKAZLIMIT|%s|%s\n" "$u" "${lim:-нет}" ;;
+    esac

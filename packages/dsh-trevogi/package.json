@@ -1,6 +1,6 @@
 {
   "name": "dsh-trevogi",
-  "version": "3.1.2",
+  "version": "3.1.10",
   "description": "Отправка тревог и сторожа журнала · Alert delivery and journal watchers",
   "keywords": ["тревоги · alerts", "сторожа · watchers", "systemd"],
   "license": "MIT",

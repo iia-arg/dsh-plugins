@@ -119,7 +119,19 @@ try:
         'MESSAGE_ID='+message,'JOB_TYPE=start','JOB_RESULT=done',
         *['UNIT='+s for s in sorted(units|{'multi-user.target'})]],
         capture_output=True,text=True,timeout=15,check=True)
-    if not p.stdout.strip() or len(p.stdout)>8*1024*1024: raise ValueError('journal_size')
+    if len(p.stdout)>8*1024*1024: raise ValueError('journal_size')
+    # RU: Пусто — ещё не слепота: journald (предел 1 ГБ) мог вычистить и начало загрузки, и все старты этих служб
+    # RU: (sadik 21.10 12:15Z: журнал с 20.10 08:17Z при загрузке 02.10, ~7000 стартов PID1/ч). Различаем пробой
+    # RU: тем же MESSAGE_ID без фильтра юнитов: есть хоть одна запись — журнал отвечает, исключать по загрузке нечего;
+    # RU: нет ни одной — слепота. Не ловит: опечатку в именах служб (пусто будет и тогда).
+    # EN: Empty is not yet blindness: journald (1 GB cap) may have vacuumed both the boot start and every start of
+    # EN: these units. Probe the same MESSAGE_ID without unit filter: any record — journal answers, nothing to exempt;
+    # EN: none — blindness. Does not catch: a typo in unit names (empty then too).
+    if not p.stdout.strip():
+        q=subprocess.run(['journalctl','--no-pager','-q','-o','json','-n','1','_PID=1','MESSAGE_ID='+message],
+            capture_output=True,text=True,timeout=15,check=True)
+        if not q.stdout.strip(): raise ValueError('journal_empty')
+        sys.exit(0)
     starts=collections.defaultdict(list); boundaries={}; seconds=collections.Counter()
     for line in p.stdout.splitlines():
         r=json.loads(line)
@@ -139,7 +151,7 @@ try:
         if mono<=60000000 and mono<boundaries.get(boot,-1) and seconds[unit,real//1000000]==1:
             print(unit+'|'+str(real//1000000))
 except Exception as error:
-    print('boot_journal_'+type(error).__name__,file=sys.stderr);sys.exit(2)
+    print('boot_journal_'+type(error).__name__+(':'+str(error)[:120] if str(error) else ''),file=sys.stderr);sys.exit(2)
 PY_BOOT
 ); boot_k=$?
 if [ "$boot_k" -ne 0 ]; then slepye+=("загрузка: метаданные journalctl не проверены (код $boot_k)"); boot_keys=""; fi

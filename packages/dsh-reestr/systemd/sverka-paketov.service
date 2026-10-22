@@ -1,0 +1,7 @@
+[Unit]
+Description=Сверка реестров пакетов между машинами (только bclaude)
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/sverka-paketov
+SuccessExitStatus=1 2
+TimeoutStartSec=900

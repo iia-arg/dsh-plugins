@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat-kompakt-dsh",
-  "version": "3.1.2",
+  "version": "3.1.4",
   "type": "module",
   "engines": {
     "node": ">=18"

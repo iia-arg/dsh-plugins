@@ -1,6 +1,6 @@
 # dsh-limity — subscription measurements and quota status
 
-**Version:** 3.1.4
+**Version:** 3.1.5
 
 [Русский README](README.md). Local service software for sadik, distributed as sources. Documentation in English is not permission to publish the software or host data. There is no npm installer.
 

@@ -10,7 +10,7 @@ All settings are environment variables: the only accepted argument is `--avto-mo
 
 | Переменная · Variable | Умолчание · Default | Пусто · Empty | Значит · Meaning | Что сломается · What breaks |
 |---|---|---|---|---|
-| `VYPUSK_REPO` | нет — обязательна · none — required | слепота · blindness | git-дерево семейства с метками и раскладкой `packages/<каталог>` · family git tree with tags and `packages/<directory>` layout | нет `.git` — слепота, код 2 · no `.git` — blindness, exit 2 |
+| `VYPUSK_REPO` | нет — обязательна · none — required | отказ 3 до канала · refusal 3 before alerts | git-дерево семейства с метками и раскладкой `packages/<каталог>` · family git tree with tags and `packages/<directory>` layout | нет `.git` — слепота, код 2 · no `.git` — blindness, exit 2 |
 | `VYPUSK_KORNI` | нет — обязательна · none — required | слепота · blindness | корни боевых каталогов, в них пакет ищется по `package.name` · production roots, the package is looked up by `package.name` | неверный корень — пакеты «вне области»; нечитаемый — слепота · wrong root — packages "out of scope"; unreadable — blindness |
 | `VYPUSK_AGENT_KORNI` | не задана — поиск по `VYPUSK_AGENT_POISK` · unset — search via `VYPUSK_AGENT_POISK` | пусто = выкл · empty = off | явный перечень корней копий агентов через `:` · explicit `:`-list of agent copy roots | не задана и нет `VYPUSK_AGENT_POISK` — слепота · unset and no `VYPUSK_AGENT_POISK` — blindness |
 | `VYPUSK_AGENT_POISK` | нет · none | пусто = выкл · empty = off | родительские каталоги через `:`; корнем копии считается каждый `<родитель>/<каталог>/plugins` · `:`-list of parent dirs; every `<parent>/<dir>/plugins` is a copy root | см. строку выше · see the row above |
@@ -57,3 +57,7 @@ Hard-coded and printed in every output: all files outside `node_modules` except 
 B-N-2032: оконный стенд теперь содержит 11 методов (прежние8 и3 проверки producer/закрытия). Нужен читаемый registry reader `MO_REESTR_PRIBOR` (умолчание `/usr/local/bin/agent-plugins`, dsh-reestr2.0.13); его настоящий `run(..., verify=True)` используется helper при закрытии. Предметы/реестр/версии/канал остаются приватными. `MO_DEREVO_REPO` и `MO_DEREVO_PRIBOR` стенд задаёт на свои фикстуры, живую конфигурацию службы не читает. Нет helper/root/reader — код2, без traceback.
 
 The window stand has 11 methods:8existing plus3 actual producer/registry-closure checks. It requires the readable registry reader `MO_REESTR_PRIBOR` (default `/usr/local/bin/agent-plugins`, dsh-reestr2.0.13); closure uses its actual verify function. Every subject/registry/version/channel remains private; the stand pins its own repo and VOW source, without reading the live unit configuration. Missing helper/root/reader gives blindness2.
+
+Отсутствующее и пустое VYPUSK_REPO дают отказ вызова3 до любых отправок/состояния/helper, также в --avto-montazh; заданный, но неверный путь остаётся слепотой2. Остальные обязательные настройки проверяются после этой границы.
+
+Missing or empty VYPUSK_REPO refuses3 before sender/state/helper, also in --avto-montazh; an explicit invalid path remains blindness2. Other mandatory settings are checked after this boundary.

@@ -14,6 +14,9 @@
            С B-N-1853 — и ОБРАТНО: у каждого агента реестра агентов (AGENTS_REGISTRY, иначе
            /etc/agent-registry/agents.yaml) профиль A и каждая копия плагина в <дом>/plugins/
            обязаны быть покрыты записью этого реестра; нет — «нет записи … для <агент>».
+  snimok   снимок реестра для сверки МЕЖДУ машинами (bclaude): verify тем же кодом + фактический отпечаток,
+           белый список полей, атомарно в $SVERKA_SNIMOK (умолч. /var/lib/sverka-paketov/snimok.json); --stdout — печать.
+           Код 0 — снимок записан (итог verify — поле verify_kod внутри), 2 — не записан. Ничего не меняет на машине.
   diff     сверить машинный файл с ОПУБЛИКОВАННЫМ и показать разницу списком
   pravka   agent-plugins pravka <новый-файл> [--ustanovit --punkt <пункт>] — ЕДИНСТВЕННАЯ
            подкоманда, которая пишет. Ставит новую редакцию САМОГО реестра:
@@ -1600,6 +1603,81 @@ def _rotaciya_strahovok(kopiya_svoya):
                      + (f"; не удалось: {'; '.join(ne_udalos)}" if ne_udalos else ""))
 
 
+# ── СНИМОК ДЛЯ СВЕРКИ МЕЖДУ МАШИНАМИ ──────────────────────────────────────
+# 20.10.2026 Михалыч, замысел SVERKA-PAKETOV r3 (ворота Вениамина 23:00, такт Забавы 22:59; слово владельца 20:18):
+# машина САМА делает снимок своего реестра своим root; bclaude его только читает (cat по mesh). Здесь:
+#   - verify прогоняется ТЕМ ЖЕ кодом прямо перед снимком (итог и время — в снимок): ночной verify на машинах идёт в
+#     разное время, а снимок с verify прошлых суток врал бы до 26 ч (замечание Вениамина 23:00);
+#   - fingerprint ФАКТИЧЕСКИЙ — fingerprint_check исполняется сейчас (как в verify), а не берётся из записи;
+#   - БЕЛЫЙ СПИСОК полей (Д3): прочее из записи в снимок не идёт; update — текстом, не исполняется;
+#   - derevo_commit — git rev-parse метки, только если derevo.address — git-дерево на ЭТОЙ машине; иначе null;
+#   - запись атомарно: tmp в том же каталоге → fsync → os.replace, 0644.
+# ЧЕГО НЕ ДЕЛАЕТ: не сравнивает машины (это сравнитель на bclaude), не правит реестр, не исполняет update.
+SNIMOK_PUT = os.environ.get("SVERKA_SNIMOK", "/var/lib/sverka-paketov/snimok.json")
+SNIMOK_VERSIYA = 1
+
+
+def _derevo_commit(e):
+    d = e.get("derevo") if isinstance(e.get("derevo"), dict) else {}
+    adres, ref = str(d.get("address") or "").split(" (")[0].strip(), str(d.get("ref") or "").split()[0] if d.get("ref") else ""
+    if not adres or not ref or not os.path.isdir(os.path.join(adres, ".git")):
+        return None
+    try:
+        p = subprocess.run(["git", "-C", adres, "rev-parse", "--verify", "--quiet", ref + "^{commit}"],
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return p.stdout.strip() or None
+
+
+def cmd_snimok(entries, args):
+    import io, contextlib, hashlib, json as _json
+    t0 = time.time()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        try:
+            kod_verify = cmd_verify(entries, [])
+        except SystemExit as e:
+            kod_verify = e.code if isinstance(e.code, int) else 2
+    zapisi = []
+    for e in entries:
+        fp, fp_sost = None, "net_proverki"
+        if e.get("fingerprint_check"):
+            sost, out = run(e["fingerprint_check"], 15, verify=True)
+            fp, fp_sost = (out, "ok") if sost == "zhivoj" else (None, "slepota")
+        d = e.get("derevo") if isinstance(e.get("derevo"), dict) else {}
+        ref = str(d.get("ref")).split()[0] if d.get("ref") else None
+        zapisi.append({"id": e["id"], "version": None if e.get("version") is None else str(e.get("version")),
+                       "origin": e.get("origin"), "fingerprint_fakt": fp, "fingerprint_sost": fp_sost,
+                       "derevo_ref": ref, "derevo_commit": _derevo_commit(e), "update": e.get("update")})
+    with open(REGISTRY, "rb") as f:
+        sha_reestra = hashlib.sha256(f.read()).hexdigest()[:16]
+    snimok = {"snimok_versiya": SNIMOK_VERSIYA, "mashina": os.uname().nodename,
+              "vremya": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "reestr": REGISTRY,
+              "reestr_sha256": sha_reestra, "verify_kod": kod_verify,
+              "verify_itog": (buf.getvalue().strip().splitlines() or [""])[-1][-300:],
+              "zapisej": len(zapisi), "zapisi": zapisi, "sekund": round(time.time() - t0, 1)}
+    tekst = _json.dumps(snimok, ensure_ascii=False, indent=1) + "\n"
+    if "--stdout" in args:
+        sys.stdout.write(tekst)
+        return 0
+    katalog = os.path.dirname(SNIMOK_PUT) or "."
+    try:
+        os.makedirs(katalog, mode=0o755, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".snimok.", dir=katalog)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(tekst); f.flush(); os.fsync(f.fileno())
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, SNIMOK_PUT)
+    except OSError as e:
+        print(f"{RED}ОТКАЗ: снимок не записан в {SNIMOK_PUT}: {e}{OFF}", file=sys.stderr)
+        return 2
+    print(f"снимок: {SNIMOK_PUT} · записей {len(zapisi)} · verify код {kod_verify} · "
+          f"отпечаток сверен у {sum(1 for z in zapisi if z['fingerprint_sost'] == 'ok')} · "
+          f"метка у {sum(1 for z in zapisi if z['derevo_ref'])} · commit у {sum(1 for z in zapisi if z['derevo_commit'])}")
+    return 0
+
+
 def main():
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help", "help"):
@@ -1623,7 +1701,7 @@ def main():
     if argv[0] == "pravka":
         return cmd_pravka(argv[1:])
     cmds = {"list": cmd_list, "check": cmd_check, "verify": cmd_verify,
-            "diff": cmd_diff}
+            "diff": cmd_diff, "snimok": cmd_snimok}
     if argv[0] not in cmds:
         print(f"неизвестная подкоманда: {argv[0]}\n")
         print(__doc__)
@@ -1636,7 +1714,8 @@ def main():
     # указать тот же предмет — это две руки на одном месте, и отказ ниже называет правильный.
     # pravka проверяет свои доводы сама (с 24.08) и сюда не доходит.
     dopustimo = {"list": ({"--health", "--avto-montazh"}, False), "check": (set(), False),
-                 "verify": ({"--avto-montazh"}, False), "diff": ({"--full"}, True)}
+                 "verify": ({"--avto-montazh"}, False), "diff": ({"--full"}, True),
+                 "snimok": ({"--stdout"}, False)}
     klyuchi, pozicionnye = dopustimo[argv[0]]
     chuzhie = [a for a in argv[1:] if (a not in klyuchi) if (a.startswith("-") or not pozicionnye)]
     if argv[0] == "list" and "--avto-montazh" in argv and "--health" not in argv:

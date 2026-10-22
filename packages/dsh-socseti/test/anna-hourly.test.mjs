@@ -83,7 +83,7 @@ test('Anna writer is closed by default even after owner approval',t=>{
 // Break caught: night event notices are held forever or bypass hourly fence.
 test('DM notice waits until 09, keeps source time and never grants publication',t=>{
  const f=fixture(t);const e=f.s.ingestEvent('anna',{platform:'vk',account_id:'123',provider_id:'dm-control',kind:'dm',conversation_id:'peer-1',subject_id:'person-1',text:'Ночная ЛС 🌊'});assert.equal(f.q.enqueueCards(),0);
- f.set('2026-10-13T06:00:00Z');assert.equal(f.q.enqueueCards(),1);const a=f.q.claim();assert.ok(a.request.args.text.includes(e.event_id));assert.equal(a.kind,'notice');assert.ok(a.request.args.text.includes('05:00'));assert.ok(a.request.args.text.includes('Ночная ЛС 🌊'));assert.equal(a.request.args.reply_markup,undefined);const m=deliver(f,a);
+ f.set('2026-10-13T06:00:00Z');assert.equal(f.q.enqueueCards(),1);const a=f.q.claim();assert.ok(a.request.args.text.includes(e.event_id));assert.equal(a.kind,'notice');assert.ok(a.request.args.text.includes('05:00'));assert.ok(!a.request.args.text.includes('Ночная ЛС 🌊'));assert.ok(!a.request.args.text.includes('person-1'));assert.ok(!a.request.args.text.includes('peer-1'));assert.equal(a.request.args.reply_markup,undefined);const m=deliver(f,a);
  assert.equal(approve(f,a,m),'denied');assert.equal(f.q.claim(),null);assert.equal(f.s.db.prepare("SELECT state FROM outbox WHERE kind='event_card_request'").get().state,'tg_sent');assert.equal(f.s.db.prepare("SELECT state FROM outbox WHERE kind='anna_event'").get().state,'held_no_private_route');
 });
 // Break caught: event sending crash replays, or real receipts are unchecked.

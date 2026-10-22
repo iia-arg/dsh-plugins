@@ -1,8 +1,8 @@
 # Устройство · Architecture
 
-Пакет — набор из девятнадцати самостоятельных приборов в `bin/`. Общего процесса, службы или состояния у них нет: каждый прибор запускается рукой или сторожем, отвечает строками вывода и кодом возврата и завершается. Общее у них одно — файл настройки и порядок, в котором прибор ищет значение.
+Пакет — набор из двадцати самостоятельных приборов в `bin/`. Общего процесса, службы или состояния у них нет: каждый прибор запускается рукой или сторожем, отвечает строками вывода и кодом возврата и завершается. Общее у них одно — файл настройки и порядок, в котором прибор ищет значение.
 
-The package is a set of nineteen standalone tools in `bin/`. They share no process, service or state: each tool is run by a hand or a watcher, answers with output lines and an exit code, and exits. The only shared thing is the settings file and the order in which a tool looks up a value.
+The package is a set of twenty standalone tools in `bin/`. They share no process, service or state: each tool is run by a hand or a watcher, answers with output lines and an exit code, and exits. The only shared thing is the settings file and the order in which a tool looks up a value.
 
 ## Порядок значения · Value lookup order
 

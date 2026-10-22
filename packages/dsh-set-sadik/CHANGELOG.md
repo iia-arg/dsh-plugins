@@ -1,5 +1,30 @@
 # История изменений dsh-set-sadik
 
+## 3.1.5 — 15.10.2026 · соседи по стойке не метятся · rack neighbours are not marked (Михалыч)
+
+- `sbin/sadik-reply-routing.sh` 2f1f7d87 → ac6c7f34 — в пометке NEW с `wan0` добавлено `! -s 5.17.7.144/28` (:91–93): правило 40
+  (fwmark → таблица 100) стоит раньше 50 («свои /28 напрямую»), и ответ соседу по стойке уходил через шлюз .145 — соединение
+  не вставало (bclaude → 5.17.7.155:38888: SYN-ACK на MAC шлюза, RST). Автор — Михалыч; ворота Вениамина 12:45Z ГОДНО;
+  смонтировано 15:23Z (окно e64a4dc6). Файл перенесён с боя как есть, код не менялся
+  · `! -s 5.17.7.144/28` in the NEW-from-wan0 mark: replies to rack neighbours no longer leave via the gateway; copied from live as is.
+
+## 3.1.4 — 15.10.2026 · боевая правка Михалыча возвращена в дерево · live fix by Mikhalych brought back into the tree (Искра, наряд Забавы 10:29:40Z)
+
+- `sbin/sadik-reply-routing.sh` 3bb1ecd2 → 2f1f7d87 (+11/−0) — `flock` после цикла `route_ready`: лечит гонку семи зовущих
+  (копии правил mangle). Автор — Михалыч; ворота Вениамина 10:28:46Z ГОДНО; смонтировано Забавой 10:29Z (страховка
+  /var/backups/montazh/B-srr-flock-20261015/). Файл перенесён с боя как есть (= кандидат /var/tmp/srr-k), код не менялся.
+  · flock after the route_ready loop fixes a race of seven callers (duplicate mangle rules); author Mikhalych, copied from live as is.
+- README: строка «Версия · Version: 3.1.4». · README: version line.
+
+## 3.1.3 — 14.10.2026 · боевая правка Михалыча возвращена в дерево · live fix by Mikhalych brought back into the tree (Искра, наряд Забавы 16:24Z)
+
+- `sbin/ru-split-apply.sh` 044be5f1 → 538c40a4 (+13/−0) — RU-split и для контейнеров: цепочка `prerouting` метит проходящий из
+  `docker0` и `br-*` трафик к `@ru_v4` (с теми же исключениями, что `output`), цепочка `forward` подрезает MSS под `awg-ru`.
+  Автор правки — Михалыч, коммит учёта /usr/local `ea45c8c` (14.10 15:41:22Z), основание — слово Александра 14.10 18:38 МСК
+  (15:38:23Z). Файл перенесён с боя как есть, код не менялся; бой уже такой, монтажа нет.
+  · RU split for containers too (prerouting for docker0/br-*, MSS clamp for awg-ru); author Mikhalych, copied from live as is.
+- README: строка «Версия · Version: 3.1.3». · README: version line.
+
 ## 3.1.2 — 14.10.2026 · подготовка к публикации · release prep (Аврора, наряд Забавы 07:18Z)
 
 - README: строка «Версия · Version: 3.1.2» под заголовком. · README: version line under the heading.

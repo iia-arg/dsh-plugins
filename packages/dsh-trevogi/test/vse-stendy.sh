@@ -9,7 +9,7 @@ final=0
 bash "$ROOT/test/stend-agent-alert.sh"; rc=$?
 printf 'STEND stend-agent-alert.sh %s\n' "$rc"
 [ "$rc" -le "$final" ] || final="$rc"
-for test in stend-nastroek-proby.py stend-watch-hvost.py stend-audit-kraev.py stend-audit-deadline.py stend-audit-yunits.py stend-audit-porchi.py stend-porchi.py; do
+for test in stend-adresaty.py stend-nastroek-proby.py stend-watch-hvost.py stend-audit-kraev.py stend-audit-deadline.py stend-audit-yunits.py stend-audit-porchi.py stend-porchi.py stend-sposob2.py; do
   python3 "$ROOT/test/$test"; rc=$?
   printf 'STEND %s %s\n' "$test" "$rc"
   [ "$rc" -le "$final" ] || final="$rc"

@@ -6,14 +6,16 @@ M08_PACKAGE optionally selects an explicit source copy; missing prerequisites ex
 import os,sys,tempfile,pathlib,copy,json,importlib.util,importlib.machinery,unittest,subprocess
 sys.dont_write_bytecode=True
 PACKAGE=pathlib.Path(os.environ.get('M08_PACKAGE', pathlib.Path(__file__).resolve().parents[1])).resolve()
+# B-N-2071: agent-registry и шаблоны раскладки — в соседнем пакете dsh-reestr (реестр агентов отделён от почты).
+REESTR_PKG=pathlib.Path(os.environ.get('M08_REESTR_PACKAGE', PACKAGE.parent/'dsh-reestr')).resolve()
 def blind(reason):
  print('СЛЕПОТА: '+reason,file=sys.stderr);raise SystemExit(2)
 if importlib.util.find_spec('yaml') is None:blind('нужен python3-yaml')
-for source in [PACKAGE/'bin/agent-registry', PACKAGE/'sbin/a2a-pochtalon.py', *[PACKAGE/'share/agent-registry/shablony-raskladki'/family/'A.tmpl' for family in ['codex','sdk-claude']]]:
+for source in [REESTR_PKG/'bin/agent-registry', PACKAGE/'sbin/a2a-pochtalon.py', *[REESTR_PKG/'share/agent-registry/shablony-raskladki'/family/'A.tmpl' for family in ['codex','sdk-claude']]]:
  if not source.is_file() or not os.access(source,os.R_OK):blind('источник не читается: '+str(source))
 def load(path,name):
  loader=importlib.machinery.SourceFileLoader(name,str(path));spec=importlib.util.spec_from_loader(name,loader);module=importlib.util.module_from_spec(spec);loader.exec_module(module);return module
-R=load(PACKAGE/'bin/agent-registry','registry1321')
+R=load(REESTR_PKG/'bin/agent-registry','registry1321')
 class Contract(unittest.TestCase):
  def setUp(self):
   self.temp=tempfile.TemporaryDirectory(prefix='m08-generator-');self.addCleanup(self.temp.cleanup);self.root=pathlib.Path(self.temp.name);self.home=self.root/'agent';(self.home/'.dsh').mkdir(parents=True);(self.home/'.dsh/lichnost.md').write_text('Fixture persona')
@@ -46,7 +48,7 @@ class Contract(unittest.TestCase):
   # Read the packaged templates unchanged; no source-string substitutions.
   for family in ['codex','sdk-claude']:
    self.agent['namerenie']['raskladka']['semejstvo']=family;sem,p=self.params(family);self.assertEqual(sem,family,p)
-   template=(PACKAGE/'share/agent-registry/shablony-raskladki'/family/'A.tmpl').read_text();self.assertIn('@@VLADELEC_TELEGRAM@@',template);self.assertIn('@@GOAL_A2A_SENDERS@@',template)
+   template=(REESTR_PKG/'share/agent-registry/shablony-raskladki'/family/'A.tmpl').read_text();self.assertIn('@@VLADELEC_TELEGRAM@@',template);self.assertIn('@@GOAL_A2A_SENDERS@@',template)
    p.update(SISTEMNYE_KORNI='["machine-fixture", "agent"]',GOSTEVYE_KORNI='[]',PRESET_B='thresholdRatio: 0.5\nretainRatio: 0.1',KATALOG_NAVYKOV='/fixture/skills')
    rendered,reason=R._f_otrisovat(template,p);self.assertIsNone(reason);d=R._yaml_terpimyj(rendered);found=[]
    def walk(v):

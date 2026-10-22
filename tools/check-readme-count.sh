@@ -20,26 +20,29 @@ katalogov=$(find packages -mindepth 1 -maxdepth 1 -type d | wc -l)
 # Строки таблиц: считаем ссылки вида [`имя`](packages/имя) в каждом разделе.
 platform=$(awk '/^## Platform plugins/{v=1;next} /^## /{v=0} v' README.md | grep -cE '^\| \[`')
 pamyat=$(awk '/^## Memory family/{v=1;next} /^## /{v=0} v' README.md | grep -cE '^\| \[`')
-vsego=$(( platform + pamyat ))
+autopilot=$(awk '/^## Autopilot \([0-9]+\)/{v=1;next} /^## /{v=0} v' README.md | grep -cE '^\| \[`')
+vsego=$(( platform + pamyat + autopilot ))
 
 # Числа, ОБЪЯВЛЕННЫЕ в заголовках и во вступлении.
 zayavleno_vsego=$(grep -oE '^## What is here: ([0-9]+) packages' README.md | grep -oE '[0-9]+' | head -1)
 zayavleno_pl=$(grep -oE '^## Platform plugins \(([0-9]+)\)' README.md | grep -oE '[0-9]+' | head -1)
 zayavleno_pm=$(grep -oE '^## Memory family .*\(([0-9]+)\)' README.md | grep -oE '[0-9]+' | head -1)
+zayavleno_ap=$(grep -oE '^## Autopilot \(([0-9]+)\)' README.md | grep -oE '[0-9]+' | head -1)
 
-echo "область: README.md против packages/ · каталогов $katalogov · строк таблиц $vsego (платформа $platform + память $pamyat)"
-echo "заявлено в заголовках: всего ${zayavleno_vsego:-НЕТ}, платформа ${zayavleno_pl:-НЕТ}, память ${zayavleno_pm:-НЕТ}"
+echo "область: README.md против packages/ · каталогов $katalogov · строк таблиц $vsego (платформа $platform + память $pamyat + автопилот $autopilot)"
+echo "заявлено в заголовках: всего ${zayavleno_vsego:-НЕТ}, платформа ${zayavleno_pl:-НЕТ}, память ${zayavleno_pm:-НЕТ}, автопилот ${zayavleno_ap:-НЕТ}"
 
 bad=0
 for para in "$vsego:$katalogov:строк таблиц против каталогов" \
             "${zayavleno_vsego:-0}:$katalogov:число во вступлении против каталогов" \
             "${zayavleno_pl:-0}:$platform:число в заголовке платформы против строк" \
-            "${zayavleno_pm:-0}:$pamyat:число в заголовке памяти против строк"; do
+            "${zayavleno_pm:-0}:$pamyat:число в заголовке памяти против строк" \
+            "${zayavleno_ap:-0}:$autopilot:число в заголовке автопилота против строк"; do
   a=${para%%:*}; rest=${para#*:}; b=${rest%%:*}; chto=${rest#*:}
   if [ "$a" != "$b" ]; then echo "  FAIL $chto: $a против $b"; bad=$((bad+1))
   else echo "  ok   $chto: $a"; fi
 done
 
-if [ "$bad" -eq 0 ]; then echo "ИТОГО: сошлось 4, расхождений 0"; exit 0; fi
+if [ "$bad" -eq 0 ]; then echo "ИТОГО: сошлось 5, расхождений 0"; exit 0; fi
 echo "ИТОГО: расхождений $bad — число в описании разошлось с диском"
 exit 1

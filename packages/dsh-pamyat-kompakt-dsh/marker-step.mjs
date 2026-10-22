@@ -261,9 +261,19 @@ const scanJournal=async (name,log)=>{
   //     The latest "[kompakt-dsh" line without the field in the same window (the beacon finds it) tells them apart: labelled
   //     with another identifier — a failure (blindness alert), the cursor does not move; labelled with ours — the "0" is honest;
   //     no such lines at all — nothing to check, said in the success line.
+  // RU: ОКНО СВЕРКИ НА ПУТИ КУРСОРА (kompakt-dsh 3.1.4, (71)+(72), замер Искры 18.10): journalctl systemd 255 при -n 1
+  //     НЕ соблюдает --after-cursor — идёт от хвоста назад по всему журналу службы (a2a-owner-copy-watch: поиск по курсору
+  //     20 мс, сверка 22 с; на avrora сверка вернула строку раньше курсора). --since границу соблюдает, поэтому на пути
+  //     курсора сверка ищет с секунды курсора (t= в мкс): захват до секунды раньше курсора сверке безвреден — она смотрит
+  //     только ид последней строки. Форма «--since @<секунды>» уже разрешена правилом sudo (63-varvara-kompakt-audit).
+  // EN: ID-CHECK WINDOW ON THE CURSOR PATH (kompakt-dsh 3.1.4): journalctl (systemd 255) with -n 1 does NOT honour
+  //     --after-cursor and walks the whole service journal backwards from the tail; --since is honoured, so on the cursor
+  //     path the check searches from the cursor's second (t= in µs). Up to one second before the cursor is harmless here.
+  //     The "--since @<seconds>" form is already allowed by the sudo rule.
+  const oknoSverki=put.args[0]==='--after-cursor'?['--since','@'+Math.floor(k.t/1e6)]:put.args;
   let sverka='по отметкам';
   if(rows.length===0){
-    const g=await chitat(['-u',unit,...put.args,'--grep','^\\[kompakt-dsh\\s','-n','1','-o','json','--no-pager']);
+    const g=await chitat(['-u',unit,...oknoSverki,'--grep','^\\[kompakt-dsh\\s','-n','1','-o','json','--no-pager']);
     const last=g.out.split('\n').filter(Boolean).map(x=>JSON.parse(x)).pop();
     if(!last)sverka='строк kompakt-dsh в окне нет';
     else if(last.SYSLOG_IDENTIFIER!==ident)throw Object.assign(Error('identifier mismatch'),{auditReason:'строки kompakt-dsh в журнале службы подписаны SYSLOG_IDENTIFIER='+String(last.SYSLOG_IDENTIFIER).slice(0,64)+', а поиск отметок шёл по '+ident+' — «0 отметок» недостоверно'});

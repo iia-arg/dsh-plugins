@@ -11,6 +11,12 @@ import { dirname, join } from 'node:path'
 // RU: Убрать зарегистрированные временные объекты на обычном exit и SIGTERM/SIGINT. SIGKILL и временное дочерних процессов не покрыты.
 // EN: Remove registered temporary objects on normal exit and SIGTERM/SIGINT. This covers neither SIGKILL nor child-process temporary objects.
 import { mkdtempSync as mkdtempSync_, rmSync as rmSync_ } from 'node:fs'
+// RU: B-N-2048: состав разбирает помощник npm-sostav (dsh-pribory ≥ 3.1.2), ищется по PATH; нет его — ОТКАЗ кодом 2, не красное и не тихий ноль.
+// EN: B-N-2048: the npm-sostav helper (dsh-pribory ≥ 3.1.2) parses the contents and is looked up on PATH; without it — REFUSAL with exit 2, not red and not a silent zero.
+try { execFileSync('sh', ['-c', 'command -v npm-sostav'], { stdio: 'ignore' }) } catch {
+  console.log('СЛЕПОТА: npm-sostav не найден — нужен dsh-pribory ≥ 3.1.2')
+  process.exit(2)
+}
 const VREMENNYE = []
 const vremennyj = (...a) => { const k = mkdtempSync_(...a); VREMENNYE.push(k); return k }
 process.on('exit', () => { for (const k of VREMENNYE) rmSync_(k, { recursive: true, force: true }) })
@@ -37,13 +43,18 @@ const slepota = (i, pochemu) => { vsego++; slep++; console.log('  ⬜ ' + i + ' 
 // RU: Проверить состав по ответу npm, не повторной интерпретации files.
 // EN: Check package contents from the npm response rather than another interpretation of files.
 let sostav = null
+let prichinaSostava = ''
 try {
   const out = execFileSync('npm', ['pack', '--dry-run', '--json'], { cwd: koren, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-  sostav = JSON.parse(out)[0].files.map((f) => f.path).sort()
+  // RU: B-N-2048: npm 11 отдаёт pack --json массивом, npm 12 — объектом; разбор одним правилом у помощника npm-sostav (dsh-pribory), его ОТКАЗ — исключение с причиной.
+  // EN: B-N-2048: npm 11 prints pack --json as an array, npm 12 as an object; one rule parses both in the npm-sostav helper (dsh-pribory), its REFUSAL throws with the reason.
+  sostav = execFileSync('npm-sostav', ['--files'], { input: out, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).split('\n').filter(Boolean).sort()
 } catch (e) { /**
- * RU: Непроверенный предмет ниже даёт слепоту, не зелёный исход.
- * EN: An unchecked subject below yields an inability-to-check result, not a pass.
- */ }
+ * RU: Непроверенный предмет ниже даёт слепоту, не зелёный исход. Причина — из исключения: в нём имя упавшей команды (npm или
+ *     npm-sostav) и stderr помощника, чтобы отказ разбора не читался как «npm не отработал» (B-N-2048).
+ * EN: An unchecked subject below yields an inability-to-check result, not a pass. The reason comes from the exception: it names the
+ *     failed command (npm or npm-sostav) and carries the helper's stderr, so a parsing refusal does not read as "npm did not run".
+ */ prichinaSostava = String(e?.message ?? e).replace(/\s+/g, ' ').trim().slice(0, 300) }
 
 proba('стенд годен: оба README непусты', () => {
   if (ru.length < 1000 || en.length < 1000) throw new Error(`ru ${ru.length}, en ${en.length} знаков`)
@@ -58,7 +69,7 @@ proba('ключи настройки описаны в обоих', () => {
 
 // RU: Ссылка README обязана вести к файлу в архиве, не только к существующему пути рабочего дерева.
 // EN: A README link must target an archived file, not merely a path present in the working tree.
-if (sostav === null) slepota('ссылки README ведут в состав публикации', 'npm pack --dry-run --json не отработал — состав неизвестен')
+if (sostav === null) slepota('ссылки README ведут в состав публикации', 'состав неизвестен — ' + prichinaSostava)
 else proba('ссылки README ведут в состав публикации', () => {
   const ssylki = new Set()
   for (const t of [ru, en]) for (const m of t.matchAll(/\b((?:src|test)\/[A-Za-z0-9._-]+\.(?:mjs|js))/g)) ssylki.add(m[1])
@@ -89,7 +100,7 @@ proba('оба называют, что слепота — отдельный к�
 
 // RU: Проверить вычислимость состава и чтение обещанных файлов. Алгоритм канонической суммы не дублируется здесь: локаль, порядок и завершающий перевод строки должны определяться единственным инструментом.
 // EN: Check computable contents and readability of promised files. Do not duplicate the canonical checksum algorithm here: one instrument must define locale, ordering, and final newline.
-if (sostav === null) slepota('состав публикации вычислим', 'npm pack --dry-run --json не отработал')
+if (sostav === null) slepota('состав публикации вычислим', 'состав неизвестен — ' + prichinaSostava)
 else proba('состав публикации вычислим', () => {
   if (sostav.length === 0) throw new Error('состав пуст — публиковать нечего')
   for (const f of sostav) readFileSync(join(koren, f))

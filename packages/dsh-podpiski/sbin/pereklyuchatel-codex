@@ -5,7 +5,8 @@
 
 ЗОВ:  pereklyuchatel-codex <3|4|toggle|toggle-force>   любой другой ввод (пусто, --dry-run, …) — ОТКАЗ, код 2, ничего не тронуто.
       pereklyuchatel-codex <3|4> <агент> [агент …]   ДЕЛЁЖ (слово владельца 07.10.2026 12:01 МСК: Марк — 3, Альфа/Бета/Гамма — 4):
-        перевешиваются ТОЛЬКО названные; имя — из юнита DOMA (alfa, beta, gamma, marc, anna, master). Неизвестное имя, повтор, имена при
+        перевешиваются ТОЛЬКО названные; имя — из юнита DOMA (alfa, beta, gamma, marc, anna, master,
+        vintik, shpuntik, gayka, shurup, tumbler). Неизвестное имя, повтор, имена при
         toggle — ОТКАЗ, код 2. Проверки годности цели и «все дома — ссылки на зарегистрированные» — как прежде, по ВСЕМ домам.
         Без имён — как прежде, ВСЕ разом (это и есть «свести делёж», рука человека). Авто заслона зовёт без имён и только при
         единой подписке — при делёже он не переключает (codex-limit-watch, ветка «делёж»).
@@ -47,7 +48,12 @@ DOMA = ('/var/lib/coder-gateway-alfa/codex-home:coder-gateway@alfa.service '
         '/var/lib/coder-gateway-gamma/codex-home:coder-gateway@gamma.service '
         '/var/lib/coder-gateway-marc/codex-home:coder-gateway-marc.service '
         '/var/lib/coder-gateway-anna/codex-home:coder-gateway-anna.service '   # B-N-1837: Анна (Codex-агент по образцу Марка)
-        '/var/lib/coder-gateway-master/codex-home:coder-gateway-master.service')   # 13.10.2026: Мастер (Codex-агент по образцу Марка)
+        '/var/lib/coder-gateway-master/codex-home:coder-gateway-master.service '   # 13.10.2026: Мастер (Codex-агент по образцу Марка)
+        '/var/lib/coder-gateway-vintik/codex-home:coder-gateway-vintik.service '
+        '/var/lib/coder-gateway-shpuntik/codex-home:coder-gateway-shpuntik.service '
+        '/var/lib/coder-gateway-gayka/codex-home:coder-gateway-gayka.service '
+        '/var/lib/coder-gateway-shurup/codex-home:coder-gateway-shurup.service '
+        '/var/lib/coder-gateway-tumbler/codex-home:coder-gateway-tumbler.service')   # 14.10.2026: команда Мастера (наряд Забавы 20:35:04Z); 15.10.2026 + Тумблер (наряд Забавы 14.10 21:44:06Z)
 ALERT = '/usr/local/bin/agent-alert'
 ZAMOK = '/run/pereklyuchatel-codex.lock'
 PROC_ROOT = '/proc'

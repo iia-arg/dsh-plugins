@@ -1,6 +1,6 @@
 {
   "name": "dsh-storozha-mashiny",
-  "version": "3.1.3",
+  "version": "3.1.6",
   "description": "Сторожа машины, на которой работают несколько ИИ-агентов: службы, ядро и DKMS, обновления, IPv6, копии пакетов, хвосты, переполнение контекста · Watchdogs for a host running several AI agents: units, kernel and DKMS, updates, IPv6, package copies, leftovers, context overflow",
   "keywords": [
     "сторож · watchdog",
@@ -17,6 +17,14 @@
   "license": "MIT",
   "author": "Aleksandr Argelander",
   "engines": { "node": ">=18" },
+  "peerDependencies": {
+    "dsh-pribory": "^3.1.2"
+  },
+  "peerDependenciesMeta": {
+    "dsh-pribory": {
+      "optional": true
+    }
+  },
   "files": [
     "bin/",
     "lib/",

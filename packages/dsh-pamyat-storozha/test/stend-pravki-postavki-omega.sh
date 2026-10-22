@@ -1,6 +1,9 @@
 #!/bin/bash
 # СТЕНД ПРИЗНАКА 6 omega-kopiya-watch — «локальная правка поставки OMEGA». 26.09.2026; переносимая редакция.
-# ЗОВУЩИЙ — ворота правки omega-kopiya-watch (автор + приёмщик). В СУТОЧНЫЙ ОБХОД НЕ СТАВИТЬ: sudo + копия боевой OMEGA (~1–2 мин).
+# ЗОВУЩИЕ — ворота правки omega-kopiya-watch (автор + приёмщик) и НОЧНОЙ ОБХОД: строка perechen-boevyh-stendov.txt, доводы — таблица
+#   vse-stendy-boevye.sh (A-N-1711, 07.10.2026). Прежнее «в суточный обход не ставить» (26.09) снято: sudo в среде обхода есть,
+#   ночью ~20 с (замер 17.10). Последний такт читает БОЕВУЮ поставку OMEGA и БОЕВОЙ systemctl: красное там ночью — живое
+#   состояние машины (правка стёрта или новее старта omega-memory), а не дефект стенда; поставка без правки — СЛЕПОТА, код 2.
 # Доводы: $1 — путь к сторожу. Переменные: STEND_PRAVKA — патч правки поставки (умолч. — путь из строки перечня пункта STEND_PUNKT_SEARCH для _search.py);
 #   STEND_PAMYAT — база pamyat.db любого агента для копии (умолч. — подставная пустая: признаку 6 содержимое не нужно);
 #   OSNOVA — сторож без признака 6 для такта «осн» (необязательно; нет — такта нет).
@@ -15,8 +18,11 @@
 # STEND_KONF — файл настройки пакета для сторожа (DSH_PAMYAT_STOROZHA_CONF); умолч. — пустой.
 # EN: STAND FOR SIGN 6 of omega-kopiya-watch — "local patch of the OMEGA distribution". 26.09.2026; portable
 #     edition.
-#     THE CALLER is the omega-kopiya-watch edit gate (author + acceptor). DO NOT PUT INTO THE DAILY ROUND: sudo
-#     + a copy of production OMEGA (~1–2 min).
+#     CALLERS: the omega-kopiya-watch edit gate (author + acceptor) and the NIGHTLY ROUND (perechen-boevyh-stendov.txt line,
+#     arguments from the vse-stendy-boevye.sh table; A-N-1711, 07.10.2026). The former "not for the daily round" (26.09) is
+#     withdrawn: sudo is available there, ~20 s at night (measured 17.10). The last step reads the PRODUCTION OMEGA install and
+#     PRODUCTION systemctl: red there at night is live machine state (patch wiped or newer than omega-memory start), not a stand
+#     defect; an install without the patch is BLINDNESS, code 2.
 #     Arguments: $1 — path to the watcher. Variables: STEND_PRAVKA — the distribution patch (default — the path
 #     from the list line of item STEND_PUNKT_SEARCH for _search.py); STEND_PAMYAT — any agent's pamyat.db base
 #     for the copy (default — an empty stand-in: sign 6 does not need contents); OSNOVA — the watcher without

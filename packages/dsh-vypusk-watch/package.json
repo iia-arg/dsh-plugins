@@ -1,6 +1,6 @@
 {
   "name": "dsh-vypusk-watch",
-  "version": "3.1.6",
+  "version": "3.1.8",
   "license": "MIT",
   "author": "Aleksandr Argelander",
   "engines": { "node": ">=18" },

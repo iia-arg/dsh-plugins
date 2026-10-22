@@ -43,7 +43,7 @@ try {
     const seen = [], consoleLines = [], original = console.log
     console.log = line => consoleLines.push(line)
     try { mount({}, { info: line => { seen.push(line) } }) } finally { console.log = original }
-    assert.equal(seen.length, 1); assert.equal(consoleLines.length, 0)
+    assert.equal(seen.length, 0); assert.equal(consoleLines.length, 1); assert.match(consoleLines[0], /\[dsh-pamyat-storozha [^\]]+\] подъём:/)
   })
   await probe('02 absent logger still has console fallback', async () => {
     const lines = [], original = console.log; console.log = line => lines.push(line)

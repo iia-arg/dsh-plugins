@@ -1,5 +1,5 @@
 #!/usr/bin/python3 -B
-"""Read-only preflight for alfa/beta/gamma/marc/anna/master. 0 idle, 1 busy, 2 blind/refused.
+"""Read-only preflight for alfa/beta/gamma/marc/anna/master/vintik/shpuntik/gayka/shurup/tumbler. 0 idle, 1 busy, 2 blind/refused.
 No restart, no write to service state; the caller must use this immediately before action.
 """
 import argparse
@@ -14,7 +14,9 @@ import subprocess
 import sys
 
 HOD = '/usr/local/libexec/agent-hod/hod-sluzhby'
-UNITS = ('alfa.service', 'beta.service', 'gamma.service', 'marc.service', 'anna.service', 'master.service')  # B-N-1837: Анна; 13.10.2026: Мастер
+UNITS = ('alfa.service', 'beta.service', 'gamma.service', 'marc.service', 'anna.service', 'master.service',  # B-N-1837: Анна; 13.10.2026: Мастер
+         'vintik.service', 'shpuntik.service', 'gayka.service', 'shurup.service',
+         'tumbler.service')  # 14.10.2026: команда Мастера (наряд Забавы 20:35:04Z); 15.10.2026 + Тумблер (наряд Забавы 14.10 21:44:06Z)
 LIMIT = 16 * 1024 * 1024
 
 

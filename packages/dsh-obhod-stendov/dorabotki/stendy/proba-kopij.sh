@@ -23,7 +23,25 @@ z() { echo "ЗЕЛЁНОЕ $*"; }; k() { echo "КРАСНОЕ $*"; red=1; }; s()
 est() { sudo -n test -e "$1"; }
 ne_dolzhen() { local kto=$1 chto=$2 p=$3 rc
   est "$p" || { s "dostup $kto $chto $p: предмета нет"; return; }
-  case $chto in read) sudo -n -u "$kto" head -c1 -- "$p" >/dev/null 2>&1; rc=$? ;; list) sudo -n -u "$kto" ls -- "$p" >/dev/null 2>&1; rc=$? ;; esac
+  if [ "$chto" = read ]; then
+    local observed
+    observed=$(sudo -n -u "$kto" python3 - "$p" <<'PY_READ'
+import errno,os,sys
+try:
+    fd=os.open(sys.argv[1],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+    os.close(fd)
+except OSError as error: print(errno.errorcode[error.errno])
+else: print('OTKRYT')
+PY_READ
+    ) || { s "dostup $kto read $p: проба учётки не выполнена"; return; }
+    case "$observed" in
+      EACCES|EPERM) z "dostup $kto read $p: отказ (ждали отказ)" ;;
+      OTKRYT) k "dostup $kto read $p: ПРОШЁЛ (ждали отказ)" ;;
+      *) s "dostup $kto read $p: ${observed:-нет ответа}, не доказательство запрета" ;;
+    esac
+    return
+  fi
+  sudo -n -u "$kto" ls -- "$p" >/dev/null 2>&1; rc=$?
   [ $rc -ne 0 ] && z "dostup $kto $chto $p: отказ (ждали отказ)" || k "dostup $kto $chto $p: ПРОШЁЛ (ждали отказ)"; }
 dolzhen() { local kto=$1 chto=$2 p=$3 ok=1
   est "$p" || { s "dostup $kto $chto $p: предмета нет"; return; }
@@ -43,10 +61,35 @@ M=$R/var/backups/montazh; H=$R/home/claude; Z=$R/var/lib/zadaniya-prervany-watch
 HOZ=$(sudo -n stat -c %U "$H" 2>/dev/null) || { s "нет $H"; HOZ=claude; }
 # посторонний
 ne_dolzhen nobody list "$M"
-ne_dolzhen nobody read "$M/B-N-1369/bazy-20261001T153209Z/zarya.db"
+# B-N-2065: предмет из текущего перечня, не вечная ссылка на удаляемую страховку.
+# NUL сохраняет пробелы/переводы строк в имени; отказ find не превращается в 0.
+MEST_LIST=$(mktemp) || { echo "СЛЕПОТА: не создать список мест копий"; exit 3; }
+trap 'rm -f -- "$MEST_LIST"' EXIT
+MEST_FILES=()
+if sudo -n find "$M" -xdev -type f -print0 > "$MEST_LIST"; then
+  mapfile -d '' -t MEST_FILES < "$MEST_LIST"
+else s "schyot $M: root-перечень не получен"; fi
+vsego=${#MEST_FILES[@]}
+sample_stamp() { sudo -n python3 - "$1" <<'PY_STAMP'
+import errno,os,stat,sys
+try: st=os.lstat(sys.argv[1])
+except OSError as error:
+    print(errno.errorcode.get(error.errno,str(error.errno)),file=sys.stderr)
+    sys.exit(1)
+if not stat.S_ISREG(st.st_mode): sys.exit(1)
+print(st.st_dev,st.st_ino,st.st_mode,st.st_uid,st.st_gid,st.st_size,st.st_mtime_ns,st.st_ctime_ns)
+PY_STAMP
+}
+if [ "$vsego" -eq 0 ]; then s "dostup nobody read $M: перечень пуст, образца нет"
+else
+  sample=${MEST_FILES[0]}
+  if before=$(sample_stamp "$sample"); then
+    ne_dolzhen nobody read "$sample"
+    after=$(sample_stamp "$sample") && [ "$before" = "$after" ] || s "dostup nobody read $sample: образец исчез/изменился"
+  else s "dostup nobody read $sample: образец исчез/не regular"; fi
+fi
 ne_dolzhen nobody list "$H"
 ne_dolzhen nobody read "$Z/dlya-zabavy-zadaniya-prervany.md"
-vsego=$(sudo -n find "$M" -xdev -type f 2>/dev/null | wc -l)
 schyot "$M (все файлы)" "$(sudo -n -u nobody find "$M" -xdev -type f -readable 2>/dev/null | wc -l)" "$vsego"
 # /tmp — корневого пространства имён: у ночного обходчика PrivateTmp=yes, его /tmp пуст, и «0 из 0» было бы слепым
 # зелёным (замер 03.10 10:3xZ: под частным /tmp 0 из 0 при 62 на хосте). Считаем по other-битам: /tmp 1777, other = nobody.

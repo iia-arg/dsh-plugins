@@ -1,0 +1,1416 @@
+{
+  "provenance": "Frozen historical physical release files, SHA-pinned; independent of current and live registry. 014 is generated from test package.",
+  "managed": [
+    "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2",
+    "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2",
+    "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2",
+    "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013"
+  ],
+  "rows": [
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/pilot",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/pilot/README.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "287ae3bb6fc69d739f0fdd7c9d1be8849b1cb5d606090229621215faa2b14ea6"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/pilot/pilot-main.json",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "c704848118f07dab8a3de86f616958a37fef06941178ea83fed0649052e835a9"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/pilot/pilot_archive.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "a932e58d7c8bd64489c38fb82bb97789ba4316b1dbbaf4e025df4cb8c67baeb1"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/pilot/pilot_mail.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "f46245fd7b80919ae6ef361a4768b329b3cef6b916a8bdbf63d295c7a3aefe74"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/release.json",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "ffcdf7ebbbac29dc1fd0aca433e6118e49f99da154083ac208480a2dddf7fb6a"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/SKILL.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "9e1ba66825b354143338dfb30abd982bcb05c732454642f12a357e1718a56153"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/0-instruments.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "3bec3a8b6b8033f2d065e97a5fa534e570647f5ae7f31fd2b30339fa12da883c"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/0-memory.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "66f131d4b2dc91216bd49ea2333a6b3a7958428a77c99c4f877ff5d03bfc77a4"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/0-modes.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "2b9b5b40c4ca5a5812e12a22994ac993887da8d8f7e17866ef889a7a13ec0f80"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/0-preflight.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "4ca50f7c9d8ce4c3259aea776843473b9c968ebf2025fa014ad9d36f3f46828b"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/0-resume.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "dff0495c17c3bc7250a1cc65f741c55ae8358bd91fac76c2d8c7975c28192f4c"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/1-manifest.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "8f9296d27817341968ebec6772fd747aa20037fe4b36b11a3438f5786f610375"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/2-adversarial.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "c407bc783cac0a1bc81f528ccd45c146a19edbb9899df3c9b30b15145f73235f"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/2-briefing.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "4384a39297a49964c46bf164fa3d522007c5a56b83d747b34ed0f01a62fad398"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/3-spec.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "1114100f0c370129048fc9284b934bd774cce2d595e873d1c3f834aef0c62365"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/4-plan.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "e6cdb00fc8acbe1b38e0131e86eb92668443677b97d54ab527dc119e2ec98634"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/5-repair.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "efc7da968ef95528f5a95a0c7349cf48672664b36a8f3d23b6cc1e881cfecd1c"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/5-subagents.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "fc0d0756a48b6fbd02dbd57bc747c7dd4ad30068c17a3323f6d6c524565f0914"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/6-review.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "6c12194127fce772f79d08c47ce1098217dd4423f1d7ae4ef038fb36c6fd2e5a"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/8-final.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "20d7fda677edc11748e69070822827e36110d0c4e95c64123620e8c90a23ff21"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/9-memory.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "2844d9bed331f8f17a66d5d8089836b6e541024351986218f44cf523d17f15c7"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/dashboard-template.html",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "c9e1f01f50e505143fa79689fb1f30257c43736b4217678fbbb1752b9841e215"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/phases/rationalizations.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "afba8831ac7c6fbf37e8516087ca59641324fd3fc5beb25e3daca11c56ae7ca4"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/prompts",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/prompts/executor.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "c02d02e842321277c62fa7be36369a4c85adba4c7b95d097d1b16a8dad9f83b3"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/prompts/review.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "2c662517e19380d6c7bf0208c7710f84cf5d2fb0dc71447615bf97e009bbdf9c"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/tools",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/tools/ap.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "9a2fb814aedbb5ca9440b0dd1191dc8b24c64bb8d76f96aa9d96939d3f578ba5"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/tools/ap_sadik.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "050040e15c7d2282d218afe312dd45a928a9ae26d87cac84607fdb6eed86b08e"
+    },
+    {
+      "path": "/opt/autopilot/releases/46060c3efc19a3e5cb740415cdfb601d126c29fd-a12-b4-c2/skill/tools/measure-run.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "ff61d049f9fb5717082357d2d2ad7611024b746827b4b8ff81a673831e1e1571"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/pilot",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/pilot/README.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "287ae3bb6fc69d739f0fdd7c9d1be8849b1cb5d606090229621215faa2b14ea6"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/pilot/pilot-main.json",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "8c10fca41cf5a9a20e57bf70c6afda9850bf3a99f0e67ec9ab7ea0f22d4f5c23"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/pilot/pilot_archive.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "a932e58d7c8bd64489c38fb82bb97789ba4316b1dbbaf4e025df4cb8c67baeb1"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/pilot/pilot_mail.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "eefab63ec746ed9ef29d841498da1db25f8c54825965662bb60224e020b4d31e"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/release.json",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "705c7bcd962ee652e943e529734437dd482116ba8db9a120840f6482a33ef744"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/SKILL.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "f43b3e3a78a8516b0e83f5dcb444fd3a5b214417d06e773fa05c97b0bad26a00"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/0-instruments.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "3bec3a8b6b8033f2d065e97a5fa534e570647f5ae7f31fd2b30339fa12da883c"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/0-memory.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "66f131d4b2dc91216bd49ea2333a6b3a7958428a77c99c4f877ff5d03bfc77a4"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/0-modes.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "2b9b5b40c4ca5a5812e12a22994ac993887da8d8f7e17866ef889a7a13ec0f80"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/0-preflight.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "4ca50f7c9d8ce4c3259aea776843473b9c968ebf2025fa014ad9d36f3f46828b"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/0-resume.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "dff0495c17c3bc7250a1cc65f741c55ae8358bd91fac76c2d8c7975c28192f4c"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/1-manifest.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "8f9296d27817341968ebec6772fd747aa20037fe4b36b11a3438f5786f610375"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/2-adversarial.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "c407bc783cac0a1bc81f528ccd45c146a19edbb9899df3c9b30b15145f73235f"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/2-briefing.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "4384a39297a49964c46bf164fa3d522007c5a56b83d747b34ed0f01a62fad398"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/3-spec.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "1114100f0c370129048fc9284b934bd774cce2d595e873d1c3f834aef0c62365"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/4-plan.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "e6cdb00fc8acbe1b38e0131e86eb92668443677b97d54ab527dc119e2ec98634"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/5-repair.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "efc7da968ef95528f5a95a0c7349cf48672664b36a8f3d23b6cc1e881cfecd1c"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/5-subagents.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "fc0d0756a48b6fbd02dbd57bc747c7dd4ad30068c17a3323f6d6c524565f0914"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/6-review.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "6c12194127fce772f79d08c47ce1098217dd4423f1d7ae4ef038fb36c6fd2e5a"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/8-final.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "a5252f93b1783722bf1d392b814ecde8327d97dacab95e670190e83b120f3eba"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/9-memory.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "2844d9bed331f8f17a66d5d8089836b6e541024351986218f44cf523d17f15c7"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/dashboard-template.html",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "c9e1f01f50e505143fa79689fb1f30257c43736b4217678fbbb1752b9841e215"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/phases/rationalizations.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "afba8831ac7c6fbf37e8516087ca59641324fd3fc5beb25e3daca11c56ae7ca4"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/prompts",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/prompts/executor.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "c02d02e842321277c62fa7be36369a4c85adba4c7b95d097d1b16a8dad9f83b3"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/prompts/review.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "2c662517e19380d6c7bf0208c7710f84cf5d2fb0dc71447615bf97e009bbdf9c"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/tools",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/tools/ap.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "1986b51643c46a563af27598a502b6d66c3a59123454af1f15cd8668a0275c5b"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/tools/ap_sadik.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "050040e15c7d2282d218afe312dd45a928a9ae26d87cac84607fdb6eed86b08e"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/skill/tools/measure-run.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "ff61d049f9fb5717082357d2d2ad7611024b746827b4b8ff81a673831e1e1571"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/tools",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/tools/README-measure-run-codex.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "0b2b6197e99ea135b1c2554af74590f574caa3a1bb78493d33cc03fe2def1651"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2/tools/measure-run-codex.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "e3f408ecfb77dcf600835f9fa5968f9bf9d67c6502261ca4fd1344d742e2a391"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/FORMAT-CONTRACT.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "b2386991fb5f30de685acd1ab9a8f7387951d5d32c84012051c0e9edb000bff3"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/pilot",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/pilot/README.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "287ae3bb6fc69d739f0fdd7c9d1be8849b1cb5d606090229621215faa2b14ea6"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/pilot/pilot-main.json",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "8c10fca41cf5a9a20e57bf70c6afda9850bf3a99f0e67ec9ab7ea0f22d4f5c23"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/pilot/pilot_archive.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "a932e58d7c8bd64489c38fb82bb97789ba4316b1dbbaf4e025df4cb8c67baeb1"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/pilot/pilot_mail.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "eefab63ec746ed9ef29d841498da1db25f8c54825965662bb60224e020b4d31e"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/release.json",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "838155127a829cb374230e08fbd6e1723206c7f7abea1fcf7b5b37e1107404ee"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/SKILL.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "f43b3e3a78a8516b0e83f5dcb444fd3a5b214417d06e773fa05c97b0bad26a00"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/0-instruments.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "678827346751f82b74aabfb5357c7e631049e408d3516022582487350113b23d"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/0-memory.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "66f131d4b2dc91216bd49ea2333a6b3a7958428a77c99c4f877ff5d03bfc77a4"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/0-modes.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "2b9b5b40c4ca5a5812e12a22994ac993887da8d8f7e17866ef889a7a13ec0f80"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/0-preflight.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "4ca50f7c9d8ce4c3259aea776843473b9c968ebf2025fa014ad9d36f3f46828b"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/0-resume.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "dff0495c17c3bc7250a1cc65f741c55ae8358bd91fac76c2d8c7975c28192f4c"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/1-manifest.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "8f9296d27817341968ebec6772fd747aa20037fe4b36b11a3438f5786f610375"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/2-adversarial.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "c407bc783cac0a1bc81f528ccd45c146a19edbb9899df3c9b30b15145f73235f"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/2-briefing.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "4384a39297a49964c46bf164fa3d522007c5a56b83d747b34ed0f01a62fad398"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/3-spec.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "1114100f0c370129048fc9284b934bd774cce2d595e873d1c3f834aef0c62365"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/4-plan.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "e6cdb00fc8acbe1b38e0131e86eb92668443677b97d54ab527dc119e2ec98634"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/5-repair.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "efc7da968ef95528f5a95a0c7349cf48672664b36a8f3d23b6cc1e881cfecd1c"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/5-subagents.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "fc0d0756a48b6fbd02dbd57bc747c7dd4ad30068c17a3323f6d6c524565f0914"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/6-review.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "6c12194127fce772f79d08c47ce1098217dd4423f1d7ae4ef038fb36c6fd2e5a"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/8-final.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "f110e0a12fbad53c07fc27a35125ff69d690c5030e35612bc8b14c3367898925"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/9-memory.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "2844d9bed331f8f17a66d5d8089836b6e541024351986218f44cf523d17f15c7"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/dashboard-template.html",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "735bd830cfc3ade7e04e1a04dac284328fc466550d0e63da6140a62149e7003e"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/phases/rationalizations.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "afba8831ac7c6fbf37e8516087ca59641324fd3fc5beb25e3daca11c56ae7ca4"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/prompts",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/prompts/executor.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "c02d02e842321277c62fa7be36369a4c85adba4c7b95d097d1b16a8dad9f83b3"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/prompts/review.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "2c662517e19380d6c7bf0208c7710f84cf5d2fb0dc71447615bf97e009bbdf9c"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/tools",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/tools/ap.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "a33c307a31439b138be8eed1db2959f0ce0bae30c9f262df60226fcd5308fd90"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/tools/ap_sadik.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "cd4e60d49cc6d50150facddcceaff5f5d187c20db9d6753ba270436e3a03b08d"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/skill/tools/measure-run.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "ff61d049f9fb5717082357d2d2ad7611024b746827b4b8ff81a673831e1e1571"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/tools",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/tools/README-measure-run-codex.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "2c9c3244ce4c3b315bc50432f0fe90acbdbcc200937893bf3d7fc92727806f3c"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/tools/README-usage-snapshot.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "b7868bd6646bf251b93051fdfbc27f2f52c2b9ead9250779419e6da6938aba54"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/tools/build-run-manifest.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "0b2410dbe839382ab0f421c9f2f2e2cdc4147f56fb19c3d04cdd98962aaa606b"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/tools/claude-root-origin.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "4f4b9f170f4fc6ce3b81a4358ac12e23a7a60d848a0a8c4ffe5392a12abf3414"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/tools/measure-run-claude-root.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "330999e86a44bc4ec4079bc142555bf23a021d1d43797325f4588c09183e310e"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/tools/measure-run-claude.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "27b6bf71c63d163d9620e22bb5b7f9d8c909909930fda5aba76b7b01f11e506c"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2/tools/measure-run-codex.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "fda0fbeea1f0d9b48ade4f4f492064f038d98c4054259c79cc35b31b929e0a0f"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/FORMAT-CONTRACT.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "b2386991fb5f30de685acd1ab9a8f7387951d5d32c84012051c0e9edb000bff3"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/pilot",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/pilot/README.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "d0ae00b9199923624824b9ef9cf68aac393e24ca56acdb298b5e72760f2c1f65"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/pilot/pilot-main.json",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "8c10fca41cf5a9a20e57bf70c6afda9850bf3a99f0e67ec9ab7ea0f22d4f5c23"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/pilot/pilot_archive.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "a932e58d7c8bd64489c38fb82bb97789ba4316b1dbbaf4e025df4cb8c67baeb1"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/pilot/pilot_mail.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "eefab63ec746ed9ef29d841498da1db25f8c54825965662bb60224e020b4d31e"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/release.json",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "1e0029fe1cfe1399a6a12f3cca8ba25e5621ff250ee5c575ca7c6af59ed2b77a"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/SKILL.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "f43b3e3a78a8516b0e83f5dcb444fd3a5b214417d06e773fa05c97b0bad26a00"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/0-instruments.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "facdf8d11e1ff851fbe91467fd7c2bb90b1086abdb1f9ee2831e33cf467a3413"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/0-memory.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "66f131d4b2dc91216bd49ea2333a6b3a7958428a77c99c4f877ff5d03bfc77a4"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/0-modes.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "2b9b5b40c4ca5a5812e12a22994ac993887da8d8f7e17866ef889a7a13ec0f80"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/0-preflight.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "e61de4bbe52606a98ccf9de2fea7cc639977d94f9846314a1f409356dbe7cb94"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/0-resume.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "7cf2d2c2f05f5529b997379847cd5bd8e7a33f04b730c9e63c33215fbccee31b"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/1-manifest.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "8f9296d27817341968ebec6772fd747aa20037fe4b36b11a3438f5786f610375"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/2-adversarial.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "c407bc783cac0a1bc81f528ccd45c146a19edbb9899df3c9b30b15145f73235f"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/2-briefing.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "4384a39297a49964c46bf164fa3d522007c5a56b83d747b34ed0f01a62fad398"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/3-spec.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "1114100f0c370129048fc9284b934bd774cce2d595e873d1c3f834aef0c62365"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/4-plan.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "f4040d250a66d6bc5a4de38bb9bd504f417c0dac450b356d80693d64251dcdc1"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/5-repair.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "efc7da968ef95528f5a95a0c7349cf48672664b36a8f3d23b6cc1e881cfecd1c"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/5-subagents.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "b2d8461d6b778f5a0f825bf9d753e9050b4a22ee493b3840ad9d031386e3c190"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/6-review.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "6c12194127fce772f79d08c47ce1098217dd4423f1d7ae4ef038fb36c6fd2e5a"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/8-final.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "1eaa8d181d9b81e45e9f6178d543f53d07867f28d2853ce7ff13b959279d123d"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/9-memory.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "2844d9bed331f8f17a66d5d8089836b6e541024351986218f44cf523d17f15c7"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/dashboard-template.html",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "d37f8b64257a9878b9c31a0368590f240fa7be6ac25066c3fcbf55657c7091b5"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/phases/rationalizations.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "afba8831ac7c6fbf37e8516087ca59641324fd3fc5beb25e3daca11c56ae7ca4"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/prompts",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/prompts/executor.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "c02d02e842321277c62fa7be36369a4c85adba4c7b95d097d1b16a8dad9f83b3"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/prompts/review.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "2c662517e19380d6c7bf0208c7710f84cf5d2fb0dc71447615bf97e009bbdf9c"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/tools",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/tools/ap.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "3d0d048795e0106321ebd312578fd299eadcfa03c36b11d06c5a9c13e2551824"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/tools/ap_sadik.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "3c4b4b02cb47590870c9b302e569b0430434bcff9ed9ca1f9a9e461669fd495d"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/tools/child-source-versions.json",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "777297887dfd27eefa690a3ed47c4ee8c432499a5f50a0ebf9de3c40467a77ca"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/tools/child_usage.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "235b846ee9508ebb104e660d57d9923748957a07bd868f0048d9c461efcf2b45"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/tools/codex_account_map.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "ba1b0c8291d1cbabab764add2391a8aebf1d8437f8edf43bb2ad1c9aa9fade79"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/tools/mail_registration.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "1017dedc0e8ca3967668a4ee1729064362f37ff69a593ec2887a5ab94869129d"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/tools/measure-run.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "ff61d049f9fb5717082357d2d2ad7611024b746827b4b8ff81a673831e1e1571"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/tools/run_catalog.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "d37059a7353a031d01bb9391f776ec698de8cafc9ac36f366872643d699a0d99"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/tools/team_usage.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "44e8344a7796cb4ded98169d850f4d121d6b2d999cc3be07f15aba8397809c0d"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/tools/usage-reader-limits.json",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "7b814bf0eaad5a4cb7d38282dcce82fabd116765412ad614f97447e88c0d4dcc"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/skill/tools/usage_registration.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "e2195ff0ec64826aba7b9a324e4cdd94e2a85c279857ded66193360568967596"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools",
+      "kind": "dir",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/README-measure-run-codex.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "2c9c3244ce4c3b315bc50432f0fe90acbdbcc200937893bf3d7fc92727806f3c"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/README-usage-snapshot.md",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "b7868bd6646bf251b93051fdfbc27f2f52c2b9ead9250779419e6da6938aba54"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/build-run-manifest.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "0b2410dbe839382ab0f421c9f2f2e2cdc4147f56fb19c3d04cdd98962aaa606b"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/child-source-versions.json",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "777297887dfd27eefa690a3ed47c4ee8c432499a5f50a0ebf9de3c40467a77ca"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/child_usage.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "235b846ee9508ebb104e660d57d9923748957a07bd868f0048d9c461efcf2b45"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/claude-root-origin.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "4f4b9f170f4fc6ce3b81a4358ac12e23a7a60d848a0a8c4ffe5392a12abf3414"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/codex_account_map.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "ba1b0c8291d1cbabab764add2391a8aebf1d8437f8edf43bb2ad1c9aa9fade79"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/collect-team-usage.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "cf6d81bec70412e38d54484713604bc7d708d5396b1c8c8577fd70df3f11d7a5"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/export-runtime-source.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "872d86c305b0283fcb4237fb10e2396433b02de974459d05bcf4f0c0a6e6aeca"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/gateway_receipt_source.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "b251127d18c4103c9ffc39dc9df39df006e2404243cf7dca9e7f2a9b9e21af96"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/gateway_segments.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "38e5d1559e58a69222733a2df3e056192daefbb722c11866ec5b1d81b48e95d1"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/mail_registration.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "1017dedc0e8ca3967668a4ee1729064362f37ff69a593ec2887a5ab94869129d"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/measure-run-claude-root.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "330999e86a44bc4ec4079bc142555bf23a021d1d43797325f4588c09183e310e"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/measure-run-claude.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "27b6bf71c63d163d9620e22bb5b7f9d8c909909930fda5aba76b7b01f11e506c"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/measure-run-codex.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "fda0fbeea1f0d9b48ade4f4f492064f038d98c4054259c79cc35b31b929e0a0f"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/raw_supplier.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "24808484875962332bca69ed42c500b13ddf553950a026c03af0216124fdd803"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/runtime_incremental.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "25755fd0b124186f4eefd4b9d1535dadd344bdd79ace98996b72c579802f2237"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/runtime_receipt_source.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "284e2a3e739dbd9f4a3c5739085c06ff712bd815d9129c52be595ae6f4f9c0d0"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/supply-team-usage-index.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "sha256": "93a8a88a9a1989951ca0d021cbfb554af31f5634e4a75d75d6026e724ed89e82"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/usage-reader-limits.json",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "7b814bf0eaad5a4cb7d38282dcce82fabd116765412ad614f97447e88c0d4dcc"
+    },
+    {
+      "path": "/opt/autopilot/releases/9fc898cbe941d5b8a369f1dd657e9119676eb44f-a20-b42-c2-release-013/tools/usage_registration.py",
+      "kind": "file",
+      "uid": 0,
+      "gid": 0,
+      "mode": 420,
+      "sha256": "e2195ff0ec64826aba7b9a324e4cdd94e2a85c279857ded66193360568967596"
+    }
+  ]
+}

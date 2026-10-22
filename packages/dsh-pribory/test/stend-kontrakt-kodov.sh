@@ -49,7 +49,18 @@ if [ -z "$OKNO" ]; then
 fi
 N_STARTED=$(sudo -n journalctl --utc -u "$SL" --since "$OKNO" --no-pager -o cat 2>/dev/null | grep -c '^Started ')
 if [ "$N_STARTED" -eq 0 ]; then
-  echo "  🔴 СЛЕПОТА стенда: подъём $SL в $T_PODYOMA, но в журнале с $OKNO строк «Started» 0 (журнал его уже не хранит, служба не пишет Started или журнал не читается) — поведенческие пробы не на чем"
+  # OBHOD-1017: три причины нуля различаются — по началу СИСТЕМНОГО журнала (служба пишет в него), а не одной строкой на всё.
+  #   Журнал ротируется по размеру (SystemMaxUse): служба, не поднимавшаяся с загрузки, рано или поздно выпадает из него — это не дефект прибора.
+  # «-n +1» — самая старая запись без «| head»: у юнитов IgnoreSIGPIPE=yes, и journalctl за head дочитывал бы журнал до срока.
+  NACHALO=$(sudo -n journalctl --system -o short-unix -q --no-pager -n +1 2>/dev/null | cut -d. -f1)
+  OKNO_S=$(date -u -d "$OKNO" +%s)
+  if ! [[ "$NACHALO" =~ ^[0-9]+$ ]]; then
+    echo "  🔴 СЛЕПОТА стенда: журнал не читается (начало системного журнала не получено) — поведенческие пробы не на чем"
+  elif [ "$NACHALO" -gt "$OKNO_S" ]; then
+    echo "  🔴 СЛЕПОТА стенда: журнал короче подъёма — системный журнал начинается с $(date -u -d "@$NACHALO" '+%Y-%m-%d %H:%M:%S UTC'), подъём $SL в $T_PODYOMA (окно с $OKNO) — поведенческие пробы не на чем"
+  else
+    echo "  🔴 СЛЕПОТА стенда: подъём $SL в $T_PODYOMA, журнал хранит окно с $OKNO, но строк «Started» 0 (служба не пишет Started?) — поведенческие пробы не на чем"
+  fi
   [ "$BED" = 0 ] || exit 1; exit 2
 fi
 echo "  окно: с $OKNO (последний подъём $SL — $T_PODYOMA; строк «Started» в окне $N_STARTED)"

@@ -3,7 +3,9 @@
 //     следующий старт ищет --after-cursor; курсор старше 7 сут или из будущего, испорченный файл, файл чужой службы — поиск за 7 сут;
 //     курсор, который journalctl не принял, — один повтор за 7 сут; провал аудита курсор не сдвигает; отказ «No journal
 //     files were found» повторяется через sudo -n. Пробы S1–S3 — на НАСТОЯЩЕМ journalctl и настоящем большом журнале
-//     (STEND_BOLSHOJ_UNIT, например iskra.service; не меньше 72 000 записей за 7 сут — иначе СЛЕПОТА, код 2), прочие —
+//     (STEND_BOLSHOJ_UNIT; не меньше 72 000 записей в ДОСТУПНОЙ глубине журнала, ≤ 7 сут — иначе СЛЕПОТА с глубиной и числом,
+//     код 2; с 17.10.2026 журнал 2G ≈ 1,5 сут — нужна плотная служба, iskra.service её уже не даёт; в обходе с 3.1.4 —
+//     a2a-owner-copy-watch.service, ≈ 157 тыс. записей, S1 там два прохода по ~19 с под таймаутом 30 с каждый), прочие —
 //     с подменным journalctl. Реестр и тревога подменены; DSH_HOME — временный каталог стенда, удаляется в конце.
 //     Чего не ловит: настоящие правила sudo (их проверяет отдельная проба с подставным /etc/sudoers), ротацию,
 //     сделанную во время самого поиска. Код выхода: 0 — сошлось, 1 — расхождение, 2 — слепота.
@@ -12,7 +14,8 @@
 //     the next start searches --after-cursor; a cursor older than 7 days or from the future, a corrupt file, a file of another service — a
 //     7-day search; a cursor journalctl rejects — one 7-day retry; a failed audit does not move the cursor; the "No journal
 //     files were found" failure is retried via sudo -n. Probes S1–S3 run on the REAL journalctl and a real large journal
-//     (STEND_BOLSHOJ_UNIT, e.g. iskra.service; at least 72,000 entries in 7 days — otherwise BLINDNESS, code 2), the rest
+//     (STEND_BOLSHOJ_UNIT; at least 72,000 entries within the AVAILABLE journal depth, ≤ 7 days — otherwise BLINDNESS naming
+//     depth and count, code 2; since 17.10.2026 the 2G journal holds ≈ 1.5 days — a dense service is needed), the rest
 //     on a replacement journalctl. Registry and alert are replaced; DSH_HOME is the stand's temp directory, removed at the
 //     end. Not caught: real sudo rules (a separate probe with a substitute /etc/sudoers), rotation during the search
 //     itself. Exit code: 0 — passed, 1 — mismatch, 2 — blindness.
@@ -22,12 +25,21 @@ process.argv[1] = `${process.env.DSH_TEST_APP}/node_modules/@deepseek-ai/dsh/lib
 const BIG=process.env.STEND_BOLSHOJ_UNIT;
 if(!/^[a-z][a-z0-9_-]*\.service$/.test(BIG??'')){console.log('СЛЕПОТА стенда: не задан STEND_BOLSHOJ_UNIT — служба с большим журналом');process.exit(2);}
 const original=cp.execFile;const JC='/usr/bin/journalctl';
-// RU: Счёт записей большого журнала за 7 сут — зрячесть подставы (потоком, без буфера).
-// EN: Entry count of the large journal for 7 days — the substitute's sightedness (streamed, no buffer).
+// RU: Глубина журнала службы — её первая видимая запись (журнал 2G с 17.10 ≈ 1,5 сут, не 7); окно счёта — не длиннее 7 сут.
+//     Порог — ОБЪЁМ, не сутки: на малом журнале быстрый поиск S1–S3 неотличим от исправного курсора.
+// EN: Journal depth of the service — its first visible entry (2G journal since 17.10 ≈ 1.5 days, not 7); the count window is
+//     at most 7 days. The threshold is VOLUME, not days: on a small journal a fast S1–S3 search is indistinguishable from a
+//     correct cursor.
+const pervaya=await new Promise((ok,no)=>{let buf='';const p=cp.spawn(JC,['-u',BIG,'-o','short-unix','-q','--no-pager']);
+  p.stdout.on('data',b=>{buf+=b;const i=buf.indexOf('\n');if(i>=0){ok(parseFloat(buf.slice(0,i)));p.kill();}});p.on('error',no);p.on('close',()=>ok(parseFloat(buf)));});
+if(!Number.isFinite(pervaya)){console.log(`СЛЕПОТА стенда: в журнале ${BIG} нет ни одной видимой записи — глубину не измерить`);process.exit(2);}
+const glub=Math.min(7*86400,Date.now()/1000-pervaya),s_=new Date(pervaya*1000).toISOString().slice(0,16)+'Z',ch=(glub/3600).toFixed(1);
+// RU: Счёт записей большого журнала за доступную глубину (≤ 7 сут) — зрячесть подставы (потоком, без буфера).
+// EN: Entry count of the large journal over the available depth (≤ 7 days) — the substitute's sightedness (streamed).
 const zapisej=await new Promise((ok,no)=>{let n=0;const p=cp.spawn(JC,['-u',BIG,'--since','-7 days','-o','cat','-q','--no-pager']);
   p.stdout.on('data',b=>{for(const c of b)if(c===10)n++;});p.on('error',no);p.on('close',()=>ok(n));});
-if(zapisej<72000){console.log(`СЛЕПОТА стенда: в ${BIG} за 7 сут ${zapisej} записей, нужно не меньше 72000`);process.exit(2);}
-console.log(`подстава: ${BIG}, записей за 7 сут ${zapisej}`);
+if(zapisej<72000){console.log(`СЛЕПОТА стенда: журнал ${BIG} виден с ${s_} — глубина ${ch} ч из 168; записей в ней ${zapisej}, нужно не меньше 72000 (объём для S1–S3) — взять службу плотнее (STEND_BOLSHOJ_UNIT)`);process.exit(2);}
+console.log(`подстава: ${BIG}, журнал с ${s_} (глубина ${ch} ч из 168), записей ${zapisej}`);
 const home=fs.mkdtempSync(path.join(os.tmpdir(),'stend-kursora-'));process.env.DSH_HOME=home;
 const NAME='agent-proba';const FILE=path.join(home,'kompakt-dsh','zhurnal-kursor-'+NAME+'.json');
 const hex=ms=>(ms*1000).toString(16);
@@ -85,6 +97,10 @@ try{
  r=await start(BIG,{starty:[ST(Date.now()+1000)]});console.log(`  S2 ${r.ms} мс: ${r.line}`);
  check(r.alerts.length===0&&/окно курсор,/.test(r.line)&&okno(r)==='after-cursor'&&r.jcalls.length===2,'S2 курсор не позже старта: --after-cursor, вызовов 2');
  check(r.ms<3000,`S2 укладывается: ${r.ms} мс < 3000`);
+ // S2б (kompakt-dsh 3.1.4): сверка ид на пути курсора — окно «--since @<секунда курсора>», не «--after-cursor»: с -n 1 journalctl
+ //     курсор не соблюдает и проходит весь журнал службы (так S2 на a2a-owner-copy-watch стоил 20 с при поиске 20 мс).
+ const sv2=r.sverki.at(-1)?.[1]??[];
+ check(r.sverki.length===0||(sv2.includes('--since')&&!sv2.includes('--after-cursor')),'S2б окно сверки ид на пути курсора — --since, не --after-cursor ('+(r.sverki.length?sv2.slice(2,4).join(' '):'сверки не было: отметки найдены')+')');
  // S3: курсор «после ротации» (нулевые s/b, t = −1 ч), старт позже — journalctl ищет по времени, строк как в контроле.
  const t1=Date.now()-3600e3;const ctrl=since=>new Promise(ok=>original(JC,['-u',BIG,'--since',since,'--grep','\\[continuation-marker\\]','-o','cat','--no-pager'],{maxBuffer:64<<20},(e,o)=>ok(o.split('\n').filter(Boolean).length)));
  fs.mkdirSync(path.dirname(FILE),{recursive:true});fs.writeFileSync(FILE,JSON.stringify({unit:BIG,cursor:'s=00000000000000000000000000000000;i=0;b=00000000000000000000000000000000;m=0;t='+hex(t1)+';x=0'}));
@@ -146,6 +162,9 @@ try{
  fs.writeFileSync(FILE,JSON.stringify({unit:'dsh.service',cursor:CUR(hex(tS-60e3))}));const nc=CUR(hex(Date.now()));
  r=await start('dsh.service',{starty:[ST(tS)],poisk:(f,a,cb)=>cb(fail(1,''),'-- cursor: '+nc+'\n','')});
  check(r.alerts.length===0&&okno(r)==='after-cursor'&&/строк отметок 0/.test(r.line)&&saved()?.cursor===nc,'S10 пустая выборка со строкой курсора: ok, курсор сдвинут');
+ // S10б (kompakt-dsh 3.1.4): та же пустая выборка по курсору — сверка ид ищет с секунды курсора (t = tS−60 с), без --after-cursor.
+ const sv10=r.sverki.at(-1)?.[1]??[];const t10='@'+Math.floor((tS-60e3)/1000);
+ check(r.sverki.length===1&&sv10[sv10.indexOf('--since')+1]===t10&&!sv10.includes('--after-cursor'),`S10б сверка ид на пути курсора: --since ${t10}, не --after-cursor (${sv10.join(' ').slice(0,120)})`);
 }catch(e){console.log('FAIL исключение: '+(e.stack||e));fails++;}
 finally{fs.rmSync(home,{recursive:true,force:true});}
 console.log(fails?`ИТОГ: расхождений ${fails}`:'ИТОГ: всё сошлось');process.exit(fails?1:0);

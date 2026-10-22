@@ -2,7 +2,7 @@ Russian version: [README.md](README.md) · English below
 
 # dsh-pochta — sadik agent letters, slot and receipt watchers, release of the mail stop HOLD
 
-Версия · Version: 3.1.5
+Версия · Version: 3.1.6
 
 ## Purpose
 
@@ -51,7 +51,7 @@ Paths and permissions were checked against the `dsh-pochta` entry in `/etc/agent
 | `systemd/a2a-owner-copy-watch.service.d/70-predely.conf` | `/etc/systemd/system/a2a-owner-copy-watch.service.d/70-predely.conf` | 0644 root:root | systemd: limits `MemoryMax`, `MemorySwapMax=0`, `TimeoutStartSec` (A-N-1963 №11) |
 | `systemd/a2a-owner-copy-watch.timer` | `/etc/systemd/system/a2a-owner-copy-watch.timer` | 0644 root:root | systemd: once a minute (`OnBootSec=1min`, `OnUnitActiveSec=1min`); enabled |
 | `systemd/receipt-watch.service` | `/etc/systemd/system/receipt-watch.service` | 0644 root:root | own timer; oneshot |
-| `systemd/receipt-watch.service.d/ohvat.conf` | `/etc/systemd/system/receipt-watch.service.d/ohvat.conf` | 0644 root:root | systemd: `RECEIPT_LEDGER_PATHS` — 11 agent ledgers |
+| `systemd/receipt-watch.service.d/ohvat.conf` | `/etc/systemd/system/receipt-watch.service.d/ohvat.conf` | 0644 root:root | systemd: `RECEIPT_LEDGER_PATHS` — 18 agent ledgers |
 | `systemd/receipt-watch.service.d/onfailure.conf` | `/etc/systemd/system/receipt-watch.service.d/onfailure.conf` | 0644 root:root | systemd: `OnFailure=receipt-watch-failed.service` (package dsh-kopiya-mashiny) |
 | `systemd/receipt-watch.service.d/70-predely.conf` | `/etc/systemd/system/receipt-watch.service.d/70-predely.conf` | 0644 root:root | systemd: limits `MemoryMax`, `MemorySwapMax=0`, `TimeoutStartSec` (A-N-1963 №11) |
 | `systemd/receipt-watch.timer` | `/etc/systemd/system/receipt-watch.timer` | 0644 root:root | systemd: once an hour, first run 10 min after boot, `Persistent=true`; enabled |
@@ -164,7 +164,7 @@ words describe defaults that the code computes.
 
 | variable | default | meaning |
 |---|---|---|
-| `RECEIPT_LEDGER_PATHS` | `/opt/iskra/workspace/.message-receipts/receipts.sqlite`, `/opt/petrovich/workspace/.message-receipts/receipts.sqlite` | absolute ledger paths, one per line; in production the drop-in `ohvat.conf` gives 11 paths |
+| `RECEIPT_LEDGER_PATHS` | `/opt/iskra/workspace/.message-receipts/receipts.sqlite`, `/opt/petrovich/workspace/.message-receipts/receipts.sqlite` | absolute ledger paths, one per line; in production the drop-in `ohvat.conf` gives 17 paths |
 | `RECEIPT_MAX_AGE_SECONDS` | `86400` | a taken letter without an outcome older than this is overdue |
 
 **`zastryalo-v-shcheli`**
@@ -260,6 +260,6 @@ Exit codes:
 
 ## B-N-2021 — hyphenated v2 accounts
 
-The publisher accepts complete account names under `[a-z_][a-z0-9_-]*`, matching the postman; invalid characters fail before temporary writes. Recipient/ledger and envelope checks stay strict. Deploy with dsh-telegram-multiagent 3.1.7 and the updated S6/S7 courier-name stand: old S6 expected legitimate hyphens to fail.
+The publisher accepts complete account names under `[a-z_][a-z0-9_-]*`, matching the postman; invalid characters fail before temporary writes. Recipient/ledger and envelope checks stay strict. Deploy with dsh-telegram-multiagent >=3.1.7 and the updated S6/S7 courier-name stand: old S6 expected legitimate hyphens to fail.
 
 This release adds local tests: `python3 -B test/stend-v2-agent-name.py`. The private transfer chain is `sudo python3 -B test/stend-chain-agent-name.py --telegram <candidate package> --postman <a2a-bus candidate>/sbin/a2a-pochtalon.py --receiver-user coders`. Root only changes temporary fixture ownership; the receiver runs unprivileged. Account lookup and notification are substituted, while file transfer and receipt storage are real. No model, Telegram or live mailbox is called. `test/` is source-only; add it to the registry entry's `derevo.not_installed` when deploying.

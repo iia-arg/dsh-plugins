@@ -7,9 +7,10 @@ import {conversationForAgent,checkConversationCapability} from './conversation-i
 
 import { LlmAdapter, LlmError, CONTEXT_WINDOW_EXCEEDED_CODE, isContextWindowExceededError } from '@deepseek-ai/dsh-llm';
 import { readFileSync } from 'node:fs';
-import {createHash} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {createLivePressure} from './live-pressure.js';
+import {platformCancellation} from './platform-cancel.js';
 // RU: Версия, байты и PID захватываются при загрузке, не перечитываются как живые на каждом ходе.
 // EN: Capture loaded code identity once; never present later disk bytes as loaded code.
 let pressureIdentity=null, pressureScope=null;
@@ -200,6 +201,7 @@ class ClaudeOauthAdapter extends LlmAdapter {
 // RU: Читать ingress key, проверить v2 capability при envelope, прикрепить bridge и lease. Lease всегда закрывается в finally; network errors не разрешают скрытый SDK повтор.
 // EN: Read the ingress key, check v2 capability when an envelope is present, attach bridge and a lease. finally closes the lease; network failures do not authorize hidden SDK retries.
   async *stream(options) {
+    try{options.signal?.throwIfAborted();}catch(error){throw this.wrapFailure(error);}
     this.warnIfApiKey();
     const ingressKey = readIngressKey(this.ingressKeyFile ?? process.env.GATEWAY_INGRESS_KEY_FILE);
     const body = {
@@ -226,6 +228,7 @@ class ClaudeOauthAdapter extends LlmAdapter {
 
     const controlLease = this.taskControlFor?.({inputDelivery,terminalDelivery});
     if (controlLease) body.taskControl = controlLease.descriptor;
+    const cancellation = platformCancellation(options.signal,controlLease,this.log);
     try {
     let res;
     try {
@@ -234,12 +237,13 @@ class ClaudeOauthAdapter extends LlmAdapter {
         await fetch('http://127.0.0.1:1/').catch(() => {});
       }
       const dispatcher = poluchitDispetcher(this.log);
+      options.signal?.throwIfAborted(); // Warmup awaited; transport signal is independent.
       res = await fetch(`${this.baseURL}/${conversation === undefined ? 'v1' : 'v2'}/agent-stream`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: 'Bearer '+ingressKey, ...(spoolCapable&&spoolAddress?{'x-dsh-spool-conversation':spoolAddress}:{}) },
         redirect: 'error',
         body: JSON.stringify(body),
-        signal: options.signal,
+        signal: cancellation.signal,
         ...(dispatcher ? { dispatcher } : {}),
       });
     } catch (e) {
@@ -256,6 +260,40 @@ class ClaudeOauthAdapter extends LlmAdapter {
 // EN: Use the same parser for complete lines and EOF remainders, including done. Bad JSON aborts with a visible nonretryable error without raw payload logging.
     let buf = '';
     let lineNumber = 0;
+    let eof=false;
+    const lines=[];
+    // One parser owns unread lines even when the consumer calls iterator.return().
+    const nextEvent = async () => {
+      for(;;){
+        if(cancellation.terminal)return null;
+        if(!lines.length){
+          if(eof)return null;
+          const {done,value}=await reader.read();eof=done;
+          buf+=done?decoder.decode():decoder.decode(value,{stream:true});
+          lines.push(...buf.split('\n'));buf=lines.pop()??'';
+          if(done&&buf.trim()){lines.push(buf);buf='';}
+        }
+        if(!lines.length)continue;
+        const line=lines.shift();lineNumber++;
+        if(!line.trim())continue;
+        let ev;
+        try{ev=JSON.parse(line);}catch{throw new Error(`NDJSON: строка ${lineNumber} — некорректный JSON; содержимое не журналируется`);}
+        if(!ev||typeof ev!=='object'||Array.isArray(ev)||typeof ev.type!=='string')throw new Error(`NDJSON: строка ${lineNumber} — не событие`);
+        if(ev.type==='input-status'||ev.type==='task-status'){
+          try{
+            const receive=ev.type==='input-status'?controlLease?.inputEvent:controlLease?.taskEvent;
+            if(typeof receive!=='function')throw Error('control event has no scoped reader');
+            await receive.call(controlLease,ev);
+            cancellation.observe(ev);
+          }catch(cause){
+            this.log?.(`CONTROL_EVENT_REJECTED: ${ev.type}; stream stopped, no automatic retry`);
+            throw Object.assign(new Error('control event rejected by its scoped receiver',{cause}),{code:'CONTROL_EVENT_REJECTED'});
+          }
+          continue;
+        }
+        return ev;
+      }
+    };
     let index = -1;
     let openBlock = null;
     let finished = false;
@@ -282,32 +320,8 @@ class ClaudeOauthAdapter extends LlmAdapter {
 
     try {
       for (;;) {
-        const { done, value } = await reader.read();
-        buf += done ? decoder.decode() : decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop() ?? '';
-        if (done && buf.trim()) { lines.push(buf); buf = ''; }
-        for (const line of lines) {
-          lineNumber += 1;
-          if (!line.trim()) continue;
-          let ev;
-          try {
-            ev = JSON.parse(line);
-          } catch {
-            throw new Error(`NDJSON: строка ${lineNumber} — некорректный JSON; содержимое не журналируется`);
-          }
-          if (!ev || typeof ev !== 'object' || Array.isArray(ev) || typeof ev.type !== 'string') throw new Error(`NDJSON: строка ${lineNumber} — не событие`);
-          if(ev.type==='input-status'||ev.type==='task-status'){
-            try{
-              const receive=ev.type==='input-status'?controlLease?.inputEvent:controlLease?.taskEvent;
-              if(typeof receive!=='function')throw Error('control event has no scoped reader');
-              await receive.call(controlLease,ev);
-            }catch(cause){
-              this.log?.(`CONTROL_EVENT_REJECTED: ${ev.type}; stream stopped, no automatic retry`);
-              throw Object.assign(new Error('control event rejected by its scoped receiver',{cause}),{code:'CONTROL_EVENT_REJECTED'});
-            }
-            continue;
-          }
+        const ev=await nextEvent();
+        if(ev===null)break;
           if (ev.type === 'text') {
             yield* openIfNeeded('text');
             acc += ev.text ?? '';
@@ -336,9 +350,8 @@ class ClaudeOauthAdapter extends LlmAdapter {
           } else if (ev.type === 'done') {
             finished = true;
           }
-        }
-        if (done) break;
       }
+      options.signal?.throwIfAborted();
       if (openBlock !== null) yield closeBlock();
       if (!finished) {
 
@@ -350,10 +363,13 @@ class ClaudeOauthAdapter extends LlmAdapter {
     } catch (e) {
       throw this.wrapFailure(e);
     } finally {
+      try { await cancellation.finish(nextEvent); }
+      finally {
       await reader.cancel().catch(() => {});
       reader.releaseLock();
+      }
     }
-    } finally { controlLease?.close(); }
+    } finally { cancellation.dispose();controlLease?.close(); }
   }
 
 // RU: Справочный mapping stop-reasons; текущий gateway done закрывает поток reason stop, этот helper не выбирает реальный итог stream.
@@ -438,7 +454,19 @@ export function apply(ctx, config = {}) {
     taskControlFor: ({inputDelivery=false,terminalDelivery=false}={}) => {
       const service = ctx.get('taskControlCodex');
       const agent = ctx.get('agents')?.currentInitiator();
-      if (service?.telegramStopVersion === 1) return service.attach(agent, adapter.baseURL, {allowCancel:config.taskControlCodex === true,...(inputDelivery&&service.sdkInputVersion===1?{allowMessage:true}:{}),...(terminalDelivery&&service.mailStopVersion===1?{terminal:true}:{})});
+      if (service?.telegramStopVersion === 1) {
+        const lease=service.attach(agent, adapter.baseURL, {allowCancel:config.taskControlCodex === true,...(inputDelivery&&service.sdkInputVersion===1?{allowMessage:true}:{}),...(terminalDelivery&&service.mailStopVersion===1?{terminal:true}:{})});
+        if(lease?.descriptor.terminal===1&&['capture','stopExact','waitTerminal'].every(k=>typeof service[k]==='function')){
+          lease.stopOnAbort=async()=>{
+            const binding=service.capture(agent);
+            if(!binding||binding.request_id!==lease.descriptor.request_id)throw Error('platform stop: exact lease missing');
+            const reply=await service.stopExact(agent,randomUUID(),binding);
+            if(!['interrupting','idle'].includes(reply.state))throw Error('platform stop: SDK stop not accepted');
+            if(await service.waitTerminal(binding)!==true)throw Error('platform stop: SDK terminal missing');
+          };
+        }
+        return lease;
+      }
       return config.taskControlCodex === true ? service?.attach(agent, adapter.baseURL) : undefined;
     },
     baseURL: config.baseURL ?? DEFAULT_GATEWAY,

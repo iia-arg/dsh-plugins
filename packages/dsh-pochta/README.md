@@ -2,7 +2,7 @@
 
 # dsh-pochta — письма агентов sadik, сторожа щелей и квитанций, снятие HOLD почтового стопа
 
-Версия · Version: 3.1.5
+Версия · Version: 3.1.6
 
 ## Назначение
 
@@ -57,7 +57,7 @@
 | `systemd/a2a-owner-copy-watch.service.d/70-predely.conf` | `/etc/systemd/system/a2a-owner-copy-watch.service.d/70-predely.conf` | 0644 root:root | systemd: пределы `MemoryMax`, `MemorySwapMax=0`, `TimeoutStartSec` (A-N-1963 №11) |
 | `systemd/a2a-owner-copy-watch.timer` | `/etc/systemd/system/a2a-owner-copy-watch.timer` | 0644 root:root | systemd: раз в минуту (`OnBootSec=1min`, `OnUnitActiveSec=1min`); включён |
 | `systemd/receipt-watch.service` | `/etc/systemd/system/receipt-watch.service` | 0644 root:root | свой таймер; oneshot |
-| `systemd/receipt-watch.service.d/ohvat.conf` | `/etc/systemd/system/receipt-watch.service.d/ohvat.conf` | 0644 root:root | systemd: `RECEIPT_LEDGER_PATHS` — 12 ledger агентов |
+| `systemd/receipt-watch.service.d/ohvat.conf` | `/etc/systemd/system/receipt-watch.service.d/ohvat.conf` | 0644 root:root | systemd: `RECEIPT_LEDGER_PATHS` — 18 ledger агентов |
 | `systemd/receipt-watch.service.d/onfailure.conf` | `/etc/systemd/system/receipt-watch.service.d/onfailure.conf` | 0644 root:root | systemd: `OnFailure=receipt-watch-failed.service` (пакет dsh-kopiya-mashiny) |
 | `systemd/receipt-watch.service.d/70-predely.conf` | `/etc/systemd/system/receipt-watch.service.d/70-predely.conf` | 0644 root:root | systemd: пределы `MemoryMax`, `MemorySwapMax=0`, `TimeoutStartSec` (A-N-1963 №11) |
 | `systemd/receipt-watch.timer` | `/etc/systemd/system/receipt-watch.timer` | 0644 root:root | systemd: раз в час, первый запуск через 10 мин после загрузки, `Persistent=true`; включён |
@@ -170,7 +170,7 @@
 
 | переменная | умолчание | смысл |
 |---|---|---|
-| `RECEIPT_LEDGER_PATHS` | `/opt/iskra/workspace/.message-receipts/receipts.sqlite`, `/opt/petrovich/workspace/.message-receipts/receipts.sqlite` | абсолютные пути ledger, по одному на строку; в бою drop-in `ohvat.conf` даёт 11 путей |
+| `RECEIPT_LEDGER_PATHS` | `/opt/iskra/workspace/.message-receipts/receipts.sqlite`, `/opt/petrovich/workspace/.message-receipts/receipts.sqlite` | абсолютные пути ledger, по одному на строку; в бою drop-in `ohvat.conf` даёт 17 путей |
 | `RECEIPT_MAX_AGE_SECONDS` | `86400` | взятое письмо без исхода старше этого — просрочено |
 
 **`zastryalo-v-shcheli`**
@@ -266,6 +266,6 @@
 
 ## B-N-2021 — имя учётки v2
 
-`put` допускает полную учётку `[a-z_][a-z0-9_-]*`, как почтальон a2a-bus; дефис разрешён, иной символ отказывает до временной записи. Recipient/ledger и схема конверта не ослаблены. Монтировать вместе с dsh-telegram-multiagent 3.1.7 и новой S6/S7 пробы имени v2 в обходе: прежняя S6 требовала отказа для законного дефиса.
+`put` допускает полную учётку `[a-z_][a-z0-9_-]*`, как почтальон a2a-bus; дефис разрешён, иной символ отказывает до временной записи. Recipient/ledger и схема конверта не ослаблены. Монтировать вместе с dsh-telegram-multiagent >=3.1.7 и новой S6/S7 пробы имени v2 в обходе: прежняя S6 требовала отказа для законного дефиса.
 
 Из копии пакета: `python3 -B test/stend-v2-agent-name.py`. Частная цепочка: `sudo python3 -B test/stend-chain-agent-name.py --telegram <копия dsh-telegram-multiagent> --postman <копия a2a-bus>/sbin/a2a-pochtalon.py --receiver-user coders`. Имена учёток подставные; root нужен только для смены UID файлов во временном каталоге, затем Node-приёмник работает под указанным непривилегированным пользователем. При отсутствии root — слепота 2. Передача/ledger настоящие, уведомление владельцу подставное; модель и Telegram не вызываются. `test/` остаётся вне боя, но входит в архив источников.

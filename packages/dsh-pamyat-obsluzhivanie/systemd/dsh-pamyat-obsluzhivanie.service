@@ -9,15 +9,15 @@ User=omega
 Group=omega
 ExecStartPre=+/usr/bin/python3 -I -S -B /usr/local/lib/dsh-pamyat-obsluzhivanie/prepare_key.py prepare
 ExecStopPost=+/usr/bin/python3 -I -S -B /usr/local/lib/dsh-pamyat-obsluzhivanie/prepare_key.py remove
-# RU: Пути к токену и чату канала тревог, реестр агентов, источник ключа и место установки runner.py — данные
-#     конкретной машины: они задаются вставкой машины (LoadCredential=alert-token:…, alert-chat:…,
-#     Environment=AGENTS_REGISTRY, OBSL_KLYUCH_HOME, OBSL_KLYUCH_HRANILISHCHE, OBSL_RUNNER), а не этим файлом.
-# EN: Paths to the alert channel token and chat, the agent registry, the key source and the runner.py install
-#     location are machine data: a machine drop-in sets them (LoadCredential=alert-token:…, alert-chat:…,
-#     Environment=AGENTS_REGISTRY, OBSL_KLYUCH_HOME, OBSL_KLYUCH_HRANILISHCHE, OBSL_RUNNER), not this file.
+# RU: Реестр агентов, источник ключа, место установки runner.py и доступ к спулу тревог — данные конкретной машины:
+#     их задаёт вставка машины (Environment=AGENTS_REGISTRY, OBSL_KLYUCH_HOME, OBSL_KLYUCH_HRANILISHCHE, OBSL_RUNNER;
+#     группа спула agent-alert), а не этот файл. Токен бота тревог службе не выдаётся (3.1.5, B-N-2055): agent-alert
+#     от omega его не читает и сдаёт тревогу в спул root-отправителя.
+# EN: The agent registry, the key source, the runner.py install location and access to the alert spool are machine
+#     data: a machine drop-in sets them (Environment=AGENTS_REGISTRY, OBSL_KLYUCH_HOME, OBSL_KLYUCH_HRANILISHCHE,
+#     OBSL_RUNNER; the agent-alert spool group), not this file. The alert bot token is not given to the service
+#     (3.1.5, B-N-2055): agent-alert running as omega cannot read it and drops the alert into the root sender's spool.
 Environment=DEEPSEEK_CREDENTIAL_FILE=/run/dsh-pamyat-obsluzhivanie-key/deepseek
-Environment=AGENT_ALERT_TOKEN_FILE=%d/alert-token
-Environment=AGENT_ALERT_CHAT_FILE=%d/alert-chat
 ExecStart=/opt/omega/venv/bin/python3 -B ${OBSL_RUNNER} --run
 StateDirectory=dsh-pamyat-obsluzhivanie
 StateDirectoryMode=0700

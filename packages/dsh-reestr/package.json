@@ -1,6 +1,6 @@
 {
   "name": "dsh-reestr",
-  "version": "3.1.3",
+  "version": "3.1.10",
   "description": "Реестр вмешательств машины с агентами DSH: что поставлено, откуда, чем проверить; правка реестра со сверкой основы и сторож расхождений · Machine intervention registry for DSH agent hosts: what is installed, from where, how to verify it; registry edits with base checks and a drift watchdog",
   "keywords": [
     "dsh",
@@ -19,6 +19,7 @@
   },
   "bin": {
     "agent-plugins": "bin/agent-plugins",
+    "agent-registry": "bin/agent-registry",
     "agent-plugins-lock-check": "bin/agent-plugins-lock-check",
     "registry-watchdog": "bin/registry-watchdog.sh",
     "nezafiksirovano-watch": "bin/nezafiksirovano-watch",
@@ -35,6 +36,7 @@
   "files": [
     "systemd/",
     "bin",
+    "share",
     "test",
     "docs",
     "README.md",

@@ -87,6 +87,9 @@ try:
           p == [] and a == ['🔴 Claude: Клод-2 (MomICan) 5 ч 99% — переключить некуда: Клод-1 (Забава) неделя 100%; Клод-3 (Med) — нет свежего замера (200 мин)'], (a, p, v))
     k, v, a, p = prohod()
     proba('Р4 «некуда» повтор → молчит', a == [] and p == [], (a, p))
+    vydacha(**{'podpiska-1': (0.02, 1.0, 5), 'podpiska-2': (1.0, 0.40, 5), 'podpiska-5': (0.58, 0.59, 210), 'podpiska-6': (0.0, 0.0, 5)})
+    k, v, a, p = prohod()
+    proba('Р17 3.1.8: то же «некуда», сменились доля (99→100%) и возраст (200→210 мин) → молчит (отметка — состояние, не текст)', a == [] and p == [], (a, p, v))
     vydacha(**{'podpiska-1': (0.02, 0.47, 5), 'podpiska-2': (0.99, 0.40, 200), 'podpiska-5': (0.58, 0.59, 5), 'podpiska-6': (0.0, 0.0, 5)})
     chitatel(n1='free', n2='blocked', n3='free', n4='free')
     k, v, a, p = prohod()
@@ -123,6 +126,12 @@ try:
     e2 = dict(ENV, DSH_LIMITY_AVTO_STEND='0')
     pp = subprocess.run([sys.executable, '-B', str(PREDMET)], env=e2, capture_output=True, text=True, timeout=60)
     proba('Р15 ключ стенда не 1 → отказ код 3 (подмены не берутся)', pp.returncode == 3 and 'ОТКАЗ' in pp.stderr, (pp.returncode, pp.stderr))
+    shlyuzy(avrora=(2, 'obshchaya-claude'), iskra=(2, 'obshchaya-claude'))   # 3.1.7: agent-alert шлёт HTML — «<» вердикта заслона отверг Telegram (19.10 05:37:11Z)
+    vydacha(**{'podpiska-1': (0.02, 1.0, 5), 'podpiska-2': (0.99, 0.40, 5), 'podpiska-5': (0.58, 0.59, 5), 'podpiska-6': (0.0, 0.0, 5)})
+    chitatel(n1='blocked', n2='blocked', n3='unknown\tсвободна при доле <0.9 & возрасте ≤360 мин', n4='free')
+    k, v, a, p = prohod()
+    proba('Р16 вердикт заслона с «<» и «&» → в канал «&lt;0.9 &amp;», голых «<» и «&» нет (HTML agent-alert)',
+          len(a) == 1 and '&lt;0.9 &amp; возрасте' in a[0] and '<' not in a[0] and '& ' not in a[0], (a, v))
 finally:
     shutil.rmtree(r, ignore_errors=True)
 print(f'ИТОГ: {ok} из {vsego}')

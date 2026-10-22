@@ -7,8 +7,8 @@
 # EN: Created 19.09.2026 on the coordinator's order. Reason: twice within three hours a package
 # EN: was deployed to production WITHOUT a tag, and both times the finding came from the person who deployed it.
 # EN: There was no instrument at all that would have noticed it by itself.
-# RU: КОДЫ ВЫХОДА: 0 чисто · 1 расхождение · 2 слепота · 3 ошибка вызова (любой довод — доводов у сторожа нет).
-# EN: EXIT CODES: 0 clean · 1 mismatch · 2 blindness · 3 invocation error (any argument — the guard takes no arguments).
+# RU: КОДЫ ВЫХОДА: 0 чисто · 1 расхождение · 2 слепота · 3 ошибка вызова (не задан VYPUSK_REPO или неподдерживаемый довод).
+# EN: EXIT CODES: 0 clean · 1 mismatch · 2 blindness · 3 invocation error (missing VYPUSK_REPO or unsupported argument).
 #
 # RU: 🔴 ПРАВИЛО ТРЕВОГИ — «бой разошёлся с меткой СВОЕЙ версии»:
 # RU:   версия совпадает, суммы разные -> ТРЕВОГА. Это наш главный класс: номер не различает;
@@ -124,17 +124,17 @@
 # EN: COUNTING MODE (named by the coordinator on 19.09, repeated in the output so that numbers do not diverge):
 # EN:   everything outside node_modules, WITHOUT *.bak*, WITHOUT *.tar, WITHOUT *.tgz
 #
-# RU: Коды: 0 сошлось · 1 расхождение · 2 слепота (сверять нечем) · 3 ошибка вызова (любой довод).
-# EN: Codes: 0 matched · 1 mismatch · 2 blindness (nothing to compare against) · 3 invocation error (any argument).
+# RU: Коды: 0 сошлось · 1 расхождение · 2 слепота (сверять нечем) · 3 ошибка вызова (нет REPO или неподдерживаемый довод).
+# EN: Codes: 0 matched · 1 mismatch · 2 blindness (nothing to compare against) · 3 invocation error (missing REPO or unsupported argument).
 set -u
 export LC_ALL=C.utf8
-# RU: 🔴 Находка 26.09.2026 07:41Z: ДОВОДОВ У СТОРОЖА НЕТ — ЛЮБОЙ ДОВОД → ОТКАЗ, код 3.
+# RU: 🔴 Находка 26.09.2026 07:41Z: НЕПОДДЕРЖИВАЕМЫЙ ДОВОД → ОТКАЗ, код 3 (сейчас разрешён --avto-montazh).
 # RU: Было: `vypusk-okno-watch.sh --bez-trevogi` молча проглатывал довод и шёл БОЕВЫМ режимом (с каналом тревог и
 # RU: состоянием) — рука была уверена, что тихо. Образец — такая же проверка у сторожа плагинов агентов (agent-plugins):
 # RU: проверка ДО любого чтения, отказ называет правильный путь. Код 3, а НЕ 2: у этого сторожа 2 — «слепота» (канал
 # RU: тревог + отметка состояния); ошибка вызывающего — не слепота к предмету, и тревога о ней ложная. Режимы — только
 # RU: окружением (ниже по коду).
-# EN: 🔴 Finding of 26.09.2026 07:41Z: THE GUARD TAKES NO ARGUMENTS — ANY ARGUMENT → REFUSAL, code 3.
+# EN: 🔴 Finding of 26.09.2026 07:41Z: UNSUPPORTED ARGUMENT → REFUSAL, code 3 (now --avto-montazh is accepted).
 # EN: Before: `vypusk-okno-watch.sh --bez-trevogi` silently swallowed the argument and ran in LIVE mode (with the alert
 # EN: channel and state) — the caller was sure it was quiet. Model — the same check in the agent plugins guard (agent-plugins):
 # EN: check BEFORE any reading, the refusal names the right way. Code 3, NOT 2: for this guard 2 means "blindness" (alert
@@ -142,10 +142,10 @@ export LC_ALL=C.utf8
 # EN: set only through the environment (further down in the code).
 # RU: ⚠️ ЧЕГО НЕ ЛОВИТ: неверное ЗНАЧЕНИЕ окружения (VYPUSK_TIHO=да — не «1», режим боевой) и опечатку в ИМЕНИ
 # RU:    необязательной переменной (VYPUSK_TIH0=1 — не прочитана вовсе). Опечатка в имени ОБЯЗАТЕЛЬНОЙ настройки
-# RU:    ловится ниже — это слепота «не задана настройка».
+# RU:    ловится: REPO — отказ3 без канала, прочие — слепота2 «не задана настройка».
 # EN: ⚠️ WHAT IT DOES NOT CATCH: a wrong environment VALUE (VYPUSK_TIHO=да is not "1", the mode stays live) and a typo in the
 # EN:    NAME of an optional variable (VYPUSK_TIH0=1 is not read at all). A typo in a REQUIRED setting's name is caught
-# EN:    further down — it is blindness "setting not set".
+# EN:    below: REPO refuses3 without alerts; the others report blindness2 "setting not set".
 AVTO_MONTAZH=0
 if [ "$#" = 1 ] && [ "$1" = --avto-montazh ]; then AVTO_MONTAZH=1; shift; fi
 if [ "$#" -gt 0 ]; then
@@ -153,7 +153,14 @@ if [ "$#" -gt 0 ]; then
   echo "Режимы задаются окружением: VYPUSK_TIHO=1 (без канала тревог) · VYPUSK_REPO · VYPUSK_KORNI · VYPUSK_INFO_KORNI ·" >&2
   echo "  VYPUSK_SOOTVETSTVIYA · VYPUSK_SOSTOYANIE · VYPUSK_ISKLYUCHENIYA · VYPUSK_NAPOMINAT · VYPUSK_ALERT · VYPUSK_SSYLKI ·" >&2
   echo "  VYPUSK_AGENT_KORNI · VYPUSK_AGENT_POISK · VYPUSK_RASKLADKA · VYPUSK_REESTR" >&2
-  echo "Пример: VYPUSK_TIHO=1 $0. Ничего не сверено, тревог не было, состояние не тронуто." >&2
+  echo "Пример: VYPUSK_REPO=/path/to/tree VYPUSK_TIHO=1 $0. Ничего не сверено, тревог не было, состояние не тронуто." >&2
+  exit 3
+fi
+
+# RU: Без явного дерева это ошибка вызова, не событие для боевого канала.
+# EN: An absent/empty explicit tree is an invocation error, not a live alert event.
+if [ -z "${VYPUSK_REPO:-}" ]; then
+  echo "ОТКАЗ: задайте непустой VYPUSK_REPO; ничего не сверено, тревог не было, состояние не тронуто." >&2
   exit 3
 fi
 
@@ -614,7 +621,9 @@ for e in zap:
     if kat in vid: out('SLEP', kat, f'две записи derevo на один каталог: {vid[kat]} и {pid}'); continue
     vid[kat] = pid; ref = str(dv.get('ref') or ''); files = dv.get('files') or []
     out('ZAP', kat, pid, ref, len(files))
-    if ref not in tegi: out('SLEP', kat, f'метки {ref or "(ref пуст)"} в дереве нет'); continue
+    # B-N-1978 (LOW-2): четвёртое поле «razryv» — причина из разрыва «файлы → метка → запись» (окно монтажа её откладывает);
+    #   строка SLEP без него — структурная, красная сразу (так и любая новая причина, пока её не пометили).
+    if ref not in tegi: out('SLEP', kat, f'метки {ref or "(ref пуст)"} в дереве нет', 'razryv'); continue
     try:
         v_metke = {p[len(sub) + 1:] for p in git('ls-tree', '-r', '--name-only', ref, '--', sub).decode().splitlines()}
         sub_m = sub   # A-N-1948: subdir уже новый, ref ещё старый — метка несёт пакет под прежним каталогом (dsh.prezhnie_imena дерева)
@@ -630,7 +639,7 @@ for e in zap:
                 alt = 'packages/' + x
                 v_metke = {p[len(alt) + 1:] for p in git('ls-tree', '-r', '--name-only', ref, '--', alt).decode().splitlines()}
                 if v_metke: sub_m = alt; out('INFO', kat, f'метка {ref} несёт прежний каталог {alt} (dsh.prezhnie_imena)'); break
-        if not v_metke: out('SLEP', kat, f'в метке {ref} нет {sub}/'); continue
+        if not v_metke: out('SLEP', kat, f'в метке {ref} нет {sub}/', 'razryv'); continue
         if not all(isinstance(f, dict) and all(k in f for k in ('local', 'remote', 'mode', 'owner')) for f in files):
             out('SLEP', kat, 'строка files без local/remote/mode/owner'); continue
         # B-N-2033 (14.10.2026, Аврора): словарь по remote молча оставлял ПОСЛЕДНЕЕ из мест с одним remote — первое выпадало из
@@ -644,10 +653,10 @@ for e in zap:
         ni = [str(x) for x in dv.get('not_installed') or []]
         def pokryt(r, x): return r == x or (x.endswith('/') and r.startswith(x))
         for r in sorted(v_metke - set(rem)):
-            if not any(pokryt(r, x) for x in ni): out('SLEP', kat, f'файл метки «{r}» не в files и не в not_installed — запись отстала от метки')
-        for r in sorted(set(rem) - v_metke): out('SLEP', kat, f'files.remote «{r}» нет в метке {ref}')
+            if not any(pokryt(r, x) for x in ni): out('SLEP', kat, f'файл метки «{r}» не в files и не в not_installed — запись отстала от метки', 'razryv')
+        for r in sorted(set(rem) - v_metke): out('SLEP', kat, f'files.remote «{r}» нет в метке {ref}', 'razryv')
         for x in ni:
-            if not any(pokryt(r, x) for r in v_metke): out('SLEP', kat, f'not_installed «{x}» нет в метке {ref}')
+            if not any(pokryt(r, x) for r in v_metke): out('SLEP', kat, f'not_installed «{x}» нет в метке {ref}', 'razryv')
         ozh = {str(x) for x in dv.get('expected_diff_files') or []}
         for r in sorted(ozh - set(rem)): out('SLEP', kat, f'expected_diff_files «{r}» нет в files')
         prich = dv.get('expected_diff_reason') or 'причина не названа'
@@ -702,6 +711,20 @@ proverit_derevo() {   # $1 — ключ записи: каталог либо «
   dif=$(printf '%s\n' "$DER_VYVOD" | awk -F'\t' -v k="$K" '$1=="DIFF" && $2==k{print $3}')
   printf '%s\n' "$DER_VYVOD" | awk -F'\t' -v k="$K" '$1=="INFO" && $2==k{print "INFO: " k " [derevo]: " $3}'
   if [ -n "$sl" ]; then
+    # B-N-1978: слепота записи в открытом окне, назвавшем эту запись, — промежуток «файлы → метка → запись», не беда.
+    #   Отсрочка УЖЕ, чем у расхождения ниже, и устроена иначе: расхождение откладывается только целиком из DIFF consistency
+    #   и с --require file:<путь> на КАЖДЫЙ файл (окно должно назвать запись и все её файлы); слепота — одним entry:<id>, но
+    #   только если ВСЕ её строки — причины разрыва (поле razryv: метки нет · subdir нет в метке · файл метки не в files ·
+    #   files.remote / not_installed нет в метке). Структурная слепота (две записи на каталог, package.json не прочитан,
+    #   prezhnie_imena, строка files без полей, дубль remote, expected_diff_files, local не читается, отказ git) — красная
+    #   сразу, окно её не прячет. Закрытие окна сверяет запись строго (registry), по сроку отсрочка снимается сама, «не
+    #   закрыто» тревожит montazh-okno watch. Замер 14.10: 5 ложных «поздняя слепота» за сутки в таких окнах (dsh-pochta ×2,
+    #   dsh-montazh, socseti-anna ×2) — все пять разрывные (not_installed/files.remote нет в метке, файл метки не в files).
+    local sl_strukt
+    sl_strukt=$(printf '%s\n' "$DER_VYVOD" | awk -F'\t' -v k="$K" '$1=="SLEP" && $2==k && $4!="razryv"{print $3}')
+    if [ -z "$sl_strukt" ] && montazh_otlozhit "entry:${DER_ID[$K]}"; then
+      IMENA_OTLOZHENNYE+=("$IDENT"); return
+    fi
     IMENA_SLEPOTA+=("$IDENT"); DER_SLEP=$((DER_SLEP+1))
     SLEPOTA+=("${K%%#*} [derevo, запись ${DER_ID[$K]}]: $(printf '%s\n' "$sl" | head -4 | paste -sd ';' -)")
   elif [ -n "$dif" ]; then

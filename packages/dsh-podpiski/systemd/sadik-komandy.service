@@ -1,5 +1,5 @@
 [Unit]
-Description=Приёмник команд владельца для sadik (/switch подписки), long-poll @arg_dsh_alert_bot (B-N-1151, Искра)
+Description=Приёмник команд владельца для sadik (/switch подписки), long-poll @arg_dsh_switch_bot (B-N-1151, Искра; свой бот с B-N-2055 №1)
 After=network-online.target
 Wants=network-online.target
 

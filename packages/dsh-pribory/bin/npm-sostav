@@ -1,0 +1,84 @@
+#!/bin/bash
+# npm-sostav — разбор вывода `npm pack --json` и `npm view … --json` ОДНИМ правилом для npm ≤11 и npm 12.
+# Только разбор stdin: npm сам не зовёт — флаги, каталог, sudo остаются у вызывающего.
+#   npm pack … --json | npm-sostav --files      → пути files[].path, по одному в строке
+#   npm pack … --json | npm-sostav --filename   → имя архива одной строкой (проверки имени — у вызывающего)
+#   npm view X dist-tags --json | npm-sostav --view → нормализованный JSON-объект одной строкой
+# Коды: 0 — разобрано; 2 — ОТКАЗ (причина в stderr: что пришло — тип, длина, ключи) или неверный вызов.
+# Никогда не «0 строк при коде 0» на негодном входе: пусто, {"error":…}, два состава, нет files — ОТКАЗ.
+#
+# ЗАЧЕМ (B-N-2048, 14.10.2026). Успех `npm pack --json` в npm 11 — МАССИВ из одного состава, в npm 12 —
+# ОБЪЕКТ с одним ключом-именем пакета; отказ в обеих — {"error":…}. `npm view --json` наоборот: в 11 объект,
+# в 12 массив из одного. Разбор `[0].files` на npm 12 слеп; признак успеха — наличие files, а не тип.
+#
+# ПРАВИЛО — одно на всех (слово Забавы 14.10 14:26Z: правило Альфы + ступень против пустого). Тот же текст
+# встраивается в записи реестра; что они равны построчно, держит общий стенд test/stend-npm-sostav.py
+# (режим --reestr гоняет jq-строку из записи на тех же фикстурах, что и этот файл).
+#   0) вход читается целиком (jq -s): ровно один JSON-документ, иначе ОТКАЗ — пусто тоже ОТКАЗ;
+#   pack: массив ровно из 1 → [0]; объект ровно из 1 ключа без "error" → его значение; иначе ОТКАЗ
+#         «не один состав»; затем .files обязан быть массивом, иначе ОТКАЗ «не дал files»;
+#   view: массив из 1 → [0]; объект без "error" → как есть; иначе ОТКАЗ «не дал один объект». Итог обязан быть
+#         объектом БЕЗ "error" и после [0]: [{"error":…}] — тоже ОТКАЗ (3.1.3, находка Беты 14.10).
+#
+#   --files: каждый элемент files обязан нести строковый path, иначе ОТКАЗ (ворота 14.10, LOW Вениамина).
+# ЧЕГО НЕ ЛОВИТ: пустой массив files (0 строк при коде 0 — правилом не запрещено, принято воротами 14.10; npm
+# pack всегда кладёт package.json, такого вывода не наблюдали);
+# смысл ключа-имени в форме 12 (имя не сверяется с package.json); верность самого состава — только форму.
+# EN: npm-sostav parses `npm pack --json` and `npm view … --json` with ONE rule for npm ≤11 and npm 12.
+#     It only parses stdin and never calls npm itself: flags, directory and sudo stay with the caller.
+#     Modes: --files (files[].path, one per line), --filename (archive name; name checks are the caller's),
+#     --view (normalized JSON object on one line). Codes: 0 — parsed; 2 — REFUSAL (the reason on stderr names
+#     what arrived: type, length, keys) or a bad call. Bad input never yields "0 lines with code 0".
+#     WHY: a successful `npm pack --json` is an ARRAY of one in npm 11 and an OBJECT keyed by the package name
+#     in npm 12; a failure is {"error":…} in both. `npm view --json` is the other way round.
+#     RULE (one for everyone, also embedded in registry entries; test/stend-npm-sostav.py --reestr keeps them
+#     line-equal): 0) the whole input is read (jq -s) and must be exactly one JSON document, empty is a refusal;
+#     pack: array of exactly 1 → [0]; object of exactly 1 key without "error" → its value; otherwise "not one
+#     package"; then .files must be an array, otherwise "no files"; view: array of 1 → [0]; object without
+#     "error" → as is; otherwise "not one object".
+#     --files: every files element must carry a string path, otherwise a refusal. --help goes to stderr, code 2.
+#     NOT CAUGHT: an empty files array (accepted by the gate); the meaning
+#     of the key in the npm 12 form; correctness of the package content — only its shape.
+set -u
+
+ODIN='if length != 1 then error("НЕ ПРОВЕРЕНО: на входе не один JSON-документ, а \(length)") else .[0] end'
+PRISHLO='"пришло \(type)\(if type == "object" then " с ключами \(keys | join(","))" elif type == "array" then " длины \(length)" else "" end)"'
+SOSTAV='if type == "array" and length == 1 then .[0] elif type == "object" and length == 1 and (has("error") | not) then .[] else error("НЕ ПРОВЕРЕНО: npm pack не дал один состав — " + '"$PRISHLO"') end | if type == "object" and (.files | type) == "array" then . else error("НЕ ПРОВЕРЕНО: npm pack не дал files — " + '"$PRISHLO"') end'
+VIEW='if type == "array" and length == 1 then .[0] elif type == "object" and (has("error") | not) then . else error("НЕ ПРОВЕРЕНО: npm view не дал один объект — " + '"$PRISHLO"') end | if type == "object" and (has("error") | not) then . else error("НЕ ПРОВЕРЕНО: npm view не дал один объект — " + '"$PRISHLO"') end'
+
+ispolzovanie() {
+  echo "npm-sostav --files | --filename | --view   (вход — stdin: вывод npm pack --json / npm view --json)"
+}
+
+if [ $# -ne 1 ]; then
+  echo "npm-sostav: ОТКАЗ — нужен ровно один режим, дано доводов: $#" >&2; ispolzovanie >&2; exit 2
+fi
+case "$1" in
+  --files)    PROG="$ODIN | $SOSTAV | "'.files[] | if (.path|type)=="string" then .path else error("НЕ ПРОВЕРЕНО: элемент files без строкового path") end'; FLAGI=-rs ;;
+  --filename) PROG="$ODIN | $SOSTAV | if (.filename | type) == \"string\" then .filename else error(\"НЕ ПРОВЕРЕНО: npm pack не дал filename — \" + $PRISHLO) end"; FLAGI=-rs ;;
+  --view)     PROG="$ODIN | $VIEW"; FLAGI=-cs ;;
+  # Справка — в stderr и код 2: в конвейере она не должна стать «путём», а пустой stdout при коде 0 — тихим нулём.
+  # EN: help goes to stderr with code 2 so that in a pipeline it never becomes a "path" or a silent zero.
+  -h|--help)  ispolzovanie >&2; exit 2 ;;
+  *) echo "npm-sostav: ОТКАЗ — неизвестный режим «$1»" >&2; ispolzovanie >&2; exit 2 ;;
+esac
+
+if [ -t 0 ]; then
+  echo "npm-sostav: ОТКАЗ — stdin не подан (терминал); подайте вывод npm конвейером" >&2; exit 2
+fi
+if ! command -v jq >/dev/null 2>&1; then
+  echo "npm-sostav: СЛЕПОТА — нет jq в PATH, разбирать нечем" >&2; exit 2
+fi
+
+# Вывод копится целиком и печатается только при успехе: отказ посреди потока (элемент files не объект)
+# не должен оставить в stdout начало списка.
+# EN: output is buffered and printed only on success, so a refusal mid-stream leaves nothing on stdout.
+OSH=$(mktemp) || { echo "npm-sostav: СЛЕПОТА — не создать временный файл" >&2; exit 2; }
+trap 'rm -f "$OSH"' EXIT
+VYVOD=$(jq "$FLAGI" "$PROG" 2>"$OSH"); KOD=$?
+if [ "$KOD" -ne 0 ]; then
+  echo "npm-sostav: ОТКАЗ (jq код $KOD): $(tr '\n' ' ' <"$OSH")" >&2
+  exit 2
+fi
+[ -n "$VYVOD" ] && printf '%s\n' "$VYVOD"
+exit 0

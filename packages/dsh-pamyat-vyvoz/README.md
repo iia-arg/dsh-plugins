@@ -39,7 +39,7 @@
 
 ## Установка
 
-Можно звать пакет из проверенного дерева выпусков: рядом должны лежать `dsh-pamyat-vyvoz` и `dsh-pamyat-core`. Для отдельной установки подготовь **локальные архивы** этой головы; ожидаемое ядро среза — **3.1.1**. Пакет выходит в npm под именем `dsh-pamyat-vyvoz`; до выхода голые имена из реестра npm не использовать.
+Можно звать пакет из проверенного дерева выпусков: рядом должны лежать `dsh-pamyat-vyvoz` и `dsh-pamyat-core`. Для отдельной установки подготовь **локальные архивы** этой головы; ожидаемое ядро среза — **3.1.1**. В npm доступна редакция `3.1.3` (замер 15.10.2026, `npm view dsh-pamyat-vyvoz version`). По решению владельца от 14.10.2026 изменения после публикации ведутся локально и в npm не выкладываются. Для описанной локальной проверки используйте архивы выбранной головы.
 
 ```bash
 # CORE_SOURCE / VYVOZ_SOURCE — каталоги исходников пакетов
@@ -48,7 +48,7 @@
 (cd "$VYVOZ_SOURCE" && npm pack --ignore-scripts --pack-destination "$ARTIFACTS")
 # В отдельном каталоге автономного CLI, без обращения к реестру:
 npm install --offline --ignore-scripts --legacy-peer-deps \
-  /absolute/path/dsh-pamyat-core-3.1.2.tgz \
+  /absolute/path/dsh-pamyat-core-3.1.3.tgz \
   /absolute/path/dsh-pamyat-vyvoz-3.1.3.tgz
 ./node_modules/.bin/vyvoz-pamyati --help
 ```

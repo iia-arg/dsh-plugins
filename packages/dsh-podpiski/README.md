@@ -1,6 +1,6 @@
 # dsh-podpiski — подписки Claude и Codex на sadik: переключатели, доступ шлюзов к токенам, сторожа и обновитель Codex, приёмник `/switch`
 
-Версия · Version: 3.1.3
+Версия · Version: 3.1.5
 
 ## Назначение
 
@@ -49,7 +49,7 @@
 | `systemd/svesti-dostup-watch.service` | `/etc/systemd/system/svesti-dostup-watch.service` | 0644 root:root | systemd; `SuccessExitStatus=1` |
 | `systemd/svesti-dostup-watch.timer` | `/etc/systemd/system/svesti-dostup-watch.timer` | 0644 root:root | systemd; `*:25 UTC` |
 
-Не ставятся: `README.md`, `CHANGELOG.md` (в записи реестра — `not_installed`). В test/ пакета есть stend-audit-kraev.py, stend-b2023-receiver.py и две фикстуры приёмника; исторические стенды переключателей/ACL также доступны в dsh-obhod-stendov (см. «Проверка»).
+Не ставятся: `README.md`, `CHANGELOG.md` (в записи реестра — `not_installed`). В test/ пакета есть stend-audit-kraev.py, stend-b2023-receiver.py, stend-switch-bot.py (свой бот приёмника, от root) и две фикстуры приёмника; исторические стенды переключателей/ACL также доступны в dsh-obhod-stendov (см. «Проверка»).
 
 Вне пакета, но нужны ему: учётка и группа `agent-switch`; `/etc/sudoers.d/sadik-switch` (разрешает `agent-switch` ровно `systemctl start --wait` экземпляров `sadik-switch@{a,b,1,2,sss,sss-on}` и `pereklyuchatel-podpiski@{1,2,1-force,2-force}`); токены и настройки шлюзов в `/etc/claude-oauth/` (`token-podpiska-<N>`, `instance-<агент>.env`, `codex-podpiska-<N>/auth.json` и `polnyj/auth.json`); токен `/etc/dsh-alert.token`, единый ID `/etc/vladelec/telegram-id` и `/usr/local/bin/vladelec-tg-id`; выключатель автопереключения `/etc/codex-limit/nastrojka.json`; `/usr/local/bin/dsh-alert`, `/usr/local/bin/agent-alert`, `/usr/local/bin/python-padenie-70`, `/usr/local/libexec/agent-hod/hod-sluzhby`, `/usr/local/bin/agent-registry`, бинарь Codex в `/opt/claude-oauth/sdk-runtime/`; программы `setfacl`/`getfacl`, `setpriv`, `runuser`, `journalctl`, Python 3 с PyYAML.
 
@@ -120,7 +120,7 @@ sudo systemctl enable --now svesti-dostup-watch.timer   # только посл�
 | `/var/lib/dsh-limity/limity.db`, читатель и его `/etc/default` | dsh-limity и этот пакет | Второй источник заслона Claude |
 | Шлюзы, их учётки/юниты, `/etc/claude-oauth/` и homes Codex | dsh-subscription-gateway и раскладка машины | Реальные переключения/сверка ACL; токены создаёт владелец окна |
 | Codex app-server `/opt/claude-oauth/sdk-runtime/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex` (`CODEX_OBN_BIN` у обновителя), JWT access и отдельный полный носитель | Установленный SDK/runtime | Обновитель и замер лимита; полный refresh не отдаётся шлюзам |
-| Учётка `agent-switch`, sudoers выше, `/etc/dsh-alert.token` | Развёртывание машины | Приёмник команд владельца |
+| Учётка `agent-switch`, sudoers выше, `/etc/dsh-switch.token` (`640 root:agent-switch`, токен своего бота `@arg_dsh_switch_bot`; с 3.1.4 не бот тревог) | Развёртывание машины | Приёмник команд владельца |
 
 Отсутствующая зависимость не означает «квота свободна». Собственных npm-зависимостей и автоматического установщика у пакета нет; изменять ACL, токены, sudoers и живые службы может только назначенная рука окна.
 
@@ -152,7 +152,7 @@ sudo systemctl enable --now svesti-dostup-watch.timer   # только посл�
 | команда | доводы |
 |---|---|
 | `pereklyuchatel-podpiski` | `[1\|2\|3] [force] [tiho]`; формы N-force — синоним цели+force, вторая цель запрещена (код 2); без цели — следующая по кругу от подписки первого общего шлюза |
-| `pereklyuchatel-codex` | `3\|4\|toggle\|toggle-force` — все Codex-шлюзы; `3\|4 <агент> …` — только названные (`alfa`, `beta`, `gamma`, `marc`, `anna`) |
+| `pereklyuchatel-codex` | `3\|4\|toggle\|toggle-force` — все Codex-шлюзы; `3\|4 <агент> …` — только названные (`alfa`, `beta`, `gamma`, `marc`, `anna`, `master`, `vintik`, `shpuntik`, `gayka`, `shurup`, `tumbler`) |
 | `svesti-dostup-podpisok` | `--dobavit [--codex N]` · `--svesti` · `--proverit` · `--chtenie [--bez-gruppy G]` |
 | `svyazki-podpisok` | `pokazat` · `razlozhit [--ustanovit]` (без `--ustanovit` — сухой прогон) |
 | `pereklyuchatel-podpiski-limity.py` | `1\|2\|3 [--baza <файл>] [--nastrojka <файл>]`; печатает `free\|blocked\|unknown<TAB>причина` |

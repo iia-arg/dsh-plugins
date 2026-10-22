@@ -1,4 +1,3 @@
-# 0.1.0-alpha.106 · Обезличивание / Anonymization
 
 Нейтральный адресат в примере промпта, нейтральные метки сообщений и стендов, явный SDK-путь стенда и точечные допуски синтетических секретов. Конвейер, бюджеты, маска, отказы воды и обрыва сохранены.
 
@@ -15,6 +14,17 @@ Restored exact comment anchors explaining the model ceiling and the absence of d
 Mask complete judgment requests; refuse invalid watermark reads and failed saves without false advancement; refuse truncated article writes and success; do not send zero topic-selection budget to the API.
 
 # История изменений · Change history
+
+## 3.1.3 — 14.10.2026 · npm 12: состав публикации через `npm-sostav` (B-N-2048)
+
+- `test/stend-readme.mjs`: вывод `npm pack --dry-run --json` разбирает помощник `npm-sostav --files` (`dsh-pribory` 3.1.2) —
+  одним правилом для npm 11 (массив) и npm 12 (объект); прежний `JSON.parse(…)[0].files` под npm 12 слеп. Под npm 11.17.0
+  и 12.2.0 стенд даёт тот же счёт.
+- Стенду нужен `npm-sostav` в PATH (на sadik — `/usr/local/bin`); нет его — стенд сразу выходит кодом 2 «СЛЕПОТА: npm-sostav
+  не найден — нужен dsh-pribory ≥ 3.1.2», не красным и не зелёным.
+- `package.json`: необязательный peer `dsh-pribory ^3.1.2` (`peerDependenciesMeta.optional`) — объявляет требование стенда и ничего
+  не ставит: обязательный peer под npm 11 и 12 офлайн-установкой не ставится (код 1, `dsh-pribory` в реестре только 3.1.1).
+- Код пакета не менялся.
 
 ## 3.1.2 — 14.10.2026 · подготовка к публикации: оформление
 

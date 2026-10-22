@@ -276,7 +276,7 @@ try:
     sud("G1 ПОДМЕНЕНО у приёмника и исполнителя", out1.startswith("ПОДМЕНЕНО:") and "ПОДМЕНЕНО: CLAUDE CODEX RESULT LOCK" in rd(f"{ST}/exec-out"),
         out1[:120] + "|" + rd(f"{ST}/exec-out")[:120])
     rasklad("2"); w(f"{ST}/limity", "unknown")
-    progon([upd("/switch-1@arg_dsh_alert_bot")])
+    progon([upd("/switch-1@arg_dsh_switch_bot")])
     # 07.10 (условие Вениамина 08:38Z): /switch-1 и /switch-a — без цели, цель выбирает переключатель ПО КРУГУ 1→2→3→1
     #   (слово владельца 05.10 23:45 МСК, переключатель стр. 205–208); с 2 следующая — 3, не 1. Прежнее «2→1» — маятник 1↔2 до 05.10:
     #   C2/C4 краснели в обходе 06.10 и 07.10 («переключение оборвано на подписку 3»: подставной шлюз не знал подписку 3).
@@ -307,7 +307,7 @@ try:
         and cx_nums() == ["4", "4"] and itog_est("переключено"), f"{rd(f'{ST}/unit-calls')!r} {rd(f'{ST}/codex-args')!r} {cx_nums()} {otvety}")
     sud("G2 ПОДМЕНЕНО у переключателя Codex", "ПОДМЕНЕНО: KATALOG DOMA ALERT ZAMOK PROC_ROOT" in rd(f"{ST}/exec-out"), rd(f"{ST}/exec-out")[:200])
     cx_state("4"); cx_limits("3", "net")
-    progon([upd("/switch-2@arg_dsh_alert_bot")])
+    progon([upd("/switch-2@arg_dsh_switch_bot")])
     sud("X2 /switch-2@бот, замера цели 3 нет → шлюзы 4→3", cx_nums() == ["3", "3"] and itog_est("переключено"), f"{cx_nums()} {otvety}")
     # ── Codex: /switch-b — с проверкой живости цели
     cx_state("3"); cx_limits("4", "zhiva")
@@ -336,7 +336,7 @@ try:
     sud("S1 /sss от владельца → юнит sadik-switch@sss, файл-состояние создан (kto=sadik-bot), ответ «ЗАКРЫТ», без «Переключаю»",
         "sadik-switch@sss.service" in rd(f"{ST}/unit-calls") and os.path.exists(zak) and json.loads(rd(zak))["kto"] == "sadik-bot"
         and any("ЗАКРЫТ" in t for _, t in otvety) and not any("Переключаю" in t for _, t in otvety), f"{rd(f'{ST}/unit-calls')!r} {os.path.exists(zak)} {otvety}")
-    progon([upd("/sss@arg_dsh_alert_bot")])
+    progon([upd("/sss@arg_dsh_switch_bot")])
     sud("S2 /sss повторно (с именем бота) → «уже закрыт», файл на месте", os.path.exists(zak) and any("уже закрыт" in t for _, t in otvety), f"{otvety}")
     progon([upd("/sss_on")])
     sud("S3 /sss_on → юнит sadik-switch@sss-on, файл убран, ответ «ОТКРЫТ»",

@@ -1,5 +1,46 @@
 # Changelog
 
+## 3.1.7 — 16.10.2026 · реестр агентов вынесен в dsh-reestr (Искра; B-N-2071, наряд Забавы 16.10 11:11:23Z, ворота Вениамина 11:27:47Z)
+
+- Слово владельца 15.10 14:18: «реестр агентов обязателен — ставится вместе с платформой или одним из наших пакетов». Машине без почты a2a (bclaude) реестр выпадал вместе с шиной.
+- Перенесены в `dsh-reestr` без правки содержимого (коммит переноса — 11 переименований 100%): `bin/agent-registry`, `share/agent-registry/shablony-raskladki/{codex,sdk-claude}/*.tmpl` (7), стенды `test/stend-ap-pochta.py`, `stend-obratno-granica.py`, `stend-yashchik-rezhim.py`. Пути на машине не меняются (`/usr/local/bin/agent-registry`, `/etc/agent-registry/shablony-raskladki/`).
+- `test/stend-13-21.py`, `test/stend-alpha.py` остаются здесь (почта + реестр), берут `agent-registry`/шаблоны из соседнего `../dsh-reestr` (`REESTR_PKG`, подмена `M08_REESTR_PACKAGE`). Прогон 16.10: оба OK.
+- README: таблица, порядок установки (сначала `dsh-reestr`), шаблоны. Справка по `agent-registry` в README.en пока здесь — с пометкой, что программа в `dsh-reestr`.
+- Agent registry moved to dsh-reestr (paths on the host unchanged); a2a-bus now depends on it.
+
+## 3.1.6 — 16.10.2026 · AP-POCHTA: почта Автопилота в шаблонах A (Искра; наряд Забавы 16.10 06:13:04Z, условие Вениамина 09:12:35 МСК к окну 2 AP 0.1.2)
+
+- Находка Вениамина: лист почты r5 правит профили «сборка-A» семерых команды Мастера руками (agentName латиницей + autopilotMail), а шаблоны A давали `agentName: @@IMYA_RU_STROCH@@` и полей почты не знали — после окна `verify` разошёлся бы у семерых, а следующий `sobrat` молча снял бы почту.
+- `agent-registry`: признак агента `namerenie.raskladka.autopilot_pochta` (true|false, умолчание false) и общее машины `mashina.raskladka_obshchee.autopilot_pochta` {`traffic_chat_id` < 0, `publisher_bot_ids` — непустой список разных ID > 0, порядок сохраняется}. Параметры `AP_POCHTA`/`BEZ_AP_POCHTA`, `AP_NOTICE_DIR` = `<dom>/a2a/zakryto/<имя>`, `AP_CHAT`, `AP_BOTY`, `AP_IMENA` = [видимое имя, имя записи] выводятся ПОСЛЕ цикла отличий — отличием не задаются. Канал требует латинский agentName при autopilotMail (`dsh-telegram-multiagent` src/autopilot-notice.js:7), поэтому тот же признак переводит agentName на имя записи.
+- Шаблоны `codex/A.tmpl`, `sdk-claude/A.tmpl`: строка agentName — два взаимоисключающих блока (`BEZ_AP_POCHTA` — прежняя строка; `AP_POCHTA` — `agentName: "<имя>"` + `autopilotMail`).
+- Признак: `sobrat` всех 17 сборщиков (80 файлов) новым кодом на прежнем реестре — A/B/C/H/J/M без изменений (D отличаются лишь путём и суммой пробной копии реестра); на кандидате реестра (+10 строк) меняются ровно семь A; шестеро побайтно = profiles-after листа r5 Беты, master — по смыслу (`_smysl`/`_smysl_a` самого agent-registry, та же байтовая разница шапки, что до правки).
+- Порча (сборка): не bool, нет общего блока, повтор бота, отличие `AP_POCHTA` у другого агента — отказ с именем; прежний код на новых шаблонах — отказ у всех 17; возврат — побайтно равно кандидату.
+- Стенд `test/stend-ap-pochta.py` (без root, без машины): настоящие `_f_parametry` и шаблоны A пакета; исправное OK → бой 3.1.5 красен → порча шаблона (без names) красна → возврат OK.
+- ЧЕГО НЕ ЛОВИТ: имя вне набора команды в коде канала (TEAM) и свой бот агента вне `publisher_bot_ids` — это видит только канал при подъёме (AP_CONFIG_INVALID); существование и права `noticeDir` — тоже канал (AP_NOTICE_DIRECTORY_UNSAFE).
+- Autopilot mail in A profiles: registry flag `raskladka.autopilot_pochta` plus a shared machine block produce the Latin `agentName` and `autopilotMail`; without the flag output is byte-identical; parameters are derived after overrides and cannot be overridden.
+
+## 3.1.5 — 16.10.2026 · OBRATNO-GRANICA: закрытые ящики в обратной сверке у не-root руки (Искра; наряд Забавы 16.10 02:11:58Z, условия Вениамина)
+
+- Находка разбора недельного 16.10: `agent-registry verify` от iskra — «НЕ ПРОВЕРЕНО: 6» (от root 0). Все 6 — `sverit_obratno`: родитель закрытого ящика `/opt/<u>/a2a/zakryto` (0700) шестерых команды Мастера не перечисляется рукой iskra (Permission denied). Слепоту видят и стенд stend-storozha-reestrov, и суточный registry-watchdog (User=iskra): «СЛЕПОТА ПРОВЕРОК [a2a-bus]».
+- Правка: `PermissionError` при перечислении родителя ящика, заявленного в реестре закрытым (`kanal.yashchik_rezhim '0700'`), у НЕ-root руки — строка «граница … не виден руке», без slep, счёт `OBRATNO_GRANICA`; итоговая строка verify — «; обратно: граница N (не моей рукой: <учётка>)». Иной отказ (незакрытый ящик) и любой отказ у root — СЛЕПОТА, как было.
+- Стенд `test/stend-obratno-granica.py` (не от root, частные каталоги 000): закрытый → граница; незакрытый (без поля и '1730') → СЛЕПОТА; возврат прав → чисто. Различение: бой — красен «закрытый» (0,1,0); широкая правка без сужения — красен «незакрытый» (граница там, где слепота); 3.1.5 — 3/3.
+- Живая сверка: от iskra rc 2 «НЕ ПРОВЕРЕНО: 6» → rc 0 «…; обратно: граница 6 (не моей рукой: iskra)»; от root вывод побайтно равен бою.
+- ЧЕГО НЕ ЛОВИТ: под не-root — незаявленный ящик внутри чужого закрытого `a2a/zakryto`; его ловит только root (читатель от root по расписанию — отдельным выпуском dsh-obhod-stendov).
+- Reverse registry check: a non-root denial on the parent of a mailbox declared closed (0700) is reported as a border with a count in the verify summary; other denials and root denials remain blindness.
+
+## 3.1.4 — 15.10.2026 · YASHCHIK-REZHIM: режим закрытого ящика в намерении
+
+- `agent-registry verify` принимает `kanal.yashchik_rezhim`: строка `1730` (умолчание) или `0700`. Иное значение — расхождение «yashchik_rezhim неизвестен»; владелец по-прежнему обязан совпадать. OK печатает фактический режим. Режимы каталогов инструмент не меняет.
+- Реестр машины меняется отдельной дельтой: шесть закрытых ящиков получают строку `'0700'`. Прежние агенты без поля сохраняют требование1730.
+- `test/stend-yashchik-rezhim.py`: реальные частные каталоги, шесть закрытых и legacy; исправное → неизвестное значение/неверный режим → возврат, контроль суммы входа, проверка владельца. Нужен Python3 с PyYAML, root не нужен; внешних вызовов нет.
+- Explicit mailbox mode declaration supports closed0700 mailboxes while preserving the1730 default and ownership checks; unknown declarations fail. Private regression fixtures exercise corruption and recovery.
+
+## 3.1.3 — 14.10.2026 · команда Мастера: параметры раскладки PESOCHNICA и SPOOL_DIR (наряд Забавы 20:35:04Z)
+
+- `agent-registry`: параметр `PESOCHNICA` семейства codex (режим песочницы Codex шлюза, `GATEWAY_PESOCHNICA` в C; read-only | workspace-write | danger-full-access) и параметр `SPOOL_DIR` обоих семейств (каталог ящика канала, `spoolDir` в A; абсолютный путь, последняя часть = имя агента — по ней канал публикует паузу и адресует стоп). Задаются только отличием записи; умолчания — прежние значения шаблонов: `danger-full-access` и `/var/spool/a2a/<имя>`.
+- Шаблоны `codex/C.tmpl`, `codex/A.tmpl`, `sdk-claude/A.tmpl` берут значения из параметров. Признак: `sobrat` всех 12 живых агентов новым кодом — 39 из 51 файла побайтно равны прежней сборке, в 12 D отличается только сумма копии реестра (источник F).
+- Raskladka parameters `PESOCHNICA` (codex sandbox mode) and `SPOOL_DIR` (channel spool dir, basename = agent name); defaults keep current output byte-identical.
+
 ## 3.1.2 — 14.10.2026 · подготовка к публикации: оформление
 
 - номер версии в README приведён к выпуску.

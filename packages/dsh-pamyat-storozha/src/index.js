@@ -388,8 +388,10 @@ function ogranichitStupeni(sessii) {
 //     Boundary two: a print failure is swallowed on purpose — mounting the guard matters more than the line
 //     about it, and the log must not crash us. The price is named: a broken logger yields SILENCE, and silence
 //     is indistinguishable from "never called".
-const pechat = (ctx, s) => {
+const pechat = (ctx, s, vZhurnal = false) => {
   const stroka = `[${name} ${versiya}] ${s}`
+  // Startup receipts read journald/stdout, not Cordis' in-memory logger buffer.
+  if (vZhurnal) { try { console.log(stroka) } catch {} return }
   try { if (typeof ctx?.logger?.info === 'function') ctx.logger.info(stroka); else console.log(stroka) }
   catch { try { console.log(stroka) } catch { /* RU: некуда сказать — работа важнее строки · EN: nowhere to report — the work matters more than the line */ } }
 }
@@ -449,7 +451,7 @@ export function apply(ctx, config) {
   //     A stand's fake ctx may lack effect — then there is nothing to remove, and mounting matters more.
   try { ctx.effect?.(() => () => { smontirovano.delete(klyuchMontazha); }); }
   catch { /* RU: подставной ctx может не знать effect — монтаж важнее подписки · EN: a fake ctx may lack effect — mounting matters more than the subscription */ }
-  const krik = (s) => pechat(ctx, s)   // RU: вся печать пакета идёт через pechat(), см. довод там · EN: all printing of the package goes through pechat(), see the reasoning there
+  const krik = (s, vZhurnal = false) => pechat(ctx, s, vZhurnal)   // RU: вся печать пакета идёт через pechat(), см. довод там · EN: all printing of the package goes through pechat(), see the reasoning there
 
   const putStupenej = fajlStupenej()
   const zagruzka = prochestStupeni(putStupenej)
@@ -480,7 +482,7 @@ export function apply(ctx, config) {
      //     ''.
      + ` · сток ${config.komandaStoka ? 'задан'
         : config.komandaStoka === undefined ? 'НЕ ЗАДАН — ключа нет в наборе (похоже на упущение)'
-        : 'ВЫКЛЮЧЕН намеренно (komandaStoka пуст) — тревога только в журнал'}`)
+        : 'ВЫКЛЮЧЕН намеренно (komandaStoka пуст) — тревога только в журнал'}`, true)
 
   // RU: ОДНО ОПОВЕЩЕНИЕ ПОВЕРХ, А НЕ ПО СЛУШАТЕЛЮ НА СОБЫТИЕ. События сжатия на узле уже слушают несколько
   //     пакетов памяти (бюджет, нудж, восстановление, секретарь). Ещё один слушатель, кричащий своё отдельно на

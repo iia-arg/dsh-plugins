@@ -62,7 +62,7 @@ agenty:
 | `User`/`Group` | `omega` | писатель уроков отказывает не под `omega` (`assert_omega`) · the lesson writer refuses unless running as `omega` |
 | `TimeoutStartSec` | `60min` | меньше суммы ступеней — служба будет убита до итога · less than the stage total — the service is killed before the summary |
 | `MemoryMax` | `4G` | один настоящий вектор занимал около 1,56 ГБ; 1 ГБ мало · one real embedding took about 1.56 GB; 1 GB is too little |
-| `LoadCredential` | `alert-token`, `alert-chat` — во вставке машины, не в юните пакета · in the machine drop-in, not in the package unit | без них доставка невозможна, старт не разрешается · without them delivery is impossible and start is refused |
+| `LoadCredential` | не задаётся — ни в юните, ни во вставке (3.1.5, B-N-2055) · not set — neither in the unit nor in a drop-in | токен бота тревог службе не нужен: тревоги идут через спул root-отправителя · the alert bot token is not needed: alerts go through the root sender's spool |
 | `ExecStartPre` / `ExecStopPost` | `prepare_key.py prepare` / `remove` (root) | без ключа судья не зовёт модель (`invalid credential`) · without a key the judge cannot call the model |
 | `Environment=OMEGA_EMBEDDING_*`, `HF_HUB_OFFLINE=1`, `OMEGA_RERANKER_AUTODOWNLOAD=0` | как у действующей OMEGA · as in the live OMEGA | другая модель или размер вектора — уроки отказывают на проверке вектора (ждут 1024) · another model or dimension makes lessons fail the vector check (1024 expected) |
 
@@ -75,7 +75,7 @@ Machine-specific data is hard-coded neither in the code nor in the package unit:
 
 | Настройка · Setting | Значит · Meaning | Не задана · Unset |
 |---|---|---|
-| `LoadCredential=alert-token:<файл>`, `alert-chat:<файл>` | токен и чат канала тревог · alert channel token and chat | доставка тревог невозможна · alert delivery impossible |
+| доступ к спулу тревог `agent-alert` (на sadik — `SupplementaryGroups=agent-button`) · access to the `agent-alert` spool | служба сдаёт тревогу в спул, шлёт root-отправитель · the service drops the alert into the spool, the root sender delivers it | спул не пишется — `agent-alert` «исход=нет-пути», доставка `unknown` · spool not writable — `agent-alert` «исход=нет-пути», delivery `unknown` |
 | `AGENTS_REGISTRY` | путь реестра агентов (YAML) · agent registry path | `registry_not_set` в ступенях уроков, счёта и уборки · in the lessons, count and cleanup stages |
 | `OBSL_KLYUCH_HOME` | дом учётной записи хранилища ключа; `GNUPGHOME` = его `.gnupg` · home of the key store account | `credential_source_not_set`, ключа нет, старт не удаётся · no key, start fails |
 | `OBSL_KLYUCH_HRANILISHCHE` | каталог хранилища `pass` · `pass` store directory | то же · same |
@@ -86,7 +86,7 @@ Machine-specific data is hard-coded neither in the code nor in the package unit:
 | Имя · Name | Кто читает · Read by | Умолчание · Default | Значит · Meaning |
 |---|---|---|---|
 | `DEEPSEEK_CREDENTIAL_FILE` | `judge.DeepSeek` | обязательна · required | файл ключа: одна строка ≤ 4096 байт, без NUL · key file: one line ≤ 4096 bytes, no NUL |
-| `AGENT_ALERT_TOKEN_FILE`, `AGENT_ALERT_CHAT_FILE` | `agent-alert` | задаёт юнит через `%d` · set by the unit via `%d` | доставка итога · summary delivery |
+| `AGENT_ALERT_TOKEN_FILE`, `AGENT_ALERT_CHAT_FILE` | `agent-alert` | юнитом не задаются (3.1.5); `agent-alert` берёт их из `/etc/dsh-trevogi/dsh-trevogi.conf` · not set by the unit; `agent-alert` takes them from its config | у `omega` токен не читается → спул · not readable by `omega` → spool |
 | `PROSMOTRENO_STATE` | `prosmotreno.py` | каталог судьи в каталоге состояния · judge dir inside the state dir | где лежат отметки · where marks live |
 | `PROSMOTRENO_DB` | `prosmotreno.py` | база OMEGA · OMEGA DB | откуда брать записи пар · where pair records come from |
 | `PYTHONDONTWRITEBYTECODE`, `OPENBLAS_NUM_THREADS` | Python | `1` | без кэша байткода в пакете; один поток BLAS · no bytecode cache in the package; one BLAS thread |

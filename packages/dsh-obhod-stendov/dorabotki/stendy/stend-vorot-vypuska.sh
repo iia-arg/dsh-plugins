@@ -79,7 +79,11 @@ PYK
   local bez=(); [ -n "${BEZ_DSH:-}" ] && bez=(env -u DSH_TEST_APP)   # зовущий БЕЗ DSH_TEST_APP (решение 15:02)
   # B-N-779: PROBA_ARG — путь, как его набрал бы человек (относительный), зов из РОДИТЕЛЯ каталога.
   local kuda="$kat" arg=.; [ -n "${PROBA_ARG:-}" ] && { kuda=$(dirname "$kat"); arg=$PROBA_ARG; }
-  local out; out=$(cd "$kuda" && VYPUSK_REESTR="$reestr_proby" OBHODCHIK="${PODMENA_OBH:-$OBH_STENDA}" OBLAST_STENDOV="$kat.boj/" PERECHEN_STENDOV="$kat.perechen" \
+  # B-N-2062: DOP_KOPIYA=<каталог> — вторая копия пакета в области и перечне обходчика (стенд ворот судит метки по копиям).
+  # Перечень второй копии — по правилу обходчика: stend-X.py при stend-X.sh не гоняется (A-N-1721), в перечне его нет.
+  [ -n "${DOP_KOPIYA:-}" ] && for s in "$DOP_KOPIYA"/test/stend-*; do [ -f "$s" ] || continue
+    case "$s" in *.py) [ -f "${s%.py}.sh" ] && continue ;; esac; printf '%s\n' "$s"; done >> "$kat.perechen"
+  local out; out=$(cd "$kuda" && VYPUSK_REESTR="$reestr_proby" OBHODCHIK="${PODMENA_OBH:-$OBH_STENDA}" OBLAST_STENDOV="$kat.boj/${DOP_KOPIYA:+$'\n'$DOP_KOPIYA/}" PERECHEN_STENDOV="$kat.perechen" \
     "${bez[@]}" "$VOROTA" "$arg" 2>&1); local kod=$?
   local beda=""
   [ "$kod" = "$zhdem" ] || beda="код $kod, ждали $zhdem"
@@ -207,8 +211,10 @@ OBYORTKA_KRASNEET="$OBYORTKA_STENDA" NET_STROKI="глухая обёртка" pr
 # репозитория меток, стенд закоммичен под меткой ⇒ не тронут. v_repo <репозиторий> <каталог пакета в нём> — коммит + метка.
 # Коммит датирован 2021-01-01: прежний признак (mtime > времени метки) на П49 давал бы ОТКАЗ, на П50 — наследие; без даты
 # время метки и файла совпадали до секунды, и П49 не различал признаки (замер 08.10 01:0xZ: основа прошла П49).
+# B-N-2115(б): метка-рубеж — ПРОШЛОЙ версии (v0.0.0), пакет — 0.0.1. Метка той же версии, что выпуск, — «метка уже есть»:
+#   ворота (dsh-montazh 3.1.42) отказывают до записи следа, а прежде давали «✅», на котором git tag упал бы.
 v_repo() { [ -d "$1/.git" ] || git init -q "$1"; git -C "$1" add -- "$2" && GIT_COMMITTER_DATE=2021-01-01T00:00:00Z git -C "$1" -c user.name=stend -c user.email=stend@sadik commit -q --date=2021-01-01T00:00:00Z -m proba \
-  && git -C "$1" tag -f proba-vorot-vypuska-v0.0.1 >/dev/null; }
+  && git -C "$1" tag -f proba-vorot-vypuska-v0.0.0 >/dev/null; }
 svezhij_paket "$B/r29/p29"; gluhoj "$B/r29/p29"; v_repo "$B/r29" p29
 VYPUSK_REPO="$B/r29" OBYORTKA_KRASNEET="$OBYORTKA_STENDA" NET_STROKI="ОТКАЗ: глухая" proba "П29 глухая обёртка в НЕТРОНУТОМ стенде → наследие названо, не отказ" 0 "наследие" "$B/r29/p29"
 # П49 (B-N-1774, ложный отказ по mtime): содержимое = метке, время файла новое (checkout/копия) → наследие, не отказ.
@@ -221,31 +227,31 @@ VYPUSK_REPO="$B/r50" OBYORTKA_KRASNEET="$OBYORTKA_STENDA" proba "П50 глухо
 # v_repo_t <репозиторий> <каталог> <метка> <дата> — коммит с датой и метка с заданным именем.
 v_repo_t() { [ -d "$1/.git" ] || git init -q "$1"; git -C "$1" add -- "$2" && GIT_COMMITTER_DATE="$4" git -C "$1" -c user.name=stend -c user.email=stend@sadik commit -q --date="$4" -m proba \
   && git -C "$1" tag -f "$3" >/dev/null; }
-# П57: метка ТОЛЬКО под каталогом (k57-v0.0.1), стенд = метке → наследие (прежний поиск по name меток не находил → «тронут», ОТКАЗ).
-svezhij_paket "$B/r57/k57"; gluhoj "$B/r57/k57"; v_repo_t "$B/r57" k57 k57-v0.0.1 2021-01-01T00:00:00Z
+# П57: метка ТОЛЬКО под каталогом (k57-v0.0.0), стенд = метке → наследие (прежний поиск по name меток не находил → «тронут», ОТКАЗ).
+svezhij_paket "$B/r57/k57"; gluhoj "$B/r57/k57"; v_repo_t "$B/r57" k57 k57-v0.0.0 2021-01-01T00:00:00Z
 VYPUSK_REPO="$B/r57" OBYORTKA_KRASNEET="$OBYORTKA_STENDA" NET_STROKI="ОТКАЗ: глухая" proba "П57 имя ≠ каталогу, метка под каталогом, стенд = метке → наследие, не отказ" 0 "наследие" "$B/r57/k57"
 # П58: метка под каталогом СТАРЕЕ (2021, стенд X), метка по имени СВЕЖЕЕ (2022, стенд Y); в дереве Y → рубеж — метка по имени → наследие.
 #   Выбор «каталог первым» дал бы рубеж 2021 и X ≠ Y → ложный ОТКАЗ.
-svezhij_paket "$B/r58/k58"; gluhoj "$B/r58/k58"; v_repo_t "$B/r58" k58 k58-v0.0.1 2021-01-01T00:00:00Z
+svezhij_paket "$B/r58/k58"; gluhoj "$B/r58/k58"; v_repo_t "$B/r58" k58 k58-v0.0.0 2021-01-01T00:00:00Z
 echo "// редакция Y" >> "$B/r58/k58/test/stend-zelenyj.mjs"; v_repo_t "$B/r58" k58 proba-vorot-vypuska-v0.0.2 2022-01-01T00:00:00Z
 VYPUSK_REPO="$B/r58" OBYORTKA_KRASNEET="$OBYORTKA_STENDA" NET_STROKI="ОТКАЗ: глухая" proba "П58 метка по имени свежее метки по каталогу, стенд = свежей → наследие" 0 "наследие" "$B/r58/k58"
 # П59: то же, но стенд изменён после свежей метки → ОТКАЗ (правка не приводит к «наследие всегда»).
-svezhij_paket "$B/r59/k59"; gluhoj "$B/r59/k59"; v_repo_t "$B/r59" k59 k59-v0.0.1 2021-01-01T00:00:00Z
+svezhij_paket "$B/r59/k59"; gluhoj "$B/r59/k59"; v_repo_t "$B/r59" k59 k59-v0.0.0 2021-01-01T00:00:00Z
 echo "// редакция Y" >> "$B/r59/k59/test/stend-zelenyj.mjs"; v_repo_t "$B/r59" k59 proba-vorot-vypuska-v0.0.2 2022-01-01T00:00:00Z
 echo "// правка после свежей метки" >> "$B/r59/k59/test/stend-zelenyj.mjs"
 VYPUSK_REPO="$B/r59" OBYORTKA_KRASNEET="$OBYORTKA_STENDA" proba "П59 стенд изменён после самой свежей метки (имя ≠ каталогу) → ОТКАЗ" 1 "глухая обёртка в" "$B/r59/k59"
 # П60 (Вениамин 07:03Z, п.2): метка по ИМЕНИ старее (2021, стенд X), по КАТАЛОГУ свежее (2022, стенд Y); в дереве Y → рубеж — каталожная → наследие.
-svezhij_paket "$B/r60/k60"; gluhoj "$B/r60/k60"; v_repo_t "$B/r60" k60 proba-vorot-vypuska-v0.0.1 2021-01-01T00:00:00Z
+svezhij_paket "$B/r60/k60"; gluhoj "$B/r60/k60"; v_repo_t "$B/r60" k60 proba-vorot-vypuska-v0.0.0 2021-01-01T00:00:00Z
 echo "// редакция Y" >> "$B/r60/k60/test/stend-zelenyj.mjs"; v_repo_t "$B/r60" k60 k60-v0.0.2 2022-01-01T00:00:00Z
 VYPUSK_REPO="$B/r60" OBYORTKA_KRASNEET="$OBYORTKA_STENDA" NET_STROKI="ОТКАЗ: глухая" proba "П60 метка по каталогу свежее метки по имени, стенд = свежей → наследие" 0 "наследие" "$B/r60/k60"
 # П61 (образец «-v» + цифра): соседний каталог «k61-extra» с меткой k61-extra-v0.0.9 СВЕЖЕЕ (2023, стенд Z) не рубеж для «k61»;
-#   рубеж — k61-v0.0.1 (2021, стенд = дереву) → наследие. Маска «k61-v*» без цифры поймала бы и «k61-vyvoz-v…».
-svezhij_paket "$B/r61/k61"; gluhoj "$B/r61/k61"; v_repo_t "$B/r61" k61 k61-v0.0.1 2021-01-01T00:00:00Z
+#   рубеж — k61-v0.0.0 (2021, стенд = дереву) → наследие. Маска «k61-v*» без цифры поймала бы и «k61-vyvoz-v…».
+svezhij_paket "$B/r61/k61"; gluhoj "$B/r61/k61"; v_repo_t "$B/r61" k61 k61-v0.0.0 2021-01-01T00:00:00Z
 cp "$B/r61/k61/test/stend-zelenyj.mjs" "$B/r61/k61/test/stend-zelenyj.mjs.keep"; echo "// редакция Z соседа" >> "$B/r61/k61/test/stend-zelenyj.mjs"
 v_repo_t "$B/r61" k61 k61-vyvoz-v0.0.9 2023-01-01T00:00:00Z; mv "$B/r61/k61/test/stend-zelenyj.mjs.keep" "$B/r61/k61/test/stend-zelenyj.mjs"
-# B-N-1923 (dsh-montazh 1.0.17, решение (б)): ворота отказывают на грязном каталоге — возврат стенда к k61-v0.0.1 коммитом,
+# B-N-1923 (dsh-montazh 1.0.17, решение (б)): ворота отказывают на грязном каталоге — возврат стенда к k61-v0.0.0 коммитом,
 #   иначе дерево r61 ≠ HEAD и П61 кончается отказом «ГРЯЗНО», а не судом рубежа. Ставить ВМЕСТЕ с воротами 1.0.17.
-git -C "$B/r61" -c user.name=stend -c user.email=stend@sadik commit -qam "возврат стенда к k61-v0.0.1"
+git -C "$B/r61" -c user.name=stend -c user.email=stend@sadik commit -qam "возврат стенда к k61-v0.0.0"
 VYPUSK_REPO="$B/r61" OBYORTKA_KRASNEET="$OBYORTKA_STENDA" NET_STROKI="ОТКАЗ: глухая" proba "П61 метка соседнего каталога k61-vyvoz-v… свежее — не рубеж (образец «-v» + цифра) → наследие" 0 "наследие" "$B/r61/k61"
 # A-N-1948 шаг 0: прежние имена пакета (package.json "dsh":{"prezhnie_imena":[…]}). После git mv каталога свежая метка лежит
 #   под ПРЕЖНИМ префиксом, а файл в ней — под прежним каталогом. pereim <репо> <каталог> <поле dsh или пусто> — git mv stara→каталог,
@@ -402,6 +408,71 @@ derevo_paket "$B/r54" d54 "$B/boj54"; printf '# Изменения\n\n## 0.0.1-�
 git -C "$B/r54" -c user.name=stend -c user.email=stend@sadik commit -qam "кандидат r20"
 VYPUSK_REPO="$B/r54" VYPUSK_REESTR="$B/r54.reestr.yaml" STENDY_INACHE="стенд ворот: пакет дерева" NET_STROKI="можно ставить" \
   proba "П54 пакет дерева, заголовок «0.0.1-кандидат r20» → отказ, не версия 0.0.1" 1 "допустимы только пробел" "$B/r54/d54"
+
+echo "── B-N-2062: метка «STEND-NEPRIMENIMO» — проба, не измеренная ни на одной копии ──"
+# Подставной стенд печатает метку, если рядом с ним нет файла bez-metki (так у копий разные исходы при одном тексте стенда).
+metka_paket() { svezhij_paket "$1"; cat > "$1/test/stend-metka.mjs" <<'MJS'
+import { existsSync } from 'node:fs'
+import path from 'node:path'
+const d = path.dirname(new URL(import.meta.url).pathname)
+if (!existsSync(path.join(d, 'bez-metki'))) console.log('STEND-NEPRIMENIMO: живой журнал: полоса подряд: простой сессии 33.3 ч (подставной)')
+console.log('PASS подставной стенд с меткой')
+MJS
+}
+metka_paket "$B/p69"
+proba "П69 одна копия, стенд с меткой → СЛЕПОТА «не измерена ни на одной копии», не «можно»" 2 "НЕ ИЗМЕРЕНА ни на одной копии" "$B/p69"
+metka_paket "$B/p70"; dvojnik "$B/p70"; rm -rf "$B/p70.k2"; cp -a "$B/p70.boj" "$B/p70.k2"
+BEZ_ZERKALA=1 DOP_KOPIYA="$B/p70.k2" proba "П70 две копии, метка на обеих → СЛЕПОТА с обеими копиями" 2 "не применимо на всех 2" "$B/p70"
+metka_paket "$B/p71"; dvojnik "$B/p71"; rm -rf "$B/p71.k2"; cp -a "$B/p71.boj" "$B/p71.k2"; : > "$B/p71.k2/test/bez-metki"
+BEZ_ZERKALA=1 DOP_KOPIYA="$B/p71.k2" proba "П71 две копии, метка на одной → можно, «измерено» названо" 0 "не применимо на 1 из 2 копий" "$B/p71"
+svezhij_paket "$B/p72"
+NET_STROKI="не применимо" proba "П72 стенд без метки → прежнее поведение, ни слова о «не применимо»" 0 "можно ставить ЛОКАЛЬНЫЙ тег" "$B/p72"
+# LOW Вениамина 03:29Z: знаменатель — ФАКТ прогона («STEND-PROGNAN» обходчика), а не файл в каталоге. Подмножество — по правилу
+#   обходчика: во второй копии рядом с stend-metka.py лежит stend-metka.sh, и .py там не гоняется (файл есть, прогона нет).
+metka_py() { svezhij_paket "$1"; rm -f "$1/test/stend-zelenyj.mjs"
+  printf "print('STEND-NEPRIMENIMO: живой журнал: полоса подряд: простой (подставной .py)')\nprint('PASS')\n" > "$1/test/stend-metka.py"; }
+metka_py "$B/p73"; dvojnik "$B/p73"; rm -rf "$B/p73.k2"; cp -a "$B/p73.boj" "$B/p73.k2"
+printf '#!/bin/bash\necho "PASS обёртка без метки"\n' > "$B/p73.k2/test/stend-metka.sh"
+BEZ_ZERKALA=1 DOP_KOPIYA="$B/p73.k2" proba "П73 подмножество: .py прогнан на одной копии из двух (на второй лежит, не гоняется) → СЛЕПОТА по факту прогона" 2 "не применимо на всех 1" "$B/p73"
+metka_py "$B/p74"; dvojnik "$B/p74"; rm -rf "$B/p74.k2"; cp -a "$B/p74.boj" "$B/p74.k2"
+printf '#!/bin/bash\necho "PASS обёртка без метки"\n' > "$B/p74.k2/test/stend-metka.sh"
+# «Старый» обходчик собирается из проверяемого: та же копия без строки STEND-PROGNAN, рядом его сканер (единственный сосед, :817).
+mkdir -p "$B/staryj"; sed '/STEND-PROGNAN/d' "$OBH_STENDA" > "$B/staryj/vse-stendy-boevye.sh"; chmod 755 "$B/staryj/vse-stendy-boevye.sh"
+cp -p "$(dirname "$OBH_STENDA")/skaner-zhivoj-mashiny.py" "$B/staryj/"
+echo "   старый обходчик для П74: STEND-PROGNAN в нём $(grep -c 'STEND-PROGNAN' "$B/staryj/vse-stendy-boevye.sh") раз (в проверяемом $(grep -c 'STEND-PROGNAN' "$OBH_STENDA"))"
+BEZ_ZERKALA=1 DOP_KOPIYA="$B/p74.k2" PODMENA_OBH="$B/staryj/vse-stendy-boevye.sh" \
+  proba "П74 тот же пакет, обходчик без «STEND-PROGNAN» (старый) → прежнее: знаменатель по файлу, «на 1 из 2», можно" 0 "не применимо на 1 из 2 копий" "$B/p74"
+
+# B-N-2066 (Заря; наряд Забавы 06:34:50Z): пробы ворот dsh-montazh 3.1.30 и 3.1.31 — постоянными (были подставными
+#   kandidaty/m3130/proba/mini.sh и mini2.sh). Нужны ворота ≥ 3.1.31: на 3.1.29 красны П75, П77–П79.
+# П75–П76 (3.1.30, info Вениамина 04:10Z): метка есть, а копий, где стенд прогнан, 0 — СЛЕПОТА «знаменатель не установлен».
+#   Сейчас недостижимо (метка и STEND-PROGNAN печатаются подряд) — подставной обходчик: проверяемый, но без STEND-PROGNAN для stend-metka*.
+mkdir -p "$B/razv"; sed 's|\[ -n "${PAKET_IMYA+x}" \] \&\& printf .STEND-PROGNAN|[ -n "${PAKET_IMYA+x}" ] \&\& [[ "$s" != *stend-metka* ]] \&\& printf '"'"'STEND-PROGNAN|' "$OBH_STENDA" > "$B/razv/vse-stendy-boevye.sh"
+chmod 755 "$B/razv/vse-stendy-boevye.sh"; cp -p "$(dirname "$OBH_STENDA")/skaner-zhivoj-mashiny.py" "$B/razv/"
+N75=$(grep -cF '[[ "$s" != *stend-metka* ]]' "$B/razv/vse-stendy-boevye.sh")
+echo "   подставной обходчик П75: условие внесено $N75 раз"
+# LOW Вениамина 06:45Z: число подстав судится — сменилась строка STEND-PROGNAN обходчика, и sed не внёсся: П75 не судим (СЛЕПОТА),
+#   а не красен с ложной причиной (нет строки «знаменатель не установлен»).
+if [ "$N75" = 1 ]; then
+  metka_paket "$B/p75"
+  PODMENA_OBH="$B/razv/vse-stendy-boevye.sh" proba "П75 метка есть, STEND-PROGNAN для стенда нет (прочие прогнаны) → СЛЕПОТА «знаменатель не установлен», не «на 1 из 0»" 2 "знаменатель не установлен" "$B/p75"
+else
+  SLEPOTA=$((SLEPOTA+1)); echo "СЛЕПОТА П75: подстава П75 не внеслась (условие внесено $N75 раз, нужно 1) — строка STEND-PROGNAN обходчика сменилась; П75 не судится"
+fi
+metka_paket "$B/p76"
+proba "П76 настоящий обходчик: метка на единственной копии → СЛЕПОТА «не измерена» (контроль П75)" 2 "НЕ ИЗМЕРЕНА ни на одной копии" "$B/p76"
+# П77–П80 (3.1.31): пакет дерева (без package.json) на двух местах — записи derevo одного subdir судятся все, единица — ID.
+dve() { derevo_paket "$B/r$1" "d$1" "$B/boj$1"; mkdir -p "$B/boj$1b"; cp "$B/r$1/d$1/sbin/x" "$B/boj$1b/x"
+  printf '  - id: %s\n    derevo:\n      subdir: %s\n      files:\n        - {local: "%s", remote: "sbin/x"}\n      not_installed: [%s]\n' \
+    "d$1-vtoraya" "d$1" "$B/boj$1b/x" "${2-\"CHANGELOG.md\"}" >> "$B/r$1.reestr.yaml"; }
+dve 77; VYPUSK_REPO="$B/r77" VYPUSK_REESTR="$B/r77.reestr.yaml" STENDY_INACHE="стенд ворот: пакет дерева" \
+  proba "П77 дерево, две записи, обе = метке → можно, записи названы" 0 "записей 2 (d77, d77-vtoraya)" "$B/r77/d77"
+dve 78; echo "# порча" >> "$B/boj78b/x"; VYPUSK_REPO="$B/r78" VYPUSK_REESTR="$B/r78.reestr.yaml" STENDY_INACHE="стенд ворот: пакет дерева" \
+  proba "П78 дерево, две записи, бой второй ≠ метке → ОТКАЗ с ID второй" 1 "[d78-vtoraya] sbin/x" "$B/r78/d78"
+dve 79 ''; VYPUSK_REPO="$B/r79" VYPUSK_REESTR="$B/r79.reestr.yaml" STENDY_INACHE="стенд ворот: пакет дерева" \
+  proba "П79 дерево, у второй записи нет CHANGELOG в not_installed → СЛЕПОТА с ID второй" 2 "[d79-vtoraya] в метке, нет в записи: CHANGELOG.md" "$B/r79/d79"
+derevo_paket "$B/r80" d80 "$B/boj80"; VYPUSK_REPO="$B/r80" VYPUSK_REESTR="$B/r80.reestr.yaml" STENDY_INACHE="стенд ворот: пакет дерева" NET_STROKI="судятся все" \
+  proba "П80 дерево, одна запись → можно, как прежде (без строки о нескольких)" 0 "можно ставить ЛОКАЛЬНЫЙ тег" "$B/r80/d80"
 
 echo "── ЗРЯЧЕСТЬ ПОСЛЕ ПОРЧ: ворота не залипли в отказе ──"
 svezhij_paket "$B/p6"

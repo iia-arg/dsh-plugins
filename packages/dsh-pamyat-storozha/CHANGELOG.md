@@ -1,3 +1,35 @@
+## 3.1.8 — 2026-10-18 · журнал 2G: omega-kopiya-watch и два его стенда (Заря; ворота Вениамина: замысел 08:32, сторож r3 08:38 МСК)
+
+- `bin/omega-kopiya-watch` `c309c59b` → `1d22ca06` (= бою `/usr/local/sbin/omega-kopiya-watch`, монтаж Забавы 18.10 05:38Z): признак вектора OMEGA снимается по базе, а не по журналу службы — с 17.10 журнал 2G держит ≈ 1,5 сут.
+- `test/stend-modeli-omega.sh` `9da6fd2e` → `6545da2b` (r3), `test/stend-svodki-doveriya.sh` `4216a8be` → `da032fe7` — под тот же признак (стенды 3 и 4 ночи 18.10).
+- README (RU/EN): номер версии приведён к выпуску (стоял 3.1.6 при пакете 3.1.7).
+
+## 3.1.7 — 2026-10-17 · шапки двух стендов omega-kopiya-watch: ночной обход вместо «не ставить» (находка Авроры, решение Искры)
+
+- `test/stend-pravki-postavki-omega.sh` (признак 6) и `test/stend-svodki-doveriya.sh` (признак 5б): шапка «в суточный обход не ставить» (26.09) противоречила перечню ночного обхода, куда оба вписаны с переноса пакета 04.10, а доводы им даёт A-N-1711 (07.10). Ночной обход 17.10 их исполнил: 19 с и 10 с, пакет зелёных 21 из 21. Шапка теперь называет обоих зовущих и говорит, что красное в последнем такте ночью — живое состояние боевой поставки OMEGA, а не дефект стенда. Код стендов не менялся.
+- README (RU/EN): строка «нельзя запускать без подмен» для этих двух стендов — то же.
+- Headers of `stend-pravki-postavki-omega.sh` and `stend-svodki-doveriya.sh` no longer say "not for the daily round": both run nightly (A-N-1711), 19 s and 10 s; red in the last step at night is live production state, not a stand defect. README lines updated. No code change.
+
+## 3.1.6 — 2026-10-15 · TEAM-003: новые агенты до первого запуска
+
+- Отсутствующий session-root не тревожит только при доказанном ещё не состоявшемся запуске по текущим systemd-свойствам и сохранённому журналу; waiting считаются отдельно, не включаются в inspected.
+- Запускавшаяся/неизвестная служба без каталога остаётся слепотой с тревогой. Metadata/journal queries ограничены5с в общем60с, работают отroot, MESSAGE не читают. Права и уведомления не перенастроены.
+- Добавлен @root fixture-стенд12методов с подставными systemd/journal/alert; порядок Z5→первый старт описан без blanket-исключения. Production не менялся автором.
+
+## 3.1.5 — 2026-10-15 · версия при подъёме видна квитанции
+
+- Стартовая строка идёт прямо в stdout, а не только в logger Cordis, который без exporter хранит её в памяти. Прочие сообщения не менялись, двойного startup-вывода нет.
+- Реальный Cordis без exporter и повторный mount проверяются новым stend-startup-journal; ожидание startup в audit-plugin перенесено с logger на stdout. Читатели pered-podyomom/kvitanciya-podyoma остаются строгими и неизменными; список исключений не вводился.
+- Startup now prints once to process stdout instead of depending on a Cordis exporter. Other event messages keep the existing logger. Actual Cordis/remount tests added; strict version/receipt readers unchanged. No deployment or live restart performed by author.
+
+## 3.1.4 — 14.10.2026 · npm 12: имя архива через `npm-sostav` (B-N-2048)
+
+- `test/stend-audit-install.mjs`: имя архива `npm pack --json` разбирает помощник `npm-sostav --filename` (`dsh-pribory` 3.1.2) —
+  одним правилом для npm 11 (массив) и npm 12 (объект); прежний `JSON.parse(…)[0].filename` под npm 12 слеп (код 2).
+- Нет `npm-sostav` в PATH или он отказал — СЛЕПОТА, код 2, с причиной («нужен dsh-pribory ≥ 3.1.2»); не красное и не зелёное.
+- `package.json`: необязательный peer `dsh-pribory ^3.1.2` (`peerDependenciesMeta.optional`) — объявляет требование стенда, ничего не ставит.
+- Код пакета не менялся. В дереве стенд по-прежнему слеп под любым npm: рядом нет `dsh-pamyat-kompakt` (это не npm).
+
 ## 3.1.3 — 14.10.2026 · документация: актуальные номера
 
 - README/доки: номера приведены к выпуску (Аврора, ветка nomera-v-dokah, fd070a17); номер пакета +1.

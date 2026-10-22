@@ -1,0 +1,14 @@
+# B-N-2055 способ 2: тревога о тревогах — очередь стоит, path-юнит погашен, отправители без пути/итога. Шлёт прямым путём.
+[Unit]
+Description=Сторож спула тревог · Alert spool watcher
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 -I -B /usr/local/sbin/agent-alert-otpravitel --storozh
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/var/spool/dsh-trevogi -/var/log/agent-alert -/var/log/dsh-trevogi
+SyslogIdentifier=agent-alert-storozh-ocheredi

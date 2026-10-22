@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "legacyWriterMaxBytes": 134217728,
+  "recordAllowanceBytes": 65536,
+  "registrationRetry": {
+    "timerSeconds": 60,
+    "accuracySeconds": 1,
+    "heartbeatSeconds": 15,
+    "timeoutStartSeconds": 35,
+    "roundToSeconds": 60
+  }
+}

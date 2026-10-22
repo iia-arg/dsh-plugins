@@ -1,6 +1,10 @@
 # dsh-pamyat-secretary — сводки и дистилляция знаний · Summaries and knowledge distillation
 
-**Версия:** 3.1.2
+**Версия:** 3.1.3
+
+В npm доступна редакция `3.1.2` (замер 15.10.2026, `npm view dsh-pamyat-secretary version`). По решению владельца от 14.10.2026 изменения после публикации ведутся локально и в npm не выкладываются.
+
+npm provides `3.1.2` (checked on 2026-10-15 with `npm view dsh-pamyat-secretary version`). By the owner's decision of 2026-10-14, changes after publication are maintained locally and are not republished to npm.
 
 Секретарь DSH сохраняет сводку вытесняемой истории в локальную память и, при отдельном включении, извлекает знания через модельный API с проверяемой ссылкой на исходные события.
 

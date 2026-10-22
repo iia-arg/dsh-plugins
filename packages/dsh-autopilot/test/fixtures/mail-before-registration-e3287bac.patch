@@ -1,0 +1,63 @@
+--- a/packages/dsh-autopilot/lib/mail_client.py
++++ b/packages/dsh-autopilot/lib/mail_client.py
+@@ -49 +49 @@
+-    def __init__(self,socket_path=DEFAULT_SOCKET,account_lookup=None,server_uid=None,*,tls_cert=SERVER_CERT,timeout=5):
++    def __init__(self,socket_path=DEFAULT_SOCKET,account_lookup=None,server_uid=None,*,tls_cert=SERVER_CERT):
+@@ -54,3 +54,2 @@
+-        self.timeout=timeout
+-
+-    def exchange(self,request,*,wait_reply=True):
++
++    def exchange(self,request):
+@@ -84 +83 @@
+-            conn.settimeout(self.timeout)
++            conn.settimeout(5)
+@@ -98,3 +96,0 @@
+-                if not wait_reply:
+-                    if request.get('op')!='usage_register':raise LocalMailError('INVALID_LOCAL_REQUEST')
+-                    conn.sendall(data);return dict(ok=True,state='SUBMITTED'),uid
+@@ -124,5 +119,0 @@
+-
+-    def submit_run(self,request):
+-        """Transport submission only; no reply/registration ACK before execution."""
+-        if type(request) is not dict or request.get('op')!='usage_register':raise LocalMailError('INVALID_LOCAL_REQUEST')
+-        return self.exchange(request,wait_reply=False)[0]
+@@ -239 +229,0 @@
+-    sub.add_parser('register-run',description='Telemetry only; JSON stdin; no application reply is awaited.')
+@@ -247,5 +237 @@
+-        client=MailClient(args.socket,timeout=.2) if args.op=='register-run' else MailClient(args.socket)
+-        if args.op=='register-run':
+-            payload=sys.stdin.read(8193)
+-            if len(payload)>8192:raise LocalMailError('FRAME_TOO_LARGE')
+-            result=client.submit_run(json.loads(payload));print(json.dumps(result));return 0
++        client=MailClient(args.socket)
+@@ -280,3 +265,0 @@
+-    except MailConnectUnavailable:
+-        if args.op=='register-run':print(json.dumps(dict(ok=False,state='UNBOUND',reason='POSTMAN_CONNECT_UNAVAILABLE')));return 2
+-        print('SOURCE_UNVERIFIED_OR_UNAVAILABLE',file=sys.stderr);return 2
+@@ -284 +266,0 @@
+-        if args.op=='register-run':print(json.dumps(dict(ok=False,state='UNBOUND',reason=str(error))));return 2
+@@ -287 +268,0 @@
+-        if args.op=='register-run':print(json.dumps(dict(ok=False,state='UNBOUND',reason='SOURCE_UNVERIFIED_OR_UNAVAILABLE')));return 2
+--- a/packages/dsh-autopilot/lib/mail_service.py
++++ b/packages/dsh-autopilot/lib/mail_service.py
+@@ -22 +21,0 @@
+-from mail_registration import queue_request, capture_ancestry, prune_terminal
+@@ -162 +160,0 @@
+-        self.db.execute('CREATE TABLE IF NOT EXISTS usage_registrations(run_id TEXT PRIMARY KEY,request_sha TEXT NOT NULL,request_json TEXT NOT NULL,peer_uid INTEGER NOT NULL,peer_pid INTEGER NOT NULL,accepted_at REAL NOT NULL,operator_json TEXT NOT NULL)')
+@@ -212 +209,0 @@
+-                    pid=struct.unpack('iII',conn.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))[0]
+@@ -214 +210,0 @@
+-                    ancestry=capture_ancestry(pid,uid) if actor=='master' else None
+@@ -236 +232 @@
+-                            answer=self.handle(actor,uid,json.loads(raw.decode('utf-8')),peer_pid=pid,peer_chain=ancestry)
++                            answer=self.handle(actor,uid,json.loads(raw.decode('utf-8')))
+@@ -251 +247 @@
+-    def handle(self,actor,uid,request,*,peer_pid=None,peer_chain=None):
++    def handle(self,actor,uid,request):
+@@ -256,3 +251,0 @@
+-            if op=='usage_register':
+-                if actor!='master' or uid!=self.users['master']:return dict(ok=False,reason='REGISTRATION_ROLE_DENIED')
+-                return queue_request(self.db,actor,uid,peer_pid,request,self.clock,peer_chain=peer_chain)
+@@ -405 +397,0 @@
+-                    result['registrationPruned']=prune_terminal(self.db)

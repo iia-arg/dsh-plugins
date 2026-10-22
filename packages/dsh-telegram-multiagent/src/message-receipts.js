@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import {cancellationReturn} from './cancellation-return.js';
 import {isCoordinatorEnvelope,unwrapCoordinator,verifyCoordinator,loadCoordinatorTrust} from './coordinator-signature.js';
 
 
@@ -56,7 +57,7 @@ function tekstPisma(r) {
 export function mashinnoePismo(r) {
   const t = tekstPisma(r);
   return /^\s*(\[delivery-v1[^\]]*\]\s*)?(\[агент [^\]]*\]\s*)?\[ответ по receipt /.test(t) || t.includes(PRERYV_METKA)
-    || /"kind"\s*:\s*"(task-control|mail-stop)/.test(t);
+    || /"kind"\s*:\s*"(task-control|mail-stop)/.test(t) || /(?:^|\n)письмо [a-f0-9-]{36} НЕ исполнено: удержано replace-STOP /u.test(t);
 }
 // RU: B-N-1619 (2.5.97): «сброс» — время и пояс в скобках, без приписок за ними. Живьём 05.10 шлюз дописывал к ошибке
 //     «(лимит ходов исключён: записи max_turns_reached…», и захват до 60 знаков тащил её в строку владельцу.
@@ -212,6 +213,13 @@ function receiptFacts(session, ids) {
     }
   }
   return facts;
+}
+// RU: Статус читает сохранённый audit: удаление backlog не стирает причину уже классифицированного удержания.
+// EN: Status reads persisted audit so a later backlog loss cannot erase an already classified hold.
+export function receiptHoldStatus(db, rows) {
+  const query=db.prepare("SELECT detail FROM audit WHERE receipt_id=? AND kind='held_by_replace' ORDER BY seq LIMIT 1");
+  return rows.map(r=>r.blocked==='held_by_replace'
+    ? {...r,replace_hold:JSON.parse(query.get(r.id)?.detail??'null')} : r);
 }
 export class MessageReceipts {
   // RU: constructor: Инициализирует состояние и схему этого компонента; не выполняет завершённую доставку автоматически.
@@ -442,10 +450,16 @@ release(id, sourceKey) {
 managed(sessionId) { return this.db.prepare('SELECT * FROM receipts WHERE session_id=? AND dsh_id IS NOT NULL').all(String(sessionId)); }
   // RU: reconcile: Сопоставляет состояния ledger с событиями и устанавливает доказанный исход.
 // EN: reconcile: Reconciles ledger state against session events to establish evidenced outcomes.
-reconcile(session, gateTurn = null, recovering = false) {
+reconcile(session, gateTurn = null, recovering = false, returnPaths) {
     const rows = this.managed(session.id); if (!rows.length) return [];
     const claimed = [];
     const facts = receiptFacts(session, rows.map(r => r.dsh_id)); let replay = false;
+    let events;
+    const hasBacklog=this.db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name IN ('mail_stop_backlog','mail_stop_controls')").get().n===2;
+    const replaceHold=hasBacklog?this.db.prepare(`SELECT c.control_id,c.started_at FROM mail_stop_backlog b
+      JOIN mail_stop_controls c ON c.control_id=b.control_id AND c.session_id=b.session_id AND c.session_created=b.session_created
+      WHERE b.session_id=? AND b.session_created=? AND b.message_id=? AND c.mode='replace' AND c.state='complete'
+        AND c.native_terminal=1 AND c.sdk_terminal=1 AND c.resume_proven=1 AND c.replacement_message<>b.message_id`):null;
     this.tx(() => {
       for (const r of rows) {
         const f = facts.get(r.dsh_id);
@@ -491,6 +505,29 @@ reconcile(session, gateTurn = null, recovering = false) {
           }
         }
         if (r.finished_at !== null) continue;
+        // BETA-RCPT: classify only an unclaimed ordinary letter in the exact completed replace generation.
+        if(r.route==='a2a' && r.dispatch_started && !r.channel_started && r.claimed_turn===null && !r.blocked
+          && !f.claims.length && !f.canceled) {
+          const hold=replaceHold?.get(r.session_id,r.session_created,r.dsh_id);
+          if(hold && !(events??=sobytiyaSessii(session).slice(nasledovanoSessii(session))).some(e=>e.type==='user/message'&&e.data?.id===r.dsh_id)) {
+            const changed=this.db.prepare(`UPDATE receipts SET blocked='held_by_replace'
+              WHERE id=? AND session_id=? AND session_created=? AND dsh_id=? AND dispatch_started=1 AND channel_started=0
+                AND claimed_turn IS NULL AND finished_at IS NULL AND blocked IS NULL`).run(r.id,r.session_id,r.session_created,r.dsh_id).changes;
+            if(changed!==1)continue;
+            if(!this.db.prepare("SELECT 1 FROM audit WHERE receipt_id=? AND kind='held_by_replace'").get(r.id)) {
+              const detail={control_id:hold.control_id,dsh_id:r.dsh_id,held_since:hold.started_at,classified_at:this.now()};
+              const destination=cancellationReturn(r,this,returnPaths);
+              if(destination && destination.kind!=='none') {
+                const key=r.id+':held-by-replace';
+                const text=`письмо ${r.dsh_id} НЕ исполнено: удержано replace-STOP ${hold.control_id} в ${new Date(hold.started_at).toISOString()}; решение — за вами`;
+                this.addOutbox(key,r.id,'new-return',JSON.stringify({kind:'held_by_replace',command:hold.control_id,destination,text}));
+                if(destination.kind==='unknown')this.db.prepare('UPDATE outbox SET error=? WHERE id=?').run('HOLD: '+destination.reason,key);
+              }
+              this.audit(r.id,'held_by_replace',JSON.stringify(detail));
+            }
+            continue;
+          }
+        }
         if (f.canceled && !f.claims.length) this.completeRow(r, 'canceled_before_run', [], 'Сообщение отменено в очереди до исполнения.');
         else if (f.end) {
           const text = f.outputs.map(x => (x.message?.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n')).filter(Boolean).join('\n\n');
@@ -589,7 +626,7 @@ holdTick() {
         this.protocolExit(r,'rejected','hold_deadline');
         this.completeRow({...r,expects_reply:1},'envelope_rejected',{kind:'hold_deadline'},'ОТКАЗ: истекли назначенные 24 часа удержания; распоряжение не исполнялось.');
       }
-      for (const r of this.db.prepare('SELECT * FROM receipts WHERE blocked IS NOT NULL AND finished_at IS NULL').all()) {
+      for (const r of this.db.prepare("SELECT * FROM receipts WHERE blocked IS NOT NULL AND blocked<>'held_by_replace' AND finished_at IS NULL").all()) {
         if (r.hold_notices < HOLD_ALERT_MS.length && this.now() - r.received_at >= HOLD_ALERT_MS[r.hold_notices]) {
           const stage = r.hold_notices;
           this.addOutbox(r.id + ':held:' + stage, r.id, 'a2a', `УДЕРЖАНО ${r.id}: ${r.blocked}. Возраст ${Math.floor((this.now()-r.received_at)/1000)} сек. ${stage===2?'СРОК РАЗБОРА 24 ЧАСА ИСТЁК. ':''}Разбирает ${this.reviewer}. ${r.blocked==='legacy_ambiguous'?'Решение: approve-new или discard через receipt-admin.':r.blocked==='invalid_utf8'?'Нужна ручная сверка исхода; после неё — discard через receipt-admin (оператор и ссылка обязательны), исполнения не будет.':r.blocked==='channel_interrupted'&&!r.dispatch_started?'Приём оборван перезапуском до выдачи агенту; после сверки — discard через receipt-admin (оператор и ссылка обязательны), исполнения не будет.':['channel_unknown','dispatch_unknown'].includes(r.blocked)&&!r.dispatch_started&&r.session_id===null&&r.claimed_turn===null?'Обработчик отказал до выдачи агенту; после сверки — discard через receipt-admin (оператор и ссылка обязательны), исполнения не будет.':'Нужна ручная сверка исхода; автоматическое разрешение этой причины запрещено.'} Исходник и запись сохранены; автоматического исполнения нет.`);
@@ -599,7 +636,9 @@ holdTick() {
       const day = String(Math.floor(this.now()/86400000));
       const last = this.db.prepare("SELECT value FROM meta WHERE key='held_day'").get()?.value;
       if (last !== day) {
-        const rows = this.db.prepare('SELECT id,blocked,received_at FROM receipts WHERE blocked IS NOT NULL AND finished_at IS NULL').all();
+        const rows = this.db.prepare(`SELECT id,blocked,received_at FROM receipts WHERE blocked IS NOT NULL AND finished_at IS NULL
+          AND (blocked<>'held_by_replace' OR EXISTS(SELECT 1 FROM outbox o WHERE o.id=receipts.id||':held-by-replace'
+            AND o.route='new-return' AND json_extract(o.body,'$.destination.kind')='unknown'))`).all();
         if (rows.length) this.addOutbox('held-summary:'+day, null, 'a2a', 'УДЕРЖАНО: '+rows.length+'. Читатель и рука разбора — '+this.reviewer+'.\n'+rows.map(r=>`${r.id}: ${r.blocked}, возраст ${Math.floor((this.now()-r.received_at)/3600000)} ч`).join('\n'));
         this.db.prepare("INSERT INTO meta VALUES('held_day',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(day);
       }
@@ -638,7 +677,7 @@ resolve(id, action, operator, reference) {
   }
   // RU: status: Возвращает измеренный snapshot состояния; не обещает внешнего получения сообщения.
 // EN: status: Returns an observed state snapshot rather than promising external receipt.
-status() { return this.db.prepare('SELECT receipts.id,source_key,received_at,hold_notices,blocked,claimed_turn,'+(this.hasClaimedAt?'claimed_at':'NULL AS claimed_at')+',finished_at,outcome,protocol_envelopes.state AS envelope_state,protocol_envelopes.reason AS envelope_reason,deadline_at,hold_duration_ms,exit_reason FROM receipts LEFT JOIN protocol_envelopes ON receipts.id=protocol_envelopes.receipt_id LEFT JOIN sources ON receipts.id=sources.receipt_id ORDER BY received_at').all(); }
+status() { return receiptHoldStatus(this.db,this.db.prepare('SELECT receipts.id,source_key,received_at,hold_notices,blocked,claimed_turn,'+(this.hasClaimedAt?'claimed_at':'NULL AS claimed_at')+',finished_at,outcome,protocol_envelopes.state AS envelope_state,protocol_envelopes.reason AS envelope_reason,deadline_at,hold_duration_ms,exit_reason FROM receipts LEFT JOIN protocol_envelopes ON receipts.id=protocol_envelopes.receipt_id LEFT JOIN sources ON receipts.id=sources.receipt_id ORDER BY received_at').all()); }
   // RU: pending: Отбирает незавершённые записи для восстановления без повторного исполнения завершённых.
 // EN: pending: Selects unfinished records for recovery without rerunning completed work.
 pending() { return this.db.prepare('SELECT * FROM receipts WHERE finished_at IS NULL AND session_id IS NOT NULL').all(); }

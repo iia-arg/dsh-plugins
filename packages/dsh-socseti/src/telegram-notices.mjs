@@ -4,6 +4,7 @@ import {sameTelegramText} from './telegram-api.mjs';
 const LIMIT=3500;
 function parts(payload){
  const time=new Intl.DateTimeFormat('ru-RU',{timeZone:'Europe/Moscow',dateStyle:'short',timeStyle:'short'}).format(payload.occurred_at??payload.received_at);
+ if(payload.kind==='dm')return [`Событие ${payload.event_id}\n${time} МСК\n${payload.platform} / dm`];
  const header=`Событие ${payload.event_id}\n${time} МСК\n${payload.platform} / ${payload.kind}\nДиалог: ${payload.conversation_id}\nАвтор: ${payload.subject_id}`;
  const width=LIMIT-header.length-64;if(width<1)throw Error('notice header rejected');
  const bodies=[];let current='';for(const c of payload.text){if(current.length+c.length>width){bodies.push(current);current=''}current+=c}bodies.push(current);

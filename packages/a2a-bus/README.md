@@ -2,7 +2,7 @@
 
 # a2a-bus
 
-**Версия:** 3.1.2
+**Версия:** 3.1.7
 
 ## Назначение
 
@@ -19,14 +19,14 @@
 | `sbin/a2a-proba-novichka` | `/usr/local/sbin/a2a-proba-novichka` | 0755 root:root | приёмка заведённого агента |
 | `bin/a2a-send` | `/usr/local/bin/a2a-send` | 0755 root:root | отправитель: кладёт письмо в ящик, даёт строку «→ кому» |
 | `bin/tell-owner` | `/usr/local/bin/tell-owner` | 0755 root:root | сообщение владельцу через бота вызвавшей учётки |
-| `bin/agent-registry` | `/usr/local/bin/agent-registry` | 0755 root:root | читатель реестра агентов (Python) |
+| — | `/usr/local/bin/agent-registry` | — | с 3.1.7 — пакет `dsh-reestr` (ставится ДО a2a-bus; B-N-2071) |
 | `lib/a2a-bus/outgoing_mirror.py` | `/usr/local/lib/a2a-bus/outgoing_mirror.py` | 0644 root:root | полная запись отправленного письма для режима owner-all |
 | `lib/a2a-bus/v2_with_mirror.py` | `/usr/local/lib/a2a-bus/v2_with_mirror.py` | 0644 root:root | обёртка над внешним `a2a-v2.py` для `a2a-send --v2` |
 | `systemd/a2a-pochtalon.service` | `/etc/systemd/system/a2a-pochtalon.service` | 0644 root:root | oneshot-служба почтальона от root |
 | `systemd/a2a-pochtalon.timer` | `/etc/systemd/system/a2a-pochtalon.timer` | 0644 root:root | таймер: `OnBootSec=30s`, `OnUnitInactiveSec=5s` |
 | `systemd/a2a-pochtalon.service.d/60-python-padenie-70.conf` | `/etc/systemd/system/a2a-pochtalon.service.d/60-python-padenie-70.conf` | 0644 root:root | запуск почтальона через `python-padenie-70`: непойманное исключение — код 70, юнит failed |
 | `systemd/a2a-pochtalon.service.d/70-predel-v-chat.conf` | `/etc/systemd/system/a2a-pochtalon.service.d/70-predel-v-chat.conf` | 0644 root:root | `A2A_PREDEL_V_CHAT=3800` |
-| `share/agent-registry/shablony-raskladki/{codex,sdk-claude}/*.tmpl` | `/etc/agent-registry/shablony-raskladki/<семейство>/*.tmpl` | 0644 root:root, каталоги 0755 при установке ниже; на существующей машине сохраняйте согласованную группу реестра | шаблоны A/B/C/M для `agent-registry sobrat`/`verify` (что в них — ниже, «Шаблоны раскладки»). Путь задаёт поле реестра `mashina.raskladka_obshchee.shablony` |
+| — (с 3.1.7 — `dsh-reestr`: `share/agent-registry/shablony-raskladki/{codex,sdk-claude}/*.tmpl`) | `/etc/agent-registry/shablony-raskladki/<семейство>/*.tmpl` | 0644 root:root, каталоги 0755 при установке ниже; на существующей машине сохраняйте согласованную группу реестра | шаблоны A/B/C/M для `agent-registry sobrat`/`verify` (что в них — ниже, «Шаблоны раскладки»). Путь задаёт поле реестра `mashina.raskladka_obshchee.shablony` |
 | `test/stend-outgoing-mirror.py` | не ставится | — | стенд отправителя |
 | `test/stend-13-21.py` | не ставится | — | генератор, общие ACL и корень машины |
 | `test/stend-alpha.py` | не ставится | — | sender/registry/root-почтальон на частных копиях |
@@ -66,6 +66,12 @@ agenty:
         yashchik: /var/spool/a2a/demosvc
 ```
 
+`agent-registry verify` проверяет режим `kanal.yashchik_rezhim`: строка `'1730'` по умолчанию либо `'0700'` для намеренно закрытого ящика. Записывайте значение в кавычках: YAML `0700` без кавычек становится числом448 и будет отклонён. Неизвестное значение или несовпадение режима/владельца дают расхождение. Проверка: `python3 -B test/stend-yashchik-rezhim.py` (частные каталоги, без root). Режим и права доступа инструмент не меняет.
+
+С 3.1.5 обратная сверка «машина → реестр» при отказе перечислить РОДИТЕЛЯ ящика, заявленного закрытым (`'0700'`), у не-root руки пишет «граница» (как прямая сверка того же ящика), а не слепоту; итоговая строка `verify` добавляет «обратно: граница N (не моей рукой: <учётка>)». Любой иной отказ и любой отказ у root — СЛЕПОТА, как прежде. Полную обратную сверку даёт `sudo agent-registry verify`. Стенд `python3 -B test/stend-obratno-granica.py` (НЕ от root).
+
+С 3.1.6 почта Автопилота в профиле A: `namerenie.raskladka.autopilot_pochta: true` даёт в блоке канала `agentName` латиницей (имя записи) и `autopilotMail` — `noticeDir` `<dom>/a2a/zakryto/<имя>`, `trafficChatId` и `publisherBotIds` из `mashina.raskladka_obshchee.autopilot_pochta` (`traffic_chat_id`, `publisher_bot_ids`), `names` — видимое имя и имя записи. Без признака профиль прежний байт в байт. Отличием параметры почты не задаются; негодный признак или общий блок — отказ сборки. Код и шаблоны A ставятся одним пакетом: прежний код на новых шаблонах отказывает («блок BEZ_AP_POCHTA: параметра нет»). Стенд `python3 -B test/stend-ap-pochta.py` (без root).
+
 Это минимальный пример для почты, не полный реестр для `verify`/`sobrat`. При такой записи `a2a-zavesti demo` создаёт ящик по учётке `demosvc`; `kanal.yashchik` указывает тот же путь. `agent-registry pole demo polzovatel --json` должен вернуть `"demosvc"`. Нужны отдельные записи отправителя и получателя; для owner-all отправитель также должен иметь правильные `dom`, `polzovatel` и `kanal`. У общей учётки требуются явные отдельные ящики агентов и отдельная проверка их читателей: ящик общей учётки не доказывает маршрут к конкретному агенту.
 
 До копирования unit/drop-in проверьте обязательные зависимости; эти команды ничего не устанавливают:
@@ -80,10 +86,10 @@ test -r /etc/agent-registry/agents.yaml
 
 ### Копирование файлов
 
-npm здесь не участвует. Файлы копируются руками от root. Порядок обязателен: сначала `bin/agent-registry`, затем оба помощника `lib/a2a-bus/*`, затем `bin/a2a-send`. Новое зеркало со старым реестром не узнаёт штатное отсутствие отправителя по машинному маркеру и даёт код 4 после укладки; письмо нельзя повторять автоматически. При откате сначала верните прежние mirror-helper, затем прежний реестр; новое зеркало нельзя оставлять со старым реестром.
+npm здесь не участвует. Файлы копируются руками от root. Порядок обязателен: сначала пакет `dsh-reestr` (с 3.1.7 в нём `agent-registry`), затем оба помощника `lib/a2a-bus/*`, затем `bin/a2a-send`. Новое зеркало со старым реестром не узнаёт штатное отсутствие отправителя по машинному маркеру и даёт код 4 после укладки; письмо нельзя повторять автоматически. При откате сначала верните прежние mirror-helper, затем прежний реестр; новое зеркало нельзя оставлять со старым реестром.
 
 ```sh
-install -m 0755 bin/agent-registry /usr/local/bin/
+# agent-registry — из пакета dsh-reestr (с a2a-bus 3.1.7 ставится ПЕРВЫМ, см. его README)
 install -d -m 0755 /usr/local/lib/a2a-bus
 install -m 0644 lib/a2a-bus/outgoing_mirror.py lib/a2a-bus/v2_with_mirror.py /usr/local/lib/a2a-bus/
 install -m 0755 bin/a2a-send bin/tell-owner /usr/local/bin/
@@ -95,13 +101,7 @@ systemctl daemon-reload
 systemctl enable --now a2a-pochtalon.timer
 ```
 
-Для `sobrat`/`verify` установите семь шаблонов в каталог реестра (на sadik — `/etc/agent-registry/shablony-raskladki`); это не запуск службы:
-
-```sh
-install -d -m 0755 /etc/agent-registry/shablony-raskladki/codex /etc/agent-registry/shablony-raskladki/sdk-claude
-install -m 0644 share/agent-registry/shablony-raskladki/codex/*.tmpl /etc/agent-registry/shablony-raskladki/codex/
-install -m 0644 share/agent-registry/shablony-raskladki/sdk-claude/*.tmpl /etc/agent-registry/shablony-raskladki/sdk-claude/
-```
+Шаблоны раскладки для `sobrat`/`verify` с 3.1.7 ставит пакет `dsh-reestr` (B-N-2071: реестр агентов нужен и машине без почты).
 
 Шаблоны раскладки кладутся в каталог, который указан в поле реестра `mashina.raskladka_obshchee.shablony`. На рабочей машине это `/etc/agent-registry/shablony-raskladki`.
 

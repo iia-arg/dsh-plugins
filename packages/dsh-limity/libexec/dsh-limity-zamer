@@ -16,7 +16,7 @@
   у всех) · подписку вне podpiski.json или без поля zamer · расход вне sadik — только ростом доли. Таблицу только ЧИТАЕТ.
 Коды: 0 — проход состоялся (в т.ч. «замерять не надо» и «не измерено»); 2 — слепота настройки («СЛЕПОТА: …»); 3 — ошибка вызова.
 """
-import json, os, pwd, re, sqlite3, subprocess, sys, time
+import html, json, os, pwd, re, sqlite3, subprocess, sys, time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -49,7 +49,8 @@ MSK = ZoneInfo('Europe/Moscow')
 
 def trevoga(tekst, golaya=False):   # golaya — текст как есть (пороги окон: одна строка по слову владельца 23:34 МСК)
     try:
-        return os.access(ALERT, os.X_OK) and subprocess.run([ALERT, tekst if golaya else f'лимиты подписок ({os.uname().nodename}): {tekst}'],
+        tekst = tekst if golaya else f'лимиты подписок ({os.uname().nodename}): {tekst}'   # 3.1.7: agent-alert шлёт HTML — «<», «&» из хвоста stderr замера, ошибок конфига, str(e) экранирую
+        return os.access(ALERT, os.X_OK) and subprocess.run([ALERT, html.escape(tekst, quote=False)],
                                                             capture_output=True, timeout=60).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False

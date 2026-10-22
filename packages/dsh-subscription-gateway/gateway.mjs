@@ -1,5 +1,6 @@
 // RU: Сервис шлюза на экземпляр агента: проверяет ingress bearer, отделяет идентичность беседы от текста, ведёт SDK ход и отдаёт NDJSON. Учётка шлюза исполняет инструменты; bypassPermissions не заменяет Unix-изоляцию.
 // EN: Per-agent gateway service: validates ingress bearer, separates conversation identity from text, runs the SDK turn and emits NDJSON. The gateway account executes tools; bypassPermissions does not replace Unix isolation.
+import {GatewayUsage,prepareGatewayUsage} from './usage-producer.mjs';
 import {admitIngress,ingressBearerVeren,readIngressKey} from './ingress-auth.mjs';
 import {vychistit} from './secret-redact.mjs';
 import {prochestReestr, maskirovatTekst, raskrytZnachenie, podnyatPosrednika, PUSTOJ_REESTR} from './pdn-maska.mjs';
@@ -47,6 +48,8 @@ import { DatabaseSync } from 'node:sqlite';
 
 const KOREN_SDK = new URL('./sdk-runtime/node_modules/', import.meta.url);
 const SDK_KESH = new Map();
+const SDK_WITNESSES = new Map();
+const SDK_LOADS = new Map();
 
 // RU: Выбрать import exports SDK, затем module/main fallback; require.resolve не гарантирует ESM-only вход.
 // EN: Select SDK import exports before module/main fallback; require.resolve cannot guarantee ESM-only entries.
@@ -63,6 +66,8 @@ function vhodPaketa(pj) {
 // EN: Lazily load SDK from adjacent sdk-runtime and cache it until restart. Missing runtime and import failure are distinct diagnostics.
 async function zagruzitSdk(imya) {
   if (SDK_KESH.has(imya)) return SDK_KESH.get(imya);
+  if(SDK_LOADS.has(imya))return SDK_LOADS.get(imya);
+  const pending=(async()=>{
   const baza = new URL(imya + '/', KOREN_SDK);
   let pj;
   try {
@@ -76,9 +81,15 @@ async function zagruzitSdk(imya) {
       `· причина чтения: ${e?.code ?? e?.message}`,
     );
   }
-  let mod;
+  let mod, witness;
   try {
-    mod = await import(new URL(vhodPaketa(pj), baza).href);
+    const entry=new URL(vhodPaketa(pj),baza);
+    const snapshot=()=>nodeCrypto.createHash('sha256').update(fs.readFileSync(entry)).digest('hex');
+    const before=snapshot();
+    mod = await import(entry.href);
+    // ESM already owns this URL after import: even metadata failure must cache it unversioned.
+    try{const after=snapshot(),current=JSON.parse(fs.readFileSync(new URL('package.json',baza),'utf8'));
+    if(before===after&&current.version===pj.version)witness=Object.freeze({sdkVersion:pj.version,sdkEntrySha256:before});}catch{}
   } catch (e) {
     throw new Error(
       `SDK «${imya}» ${pj.version ?? '?'} найден, но НЕ ЗАГРУЖАЕТСЯ: ${e?.code ?? ''} ${e?.message}. ` +
@@ -88,8 +99,12 @@ async function zagruzitSdk(imya) {
     );
   }
   SDK_KESH.set(imya, mod);
+  SDK_WITNESSES.set(imya,witness??null);
   log(`[shlyuz] SDK ${imya} ${pj.version ?? '?'} взят из слоя среды: ${baza.pathname}`);
   return mod;
+  })();
+  SDK_LOADS.set(imya,pending);
+  try{return await pending}finally{SDK_LOADS.delete(imya)}
 }
 
 import {loadCompaction} from './compaction-runtime.mjs';
@@ -274,13 +289,15 @@ function envDvizhka(dop) {
   delete env.CLAUDE_CODE_OAUTH_TOKEN;
   return { ...env, ...dop };
 }
-function spawnDvizhkaSTokenom(o, token) {
+function spawnDvizhkaSTokenom(o, token, usage) {
   const env = { ...o.env, CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: '3' };
   delete env.CLAUDE_CODE_OAUTH_TOKEN;
   // RU: как spawnLocalProcess SDK (stdio pipe ×3, signal, windowsHide) + fd 3 — труба с токеном, закрывается сразу после записи.
   const child = spawnProcess(o.command, o.args, { cwd: o.cwd, env, signal: o.signal, stdio: ['pipe', 'pipe', 'pipe', 'pipe'], windowsHide: true });
   child.stdio[3].on('error', (e) => log(`🔴 движок: труба токена (fd 3) отказала: ${e?.code ?? e?.message}`));
   child.stdio[3].end(String(token ?? ''));
+  try{usage?.claudeHandle(TOKEN_FILE,{env})}catch{try{usage?.fail('SOURCE_GAP')}catch{}}
+  try{usage?.engineProcess(child)}catch{try{usage?.fail('G_PROCESS_UNPROVEN')}catch{}}
   // RU: SDK при своём запуске копит хвост stderr для «exited with code N»; при нашем — копим сами и пишем в журнал (через vychistit).
   let hvost = '';
   child.stderr.on('data', (b) => { hvost = (hvost + b).slice(-4000); });
@@ -695,7 +712,7 @@ const POSTAVSHCHIK_OPENAI = {
     return false;
   },
 
-  async *progon({ zapros, sessiya, cwd, model, registerTaskControl, pressure, spoolAddress, pressureCounter=pressureCounterFor(spoolAddress), contextObserver }) {
+  async *progon({ zapros, sessiya, cwd, model, registerTaskControl, pressure, spoolAddress, pressureCounter=pressureCounterFor(spoolAddress), contextObserver, usageObserver }) {
 
     const { Codex } = await zagruzitSdk('@openai/codex-sdk');
 
@@ -735,7 +752,7 @@ const POSTAVSHCHIK_OPENAI = {
         for await (const e of progonAppServer({ bin: CODEX_BIN, env: envA, log, zapros, sessiya, cwd: cwd || undefined, model: model || undefined,
           sandbox: PESOCHNICA || undefined, effort: EFFORT || undefined, config: mcpNastrojka.config, porog: p,
           tekstSignala: (z) => tekstSignala(z, p), clientVersion: VERSIYA,
-          registerTaskControl, onPressureAccepted:()=>pressureCounter.accepted(),onThread:id=>{nitA=id} })) {
+          registerTaskControl, usageObserver, onPressureAccepted:()=>pressureCounter.accepted(),onThread:id=>{nitA=id} })) {
           if (e.type === 'itog-app-server') { itogA = e; continue; }
           if (e.type === 'usage' && e.sessiya) nitA = e.sessiya;
           yield e;
@@ -762,9 +779,13 @@ const POSTAVSHCHIK_OPENAI = {
       onCompacted:event=>contextObserver?.compacted(event),onBlind:()=>contextObserver?.blind(),
     });
     const turnUsageWatch = watchTurnUsage(() => { const id = thread.id ?? sessiya; return id ? putSessii(id, cwd || WORK_DIR) : null; }, log);
+    const usage=(method,...args)=>{try{usageObserver?.[method]?.(...args)}catch{try{usageObserver?.fail('SOURCE_GAP')}catch{}}};
+    usage('codexSpawn',mcpNastrojka.env??process.env);
     try {
     const potok = await thread.runStreamed(zapros);
     for await (const ev of potok.events) {
+      if(ev.type==='thread.started')usage('codexReady');
+      if(ev.type==='turn.completed'||ev.type==='turn.failed')usage('codexTerminal');
       if (ev.type === "item.completed") {
         const it = ev.item ?? {};
         if (it.type === "agent_message")      yield { type: "text", text: it.text ?? "" };
@@ -779,6 +800,7 @@ const POSTAVSHCHIK_OPENAI = {
       }
     }
     } finally {
+      usage('codexFinished');
       try { turnUsageWatch.close(); } catch {                                        }
       try { compactWatch.close(); }
       catch {
@@ -819,6 +841,7 @@ const CODEX_PUT = String(process.env.GATEWAY_CODEX_PUT ?? '').trim() || 'exec';
 if (!['exec', 'app-server'].includes(CODEX_PUT)) throw new Error(`GATEWAY_CODEX_PUT «${CODEX_PUT}» неизвестен — знаю exec | app-server`);
 const CODEX_VENDOR = fileURLToPath(new URL('./sdk-runtime/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/', import.meta.url));
 const CODEX_BIN = String(process.env.GATEWAY_CODEX_BIN ?? '').trim() || path.join(CODEX_VENDOR, 'bin', 'codex');
+
 
 const YASHCHIK = String(process.env.GATEWAY_YASHCHIK ?? '').trim()
   || (String(process.env.KOMPAKT_AGENT ?? '').trim() ? `/var/spool/a2a/${String(process.env.KOMPAKT_AGENT).trim()}` : '');
@@ -1458,11 +1481,16 @@ async function obrabotatZapros(req, res) {
   },(binding,codex,request_id)=>send({type:'task-status',state:'terminal',binding,codex,request_id}),{deferTerminal:true}) : undefined;
   // RU: Флаг явного стопа — только по принятому stop-exact: отвергнутый (ход кончился, маршрут закрыт) не отменяет дослать B, компакт и письмо продолжения (аудит №14). На время самого стопа приём держит prervanPoStop.
   // EN: The explicit-stop flag follows an accepted stop-exact only: a refused one (turn over, route closed) does not cancel B delivery, compaction and the continuation letter (audit #14). During the stop itself prervanPoStop holds intake.
-  const registerTaskControl=baseTaskControl?Object.assign((dispatch,engine)=>baseTaskControl(async packet=>{
+  let usageObserver=null;
+  if(body.taskControl?.request_id&&USAGE_SOURCE_FILE)try{
+    usageObserver=new GatewayUsage({file:USAGE_SOURCE_FILE,engine:IMYA_POSTAVSHCHIKA==='openai'?'codex':'claude',descriptor:body.taskControl,log});
+  }catch{log('[usage] G_SOURCE_UNAVAILABLE')}
+  const usage=(method,...args)=>{try{usageObserver?.[method]?.(...args)}catch{try{usageObserver?.fail('SOURCE_GAP')}catch{}}};
+  const registerTaskControl=baseTaskControl?Object.assign((dispatch,engine)=>{const close=baseTaskControl(async packet=>{
     const otvet=await dispatch(packet);
     if(packet.op==='stop-exact'&&otvet?.accepted===true)explicitMailStop=true;
     return otvet;
-  },engine),{closed:baseTaskControl.closed,terminal:baseTaskControl.terminal}):undefined;
+  },engine);if(IMYA_POSTAVSHCHIKA==='anthropic')usage('ready',engine);return close},{closed:baseTaskControl.closed,terminal:engine=>{const result=baseTaskControl.terminal(engine);if(result&&IMYA_POSTAVSHCHIKA==='anthropic')usage('terminal',engine);return result}}):undefined;
 
   res.writeHead(200, {
     'content-type': 'application/x-ndjson; charset=utf-8',
@@ -1554,7 +1582,7 @@ async function obrabotatZapros(req, res) {
           sessiya: tekushchij.resume || null,
           cwd: body.cwd || WORK_DIR,
           model: body.model || undefined,
-          registerTaskControl, pressure:pressureHoda, spoolAddress, pressureCounter, contextObserver,
+          registerTaskControl, pressure:pressureHoda, spoolAddress, pressureCounter, contextObserver, usageObserver,
         })) {
           if (e.type === 'input-status' && e.state === 'offered') accountInput(e.packet);
           if (e.type === 'usage') {
@@ -1645,6 +1673,7 @@ async function obrabotatZapros(req, res) {
     const iter = query({
       prompt: tekushchij.prompt,
       options: {
+        ...(usageObserver ? { includePartialMessages: true } : {}),
         model: body.model || DEFAULT_MODEL,
 
         maxTurns: Number(body.maxTurns) > 0 ? Number(body.maxTurns) : DEFAULT_MAX_TURNS,
@@ -1655,7 +1684,7 @@ async function obrabotatZapros(req, res) {
         ...(process.env.GATEWAY_INSTRUMENTY_DVIZHKA === 'net' ? { tools: [] } : {}),
         ...(EFFORT ? { effort: EFFORT } : {}),
 
-        hooks: { Stop: [{ hooks: [async (vhod) => {effortIzHuka=vhod?.effort?.level??null;return composeInputHook('Stop')}] }],
+        hooks: { ...(usageObserver ? {SubagentStart:[{hooks:[async(input,hookId)=>{usage('claudeSubagentStart',input,hookId);return {}}]}]} : {}), Stop: [{ hooks: [async (vhod) => {effortIzHuka=vhod?.effort?.level??null;return composeInputHook('Stop')}] }],
           ...(DAVLENIE.has('signal') || registerTaskControl ? { PostToolBatch: [{ hooks: [async () => composeInputHook('PostToolBatch')] }] } : {}) },
 
         ...(tekushchij.resume ? { resume: tekushchij.resume } : { sessionId }),
@@ -1669,7 +1698,7 @@ async function obrabotatZapros(req, res) {
         env: envDvizhka({ CLAUDE_CODE_NO_MODEL_FALLBACK: '1',
           ...(kartaHoda ? { ANTHROPIC_BASE_URL: kartaHoda.url } : {}),
           ...(propuskHoda ? { GATEWAY_MOST_PROPUSK: propuskHoda } : {}) }),
-        spawnClaudeCodeProcess: (o) => spawnDvizhkaSTokenom(o, token),
+        spawnClaudeCodeProcess: (o) => spawnDvizhkaSTokenom(o, token, usageObserver),
       },
     });
 
@@ -1721,6 +1750,8 @@ async function obrabotatZapros(req, res) {
     let oknoSdkObeshchanie = null;
     try {
     for await (const m of iter) {
+      if(m.type==='system'&&m.subtype==='init')usage('claudeVersion',m,SDK_WITNESSES.get('@anthropic-ai/claude-agent-sdk'));
+      usage('claudeMessage',m);
       if (m.type === 'result') { rezultatPrishyol = true; rezultatVid = m.subtype ?? null; }
       if (m.type === 'rate_limit_event') zapisatLimit(m.rate_limit_info);
       if (m.type === 'system' && m.subtype === 'compact_boundary') {
@@ -1966,9 +1997,12 @@ async function obrabotatZapros(req, res) {
     otmetitOtkaz(plan?.kluch, message);
     send({ type: 'error', message: message.slice(0, 500) });
   } finally {
+    try{void usageObserver?.close().catch(()=>{})}catch{}
     res.end();
   }
 }
+
+const USAGE_SOURCE_FILE=prepareGatewayUsage({provider:IMYA_POSTAVSHCHIKA,env:process.env,log});
 
 server.listen(PORT, HOST, async () => {
 

@@ -1,4 +1,3 @@
-# 0.1.0-alpha.48 · Обезличивание / Anonymization
 
 Принятый отказ недоступной политики сохранён; нейтральные исторические подписи и сообщения. Подача, отбор, доверие и алгоритм восстановления не меняются.
 
@@ -15,6 +14,17 @@ Fixed the load-validation stand: use the event returned by Session.append, check
 Without core session-exclusion policy, refuse memory access with a reason; policy recovery permits the next call. The release version is assigned separately.
 
 # История изменений · Change history
+
+## 3.1.3 — 14.10.2026 · npm 12: состав публикации через `npm-sostav` (B-N-2048)
+
+- `test/stend-readme.mjs`: вывод `npm pack --dry-run --json` разбирает помощник `npm-sostav --files` (`dsh-pribory` 3.1.2) —
+  одним правилом для npm 11 (массив) и npm 12 (объект); прежний `JSON.parse(…)[0].files` под npm 12 слеп. Под npm 11.17.0
+  и 12.2.0 стенд даёт тот же счёт.
+- Стенду нужен `npm-sostav` в PATH (на sadik — `/usr/local/bin`); нет его — стенд сразу выходит кодом 2 «СЛЕПОТА: npm-sostav
+  не найден — нужен dsh-pribory ≥ 3.1.2», не красным и не зелёным.
+- `package.json`: необязательный peer `dsh-pribory ^3.1.2` (`peerDependenciesMeta.optional`) — объявляет требование стенда и ничего
+  не ставит: обязательный peer под npm 11 и 12 офлайн-установкой не ставится (код 1, `dsh-pribory` в реестре только 3.1.1).
+- Код пакета не менялся.
 
 ## 3.1.2 — 14.10.2026 · подготовка к публикации: оформление
 

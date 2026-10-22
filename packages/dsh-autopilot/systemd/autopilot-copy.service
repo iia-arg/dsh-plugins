@@ -1,0 +1,30 @@
+[Unit]
+Description=Autopilot postal receipt publisher (agent bots, no model)
+After=autopilot-mail.service network-online.target
+Requires=autopilot-mail.service
+PartOf=autopilot-mail.service
+OnFailure=autopilot-mail-failed@%n.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=autopilot-copy
+Group=autopilot-copy
+SupplementaryGroups=autopilot-mail
+ExecStart=/usr/bin/python3 /opt/autopilot/post/0.1.3/pilot/mail_copy_worker.py
+Restart=on-failure
+RestartPreventExitStatus=2
+RestartSec=3
+TimeoutStopSec=15
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+InaccessiblePaths=/var/spool/a2a /var/lib/autopilot-mail /etc/agent-registry /etc/dsh-telegram
+UMask=0077
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

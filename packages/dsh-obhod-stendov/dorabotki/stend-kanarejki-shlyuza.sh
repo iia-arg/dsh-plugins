@@ -228,7 +228,7 @@ import json, os, re, sys
 kat, spisok = sys.argv[1:3]
 try:
     d = json.load(open(spisok, encoding='utf-8'))
-    nazvany = {s['klyuch'] for s in d['sushchnosti']} | set(d.get('bezvrednye', {}))
+    nazvany = {s['klyuch'] for s in d['sushchnosti']} | set(d.get('bezvrednye', {})) | {k for k in d.get('tolko_nalichie', {}) if not k.startswith('_')}
 except Exception as e:
     print(f'список не разобран: {e}'); sys.exit(2)
 IMYA = r'([A-Za-z_][A-Za-z0-9_]*)'
@@ -253,6 +253,22 @@ while ochered:
     # (шлюз 0.4.17, A-N-721 Б: const envA = { ...(mcpNastrojka.env ?? process.env) }). Переменная, собранная таким распадом, —
     # псевдоним: её чтения NAME.KLYUCH — ключи окружения, как env.KLYUCH (иначе envA.PATH прошёл бы мимо списка).
     raspad = list(re.finditer(r'\.\.\.\(\s*[\w.?]+\s*\?\?\s*process\.env\s*\)', s))
+    # B-N-2124/ИП 3.1.111 (18.10, Искра): шлюз 3.1.6 отдаёт окружение ЦЕЛИКОМ аргументом наблюдателю учёта —
+    # usage('codexSpawn', X ?? process.env) gateway.mjs:769, codex-app-server.mjs:100; beforeSpawn?.(env ?? process.env, args) :50.
+    # Это граница, как распад: что приёмник читает из этого окружения, ловят правила env.X/env?.X и hasOwn ниже (приёмник
+    # usage-producer.mjs codexSpawn(env) — параметр env). ЧЕГО НЕ ЛОВИТ: приёмник, назвавший параметр иначе (sreda.X) — его чтения мимо.
+    raspad += list(re.finditer(r'[\w.?]+\s*\?\?\s*process\.env(?=\s*[,)])', s))
+    # 18.10 (Искра, находка Зари П4): шлюз 3.1.8 gateway.mjs:1989 — prepareGatewayUsage({provider:…, env:process.env, log}):
+    # окружение отдано СВОЙСТВОМ объекта с ключом ровно env — приёмник берёт его параметром env (usage-producer.mjs:7
+    # {provider, env=process.env, log}), его чтения ловят env.X/env?.X/hasOwn. Граница, как довод вызова. ЧЕГО НЕ ЛОВИТ:
+    # свойство под другим ключом (sreda:process.env) — остаётся слепотой; приёмник, переименовавший env внутри, — его чтения мимо.
+    raspad += list(re.finditer(r'(?<![\w.$])env\s*:\s*process\.env(?=\s*[,}])', s))
+    # Проверка НАЛИЧИЯ ключа — тоже чтение имени (usage-producer.mjs codexSpawn: overrides=[...].some(k=>Object.hasOwn(env,k))).
+    # ЧЕГО НЕ ЛОВИТ: массив, собранный не литералом, «k in env», Object.keys(env).includes(...).
+    kod |= set(re.findall(r'''Object\.hasOwn\(\s*env\s*,\s*['"]([A-Z_][A-Z0-9_]*)['"]''', s))
+    for mas, per in re.findall(r'\b(\w+)\.some\(\s*(\w+)\s*=>\s*Object\.hasOwn\(\s*env\s*,\s*\2\s*\)\s*\)', s):
+        for lit in re.findall(r'\b' + re.escape(mas) + r'\s*=\s*\[([^\]]*)\]', s):
+            kod |= set(re.findall(r'''['"]([A-Z_][A-Z0-9_]*)['"]''', lit))
     for n_ in re.findall(r'\b(?:const|let|var)\s+' + IMYA + r'\s*=\s*\{\s*\.\.\.\(\s*[\w.?]+\s*\?\?\s*process\.env\s*\)\s*\}', s):
         kod |= set(re.findall(r'\b' + re.escape(n_) + r'\.' + IMYA, s))
     for m in re.finditer(r"""process\.env\b(?!\s*\.|\s*\[\s*['"])""", s):

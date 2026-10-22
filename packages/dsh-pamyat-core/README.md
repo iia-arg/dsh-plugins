@@ -30,9 +30,9 @@ flowchart LR
 
 ## Установка и требования · Installation and requirements
 
-**Откуда ставить.** Пакет публикуется в npm выпуском 3.1.2 (порядок и окно — по решению владельца). До выхода в реестре npm лежит старая редакция `0.1.0-alpha.*` (замер 10.10.2026, `npm view dsh-pamyat-core version`): `npm install dsh-pamyat-core` поставит её, а не описанную здесь. До выпуска ставьте из дерева исходников: `npm pack <дерево>/packages/dsh-pamyat-core` и затем `npm install ./dsh-pamyat-core-<версия>.tgz`.
+**Откуда ставить.** В npm доступна редакция `3.1.2` (замер 15.10.2026, `npm view dsh-pamyat-core version`). По решению владельца от 14.10.2026 изменения после публикации ведутся локально и в npm не выкладываются. Для актуальной локальной редакции подготовьте архив из выбранной головы дерева: `npm pack <дерево>/packages/dsh-pamyat-core`, затем `npm install ./dsh-pamyat-core-<версия>.tgz`.
 
-**Where to install from.** The package is published to npm with release 3.1.2 (order and window — by the owner's decision). Until then the npm registry holds an old `0.1.0-alpha.*` edition (measured 10.10.2026, `npm view dsh-pamyat-core version`): `npm install dsh-pamyat-core` installs that one, not the one described here. Until the release, install from the source tree: `npm pack <дерево>/packages/dsh-pamyat-core`, then `npm install ./dsh-pamyat-core-<версия>.tgz`.
+**Where to install from.** npm provides `3.1.2` (checked on 2026-10-15 with `npm view dsh-pamyat-core version`). By the owner's decision of 2026-10-14, changes after publication are maintained locally and are not republished to npm. For the current local edition, pack the selected source revision with `npm pack <tree>/packages/dsh-pamyat-core`, then run `npm install ./dsh-pamyat-core-<version>.tgz`.
 
 Нужны Node.js 22+ с рабочим `node:sqlite`, DSH с peer-диапазонами Cordis `^4.0.1` и Schemastery `^3.18.1`, каталог базы с правом записи у пользователя платформы. SQLite встроен в Node; отдельный сервер базы и нативный npm-драйвер не нужны. На старых сборках Node поддержка встроенного SQLite может требовать флага запуска; сначала проверь импорт ниже.
 
@@ -40,7 +40,7 @@ Requirements: Node.js 22+ with working `node:sqlite`, a DSH deployment with peer
 
 ```sh
 node --input-type=module -e "import('node:sqlite').then(() => console.log('SQLite available'))"
-npm pack <дерево>/packages/dsh-pamyat-core   # до выпуска 3.1.2 — из дерева · until release 3.1.2 — from the tree
+npm pack <дерево>/packages/dsh-pamyat-core   # актуальная локальная редакция из дерева · current local edition from the tree
 npm install ./dsh-pamyat-core-<версия>.tgz
 ```
 

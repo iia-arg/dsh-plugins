@@ -39,7 +39,7 @@ What the operations write:
 
 ## Installation
 
-Use the verified source tree with `dsh-pamyat-vyvoz` beside `dsh-pamyat-core`, or build **local archives** from the selected revision. The checked core snapshot is **3.1.1**. The package is published to npm as `dsh-pamyat-vyvoz`; until then do not install bare registry names.
+Use the verified source tree with `dsh-pamyat-vyvoz` beside `dsh-pamyat-core`, or build **local archives** from the selected revision. The checked core snapshot is **3.1.1**. npm provides `3.1.3` (checked on 2026-10-15 with `npm view dsh-pamyat-vyvoz version`). By the owner's decision of 2026-10-14, changes after publication are maintained locally and are not republished to npm. Use archives from the selected revision for the local check described here.
 
 ```bash
 # CORE_SOURCE / VYVOZ_SOURCE are package source directories; ARTIFACTS already exists.
@@ -47,7 +47,7 @@ Use the verified source tree with `dsh-pamyat-vyvoz` beside `dsh-pamyat-core`, o
 (cd "$VYVOZ_SOURCE" && npm pack --ignore-scripts --pack-destination "$ARTIFACTS")
 # In a separate standalone CLI directory, without registry access:
 npm install --offline --ignore-scripts --legacy-peer-deps \
-  /absolute/path/dsh-pamyat-core-3.1.2.tgz \
+  /absolute/path/dsh-pamyat-core-3.1.3.tgz \
   /absolute/path/dsh-pamyat-vyvoz-3.1.3.tgz
 ./node_modules/.bin/vyvoz-pamyati --help
 ```

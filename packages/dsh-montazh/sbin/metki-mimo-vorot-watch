@@ -24,10 +24,22 @@ import json, os, re, stat, subprocess, sys, datetime
 REESTR = os.environ.get('MMV_REESTR', '/etc/agent-registry/plugins.yaml')
 ZD = os.environ.get('MMV_ZHURNAL_DIR', '/var/lib/vypusk-tegom')
 ALERT = os.environ.get('MMV_ALERT', '/usr/local/bin/agent-alert')
+MONTAZH_OKNO = os.environ.get('MMV_MONTAZH_OKNO', '/usr/local/sbin/montazh-okno')   # B-N-1978: окно монтажа — один источник
 SD = os.environ.get('MMV_STATE') or os.environ.get('STATE_DIRECTORY') or '/var/lib/metki-mimo-vorot-watch'
 ZHURNAL, SNIMOK = os.path.join(ZD, 'zhurnal.tsv'), os.path.join(ZD, 'istoricheskie-metki.tsv')
 SOST, ITOG = os.path.join(SD, 'skazano.txt'), os.path.join(SD, 'itog.json')
 RE_VER = re.compile(r'^(.+)-v([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]*[0-9A-Za-z-])?)$')   # B-N-2029: дефис внутри pre-release, образец = OBRAZEC_VERSII ворот
+
+def okno_otlozhilo(ident):
+    """B-N-1978: запись реестра в ОТКРЫТОМ окне монтажа, назвавшем entry:<id>, — промежуток «файлы → метка → запись», не беда.
+    Спрашиваем montazh-okno (тот же разбор, что у vypusk-okno-watch); код 4 и «ОТЛОЖЕНО …» — отсрочка, иное (нет окна, срок
+    истёк, помощник не ответил) — прежнее красное. «Окно не закрыто» по сроку говорит montazh-okno watch, не этот сторож."""
+    if not ident: return None
+    try:
+        p = subprocess.run([MONTAZH_OKNO, 'otlozheno', '--avto-montazh', f'entry:{ident}'], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError): return None
+    stroka = (p.stdout.strip().splitlines() or [''])[0]
+    return stroka if p.returncode == 4 and stroka.startswith('ОТЛОЖЕНО ') else None
 
 def itog(kod, krasnye, tekst, dostavleno='-', ist=None):
     try:
@@ -149,7 +161,10 @@ def sud(repos, refs):
     vse = {(r_, i) for r_ in repos for i in metki(r_)}
     ist_reestr = 0
     for repo, ref, ident in refs:
-        if (repo, ref) not in vse: krasnye.append(f'РЕЕСТР ССЫЛАЕТСЯ НА МЕТКУ, КОТОРОЙ НЕТ: {ident} → {ref} ({repo})')
+        if (repo, ref) not in vse:
+            otl = okno_otlozhilo(ident)
+            if otl: print(f'{otl} — запись {ident} → {ref}: метки ещё нет, окно монтажа открыто'); continue
+            krasnye.append(f'РЕЕСТР ССЫЛАЕТСЯ НА МЕТКУ, КОТОРОЙ НЕТ: {ident} → {ref} ({repo})')
         elif (repo, ref) in ist: ist_reestr += 1
     print(f'СВОДКА: деревьев {len(repos)} · меток {len(vse)} · исторических {ist_n} (из них derevo.ref реестра {ist_reestr} из {len(refs)}) · '
           f'после журнала {novyh} · красных {len(krasnye)} · строк следа {len(sled)}')

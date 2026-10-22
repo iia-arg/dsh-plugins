@@ -6,6 +6,9 @@ B-N-1776 такт 4 (07.10.2026): источник — /var/lib/dsh-limity/limit
 (limity-read) снят. Правило свежести (Вениамин 07.10 19:24 МСК) — формулами в /etc/default/pereklyuchatel-podpiski-limity,
 чисел правила в коде нет. Окна five_hour и seven_day; по каждому — последний ИЗМЕРЕННЫЙ замер (izmereno=1): более новая
 строка «не измерено» не прячет отказ, сброс которого ещё не прошёл.
+B-N-1806 (16.10.2026, Заря): доля 0 без сброса — окно НЕ НАЧАТО (его никто не тратил; сервер сброса не даёт), а не «сброс
+неизвестен»: простаивающая подписка иначе не бывает «свободной» ни при какой частоте замера (база 16.10: все 341 строк five_hour
+izmereno=1 с пустым сбросом — с долей 0). Возраст замера судится как прежде.
 ЧЕГО НЕ ЛОВИТ: окна seven_day_opus/seven_day_sonnet/overage не судятся · расход между замерами (только следующим замером) ·
 простаивающая подписка без замеров — «не измерено» по построению (переход только force).
 Выход: «free|blocked|unknown<TAB>причина»; коды 0 / 10 / 20.
@@ -73,10 +76,11 @@ def classify(db, podpiska, p, now):
         if moment > now + 120:
             detail.append(posl + ' (замер в будущем)')
             continue
-        if sbros is None:
+        ne_nachato = sbros is None and dolya == 0 and status != 'rejected'
+        if sbros is None and not ne_nachato:
             detail.append(posl + ' (сброс неизвестен)')
             continue
-        if sbros <= now:
+        if not ne_nachato and sbros <= now:
             detail.append(posl + f' (сброс {utc(sbros)} прошёл — замер о прошлом окне)')
             continue
         if status == 'rejected' or dolya >= p['ISCHERPANA_DOLYA_OT']:
@@ -84,7 +88,7 @@ def classify(db, podpiska, p, now):
             continue
         if dolya < porog and now - moment <= vozrast_min * 60:
             svobodno += 1
-            detail.append(f'{metka} {dolya} ({minut} мин назад)')
+            detail.append(f'{metka} {dolya}{" окно не начато" if ne_nachato else ""} ({minut} мин назад)')
             continue
         detail.append(posl + f' (свободна при доле <{porog:g} и возрасте ≤{vozrast_min:g} мин)')
     if blocked:

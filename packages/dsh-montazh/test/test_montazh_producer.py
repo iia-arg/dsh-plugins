@@ -151,6 +151,54 @@ sys.exit(subprocess.run(['/usr/bin/mv',*sys.argv[1:]]).returncode)
   registry.write_text(json.dumps({'services':[self.entry]}))
   q=subprocess.run([str(PKG/'sbin/montazh-okno'),'zakryt',record['id']],env=self.env,capture_output=True,text=True)
   self.assertEqual(q.returncode,1,q.stdout+q.stderr);self.assertEqual(self.records()[0]['phase'],'open')
+ # B-N-2082: перенос в derevo ДРУГОЙ записи той же pravka (B-N-2071) — закрывается, только если под новым владельцем живой
+ #   файл = blob его ref (условие Вениамина 14:05Z) и реестр = HEAD своего учёта git (LOW); два владельца / чужой ref — нет.
+ def test_derevo_target_moved_to_one_other_entry_closes_two_owners_refuse(self):
+  registry=self.owned_registry();self.assertEqual(self.invoke('files').returncode,0);record=self.records()[0]
+  git=lambda *a,cwd=self.r:subprocess.run(['git','-C',str(cwd),*a],check=True,capture_output=True,text=True)
+  (self.repo/'packages/fixture/x').write_text('new');git('add','.',cwd=self.repo);git('-c','user.name=F','-c','user.email=f@s','commit','-qm','new',cwd=self.repo);git('tag','fixture-v1.0.1',cwd=self.repo)
+  row=dict(self.entry['derevo']['files'][0])
+  self.entry['version']='new';self.entry['derevo']['files']=[];self.entry['derevo']['not_installed']=['package.json','x']
+  receiver=json.loads(json.dumps(self.entry));receiver['id']='receiver-entry';receiver['derevo']['files']=[row];receiver['derevo']['not_installed']=['package.json'];receiver['derevo']['ref']='fixture-v1.0.1'
+  second=json.loads(json.dumps(receiver));second['id']='second-entry'
+  git('init','-q')
+  def close(services):
+   registry.write_text(json.dumps({'services':services}));git('add','registry.yaml');git('-c','user.name=F','-c','user.email=f@s','commit','-qm','r','--allow-empty')
+   return subprocess.run([str(PKG/'sbin/montazh-okno'),'zakryt',record['id']],env=self.env,capture_output=True,text=True)
+  q=close([self.entry,receiver,second]);self.assertEqual(q.returncode,1,q.stdout+q.stderr);self.assertIn('ownership changed',q.stderr);self.assertEqual(self.records()[0]['phase'],'open')
+  stale=dict(receiver,derevo=dict(receiver['derevo'],ref='fixture-v1.0.0'))
+  q=close([self.entry,stale]);self.assertEqual(q.returncode,1,q.stdout+q.stderr);self.assertIn('differs from receiver-entry',q.stderr);self.assertEqual(self.records()[0]['phase'],'open')
+  registry.write_text(json.dumps({'services':[self.entry,receiver]})+' ')
+  q=subprocess.run([str(PKG/'sbin/montazh-okno'),'zakryt',record['id']],env=self.env,capture_output=True,text=True)
+  self.assertEqual(q.returncode,1,q.stdout+q.stderr);self.assertIn('not HEAD of its git record',q.stderr)
+  q=close([self.entry,receiver]);self.assertEqual(q.returncode,0,q.stdout+q.stderr);self.assertEqual(self.records()[0]['phase'],'closed')
+ # B-N-2082 (Вениамин 19:20 МСК, окно e19cdc88): файл покидает derevo, только если это снятие --snyat пункта ОКНА — по старому
+ #   имени его нет, страховка пункта держит его прежние байты ровно раз, рядом ровно один .SNYATO-* с той же суммой. Иное — отказ.
+ def test_derevo_target_removed_by_snyat_of_window_task_closes_only_with_trace(self):
+  import pwd,grp
+  registry=self.owned_registry();owner=pwd.getpwuid(os.getuid()).pw_name+':'+grp.getgrgid(os.getgid()).gr_name
+  git=lambda *a:subprocess.run(['git','-C',str(self.repo),*a],check=True,capture_output=True,text=True)
+  dup=self.live/'y';dup.write_text('dup');(self.repo/'packages/fixture/y').write_text('dup')
+  git('add','.');git('-c','user.name=F','-c','user.email=f@s','commit','-qm','dup');git('tag','-f','fixture-v1.0.0')
+  self.entry['derevo']['files'].append({'local':str(dup),'remote':'y','mode':'0644','owner':owner})
+  registry.write_text(json.dumps({'plugins':[],'services':[self.entry]}))
+  self.env['MO_STRAHOVKI']=str(self.r/'backups')+':'+str(self.r/'private-backups')
+  q=subprocess.run(['bash',str(self.smf),'--punkt','B-N-2025-PROBE','--snyat','--v-boj',str(self.live),'y'],cwd=self.r,env=self.env,capture_output=True,text=True,timeout=15)
+  self.assertEqual(q.returncode,0,q.stdout+q.stderr);self.assertFalse(dup.exists());snyato=list(self.live.glob('y.SNYATO-*'));self.assertEqual(len(snyato),1)
+  self.assertEqual(self.records(),[],'--snyat окна не открывает');import time;time.sleep(1.1)  # страховка снятия и монтажа — разные секунды
+  q=self.invoke('files');self.assertEqual(q.returncode,0,q.stdout+q.stderr);record=self.records()[0]
+  self.assertIn({'local':str(dup),'remote':'y'},[c for c in record['checks'] if c['kind']=='registry'][0]['owned_files'])
+  (self.repo/'packages/fixture/x').write_text('new');git('rm','-q','packages/fixture/y');git('add','.');git('-c','user.name=F','-c','user.email=f@s','commit','-qm','dup retired');git('tag','fixture-v1.0.1')
+  self.entry['version']='new';self.entry['derevo']['ref']='fixture-v1.0.1';self.entry['derevo']['files']=self.entry['derevo']['files'][:1]
+  registry.write_text(json.dumps({'plugins':[],'services':[self.entry]}))
+  close=lambda:subprocess.run([str(PKG/'sbin/montazh-okno'),'zakryt',record['id']],env=self.env,capture_output=True,text=True,timeout=15)
+  shutil.copy2(snyato[0],dup);q=close();self.assertEqual(q.returncode,1,q.stdout+q.stderr);self.assertIn('still on disk',q.stderr);dup.unlink()
+  hidden=self.r/'hidden';snyato[0].rename(hidden);q=close();self.assertEqual(q.returncode,1,q.stdout+q.stderr);self.assertIn('.SNYATO-* with the backup sum',q.stderr)
+  snyato[0].write_text('other');q=close();self.assertEqual(q.returncode,1,q.stdout+q.stderr);self.assertIn('.SNYATO-* with the backup sum',q.stderr);snyato[0].unlink();hidden.rename(snyato[0])
+  self.env['MO_STRAHOVKI']=str(self.r/'nowhere');q=close();self.assertEqual(q.returncode,1,q.stdout+q.stderr);self.assertIn('found 0 times',q.stderr)
+  self.assertEqual(self.records()[0]['phase'],'open')
+  self.env['MO_STRAHOVKI']=str(self.r/'backups')+':'+str(self.r/'private-backups')
+  q=close();self.assertEqual(q.returncode,0,q.stdout+q.stderr);self.assertEqual(self.records()[0]['phase'],'closed')
  def test_derevo_bad_yaml_is_named_refusal_before_replace(self):
   self.owned_registry();(self.r/'registry.yaml').write_text('services: [')
   q=self.invoke('files');self.assertEqual(q.returncode,2,q.stdout+q.stderr);self.assertNotIn('Traceback',q.stderr);self.assertEqual(self.target.read_text(),'old')
@@ -197,6 +245,49 @@ sys.exit(subprocess.run(['/usr/bin/mv',*sys.argv[1:]]).returncode)
    for args in [('add','.'),('-c','user.name=Fixture','-c','user.email=fixture@sadik','commit','-qm','new x y'),('tag','fixture-v1.0.1')]:
     subprocess.run(['git',*args],cwd=self.repo,check=True,capture_output=True)
   self.entry['derevo']['ref']='fixture-v1.0.1';self.entry['version']='new';registry.write_text(json.dumps({'plugins':[],'services':[self.entry]}))
+ # B-N-2111 (23): task join must refuse BEFORE backup/temp/window writes.
+ def backup_tree(self):
+  out={}
+  for name in ('backups','private-backups'):
+   root=self.r/name
+   if not root.exists():out[name]=None;continue
+   for p in [root,*sorted(root.rglob('*'))]:
+    st=p.stat();out[str(p.relative_to(self.r))]=(st.st_mode,st.st_ino,st.st_mtime_ns,hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None)
+  return out
+ def join_task_case(self,case):
+  self.two_dir_registry();q=self.invoke('files');self.assertEqual(q.returncode,0,q.stdout+q.stderr)
+  record=self.records()[0];ident=record['id'];path=self.state/(ident+'.json');original=path.read_bytes();own=record['task']
+  punkt='B-N-2111-23-FOREIGN' if case=='foreign' else own
+  if case!='foreign':
+   if case=='missing':record.pop('task')
+   else:record['task']=''
+   path.write_text(json.dumps(record));actual=json.loads(path.read_text())
+   self.assertTrue(('task' not in actual) if case=='missing' else actual['task']=='')
+   self.assertNotEqual(hashlib.sha256(original).hexdigest(),hashlib.sha256(path.read_bytes()).hexdigest())
+   print('TASK-PORCHA replacements=1 case='+case+' before='+hashlib.sha256(original).hexdigest()+' after='+hashlib.sha256(path.read_bytes()).hexdigest(),flush=True)
+  else:
+   self.assertNotEqual(punkt,own);print('TASK-PORCHA arguments=1 --punkt '+own+' -> '+punkt,flush=True)
+  before_window=path.read_bytes();before_backup=self.backup_tree();before_target=self.target2.read_bytes();before_inode=self.target2.stat().st_ino
+  q=self.invoke2(('--okno-id',ident,'--punkt',punkt))
+  self.assertEqual(q.returncode,2,q.stdout+q.stderr)
+  self.assertEqual(self.backup_tree(),before_backup,'backup tree changed before task refusal')
+  self.assertEqual(path.read_bytes(),before_window);self.assertEqual(self.target2.read_bytes(),before_target);self.assertEqual(self.target2.stat().st_ino,before_inode)
+  self.assertEqual(sorted(p.name for p in self.live2.iterdir()),['y'])
+  self.assertIn(punkt,q.stderr);self.assertIn('task',q.stderr);self.assertIn(own if case=='foreign' else ('<отсутствует>' if case=='missing' else "''"),q.stderr)
+  if case!='foreign':
+   path.write_bytes(original);self.assertEqual(json.loads(path.read_text())['task'],own);self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),hashlib.sha256(original).hexdigest())
+   print('TASK-VOZVRAT replacements=1 case='+case+' sha256='+hashlib.sha256(original).hexdigest(),flush=True)
+  q=self.invoke2(('--okno-id',ident));self.assertEqual(q.returncode,0,q.stdout+q.stderr);self.assertEqual(self.target2.read_text(),'new2');self.assertEqual(self.records()[0]['task'],own)
+ def test_join_empty_window_id_refuses_before_backup(self):
+  self.two_dir_registry();q=self.invoke('files');self.assertEqual(q.returncode,0,q.stdout+q.stderr)
+  before=self.backup_tree();window=self.records()[0];raw=(self.state/(window['id']+'.json')).read_bytes()
+  print("WINDOW-ID-PORCHA arguments=1 old="+window['id']+" new=''",flush=True)
+  q=self.invoke2(('--okno-id',''));self.assertEqual(q.args[-1],'')
+  self.assertEqual(q.returncode,2,q.stdout+q.stderr);self.assertEqual(self.backup_tree(),before)
+  self.assertEqual(self.target2.read_text(),'old2');self.assertEqual((self.state/(window['id']+'.json')).read_bytes(),raw);self.assertIn('--okno-id',q.stderr)
+ def test_join_foreign_task_refuses_before_backup_and_return(self):self.join_task_case('foreign')
+ def test_join_empty_task_refuses_before_backup_and_return(self):self.join_task_case('empty')
+ def test_join_missing_task_refuses_before_backup_and_return(self):self.join_task_case('missing')
  def test_derevo_two_directories_join_one_window_closed_only_after_both(self):
   registry=self.two_dir_registry()
   q=self.invoke('files');self.assertEqual(q.returncode,0,q.stdout+q.stderr);ident=self.records()[0]['id']

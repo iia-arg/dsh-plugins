@@ -32,10 +32,13 @@ schitat() {
   local kat=$1
   [ -d "$kat" ] || { echo "нет каталога: $kat" >&2; return 2; }
   local spisok
+  # B-N-2048: разбор вывода npm pack --json — помощник npm-sostav (dsh-pribory), одно правило для npm 11 (массив) и
+  # 12 (объект); прежний разбор [0].files под npm 12 слеп. Нет помощника — ОТКАЗ код 2 (решение Забавы 14:36Z), а не «npm не отдал состав».
+  command -v npm-sostav >/dev/null || { echo "npm-sostav не найден — нужен dsh-pribory ≥ 3.1.2" >&2; return 2; }
   # №10 аудита A-N-1948 (находка Авроры 01:30Z, CRITICAL по месту вызова): podyom-uzla зовёт прибор под root по каталогам
   # агента, а `npm pack` исполняет prepack/prepare/postpack из их package.json. --ignore-scripts: состав — без чужих сценариев.
   spisok=$(cd "$kat" && npm pack --dry-run --json --ignore-scripts 2>/dev/null \
-    | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s)[0].files.map(f=>f.path).join("\n"))}catch(e){process.exit(3)}})' \
+    | npm-sostav --files \
     | LC_ALL=C sort)
   [ -n "$spisok" ] || { echo "npm не отдал состав для $kat" >&2; return 3; }
   local n; n=$(echo "$spisok" | wc -l)

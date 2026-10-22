@@ -23,7 +23,7 @@ On the machine the package is installed once, in the shared plugins directory: `
 
 ## Installation
 
-**Where to install from.** The package is published to npm with release 3.1.2 (order and window — by the owner's decision). Until then the npm registry holds an old `0.1.0-alpha.*` edition (measured 10.10.2026, `npm view dsh-pamyat-nudzh version`): `npm install dsh-pamyat-nudzh` installs that one, not the one described here. Until the release, install from the source tree: `npm pack <tree>/packages/dsh-pamyat-nudzh`, then `npm install ./dsh-pamyat-nudzh-<version>.tgz`.
+**Where to install from.** npm provides `3.1.2` (checked on 2026-10-15 with `npm view dsh-pamyat-nudzh version`). By the owner's decision of 2026-10-14, changes after publication are maintained locally and are not republished to npm. For the current local edition, pack the selected source revision with `npm pack <tree>/packages/dsh-pamyat-nudzh`, then run `npm install ./dsh-pamyat-nudzh-<version>.tgz`.
 
 1. The tarball `dsh-pamyat-nudzh-<version>.tgz` sits on the `agent-plugins-tarbally/` shelf — a sibling directory of `agent-plugins/`.
 2. `agent-plugins/package.json` lists the package as a dependency on that tarball; the version is pinned in `package-lock.json`:

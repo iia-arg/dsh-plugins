@@ -1,5 +1,12 @@
 # История · Changelog
 
+## 3.1.3 — 16.10.2026 · платформенная отмена ребёнка / scoped platform cancellation
+
+- Второй глаз Гаммы: исходный AbortSignal повторно проверяется после await-прогрева dispatcher, непосредственно перед POST; отменённый до отправки запрос не запускает SDK. Новый HTTP-стенд воспроизводит эту гонку.
+- По наряду Забавы 06:34:46 UTC: отмена terminal-capable запроса вызывает адресный SDK stop-exact и удерживает читатель terminal до отпускания lease; родитель и другие leases не останавливаются.
+- Parser сохраняет непрочитанные строки при iterator.return; единый предел8000мс, EOF/отказ/таймаут дают REMOTE_STOP_UNCONFIRMED, не успешный terminal. Без terminal-контракта прежний transport-only путь назван границей.
+- Six packaged HTTP/lease probes cover streaming cancel, consumer return, late ready, a fast ready+terminal race, EOF without terminal and the deadline. Full DSH/SDK-copy regression is separate; no production deployment or live model invocation.
+
 ## 3.1.2 — 14.10.2026 · подготовка к публикации · release prep (Аврора, наряд Забавы 07:18Z)
 
 - `author` — «Aleksandr Argelander» (единый автор семьи; лицензия MIT на его имя) · `author` set to "Aleksandr Argelander"

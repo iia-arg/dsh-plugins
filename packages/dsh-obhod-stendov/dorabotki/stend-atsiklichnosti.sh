@@ -168,10 +168,31 @@ else
 fi
 
 echo "== 5. ОБА УЧЁТА ОТВЕЧАЮТ ЗЕЛЁНЫМ ПРЯМО СЕЙЧАС =="
-"$SH" --check >/dev/null 2>&1; k2=$?
+vyvod2=$("$SH" --check 2>&1); k2=$?
+# 19.10 (наряд Забавы 04:58Z): при коде ≠ 0 — ПРЕДМЕТ рядом с причиной. Ночной отчёт берёт строку FAIL; без предмета
+# «правка не сведена?» нельзя разобрать задним числом (ночь 18.10 так и осталась без ответа). Сначала печатается реальная разница manifest.txt, затем предметный guard (ПИШЕТ-ПОДЪЁМ, обещанный --kontrol, ХОЗЯИН, ПАРА).
+# Справочные progon/dvojniki не объясняют код отказа; неизвестная причина названа прямо и дополнена хвостом. Счёт проверок не меняется.
+predmet2=""; n2=0; prichina2=""
+if [ $k2 != 0 ]; then
+  # progon и dvojniki печатают красное как справку и не меняют код --check.
+  # Сначала предмет реального отказа: diff манифеста либо конечный guard.
+  predmet2=$(printf '%s\n' "$vyvod2" | grep -E '^[-+][A-Z]\|' || true)
+  if [ -n "$predmet2" ]; then
+    prichina2="разница manifest.txt"
+  else
+    predmet2=$(printf '%s\n' "$vyvod2" | grep -E '^но |^НЕТ МАНИФЕСТА:|^СЛЕПОТА:|^ОТКАЗ:|^ПАРА |^[[:space:]]*🔴 (ХОЗЯИН|ПИШЕТ-ПОДЪЁМ:|обещан контроль, а файла нет:|описание обещает --kontrol, в коде его НЕТ:)|^    [^ ]+:[^ ]+ /' || true)
+    prichina2="отказ проверки"
+  fi
+  if [ -z "$predmet2" ]; then
+    prichina2="причина кода $k2 не выделена"
+    predmet2=$(printf '%s\n' "$vyvod2" | tail -n 5)
+  fi
+  n2=$(printf '%s\n' "$predmet2" | grep -c . || true)
+fi
 /usr/local/bin/agent-plugins verify >/dev/null 2>&1; k1=$?
 # B-N-1768: код 2 учёта — «проверить не удалось» (под iskra verify не читает /etc/agent-secrets и дом alfa) — СЛЕПОТА, не FAIL.
-if [ $k2 = 0 ]; then zeleno "второй учёт: код 0"; elif [ $k2 = 2 ]; then slepo "второй учёт: код 2 — не измерено"; else krasno "второй учёт: код $k2 (правка не сведена?)"; fi
+if [ $k2 = 0 ]; then zeleno "второй учёт: код 0"; elif [ $k2 = 2 ]; then slepo "второй учёт: код 2 — не измерено"; else krasno "второй учёт: код $k2 · $prichina2 · строк $n2, первая: $(printf '%s\n' "$predmet2" | head -n 1 | cut -c1-160)"; fi
+[ $k2 != 0 ] && printf '%s\n' "$predmet2" | head -n 30 | sed 's/^/         | /'
 if [ $k1 = 0 ]; then zeleno "первый учёт: код 0"; elif [ $k1 = 2 ]; then slepo "первый учёт: код 2 — не измерено (права учётки?)"; else krasno "первый учёт: код $k1"; fi
 
 echo

@@ -45,6 +45,16 @@ const t = (name, got, want) => {
   else { bad++; console.log(`  FAIL ${name}\n       ждали ${w}\n       вышло ${g}`) }
 }
 const slepo = (name, why) => { slepota++; console.log(`  СЛЕПОТА ${name}: ${why}`) }
+// RU: B-N-1984 (Заря, находка Искры): «не применимо» — проверка не судит, потому что предмета нет по устройству, а не по поломке.
+//   Не красит ворота и не прячется: печатается с причиной и входит в счёт проверок.
+let neprim = 0
+// B-N-2062 шаг 2 (Заря; решение Забавы 03:16Z, вариант А): рядом — машинная метка «STEND-NEPRIMENIMO: <проба>: <причина>» с начала
+//   строки; обход (dsh-obhod-stendov ≥ 3.1.65) несёт её в ворота, ворота (dsh-montazh ≥ 3.1.27) ставят СЛЕПОТУ, если проба не измерена
+//   ни на одной копии. В имени пробы «: » заменено на « — »: двоеточие с пробелом в договоре метки отделяет пробу от причины.
+const neprimenimo = (name, why) => {
+  neprim++; console.log(`  НЕ ПРИМЕНИМО ${name}: ${why}`)
+  console.log(`STEND-NEPRIMENIMO: ${name.replaceAll(': ', ' — ')}: ${why}`)
+}
 
 if (!existsSync(SRC)) { console.log(`  СЛЕПОТА нет файла моста ${SRC}`); process.exit(2) }
 const text = readFileSync(SRC, 'utf8')
@@ -310,18 +320,26 @@ console.log('\n=== В2. Часовой потолок: подставной пр
 console.log('\n=== Г. Предел на ЖИВОМ журнале сессии ===')
 
 {
-  let events
+  let events, prostojCh = null, prostojSobytij = 0
   try {
     if (!ZHURNAL) throw new Error('журнал сессии не найден: в доме нет ни одного session.jsonl.zstd / session.v4.jsonl.zstd')
     if (!existsSync(ZHURNAL)) throw new Error(`нет файла ${ZHURNAL}`)
     // RU: B-N-1919: журнал, не писавшийся дольше суток, не содержит событий текущего дня — «за сутки 0» и «полоса 0» по нему
-    //   были бы не замером, а молчанием мёртвого файла. Порог — сутки (= окно счёта «за сутки»). Простой агента дольше суток
-    //   тоже даст СЛЕПОТУ: это честно — живой проверке нечего мерить.
+    //   были бы не замером, а молчанием мёртвого файла. Порог — сутки (= окно счёта «за сутки»). Простой агента дольше суток —
+    //   «не применимо» с причиной (B-N-1984, ниже), не слепота.
     const VOZRAST_CH = (Date.now() - statSync(ZHURNAL).mtimeMs) / 3600000
-    if (VOZRAST_CH > PREDEL_SVEZHESTI_CH) throw new Error(`журнал ${ZHURNAL} не писался ${VOZRAST_CH.toFixed(1)} ч (> ${PREDEL_SVEZHESTI_CH} ч) — мерить нечего`)
-    console.log(`       журнал: ${ZHURNAL} (писался ${VOZRAST_CH.toFixed(1)} ч назад)`)
+    // RU: B-N-1984: журнал читается и разбирается ДО суда о возрасте. Старый, но целый журнал текущего формата — ПРОСТОЙ сессии
+    //   (10.10: varvara 32.4 ч, marc 24.3 ч — почта молчала): мерить нечего, это «не применимо», а не слепота. Не читается,
+    //   не разбирается, нет файла или только прежнее имя журнала — ПОЛОМКА: слепота, как прежде.
     const raw = execFileSync('zstdcat', [ZHURNAL], { maxBuffer: 512 * 1024 * 1024 }).toString()
-    events = raw.split('\n').filter(Boolean).map((l) => JSON.parse(l))
+    const razobrano = raw.split('\n').filter(Boolean).map((l) => JSON.parse(l))
+    if (VOZRAST_CH > PREDEL_SVEZHESTI_CH) {
+      if (path.basename(ZHURNAL) !== 'session.v4.jsonl.zstd') throw new Error(`журнал ${ZHURNAL} не писался ${VOZRAST_CH.toFixed(1)} ч (> ${PREDEL_SVEZHESTI_CH} ч), и имя у него прежнее — свежий журнал текущего формата не найден`)
+      prostojCh = VOZRAST_CH; prostojSobytij = razobrano.length
+    } else {
+      console.log(`       журнал: ${ZHURNAL} (писался ${VOZRAST_CH.toFixed(1)} ч назад)`)
+      events = razobrano
+    }
   } catch (e) {
 
     const pochemu = String(e?.message ?? e).slice(0, 160)
@@ -330,6 +348,12 @@ console.log('\n=== Г. Предел на ЖИВОМ журнале сессии 
       + ' модуля его ещё нет. Поработайте с агентом и повторите, либо укажите путь'
       + ' переменной MOST_ZHURNAL.')
     slepo('живой журнал: счёт за сутки', 'та же причина: журнала сессии нет')
+  }
+
+  if (prostojCh !== null) {
+    const pochemu = `простой сессии: журнал ${ZHURNAL} целый (событий ${prostojSobytij}), но не писался ${prostojCh.toFixed(1)} ч (> ${PREDEL_SVEZHESTI_CH} ч) — за сутки мерить нечего`
+    neprimenimo('живой журнал: полоса подряд', pochemu)
+    neprimenimo('живой журнал: счёт за сутки', 'та же причина: простой сессии')
   }
 
   if (events) {
@@ -342,11 +366,11 @@ console.log('\n=== Г. Предел на ЖИВОМ журнале сессии 
   }
 }
 
-console.log(`\nИТОГО: сошлось ${ok}, расхождений ${bad}, слепота ${slepota}`)
+console.log(`\nИТОГО: сошлось ${ok}, расхождений ${bad}, слепота ${slepota}, не применимо ${neprim}`)
 
 const ZHDYOM = 53 // аудит №6 (1.3.44): +4 пробы at
-if (ok + bad + slepota !== ZHDYOM) {
-  console.log(`\nСЛЕПОТА: проверок ${ok + bad + slepota}, а стенд состоит из ${ZHDYOM} — часть не состоялась.`)
+if (ok + bad + slepota + neprim !== ZHDYOM) {
+  console.log(`\nСЛЕПОТА: проверок ${ok + bad + slepota + neprim}, а стенд состоит из ${ZHDYOM} — часть не состоялась.`)
   process.exit(2)
 }
 process.exit(bad ? 1 : (slepota ? 2 : 0))

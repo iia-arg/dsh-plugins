@@ -1,0 +1,108 @@
+{
+  "origin": {
+    "mailDatabase": "/var/lib/autopilot-mail/mail.sqlite",
+    "operatorReservation": "/var/lib/autopilot-usage/reservations/673ee1128191c1554647a36543263f4ce254eb9bbc4fc29074030aa001528b16.json"
+  },
+  "participants": [
+    {
+      "engine": "codex",
+      "gatewaySource": "raw-v1",
+      "gatewayTransport": {
+        "node": "/opt/nodejs/node-v24.19.0-linux-x64/bin/node",
+        "nodeSha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+        "policyCli": "/opt/autopilot-gateway-policy/3.1.8-352ae7f8/usage-limits.mjs",
+        "version": 1
+      },
+      "gid": 1011,
+      "home": "/var/lib/coder-gateway-master/codex-home",
+      "name": "master",
+      "runtimeSource": {
+        "home": "/opt/master",
+        "ledger": "/opt/master/workspace/.message-receipts/receipts.sqlite",
+        "native": {
+          "compression": "zstd",
+          "cwd": "/opt/master/workspace",
+          "root": "/opt/master/.dsh/sessions",
+          "version": 4
+        },
+        "raw": "/opt/master/workspace/.message-receipts/usage-runtime-v1.jsonl"
+      },
+      "sources": {
+        "gateway": "/var/lib/coder-gateway-master/codex-home/.usage-meter/gateway-v1.jsonl",
+        "raw": [],
+        "runtime": "/opt/master/workspace/.message-receipts/usage-runtime-v1.jsonl"
+      },
+      "uid": 1006
+    },
+    {
+      "engine": "codex",
+      "gatewaySource": "raw-v1",
+      "gatewayTransport": {
+        "node": "/opt/nodejs/node-v24.19.0-linux-x64/bin/node",
+        "nodeSha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+        "policyCli": "/opt/autopilot-gateway-policy/3.1.8-352ae7f8/usage-limits.mjs",
+        "version": 1
+      },
+      "gid": 1012,
+      "home": "/var/lib/coder-gateway-vintik/codex-home",
+      "name": "vintik",
+      "runtimeSource": {
+        "home": "/opt/vintik",
+        "ledger": "/opt/vintik/workspace/.message-receipts/receipts.sqlite",
+        "native": {
+          "compression": "zstd",
+          "cwd": "/opt/vintik/workspace",
+          "root": "/opt/vintik/.dsh/sessions",
+          "version": 4
+        },
+        "raw": "/opt/vintik/workspace/.message-receipts/usage-runtime-v1.jsonl"
+      },
+      "sources": {
+        "gateway": "/var/lib/coder-gateway-vintik/codex-home/.usage-meter/gateway-v1.jsonl",
+        "raw": [],
+        "runtime": "/opt/vintik/workspace/.message-receipts/usage-runtime-v1.jsonl"
+      },
+      "uid": 1007
+    },
+    {
+      "engine": "claude",
+      "gatewaySource": "raw-v1",
+      "gatewayTransport": {
+        "node": "/opt/nodejs/node-v24.19.0-linux-x64/bin/node",
+        "nodeSha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+        "policyCli": "/opt/autopilot-gateway-policy/3.1.8-352ae7f8/usage-limits.mjs",
+        "version": 1
+      },
+      "gid": 1016,
+      "home": "/opt/sova",
+      "name": "sova",
+      "runtimeSource": {
+        "home": "/opt/sova",
+        "ledger": "/opt/sova/workspace/.message-receipts/receipts.sqlite",
+        "native": {
+          "compression": "zstd",
+          "cwd": "/opt/sova/workspace",
+          "root": "/opt/sova/.dsh/sessions",
+          "version": 4
+        },
+        "raw": "/opt/sova/workspace/.message-receipts/usage-runtime-v1.jsonl"
+      },
+      "sources": {
+        "gateway": "/opt/sova/.usage-meter/gateway-v1.jsonl",
+        "raw": [],
+        "runtime": "/opt/sova/workspace/.message-receipts/usage-runtime-v1.jsonl"
+      },
+      "uid": 1011
+    }
+  ],
+  "project": "/srv/autopilot/projects/ap-test-0110",
+  "runId": "48cb25c58c254d3883965989edfceda2",
+  "runtimeOperator": {
+    "jobId": "operator-ab913c0804086489f7a598268137fb046813c57ea3220df394ab4c651a61af56",
+    "sessionCreated": 1792148289159,
+    "sessionId": "telegram-autopilot-team",
+    "turn": 63
+  },
+  "schemaVersion": 1,
+  "startedAt": "2026-10-19T03:42:32.096870+00:00"
+}

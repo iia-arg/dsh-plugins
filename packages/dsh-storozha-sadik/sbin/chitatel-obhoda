@@ -9,6 +9,7 @@
 # ЧТО ДЕЛАЕТ (root, по таймеру 04:50–10:50 UTC раз в час; ночь прочитана — дальше молчит до следующей):
 #   ночь = запуск vse-stendy-boevye.service в [срабатывание таймера, +120 с]; ручные прогоны днём — не ночи, не читаются.
 #   Вывод ночи — строки обёртки (SYSLOG_IDENTIFIER=vse-stendy-po-tajmeru.sh) этого запуска (_SYSTEMD_INVOCATION_ID).
+#   B-N-2108: «⚠️ НЕОЖИДАННО … код 2 … СЛЕПОТА» — отдельный исход B; история не снимается при смене N↔B.
 #   Из них: «🔴 НЕОЖИДАННО: стенд (…, код N) — причина» + хвост вывода стенда, строки охвата, «ОЖИДАЕМО: …».
 #   B-N-1754: строки «↳ » под стендом — пояснения его провала (метит обходчик) — идут в письмо «пояснения: …», ≤400 знаков на стенд.
 #   «N-я ночь подряд» — по тем же строкам прежних ночей в журнале (до 14 ночей назад, пропуск ночи рвёт счёт).
@@ -95,6 +96,8 @@ def nochi_iz_zhurnala():
 nochi, segodnya, trig = nochi_iz_kataloga() if ISTOCHNIK else nochi_iz_zhurnala()
 
 RE_N = re.compile(r'🔴 НЕОЖИДАННО: (\S+) \(выпуск [^,]*, код (\d+)\) — (.*)$')
+# B-N-2108: отдельный исход; старые красные строки, включая код 2, остаются в N.
+RE_B = re.compile(r'^\s*⚠️ НЕОЖИДАННО: (\S+) \(выпуск [^,]*, код (2)\) — (СЛЕПОТА: .*)$')
 RE_O = re.compile(r'ОЖИДАЕМО: (\S+) \(выпуск [^)]*\) · код (\d+)')
 RE_H = re.compile(r'🔴 (В ПЕРЕЧНЕ ЕСТЬ, НА ДИСКЕ НЕТ|НА ДИСКЕ ЕСТЬ, В ПЕРЕЧНЕ НЕТ|В ПЕРЕЧНЕ ЕСТЬ, ОБХОДОМ НЕ ПРОГНАН[^:]*): (\S+)$')
 RE_ITOG = re.compile(r'ИТОГ ТАЙМЕРА: обходчик код (\d+) · стендов (\S+) · расхождений (\d+) · слепот (\d+) '
@@ -104,33 +107,35 @@ VAZHNOE = re.compile(r'FAIL|❌|СЛЕПОТА|Error|ОТКАЗ|итог')
 POYASN = 400   # знаков пояснений на стенд (B-N-1754); письмо целиком держит PREDEL
 
 def razbor(t):
-    """{'N': {стенд: что}, 'H': {путь: вид}, 'O': {стенд: что}, 'itog': строка|None, 'chisla': (ож, неож)|None}"""
-    r = {'N': {}, 'H': {}, 'O': {}, 'itog': None, 'chisla': None}
+    """{'N': {красный стенд: что}, 'B': {слепой стенд: что}, 'H': {путь: вид}, 'O': {стенд: что}, 'itog': строка|None, 'chisla': (ож, неож)|None}"""
+    r = {'N': {}, 'B': {}, 'H': {}, 'O': {}, 'itog': None, 'chisla': None}
     stroki = t.splitlines()
     for s in stroki:
         if m := RE_ITOG.search(s): r['itog'] = s[m.start():].strip(); r['chisla'] = (int(m[5]), int(m[6]))
         elif m := RE_UBIT.search(s): r['itog'] = m[0].strip()
         elif m := RE_N.search(s): r['N'][m[1]] = f'код {m[2]}, {m[3].strip()[:120]}'
+        elif m := RE_B.search(s): r['B'][m[1]] = f'код {m[2]}, {m[3].strip()[:120]}'
         elif m := RE_H.search(s): r['H'][m[2]] = m[1]
         elif m := RE_O.search(s): r['O'][m[1]] = f'код {m[2]}'
-    for k in r['N']:   # хвост вывода стенда, который обходчик кладёт строками «  <имя>: …»
-        b = re.escape(k.rsplit('/', 1)[-1])
-        hv = [m[1] for s in stroki if (m := re.match(r'\s+' + b + r':\s*(.*\S)', s))]
-        po = [' '.join(x[1:].split()) for x in hv if x.startswith('↳')]   # B-N-1754: пояснения провала (обходчик метит «↳ »)
-        hv = [x for x in hv if not x.startswith('↳')]
-        hv = [x for x in hv if VAZHNOE.search(x)][:2] or hv[-2:]
-        if hv: r['N'][k] += ' · ' + ' | '.join(f'«{x[:140]}»' for x in hv)
-        # B-N-1754 r2: пояснения — целыми строками в POYASN знаков; не влезло — «(показано K из M)», M — от обходчика,
-        # если он сам не показал всё (его строка «↳ (показано k из m)»), иначе — сколько строк пришло.
-        vsego = len(po)
-        if po and (m := re.fullmatch(r'\(показано \d+ из (\d+)\)', po[-1])): po, vsego = po[:-1], int(m[1])
-        if po and POYASN > 0:
-            vzyato = []
-            for x in po:
-                if len('; '.join(vzyato + [x])) > POYASN: break
-                vzyato.append(x)
-            vzyato = vzyato or [po[0][:POYASN - 1] + '…']   # первая строка сама длиннее предела — обрезком
-            r['N'][k] += ' · пояснения: ' + '; '.join(vzyato) + (f' (показано {len(vzyato)} из {vsego})' if len(vzyato) < vsego else '')
+    for group in (r['N'], r['B']):
+        for k in group:   # хвост вывода стенда, который обходчик кладёт строками «  <имя>: …»
+            b = re.escape(k.rsplit('/', 1)[-1])
+            hv = [m[1] for s in stroki if (m := re.match(r'\s+' + b + r':\s*(.*\S)', s))]
+            po = [' '.join(x[1:].split()) for x in hv if x.startswith('↳')]   # B-N-1754: пояснения провала (обходчик метит «↳ »)
+            hv = [x for x in hv if not x.startswith('↳')]
+            hv = [x for x in hv if VAZHNOE.search(x)][:2] or hv[-2:]
+            if hv: group[k] += ' · ' + ' | '.join(f'«{x[:140]}»' for x in hv)
+            # B-N-1754 r2: пояснения — целыми строками в POYASN знаков; не влезло — «(показано K из M)», M — от обходчика,
+            # если он сам не показал всё (его строка «↳ (показано k из m)»), иначе — сколько строк пришло.
+            vsego = len(po)
+            if po and (m := re.fullmatch(r'\(показано \d+ из (\d+)\)', po[-1])): po, vsego = po[:-1], int(m[1])
+            if po and POYASN > 0:
+                vzyato = []
+                for x in po:
+                    if len('; '.join(vzyato + [x])) > POYASN: break
+                    vzyato.append(x)
+                vzyato = vzyato or [po[0][:POYASN - 1] + '…']   # первая строка сама длиннее предела — обрезком
+                group[k] += ' · пояснения: ' + '; '.join(vzyato) + (f' (показано {len(vzyato)} из {vsego})' if len(vzyato) < vsego else '')
     return r
 
 R = {d: razbor(t) for d, (_, t) in nochi.items()}
@@ -144,7 +149,7 @@ def podryad(klyuch, vid):
         d = dnej_nazad(segodnya, n)
         if d not in R: break
         r = R[d]
-        if not (klyuch in r['H'] if vid == 'H' else klyuch in r['N'] or klyuch in r['O']): break
+        if not (klyuch in r['H'] if vid == 'H' else klyuch in r['N'] or klyuch in r['B'] or klyuch in r['O']): break
         n += 1
     return n
 
@@ -173,34 +178,44 @@ else:
                     f' что красно, не установлено.')
     else:
         vchera = R.get(dnej_nazad(segodnya, 1))
-        snyato = sorted((set(vchera['N']) | set(vchera['H'])) - set(r['N']) - set(r['H'])) if vchera else []
+        snyato = sorted((set(vchera['N']) | set(vchera['B']) | set(vchera['H'])) - set(r['N']) - set(r['B']) - set(r['H'])) if vchera else []
         sverka = ''
         if r['chisla'] is None:
             sverka = 'итог без чисел ожидаемых/неожиданных'
-        elif r['chisla'] != (len(r['O']), len(r['N'])):
+        elif r['chisla'] != (len(r['O']), len(r['N']) + len(r['B'])):
             sverka = (f'в итоге ожидаемых {r["chisla"][0]}, неожиданных {r["chisla"][1]}; разобрано строк — '
-                      f'{len(r["O"])} и {len(r["N"])}')
+                      f'{len(r["O"])} и {len(r["N"]) + len(r["B"])}')
         if sverka: kod = 2
-        if r['N'] or r['H'] or snyato or sverka:
+        if r['N'] or r['B'] or r['H'] or snyato or sverka:
             nach = [f'Ночь {segodnya} · {r["itog"]}']
             if sverka: nach.append(f'🔴 РАЗБОР РАЗОШЁЛСЯ С ИТОГОМ ({sverka}) — формат обхода сменился, перечень ниже НЕПОЛОН.')
             neozh = [f'• {k} · {v} · {metka(podryad(k, "N"))}' for k, v in sorted(r['N'].items())]
+            slepoty = [f'• {k} · {v} · {metka(podryad(k, "B"))}' for k, v in sorted(r['B'].items())]
             ohvat = [f'• {v}: {k} · {metka(podryad(k, "H"))}' for k, v in sorted(r['H'].items())]
             ozh = [(k, v, podryad(k, 'O')) for k, v in sorted(r['O'].items())]
             z_n = [f'НЕОЖИДАННО — {len(neozh)} (стенд · что красное · с какой ночи):'] if neozh else []
+            z_b = [f'СЛЕПОТА — {len(slepoty)} (стенд · что не измерено · с какой ночи):'] if slepoty else []
             z_h = [f'ОХВАТ — {len(ohvat)} (стенд не в перечне или не прогнан):'] if ohvat else []
-            sny = [f'СНЯТО — {len(snyato)} (прошлой ночью неожиданно красны, этой — нет):'] + [f'• {k}' for k in snyato] if snyato else []
-            net = [] if neozh or ohvat else ['Неожиданного этой ночью нет.']
+            bylo = 'неожиданные отказы/слепоты' if vchera and vchera['B'] else 'неожиданно красны'
+            sny = [f'СНЯТО — {len(snyato)} (прошлой ночью {bylo}, этой — нет):'] + [f'• {k}' for k in snyato] if snyato else []
+            net = [] if neozh or slepoty or ohvat else ['Неожиданного этой ночью нет.']
             z_o = f'Под исключением — {len(ozh)} (письма не вызывают)'
             konec = ['Граница: читаю только ночной прогон; ничего не чиню и не сужу, кто неправ — стенд или предмет.'
                      ' Письмо повторяется каждую ночь, пока неожиданное держится.']
-            telo = nach + z_n + neozh + z_h + ohvat + sny + net + ([z_o + ':'] + [f'• {k} · {v} · {metka(n)}' for k, v, n in ozh] if ozh else []) + konec
+            telo = nach + z_n + neozh + z_b + slepoty + z_h + ohvat + sny + net + ([z_o + ':'] + [f'• {k} · {v} · {metka(n)}' for k, v, n in ozh] if ozh else []) + konec
             # письмо короче полного: охват больше 10 — числом, ожидаемое — одной строкой; хвост неожиданного — по пределу ниже
-            kratko = (nach + z_n, neozh, z_h + (ohvat if len(ohvat) <= 10 else ['• перечень — в полном файле']) + sny + net
+            z_spiska = ([f'НЕОЖИДАННО — {len(neozh)}; СЛЕПОТА — {len(slepoty)} (стенд · причина · история):']
+                        if neozh and slepoty else z_n + z_b)
+            kratko = (nach + z_spiska, neozh + slepoty, z_h + (ohvat if len(ohvat) <= 10 else ['• перечень — в полном файле']) + sny + net
                       + ([z_o + ': ' + ', '.join(f'{k} ({n})' for k, _, n in ozh)] if ozh else []) + konec)
 
 if klyuch == prochitano:
-    print(f'   ночь {segodnya}: уже прочитана ({klyuch}) — письма не повторяю'); sys.exit(kod)
+    # Находка Михалыча 14.10: повтор уже прочитанной ночи — «делать нечего», а не отказ. Прежде выход kod держал юнит красным
+    #   (systemctl --failed) каждый час, если при прочтении был код 2 (разбор разошёлся с итогом). Отказ этой ночи назван один раз —
+    #   при прочтении (код 2 и письмо); повтор — успех со строкой причины. Настоящие отказы ниже не тронуты.
+    print(f'   ночь {segodnya}: уже прочитана ({klyuch}) — письма не повторяю'
+          + (f'; при прочтении код {kod} (разбор разошёлся с итогом — назван в письме ночи), повтором не краснею' if kod else ''))
+    sys.exit(0)
 if not telo:
     print(f'   ночь {segodnya}: {R[segodnya]["itog"]} — неожиданного нет, прошлой ночью тоже — письма нет')
 else:

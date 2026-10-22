@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import pwd
 import re
+import shutil
 import socket
 import stat
 import subprocess
@@ -561,7 +562,82 @@ def unchanged(identities):
     return True
 
 
-def verify(checks, identities=None):
+def verify_moved(registry_path, entry, row, identities):
+    """B-N-2082 (условие Вениамина 14:05Z): перенесённый файл под НОВЫМ владельцем — живой файл = blob в дереве этой записи
+    (address/subdir/ref/remote), режим и владелец = строке files; как сверка VOW (verify_derevo), но только этот файл —
+    чужие незакрытые окна новой записи не мешают. И перенос — записанный акт: реестр = HEAD своего учёта git (LOW)."""
+    import grp
+    dv = entry['derevo']
+    validate_derevo_files(dv)
+    captured = []
+    repo, ref, sub = vow_repo(captured), dv.get('ref'), str(dv.get('subdir') or '').rstrip('/')
+    if dv.get('address') != repo: raise ValueError('moved: derevo address differs from effective VOW repo: ' + entry['id'])
+    if not isinstance(ref, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]*', ref) or not re.fullmatch(r'packages/[A-Za-z0-9._-]+', sub):
+        raise ValueError('moved: derevo ref/subdir invalid: ' + entry['id'])
+    env = dict(os.environ, GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='safe.directory', GIT_CONFIG_VALUE_0=repo)
+    git = lambda *a: subprocess.run(['git', '--no-optional-locks', '-C', repo, *a], env=env, capture_output=True, timeout=20)
+    commit = git('rev-parse', '--verify', tag_ref(ref) + '^{commit}')
+    if commit.returncode: raise ValueError('moved: tag ' + ref + ' of ' + entry['id'] + ' not found')
+    blob = git('show', commit.stdout.decode().strip() + ':' + sub + '/' + str(row['remote']))
+    if blob.returncode: raise ValueError('moved: ' + row['local'] + ' not in ' + ref + ':' + sub + '/' + str(row['remote']))
+    st = os.lstat(row['local'])
+    if not stat.S_ISREG(st.st_mode): raise ValueError('moved: not a regular file: ' + row['local'])
+    with open(row['local'], 'rb') as fh: live = fh.read()
+    if hashlib.sha256(live).digest() != hashlib.sha256(blob.stdout).digest():
+        raise ValueError('moved: ' + row['local'] + ' differs from ' + entry['id'] + ' ' + ref)
+    try: owner = pwd.getpwuid(st.st_uid).pw_name + ':' + grp.getgrgid(st.st_gid).gr_name
+    except KeyError: owner = str(st.st_uid) + ':' + str(st.st_gid)
+    if str(row.get('mode')) != '%04o' % stat.S_IMODE(st.st_mode) or str(row.get('owner')) != owner:
+        raise ValueError('moved: mode/owner of ' + row['local'] + ' differ from ' + entry['id'])
+    rdir, rname = os.path.dirname(registry_path), os.path.basename(registry_path)
+    head = subprocess.run(git_command(rdir) + ['show', 'HEAD:' + rname], capture_output=True, timeout=20)
+    with open(registry_path, 'rb') as fh: current = fh.read()
+    if head.returncode or head.stdout != current: raise ValueError('moved: registry is not HEAD of its git record: ' + registry_path)
+    captured.append(('tag', dict(kind='tag', repo=repo, ref=ref), commit.stdout.decode().strip()))
+    captured.append(('stat', row['local'], generation(st)))
+    if identities is not None: identities.extend(captured)
+
+
+def verify_removed(local, task, identities):
+    """B-N-2082 (условие Вениамина 19:20 МСК, окно e19cdc88): файл ушёл из derevo — не потеря, ТОЛЬКО если это снятие
+    --snyat пункта ОКНА: по старому имени его нет; в страховках пункта (<корень>/<task>/*.tar, root, не пишется группой/всеми)
+    его прежние байты лежат ровно один раз; рядом ровно один <имя>.SNYATO-* с той же суммой. Иное — отказ, как было.
+    НЕ ЛОВИТ: снятие тем же пунктом в ДРУГОМ окне (пункт — граница окна, время снятия не сверяется)."""
+    if not isinstance(task, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', task) or '..' in task:
+        raise ValueError('removed: window task is not a safe directory name')
+    try: os.lstat(local)
+    except FileNotFoundError: pass
+    else: raise ValueError('removed: still on disk under old name: ' + local)
+    member, found = local.lstrip('/'), []
+    for base in os.environ.get('MO_STRAHOVKI', '/var/backups/montazh:/var/backups/montazh-s-klyuchom').split(':'):
+        d = os.path.join(base, task)
+        try: st = os.lstat(d)
+        except FileNotFoundError: continue
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022: raise ValueError('removed: unsafe backup directory: ' + d)
+        for name in sorted(os.listdir(d)):
+            p = os.path.join(d, name)
+            if not name.endswith('.tar'): continue
+            st = os.lstat(p)
+            if not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022: raise ValueError('removed: unsafe backup: ' + p)
+            with tarfile.open(p) as tf:
+                for m in tf.getmembers():
+                    if os.path.normpath(m.name).lstrip('/') != member: continue
+                    if not m.isreg(): raise ValueError('removed: backup member is not a regular file: ' + p)
+                    found.append((p, generation(st), hashlib.sha256(tf.extractfile(m).read()).hexdigest()))
+    if len(found) != 1: raise ValueError('removed: --snyat backup of ' + local + ' in task ' + task + ' found ' + str(len(found)) + ' times (need 1)')
+    traces = []
+    head = os.path.basename(local) + '.SNYATO-'
+    for p in sorted(os.path.join(os.path.dirname(local), n) for n in os.listdir(os.path.dirname(local)) if n.startswith(head)):
+        st = os.lstat(p)
+        if not stat.S_ISREG(st.st_mode): continue
+        with open(p, 'rb') as fh:
+            if hashlib.sha256(fh.read()).hexdigest() == found[0][2]: traces.append((str(p), generation(st)))
+    if len(traces) != 1: raise ValueError('removed: ' + str(len(traces)) + ' .SNYATO-* with the backup sum next to ' + local + ' (need 1)')
+    if identities is not None:
+        identities.extend([('absent', local), ('stat', found[0][0], found[0][1]), ('stat', traces[0][0], traces[0][1])])
+
+
+def verify(checks, identities=None, task=None):
     errors = []
     for c in checks:
         try:
@@ -612,8 +688,20 @@ def verify(checks, identities=None):
                         raise ValueError('registry command source must be root-owned, not world-writable')
                     current_files = items[0]['derevo']['files']
                     for original in c.get('owned_files', []):
-                        if sum(f.get('local')==original['local'] and f.get('remote')==original['remote'] for f in current_files)!=1:
-                            raise ValueError('derevo ownership changed: '+original['local'])
+                        # B-N-2082: перенос файла в derevo ДРУГОЙ записи той же pravka (B-N-2071, 76159a63) — не потеря: в этой
+                        #   записи его нет вовсе, а во всём реестре он ровно один раз в одной записи. Иначе — как было.
+                        elsewhere = [(e, f) for e in entries if e is not items[0] and isinstance(e.get('derevo'), dict)
+                                     for f in (e['derevo'].get('files') or []) if isinstance(f, dict) and f.get('local') == original['local']]
+                        here = sum(f.get('local')==original['local'] and f.get('remote')==original['remote'] for f in current_files)
+                        moved = not any(f.get('local') == original['local'] for f in current_files) and len(elsewhere) == 1
+                        if here != 1 and not moved:
+                            if task is None or elsewhere or any(f.get('local') == original['local'] for f in current_files):
+                                raise ValueError('derevo ownership changed: '+original['local'])
+                            try: verify_removed(original['local'], task, identities)
+                            except ValueError as e: raise ValueError('derevo ownership changed: ' + original['local'] + ' (' + str(e) + ')')
+                            continue
+                        if here != 1:
+                            verify_moved(c['path'], elsewhere[0][0], elsewhere[0][1], identities)
                     verify_derevo(items[0], identities)
                     verify_entry_values(items[0], identities)
                 if c.get('values_consistency'):
@@ -797,12 +885,17 @@ def copy_source(c):
 
 def publication_from_source(source):
     """Admission-only recomputation; closing never repeats npm pack."""
+    if shutil.which('npm-sostav') is None:
+        raise ValueError('npm-sostav не найден — нужен dsh-pribory ≥ 3.1.2')
     with tempfile.TemporaryDirectory(prefix='okno-copy-pack-') as temporary:
         env = dict(os.environ, npm_config_cache=temporary)
         output = subprocess.run(['npm', 'pack', '--json', '--ignore-scripts'], cwd=source,
                                 env=env, capture_output=True, text=True, timeout=30, check=True)
-        data = json.loads(output.stdout)
-        filename = data[0]['filename']
+        parsed = subprocess.run(['npm-sostav', '--filename'], input=output.stdout, env=env,
+                                capture_output=True, text=True, timeout=20)
+        if parsed.returncode != 0:
+            raise ValueError(parsed.stderr.strip() or 'npm-sostav refused publication metadata')
+        filename = parsed.stdout.removesuffix('\n')
         if not isinstance(filename, str) or Path(filename).name != filename:
             raise ValueError('publication archive name invalid')
         rows = []
@@ -972,8 +1065,16 @@ def trusted_rollback(subjects, checks):
                 if rel not in {row['path'] for row in owner['baseline']}:
                     result.append(dict(kind='absent', path=c['path']))
             else:
-                st = os.lstat(c['path'])
-                result.append(dict(kind='file', path=c['path'], sha256=hashlib.sha256(Path(c['path']).read_bytes()).hexdigest(),
+                try: st = os.lstat(c['path'])
+                except FileNotFoundError:
+                    result.append(dict(kind='absent', path=c['path']))
+                    continue
+                if not stat.S_ISREG(st.st_mode) or os.path.realpath(c['path']) != c['path']:
+                    raise ValueError('rollback file is not a canonical regular path')
+                before_sha = hashlib.sha256(Path(c['path']).read_bytes()).hexdigest()
+                if generation(os.lstat(c['path'])) != generation(st):
+                    raise ValueError('rollback file changed while capturing baseline')
+                result.append(dict(kind='file', path=c['path'], sha256=before_sha,
                                    mode=stat.S_IMODE(st.st_mode), uid=st.st_uid, gid=st.st_gid))
         elif c['kind'] == 'registry':
             _, entries = registry_entries(c['path'])
@@ -1119,9 +1220,9 @@ def release_check(path, checks):
     return c
 
 
-def stable_verify(checks):
+def stable_verify(checks, task=None):
     identities = []
-    errors = verify(checks, identities)
+    errors = verify(checks, identities, task)
     if not errors and not unchanged(identities): errors.append('strict objects changed during verification')
     return errors
 
@@ -1220,7 +1321,7 @@ def main():
                 if record['phase'] == 'rolled_back' and any(c['kind'] == 'copy' for c in record['checks']):
                     return 0  # Physical restoration is not a health verdict for a pre-existing broken copy.
                 checks = record.get('rollback_checks', record['checks']) if record['phase'] == 'rolled_back' else record['checks']
-                if stable_verify(checks) or read(root, ident + '.json') != record: return 0
+                if stable_verify(checks, record['task']) or read(root, ident + '.json') != record: return 0
             else: return 0
         now = clock()  # stable_verify мог ждать приборы: старый now не продлевает срок open.
         for ident, subject in mentioned:
@@ -1275,7 +1376,7 @@ def main():
             if a.since_ns is not None and record.get('closed_boot_id', record['boot_id']) == boot() and record['phase'] == 'closed' and a.since_ns <= record.get('closed_ns', 0) <= now:
                 # A slow reader must not send its pre-close snapshot. One strict
                 # addressed re-read, checked against the same record generation.
-                errors = stable_verify(record['checks'])
+                errors = stable_verify(record['checks'], record['task'])
                 if not errors and read(root, record['id'] + '.json') == record:
                     print('ПЕРЕСНЯТО: сошлось ' + a.subject)
                     return 6
@@ -1357,6 +1458,20 @@ def main():
                         if len(pinned) != 1 or {k: v for k, v in copy.items() if k not in baseline_keys} != {k: v for k, v in pinned[0].items() if k not in baseline_keys}:
                             raise ValueError('copy join differs from immutable plan')
                         copy.update({k: pinned[0][k] for k in baseline_keys})
+                    # B-N-2060: release_copy закрепляет ещё три поля происхождения. Файловый producer
+                    # дочитывает только их из текущего реестра, затем проходит прежнее полное равенство.
+                    # Проверку окна не ослабляем и не дописываем её урезанный дубликат.
+                    for check in checks:
+                        if check['kind'] != 'registry' or not check.get('derevo_consistency'): continue
+                        pinned = [old for old in existing['checks'] if
+                                  {k: v for k, v in old.items() if k != 'expected'} ==
+                                  {k: v for k, v in check.items() if k != 'expected'}]
+                        if len(pinned) != 1: continue
+                        entry = next((e for e in entries if e['id'] == check['id']), None)
+                        if entry is None: raise ValueError('registry entry vanished')
+                        for key in ('path', 'source.type', 'source.address'):
+                            if key in pinned[0]['expected'] and key not in check['expected']:
+                                check['expected'][key] = dotted(entry, key)
                     # B-N-2034: join дописывает ТОЛЬКО file-проверки своих целей, принадлежащих записи derevo, чья
                     # проверка уже в окне и равна проверке вызова. Иное — вне неизменяемого плана; срок не меняется.
                     owned = {f['local'] for c in existing['checks'] if c['kind'] == 'registry' and c.get('derevo_consistency') and c in checks for f in c.get('owned_files', [])}
@@ -1369,7 +1484,12 @@ def main():
                     if not set(actual['subjects']) - set(added) <= set(existing['subjects']):
                         raise ValueError('producer is outside immutable plan')
                     if extra:
-                        atomic(root, dict(existing, subjects=existing['subjects'] + added, checks=existing['checks'] + extra))
+                        joined = dict(existing, subjects=existing['subjects'] + added, checks=existing['checks'] + extra)
+                        if 'rollback_plan' in existing:
+                            baseline = trusted_rollback(added, extra)
+                            joined['rollback_plan'] = dict(subjects=existing['rollback_plan']['subjects'] + added,
+                                checks=existing['rollback_plan']['checks'] + baseline['checks'])
+                        atomic(root, joined)
                 print(a.id); return 0
             plan = json.loads(a.plan.read_text(), object_pairs_hook=unique) if a.plan else actual
             if not isinstance(plan, dict): raise ValueError('invalid plan')
@@ -1441,7 +1561,7 @@ def main():
             plan_shape(plan['subjects'], plan['checks'])
             closure_checks = plan['checks']
         if a.action in {'zakryt', 'otkat-proveren', 'vosstanovit'}:
-            errors = verify(closure_checks, identities)
+            errors = verify(closure_checks, identities, original['task'])
             if errors:
                 print('НЕ ЗАКРЫТО: ' + '; '.join(errors), file=sys.stderr)
                 return 1

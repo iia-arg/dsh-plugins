@@ -2,6 +2,10 @@
 # EN: Token/chat paths only, no secret values. Comments start at column zero.
 AGENT_ALERT_TOKEN_FILE=/etc/dsh-trevogi/token
 AGENT_ALERT_CHAT_FILE=/etc/dsh-trevogi/chat-id
+# RU: Второй хозяин задаётся оператором, пусто — только хозяин из CHAT_FILE.
+AGENT_ALERT_OWNER_CHAT_ID=
+# RU: Только дополнительные гости; весь файл строгий, ошибка даёт тревогу хозяевам.
+AGENT_ALERT_SPISOK_FILE=/var/lib/alert-privratnik/spisok
 AGENT_ALERT_HVOST=/var/log/dsh-trevogi/poslednie.log
 AGENT_ALERT_POPYTOK=3
 AGENT_ALERT_PAUZY=5 15

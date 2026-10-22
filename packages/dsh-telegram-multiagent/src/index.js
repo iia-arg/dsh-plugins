@@ -1,3 +1,6 @@
+import {UsageRuntime} from './usage-runtime.js';
+import {acquireClaudeTurnUsage} from './claude-turn-usage.js';
+import {autopilotSettings,droppedPublisher,AutopilotNotices,AP_ROUTE} from './autopilot-notice.js';
 // RU: Собирает входы Telegram/A2A/spool/site и связывает каждое сообщение с устойчивой квитанцией и поколением сессии. Сохраняет вход до продвижения offset, flush до wake; неопределённый исход удерживает, не повторяет работу модели. Владение опросом привязано к токену и снимается после последнего монтажа. Внешние курьеры, память и MCP-мост имеют отдельные границы.
 // EN: Composes Telegram/A2A/spool/site inputs and binds each message to a durable receipt and session generation. Persists before offset advance and flushes before wake; holds uncertain execution instead of rerunning model work. Polling is token-owned until the last mount is disposed. Couriers, memory, and MCP bridges have independent boundaries.
 import {SocialDispatcher,startSocialDispatch} from './social-dispatch.js';
@@ -161,6 +164,7 @@ function settings() {
       return {newSessionsEnabled:false,ownerChatId:null,nastrojkiNeProchitany:true};
     }
   }
+  const autopilot=autopilotSettings(config); // opt-in snapshot; no hot reload
   const deployment=deploymentSettings(config,settings());
   const tg = new TelegramClient(token, log, {allowedUpdates:socialUpdates(config)});
   const attachmentStore = new AttachmentStore({
@@ -173,6 +177,8 @@ function settings() {
   });
   const voiceTemp = new VoiceTempStore({workspace: config.workspace ?? process.cwd(), baseDirectory: config.voiceTempBaseDirectory, log});
   const receipts = new MessageReceipts(path.join(config.workspace ?? process.cwd(), '.message-receipts'),{coordinatorTrustFile:deployment.coordinatorTrustFile,reviewer:deployment.receiptReviewer,ownerCopyMode:()=>deliveryMode(),agentName:config.agentName});
+  const claudeTurnUsage=acquireClaudeTurnUsage(receipts.root,config.agentName,{log});
+  ctx.effect(()=>()=>claudeTurnUsage.close());
   const socialIngress=config.social?new SocialIngress({config,ledger:receipts,log}):null;
 
   ustanovitIstochnikPomoshchnika(() => ctx.get('pamyat'), log);
@@ -208,6 +214,8 @@ function settings() {
   }
   const receiptSessions = new Map();
   const codexControl = new CodexTaskControl(receipts, config.spoolDir ? path.basename(path.resolve(config.spoolDir)) : '');
+  const usageRuntime=autopilot?new UsageRuntime(receipts,config.agentName,{log}):null;
+  if(usageRuntime){codexControl.usage=usageRuntime;ctx.effect(()=>()=>usageRuntime.close())}
   ctx.provide('taskControlCodex', codexControl);
   const sdkInputs=new SdkInbox(receipts,ctx.get('sessions'),codexControl,log,config.appDir || process.env.DSH_APP_DIR);codexControl.sdkInputs=sdkInputs;conversationPause.sdkInputs=sdkInputs;ctx.effect(()=>()=>sdkInputs.dispose());
   let stopSettings;
@@ -330,6 +338,10 @@ function protectSite(agentCtx,agent,key){
   // B-N-1642: гостевой чат открытого бота — ключ 'gost-<chatId>' (сессия telegram-gost-…): пресет гостя и набор сайта.
   const {gostevojKlyuch, ogranichennyjKlyuch, marshrutChata, chatIzKlyucha, presetDlya} = marshrutyGostya(config,
     {allowed, groups: () => settings()?.groups, mergeChat: () => MERGE_CHAT, a2aChat: () => A2A_CHAT});
+  const apNotices=autopilot?new AutopilotNotices(autopilot,{receipts,log,dispatch:async(r,text,key)=>{
+    const {handle}=await agentFor(AP_ROUTE);
+    return receiptRuntime().enqueue(r,handle.agent,()=>platform.createUserMessage({content:[{type:'text',text}],source:{kind:'agent-message',form:'relay',senderSessionId:'autopilot:notice'}}),AP_ROUTE,key);
+  }}):null;
   const socialDispatcher=socialIngress?new SocialDispatcher({ingress:socialIngress,ledger:receipts,log,
     dispatch:async(receipt,text,active)=>{
       const routeKey=marshrutChata(-1001659691422);
@@ -993,6 +1005,7 @@ async function goalCommand(text, channel, agent) {
 
 
   ctx.on('session/event', (session, event) => {
+    claudeTurnUsage.observe(session,event); // All routes, before AP/managed early returns.
 
 
     if (event.type !== 'assistant/chunk') {
@@ -1001,9 +1014,15 @@ async function goalCommand(text, channel, agent) {
     const sid = String(session?.id ?? '');
     const managedTurn = receipts.managed(sid).some(r => r.claimed_turn === event.data?.turn);
     if(event.type==='turn/end') {
-      void receiptRuntime().observe(session).catch(e=>log(`[receipt] результат не подтверждён: ${e?.message??e}`));
+      // RU: Сторож считает завершения всех ходов, до выходов managed/chatId.
+      // EN: Count every completed turn before managed/chatId routing exits.
+      momentPoslednegoHoda = Date.now();
+      const persisted=receiptRuntime().observe(session);
+      if(usageRuntime)void usageRuntime.afterFlush(session,event.data?.turn,persisted);
+      void persisted.catch(e=>log(`[receipt] результат не подтверждён: ${e?.message??e}`));
     }
 
+    if(autopilot&&sessionToChat.get(sid)===AP_ROUTE)return; // managed AP result stays in receipts; never legacy TG/A2A
     if (event.type === 'assistant/message') {
       const reply = (event.data?.message?.content ?? []).filter(b => b?.type === 'text').map(b => b.text).join('\n');
       void attachmentStore.confirm(sid, stripGoalMarker(reply))
@@ -1051,9 +1070,6 @@ async function goalCommand(text, channel, agent) {
         const q = pendingAsk.get(sid) ?? [];
         if (q.length) turnAsk.set(sid, q.shift());
         void tg.typing(chatId);
-      } else if (event.type === 'turn/end') {
-
-        momentPoslednegoHoda = Date.now();
       }
       if (event.type === 'turn/end' && event.data?.reason?.kind === 'error') {
 
@@ -1291,11 +1307,16 @@ function opisanieSledom(handle, chatId, vl) {
   }
 
   async function handleUpdate(u, receipt) {
+    if(autopilot&&droppedPublisher(u,autopilot))return; // before SocialIngress/media/context/queue
     if(config.social&&socialIngress?.handles(u)){
       const bot=await botKto();return socialIngress.handle(u,receipt,bot?.id,(id,text)=>tg.call('answerCallbackQuery',{callback_query_id:id,text},5000,1));
     }
     const msg = u.message;
     if (!msg) return;
+    if (msg.from?.is_bot === true) {
+      log(`отброшено: сообщение бота ${msg.from.id} в чате ${msg.chat?.id}`);
+      return;
+    }
     const isVoice = !!(msg.voice || msg.audio);
     const hasAttachment = !!(msg.document || msg.photo || msg.video);
     const unsupported = !!(msg.animation || msg.video_note || msg.sticker);
@@ -1307,14 +1328,15 @@ function opisanieSledom(handle, chatId, vl) {
     let receivedAttachment = null;
 
 
-    const gruppa = nastrojkaGruppy(settings(), msg.chat, config.agentName, log);
+    const traffic=autopilot&&msg.chat?.id===autopilot.trafficChatId;
+    const gruppa = traffic?{mode:'mention',names:autopilot.names,context:0,replyCounts:false,strictAddress:true,username:null}:nastrojkaGruppy(settings(), msg.chat, config.agentName, log);
     let rasshifrovka = null, golaya = null, nikBota = null;
     if (gruppa) {
       const me = await botKto();
       const meDlyaProverki = { id: me?.id ?? null, username: me?.username ?? gruppa.username };
       if (isVoice && isAllowed(userId)) rasshifrovka = await transcribeVoice((msg.voice ?? msg.audio).file_id, (msg.voice ?? msg.audio).duration, String(chatId), config.openBot === true && !allowed.has(userId));
       const gde = rasshifrovka ?? (typeof msg.text === 'string' ? msg.text : (msg.caption ?? ''));
-      const r = obrashchenie(msg, { me: meDlyaProverki, names: gruppa.names, replyCounts: gruppa.replyCounts, tekst: gde });
+      const r = obrashchenie(msg, { me: meDlyaProverki, names: gruppa.names, replyCounts: gruppa.replyCounts, strictAddress:gruppa.strictAddress, tekst: gde });
       if (!r.addressed) {
         const chto = rasshifrovka !== null ? `[голосовое] ${rasshifrovka}`
           : isVoice ? '[голосовое, не расшифровано]' : hasAttachment ? `[вложение не сохранено] ${msg.caption ?? ''}` : gde;
@@ -1593,7 +1615,7 @@ function opisanieSledom(handle, chatId, vl) {
   }
 
 
-  const A2A_DIR = config.a2aDir || null;
+  const A2A_DIR = autopilot?.only?null:(config.a2aDir || null);
   const A2A_IN = A2A_DIR ? path.join(A2A_DIR, 'in') : null;
   const A2A_OUT = A2A_DIR ? path.join(A2A_DIR, 'out') : null;
   // A-N-1948 №2 (№11): имена legacy-записей в out/ — «<мс>-…txt», как прежде (формат читает сборщик координатора), но метка
@@ -1606,7 +1628,7 @@ function opisanieSledom(handle, chatId, vl) {
   const A2A_CHAT = config.a2aSession || 'a2a';
 
 
-  const SPOOL_IN = config.spoolDir || null;
+  const SPOOL_IN = autopilot?.only?null:(config.spoolDir || null);
 
 
   const SPOOL_STALE_HOURS = Number(config.spoolStaleHours ?? 12);
@@ -2193,6 +2215,7 @@ async function loop(run) {
         await receiptTick();
         await shagOprosa('a2a', () => pollA2A());
         await shagOprosa('ящик', () => pollSpool());
+        if(apNotices)await shagOprosa('почта Автопилота',()=>apNotices.tick());
         // A-N-1948 №2 (№9): идентичность бота — из кеша botKto (getMe один раз на процесс, повтор только после отказа), а не
         //   запросом getMe на каждом цикле (~раз в 25 с). id бота для токена не меняется; отказ getMe — та же ветка «Bot ID неизвестен».
         const bot = await botKto();

@@ -1,0 +1,22 @@
+# B-N-2055 способ 2: root-отправитель спула. Зовёт его agent-alert-otpravitel.path; токен читает root.
+[Unit]
+Description=Спул тревог: отправить очередь · Alert spool: deliver queue
+# Предел запусков — в [Unit] (в [Service] systemd его молча игнорирует). Умолчание 5 за 10 с всплеск писем
+# пробил (окно 15.10 00:36:13Z: start-limit-hit ⇒ path-юнит погас до reset-failed). Законный всплеск — не больше
+# одного запуска на письмо (запросы во время работы сливаются); 100 за 10 с — с запасом. Не 0: застрявший во vhod/
+# файл крутил бы службу каждые ~40 мс бесконечно (предел срабатываний path — 200 за 2 с — такой круг не ловит);
+# с пределом круг гаснет за секунды, и сторож очереди назовёт path failed.
+StartLimitIntervalSec=10s
+StartLimitBurst=100
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 -I -B /usr/local/sbin/agent-alert-otpravitel
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/var/spool/dsh-trevogi -/var/log/agent-alert -/var/log/dsh-trevogi
+TimeoutStartSec=900
+SyslogIdentifier=agent-alert-otpravitel

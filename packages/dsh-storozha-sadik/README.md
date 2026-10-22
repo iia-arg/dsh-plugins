@@ -2,9 +2,29 @@
 
 # dsh-storozha-sadik — сторожа машины sadik, которые не вошли в dsh-storozha-mashiny, и их каналы тревог
 
-Версия · Version: 3.1.10
+Версия · Version: 3.1.28
 
 Текущая версия — см. заголовок `CHANGELOG.md` (у пакета нет `package.json`) и метку `dsh-storozha-sadik-v<номер>` в дереве.
+
+## Persistent notice: формат active (3.1.28)
+
+В storozha-sutochnye.txt строка `<unit> active` проверяет загруженную службу: ActiveState=active и MainPID≠0 — без тревоги и без чтения start-job. Inactive/failed и другие известные неактивные состояния дают именную тревогу; activating допускается до30с от InactiveExitTimestamp, дальше — тревога. Неизвестные/неполные/непрочитанные свойства — СЛЕПОТА. Состояние читается одним systemctl show, предел3с+1с на kill, без повторов. Срок30с совпадает с допуском старта notice в листе AP0.1.16; это не новый параметр перечня.
+
+Прежние числовые сроки и ! не меняются. ! исключает проверку и не подходит вместо active. Новый сторож ставится ДО worker на прежнем числовом перечне; семь notice-строк переводятся в active в шаге перевода worker того же окна. Стенд `test/stend-notice-active.py` читает настоящий блок и функции канала с частными внешними входами; штатный боевой sadik-watch автором не запускается. Это видимость остановки на очередном тике, а не проверка доставки почты/зависшего активного процесса или поимка короткого падения между тиками.
+
+## Автозапуск: область 3.1.22
+
+Collect включает `ENABLED_AP_SCOPE|N|M` в машинный stdout. После проверки среза читатель пишет `AP: юнитов N, получателей M` существующим log в журнал юнита. Внешний захват SREZ гасит stderr, поэтому этот канал для сводки не используется. Нет/негодная сводка — размер не измерен; уменьшение области не создаёт отдельной тревоги или истории.
+
+Зовущий — прежний `sadik-watch.service`: сбор `collect`, затем читатель `sadik_enabled_check`, доставка через существующую группу `service-autostart`. Для агентов и шлюзов правило прежнее: active без постоянного enabled. Для обязательных юнитов Автопилота нужен **enabled независимо от active**; enabled-runtime недостаточно.
+
+Перечень AP берётся из записи `dsh-autopilot` в `/etc/agent-registry/plugins.yaml`: установленный `path/MAIL-LAYOUT.json` → `system_units` и live-unit-пути `derevo.files`. Ожидаемый `[Install]` читается из исходников установленного пакета, не из включающих symlink и не из уже включённых экземпляров. Получатели notice — агенты с `namerenie.raskladka.autopilot_pochta: true` в реестре агентов; список имён в коде не хранится.
+
+`autopilot-mail-notice@.timer` — шаблон: из него требуются экземпляры получателей. Другой устанавливаемый шаблон допускается при объявленном `DefaultInstance`; без известного раскрытия — СЛЕПОТА. Файлы без boot-привязки `[Install]` выводятся как template/static и не требуют enabled. Неизвестная схема, пустой или неполный перечень, пропавший источник и отказ systemctl дают именованную слепоту. Типы, кроме service/timer, сейчас не поддержаны и дают отказ, а не зелёное.
+
+Сбор ограничен 15 с + 1 с до принудительного завершения, каждый из трёх пакетных systemctl-вызовов — 5 с; внешний вызывающий оставляет предел 60 с. Повторов нет. Проверка сама ничего не включает и не запускает. Узкая команда `bash libexec/sadik-watch-enabled.sh autopilot --root /абсолютный/физический/root` читает ту же AP-область в частном дереве; она не является установкой и не меняет enable-ссылки. `--dry-run`, `-n`, неизвестные аргументы — отказ.
+
+Не ловит: факт успешной перезагрузки, исправность запущенного кода, наличие и работоспособность static-служб, юниты вне объявленных источников и правомерность удаления декларации/флага получателя. Изменение исходного намерения меняет область проверки; его авторизацию этот сторож не проверяет. `test/stend-enabled.py` вызывает настоящий сборщик/читатель с подставным каналом, включая native `systemctl --root` исправное → отключённый экземпляр → возврат и повторное тихое зелёное.
 
 ## Назначение
 
@@ -24,7 +44,7 @@
   групп-шлюзов прав (ступень «группы прав» зовёт `gruppy-prav-watch`, см. ниже). Раз в 7 суток он сам говорит «жив».
   Тревоги уходят через `dsh-alert`, при его отказе — письмом a2a агенту `iskra`.
 - `gruppy-prav-watch` + эталон `gruppy-prav.conf` — члены групп-шлюзов прав (`limity-vhod`, `agent-button`,
-  `claudeoauth`) против эталона: строки `m` в `sysusers.d` или явный список с доводом на каждого члена (B-N-1913).
+  `claudeoauth`, `a2a-pochta`) против эталона: строки `m` в `sysusers.d` или явный список с доводом на каждого члена (B-N-1913).
   Сверяет и дополнительных членов (`/etc/group`), и членов по основной группе (`/etc/passwd`). Сам наружу не пишет и
   ничего не меняет: его зовёт `sadik-watch` каждый такт, лишний или недостающий член — тревога с именами учётки и
   группы.
@@ -62,7 +82,9 @@
   `/opt/agent-plugins/node_modules`. Если он упал, `pamyat-seam-failed@` шлёт тревогу в `agent-alert`.
 - `agent-button-daemon.sh` — «кнопка»: постоянная служба, которая исполняет команды из списка
   `/etc/agent-button/allowed.conf` по файлу-запросу в `/var/lib/agent-button/pending/`. Нужна, чтобы агент мог
-  перезапустить сам себя: делает это процесс вне его дерева процессов.
+  перезапустить сам себя: делает это процесс вне его дерева процессов. Полномочие — по учётке-владельцу файла-запроса
+  (fstat открытого дескриптора): с полным sudo (`(ALL) NOPASSWD: ALL` в `sudo -l -U`, снимается на каждый запрос) —
+  любая команда списка; без него — только `restart-<своя учётка>` и `restart-gateway-<своя>`, прочее — код 77 в `done/`.
 
 Результат читают владелец (Telegram), координатор (письма `chitatel-obhoda`) и сам `sadik-watch`: упавшую службу
 любого сторожа из перечня суточных он видит как «failed» или «просрочен».
@@ -92,6 +114,7 @@
 | `libexec/pamyat-seam/stand.mjs` | `/usr/local/libexec/pamyat-seam/stand.mjs` | 0644 root:root | `run.sh` (через `/usr/local/bin/node`) |
 | `libexec/pamyat-seam/failed-v2.sh` | `/usr/local/libexec/pamyat-seam/failed-v2.sh` | 0755 root:root | `pamyat-seam-failed@.service` |
 | `libexec/gruppy-prav-watch` | `/usr/local/libexec/gruppy-prav-watch` | 0755 root:root | sadik-watch, ступень «группы прав» (`python3 -ISB`) |
+| `libexec/sadik-watch-enabled.sh` | `/usr/local/libexec/sadik-watch-enabled.sh` | 0755 root:root | sadik-watch: сбор `collect` (в срезе, предел 60 с) и читатель автозапуска агентов и обязательных юнитов AP (подключается `. ../libexec/…`); ставится ДО `sbin/sadik-watch` |
 | `etc/gruppy-prav.conf` | `/etc/agent-registry/gruppy-prav.conf` | 0644 root:agent-registry | gruppy-prav-watch (эталон состава групп-шлюзов) |
 | `systemd/sadik-watch.service` | `/etc/systemd/system/sadik-watch.service` | 0644 root:root | systemd; задаёт среду `SADIK_WATCH_*` |
 | `systemd/sadik-watch.timer` | `/etc/systemd/system/sadik-watch.timer` | 0644 root:root | systemd, `*:2/10` (каждые 10 мин), включён |
@@ -121,6 +144,7 @@
 | `systemd/pamyat-seam.timer` | `/etc/systemd/system/pamyat-seam.timer` | 0644 root:root | systemd, 06:20 UTC, включён |
 | `systemd/pamyat-seam-failed@.service` | `/etc/systemd/system/pamyat-seam-failed@.service` | 0644 root:root | systemd по `OnFailure=` у `pamyat-seam.service` |
 | `systemd/agent-button.service` | `/etc/systemd/system/agent-button.service` | 0644 root:root | systemd, `WantedBy=multi-user.target`, `Restart=always`, включена |
+| `systemd/agent-button.tmpfiles` | `/etc/tmpfiles.d/agent-button.conf` | 0644 root:root | systemd-tmpfiles: pending3770 + .git/.codex/.agents/.aws root0755; Codex0.162.1 |
 
 В бой не ставятся: `README.md`, `CHANGELOG.md`, все стенды из `test/` и образец `etc/default/chitatel-obhoda.example`.
 В записи реестра `not_installed` на 10.10 названы `README.md`, `CHANGELOG.md` и `test/stend-gruppy-prav.sh`; новые файлы
@@ -221,6 +245,22 @@
    строкой `!<служба> <причина>`. Иначе `sadik-watch` покраснеет: «таймер наш, строки в перечне НЕТ».
    Замаскированный таймер (`systemctl mask`) строки не требует: он идёт в счёт «замаскировано N: <имена>» строки полноты,
    не красное. Служба таймера «-» в `list-timers --all` без маски — красная строка «служба не определена: <таймер>».
+   Для семи AP notice timers подготовлен `etc/storozha-sutochnye-autopilot.fragment`: конкретные
+   `autopilot-mail-notice@<агент>.service 1` (master, vintik, shpuntik, gayka, sova, shurup, tumbler).
+   Это фрагмент для добавления в существующий файл машины, **не замена всего перечня** и не новый
+   автоматически читаемый путь. Назначенная рука отдельно готовит полный AFTER на закреплённом BEFORE,
+   сохраняет прежний текст побайтным префиксом и монтирует полный файл после ворот. При уже имеющейся
+   строке или `!` для любого из семи имён — остановка и пересмотр кандидата, не дублирование.
+   Читатель сопоставляет точные имена: шаблон `@.service` не разворачивает, `!` исключает и failed,
+   и свежесть. Срок 1 ч — существующее правило для частых таймеров; failed ищется каждый такт
+   sadik-watch (10 мин), не ждёт часа. Одинаковая тревога напоминается через 6 ч; после восстановления
+   один раз сообщается изменение/снятие состава, далее тишина об этом notice.
+   Таймер notice — `OnUnitActiveSec=5`, служба `oneshot`: очередной запуск с номинальным интервалом 5 с
+   сбрасывает `failed`. Перечень ловит устойчивый отказ и `StartLimit`; одиночные сбои, сброшенные
+   следующим запуском между тактами sadik-watch (10 мин), не покрываются по построению.
+   Успешный код notice не доказывает доставку.
+   Проверка: `python3 -B test/stend-autopilot-notice-sutochnye.py`, только местные подставы, без root,
+   настоящих systemd/journal/канала. Монтаж фрагмента вместо полного файла запрещён по его контракту.
 5. В записи `dsh-storozha-sadik` реестра перевести `version` (отпечаток `installed_check`) и `ref` на новую метку.
    Реестр правится только через `agent-plugins pravka`: правку мимо неё ловит сам `sadik-watch`.
 
@@ -289,8 +329,8 @@
 - `<группа> spisok -` — членов быть не должно.
 
 Строка не по форме, пустой эталон или повтор группы (слепота с номерами обеих строк) — слепота. Хозяин группы (одноимённая
-учётка) не считается лишним ни по основной группе, ни среди дополнительных членов. В бою: `limity-vhod sysusers`, `agent-button spisok` (8 учёток, довод
-на каждую — в примечаниях файла), `claudeoauth spisok -`. Состав группы меняют правкой строки эталона (рука монтажа),
+учётка) не считается лишним ни по основной группе, ни среди дополнительных членов. В бою: `limity-vhod sysusers`, `agent-button spisok` (15 учёток: девять + шестеро команды Мастера с окна KNOPKA-MASTER 16.10, довод
+на каждую — в примечаниях файла), `claudeoauth spisok -`, `a2a-pochta spisok` (9 учёток; команда Мастера — не члены). Состав группы меняют правкой строки эталона (рука монтажа),
 иначе тревога. Вывод: строки `ok <группа>: …`, `ЛИШНИЙ <учётка> в <группа> (…)`, `НЕДОСТАЁТ <учётка> в <группа> (…)`,
 `СЛЕПОТА: …`; последняя строка — `СОСТАВ: <ключи>` (пусто — чисто).
 
@@ -451,8 +491,12 @@ Tar Марка с `manifest.json` и `app/` читается без распак
 — в файле root 0600, как в бою); без довода судит соседний
 `../sbin/agent-button-daemon.sh`. 6 проб: исправное исполнено · символическая ссылка на чужой файл — 65, текста нет ·
 жёсткая ссылка — 65 · FIFO не вешает кнопку, соседний запрос исполнен · текст непринятого запроса не повторяется ·
-перевод строки в имени запроса не подделывает строку журнала.
-Коды стенда: 0, 1 — расхождение, 2 — не собран. Ночной и недельный обход его пока не зовут: в перечне стендов его нет.
+перевод строки в имени запроса не подделывает строку журнала. С 3.1.12 под root — ещё 7 проб полномочий (запросы
+кладутся от `master` и `iskra` через `runuser`, признак sudo — живой; исполнение доказывает файл-след): master →
+`restart-master` и `restart-gateway-master` исполнены · master → `reboot-server`, `restart-iskra` — 77, не исполнены ·
+подлог (имя запроса с чужой учёткой, владелец master) — 77 · причина отказа называет учётку · iskra → `reboot-server`,
+`restart-master`, `restart-memory` исполнены. Не root — эти 7 не гоняются: СЛЕПОТА, код 2.
+Коды стенда: 0, 1 — расхождение, 2 — не собран или слепота полномочий. Ночной и недельный обход его пока не зовут: в перечне стендов его нет.
 
 Стендов нет у `sessiya-uderzhana-watch`, `socseti-watch`, `pamyat-fill-watch.py` (у него есть режим `--check`: только
 чтение, код 1, если есть находки), `dsh-alert`, `claudeclaw-alert`. Сам `pamyat-seam` и
@@ -539,3 +583,46 @@ sudo SADIK_WATCH_MESTNO=1 SADIK_WATCH_SOST=/tmp/proba-sost SADIK_ALERT_BIN=/bin/
 B-N-2023: manual probes must also set SADIK_VLADELEC_WATCH_BIN=/bin/true or isolate the helper/courier in a private namespace. Muting the Telegram alert alone does not mute independent A2A. The unit has no override, so the normal helper is called every local tick. An explicitly empty override refuses before state writes.
 
 Пакетные проверки B-N-2023: `test/stend-b2023-reader.py`, `stend-b2023-consumers.py`, `stend-b2023-watch.py`, `stend-b2023-watch-state.py`. Нужен sudo для root-файлов и приватного mount namespace; неизвестная среда — код 2. Боевые настройки, Telegram и доставка в настоящую щель в пробах не используются. `VLADELEC_WATCH_STATE_DIR` — каталог состояния только стенда; юнит использует `/var/lib/sadik-watch`.
+
+### B-N-2063: общий код проверки реестра
+
+`dsh-storozha-sadik/libexec/sadik-watch-pravka.sh` содержит реальную проверку 2г: её зовут штатный `sadik-watch.timer` через watcher и B1–B5 узкого `stend-pravki-mimo.sh`. Стенд читает определения функций log/kanal/gruppa из проверяемого watcher, затем зовёт общий код; main, срез машины и owner-helper не исполняются. Все его каналы/состояние/реестр подставные. Девять прежних проб сохранены. Сторож продолжает применять `_UID=0`, полный SHA и 21600 с остывания; эта проверка не покрывает agents.yaml, подлог root или смысл принятой pravka.
+
+Новый helper → `/usr/local/libexec/sadik-watch-pravka.sh`, 0644 root:root, в derevo.files; сначала библиотека, затем watcher/стенд. Файл сам по себе при source не делает IO. Регресс: `python3 packages/dsh-obhod-stendov/test/test_pravki_isolation.py` из дерева (рука автора/приёмщика, нужна sudo для A1–A4). Он исполняет реальный caller с подставным срезом и каналами, проверяет обнаружение/возврат. Полного живого такта и реальной доставки этот регресс не проверяет.
+
+### B-N-2063: один срез окна отказов
+
+OTKAZDLINA и OTKAZLIMIT используют один `journalctl -u UNIT --since -$OKNO_OTKAZA -o short-unix` вместо 2–3 чтений. Прежние фильтры, окна и строки результата сохранены. Срез держится только в памяти текущего UNIT, без файла с содержимым журнала; память зависит от его объёма. Пустой/недоступный журнал остаётся SLEPOTA; частичный stdout при отказе разбирается как прежде — эта дельта не расширяет старую диагностику отказов.
+
+Регресс: `python3 test/test_otkazy_single_read.py` из каталога пакета; frozen fixture — точный прежний блок производства, результаты на одинаковом вводе сравниваются побайтно. 14 входов: пустой, No entries, отказ, частичный отказ, пустая строка, нормальный текст, Prompt, лимит, подложный текст, несколько отказов, три агентных входа и отдельное окно 17min. Проверяется и один запрос на UNIT. Полный живой такт/доставка вне этой пробы.
+
+Both consumers reuse one short-unix journal snapshot per UNIT. Output, filters and configured window remain unchanged. The snapshot stays in memory for the current UNIT only. The regression compares the original and candidate production consumers byte for byte, including empty/error inputs; partial-output failure keeps the old behavior. Live delivery is outside this regression.
+
+
+### Кнопка: постоянные точки метаданных Codex (B-N-2088)
+
+`pending` на старте создаёт демон (`mkdir -p`, без изменения режима); его цикл читает только `pending/*.cmd`.
+`systemd/agent-button.tmpfiles` — носитель режима root:agent-button3770 и четырёх пустых root:root0755
+`.git .codex .agents .aws`. Codex0.162.1 защищает эти имена на каждом writable_root; при отсутствии создаёт/убирает их сам.
+На общей sticky-очереди параллельные учётки могут не убрать чужую синтетику и получить panic101 ПОСЛЕ исполнения команды.
+
+При первой установке, ДО запуска Кнопки/ходов Codex, поставить файл из таблицы и выполнить:
+`systemd-tmpfiles --create /etc/tmpfiles.d/agent-button.conf`. При обновлении выполнить то же в согласованном окне без
+активных ходов пятерых; прежние владельцы/режим/ACL pending сохраняются. Не брать существующую чужую синтетику как готовую:
+неожиданный тип/владелец/непустой каталог — остановиться и разобрать. Очередь/заявки не очищать.
+Файл tmpfiles перечитывается при загрузке; `d` с возрастом `-` не задаёт очистку. Только каталогам имён положен0755,
+самой pending остаётся3770. Изменение только tmpfiles и каталогов НЕ требует restart Кнопки/gateway и daemon-reload:
+исполняемые файлы/unit не меняются, цикл `.cmd` продолжает работать. Реальная проверка после окна — свой запрос из нового
+Codex-хода; его исполнение может перезапустить собственный gateway, это отдельно от установки носителя.
+
+Проверка кандидата: root `python3 -I -B test/stend-knopki-tmpfiles.py` на одноразовой раскладке (tmpfiles cold/repeat,
+пакетный демон с инертным ping; боевой ExecStart не запускается). Перед обновлением Codex повторить native sandbox модель
+очереди root:agent-button3770 с тем же ACL/четырьмя каталогами от реальной учётки без sudo: rc0, запись `.cmd`, 40/40 записи,
+0/40 cleanup-panic на паре20+20. Список имён измерен для0.162.1; новые имена будущих версий и удаление каталогов между
+загрузкой/проверками эта частичная мера не ловит. Установочный зовущий — systemd-tmpfiles при boot и оператор при установке;
+суд живой пробы/модели — координатор/ворота, отдельный постоянный сторож свойств этих четырёх каталогов не добавлен.
+
+
+### Чего не ловит active/MainPID
+
+Петля перезапусков worker остаётся невидимой: после непредвиденного исключения timer поднимает его через 5 с, и проверка почти всегда застаёт active с новым PID. Сторож не хранит прежний PID и не считает таймерные старты; возврат потока журнала этим признаком не обнаруживается. StartLimit в [Unit] — отдельный тикет. Эта оговорка добавлена при сборке AP0.1.16 по условию Вениамина; runtime3.1.28 не менялся.

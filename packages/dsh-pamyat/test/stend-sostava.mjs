@@ -430,7 +430,16 @@ proba('🔴 ВСЁ, ЧТО ЧИТАЕТ СТЕНД, ЕСТЬ В СОСТАВЕ �
   } catch (e) {
     throw new Error('СЛЕПОТА (среда): npm pack не исполнился — состав публикации не получен: ' + String(e.stderr || e.message).trim().split('\n').pop().slice(0, 120));
   }
-  const sostavPub = JSON.parse(vyvod)[0].files.map((f) => f.path);
+  // RU: B-N-2048: разбор — помощником npm-sostav (dsh-pribory): npm 11 отдаёт массив, npm 12 — объект; [0].files под 12 слеп.
+  // EN: B-N-2048: parsing goes through the npm-sostav helper (dsh-pribory): npm 11 returns an array, npm 12 an object.
+  let sostavPub;
+  try {
+    sostavPub = execFileSync('npm-sostav', ['--files'], { input: vyvod, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] })
+      .split('\n').filter(Boolean);
+  } catch (e) {
+    if (e.code === 'ENOENT') throw new Error('СЛЕПОТА (среда): npm-sostav не найден — нужен dsh-pribory ≥ 3.1.2');
+    throw new Error('СЛЕПОТА (среда): состав публикации не разобран помощником npm-sostav: ' + String(e.stderr || e.message).trim().split('\n').pop().slice(0, 120));
+  }
   const stend = readFileSync(join(koren, 'test', 'stend-sostava.mjs'), 'utf8');
   const nuzhno = new Set();
   for (const m of stend.matchAll(/join\(koren,\s*'([^']+)'(?:,\s*'([^']+)')?\)/g)) {

@@ -1,0 +1,70 @@
+{
+  "schema_version": 2,
+  "bots": {
+    "__OPERATOR_UNIX__": {
+      "bot_user_id": "__OPERATOR_BOT_USER_ID_DECIMAL_STRING__",
+      "token_file": "__BOT_TOKEN_DIRECTORY_ABSOLUTE_PATH__/__OPERATOR_UNIX__.token"
+    },
+    "__WORKER_1_UNIX__": {
+      "bot_user_id": "__WORKER_1_BOT_USER_ID_DECIMAL_STRING__",
+      "token_file": "__BOT_TOKEN_DIRECTORY_ABSOLUTE_PATH__/__WORKER_1_UNIX__.token"
+    },
+    "__WORKER_2_UNIX__": {
+      "bot_user_id": "__WORKER_2_BOT_USER_ID_DECIMAL_STRING__",
+      "token_file": "__BOT_TOKEN_DIRECTORY_ABSOLUTE_PATH__/__WORKER_2_UNIX__.token"
+    },
+    "__WORKER_3_UNIX__": {
+      "bot_user_id": "__WORKER_3_BOT_USER_ID_DECIMAL_STRING__",
+      "token_file": "__BOT_TOKEN_DIRECTORY_ABSOLUTE_PATH__/__WORKER_3_UNIX__.token"
+    },
+    "__REVIEWER_UNIX__": {
+      "bot_user_id": "__REVIEWER_BOT_USER_ID_DECIMAL_STRING__",
+      "token_file": "__BOT_TOKEN_DIRECTORY_ABSOLUTE_PATH__/__REVIEWER_UNIX__.token"
+    },
+    "__WORKER_4_UNIX__": {
+      "bot_user_id": "__WORKER_4_BOT_USER_ID_DECIMAL_STRING__",
+      "token_file": "__BOT_TOKEN_DIRECTORY_ABSOLUTE_PATH__/__WORKER_4_UNIX__.token"
+    },
+    "__WORKER_5_UNIX__": {
+      "bot_user_id": "__WORKER_5_BOT_USER_ID_DECIMAL_STRING__",
+      "token_file": "__BOT_TOKEN_DIRECTORY_ABSOLUTE_PATH__/__WORKER_5_UNIX__.token"
+    }
+  },
+  "targets": [
+    {
+      "id": "traffic",
+      "chat_id": "__TRAFFIC_CHAT_ID_NEGATIVE_DECIMAL_STRING__",
+      "text_chars": 100,
+      "agents": {
+        "__OPERATOR_UNIX__": {
+          "on_send": true,
+          "on_receive": true
+        },
+        "__WORKER_1_UNIX__": {
+          "on_send": true,
+          "on_receive": true
+        },
+        "__WORKER_2_UNIX__": {
+          "on_send": true,
+          "on_receive": true
+        },
+        "__WORKER_3_UNIX__": {
+          "on_send": true,
+          "on_receive": true
+        },
+        "__REVIEWER_UNIX__": {
+          "on_send": true,
+          "on_receive": true
+        },
+        "__WORKER_4_UNIX__": {
+          "on_send": true,
+          "on_receive": true
+        },
+        "__WORKER_5_UNIX__": {
+          "on_send": true,
+          "on_receive": true
+        }
+      }
+    }
+  ]
+}

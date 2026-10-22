@@ -4,12 +4,21 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+// RU: B-N-2048: состав разбирает помощник npm-sostav (dsh-pribory ≥ 3.1.2), ищется по PATH; нет его — ОТКАЗ кодом 2, не красное и не тихий ноль.
+// EN: B-N-2048: the npm-sostav helper (dsh-pribory ≥ 3.1.2) parses the contents and is looked up on PATH; without it — REFUSAL with exit 2, not red and not a silent zero.
+try { execFileSync('sh', ['-c', 'command -v npm-sostav'], { stdio: 'ignore' }); } catch {
+  console.log('СЛЕПОТА: npm-sostav не найден — нужен dsh-pribory ≥ 3.1.2');
+  process.exit(2);
+}
 
 const koren = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ru = readFileSync(join(koren, 'README.md'), 'utf8');
 const en = readFileSync(join(koren, 'README.en.md'), 'utf8');
 
-let vsego = 0, proshlo = 0;
+// RU: B-N-2048 (LOW Вениамина): нет состава публикации — npm не ответил или помощник npm-sostav отказал — это слепота (код 2), не «упало».
+// EN: B-N-2048 (Veniamin LOW): no publication contents — npm did not answer or the npm-sostav helper refused — is blindness (exit 2), not a failure.
+class Slepota extends Error {}
+let vsego = 0, proshlo = 0, slepyh = 0;
 const proba = (imya, f) => {
   vsego++;
   try {
@@ -27,7 +36,7 @@ const proba = (imya, f) => {
                       'Бросай ошибку либо ничего не возвращай');
     }
     proshlo++; console.log('  ✅ ' + imya); }
-  catch (e) { console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 130)); }
+  catch (e) { if (e instanceof Slepota) { slepyh++; console.log('  ⚠️ СЛЕПОТА: ' + imya + ' — ' + e.message.slice(0, 130)); } else console.log('  ❌ ' + imya + ' — ' + e.message.slice(0, 130)); }
 };
 
 const PRIRODY = ['otkazano-chelovekom', 'otmeneno', 'net-kanala', 'net-sluzhby', 'net-agenta', 'ne-predyavleno'];
@@ -116,10 +125,14 @@ proba('оба README предупреждают, что часть имён — 
 // RU: Состав публикации спрашиваем у npm, а не выводим из ручного files: новый стенд может не попасть в пакет при существующей ссылке README.
 // EN: Ask npm for publication contents rather than deriving them from a manual files list: a new suite may be absent from the package despite a README link.
 function sostavPublikacii() {
-  const vyvod = execFileSync('npm', ['pack', '--dry-run', '--json'], {
-    cwd: koren, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
-  });
-  return JSON.parse(vyvod)[0].files.map((f) => f.path);
+  try {
+    const vyvod = execFileSync('npm', ['pack', '--dry-run', '--json'], {
+      cwd: koren, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    // RU: B-N-2048: npm 11 отдаёт pack --json массивом, npm 12 — объектом; разбор одним правилом у помощника npm-sostav (dsh-pribory), его ОТКАЗ — исключение с причиной.
+    // EN: B-N-2048: npm 11 prints pack --json as an array, npm 12 as an object; one rule parses both in the npm-sostav helper (dsh-pribory), its REFUSAL throws with the reason.
+    return execFileSync('npm-sostav', ['--files'], { input: vyvod, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).split('\n').filter(Boolean);
+  } catch (e) { throw new Slepota('состав публикации неизвестен — ' + String(e?.message ?? e).replace(/\s+/g, ' ').trim()); }
 }
 
 proba('🔴 ВСЁ, НА ЧТО ССЫЛАЕТСЯ README, ЛЕЖИТ В СОСТАВЕ ПУБЛИКАЦИИ', () => {
@@ -149,5 +162,5 @@ proba('🔴 ОБА README НАЗЫВАЮТ ОДИН И ТОТ ЖЕ СПОСОБ 
   }
 });
 
-console.log('  итог: ' + proshlo + ' из ' + vsego);
-process.exit(proshlo === vsego ? 0 : 1);
+console.log('  итог: ' + proshlo + ' из ' + vsego + (slepyh ? ' (слепота: ' + slepyh + ')' : ''));
+process.exit(proshlo + slepyh < vsego ? 1 : slepyh ? 2 : 0);

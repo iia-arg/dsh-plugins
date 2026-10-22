@@ -7,6 +7,38 @@
 import {renderInboxFrame,parseInboxPayload,MAX_PENDING_INPUTS} from './inbox-input.mjs';
 import { spawn, execFile } from 'node:child_process';
 import { poBelomu, vychistit, sekretyProcessa } from './secret-redact.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+
+// RU: Итог usage хода из уведомлений thread/tokenUsage/updated {threadId, turnId, tokenUsage{total, last}} — канал протокола, не файл
+// RU: rollout: им проверяется полнота журнала Codex (адаптер measure-run-codex --sverka-shlyuz). total — нарастающий по нити, поэтому
+// RU: итог хода = total последнего уведомления − (total − last) первого; вызовы = число разных total (повторы одинаковы). Не бросает.
+// EN: Turn usage total from thread/tokenUsage/updated (protocol channel, not the rollout file): last total − (total − last) of the first
+// EN: notification; calls = distinct totals. Never throws; notifications without turnId or with bad numbers are counted, not summed.
+const POLYA_USAGE = ['inputTokens', 'cachedInputTokens', 'cacheWriteInputTokens', 'outputTokens', 'reasoningOutputTokens'];
+export function schetUsageHoda() {
+  const hody = new Map(); let bezTurn = 0, plohih = 0;
+  const godno = (u) => u && typeof u === 'object' && POLYA_USAGE.every((f) => Number.isSafeInteger(u[f]) && u[f] >= 0);
+  return {
+    prinyat(p) {
+      const t = p?.turnId, tu = p?.tokenUsage;
+      if (typeof t !== 'string' || !t) { bezTurn++; return; }
+      if (!godno(tu?.total) || !godno(tu?.last)) { plohih++; return; }
+      let z = hody.get(t);
+      if (!z) { z = { osnova: POLYA_USAGE.map((f) => tu.total[f] - tu.last[f]), totaly: new Set(), konec: null }; hody.set(t, z); }
+      z.totaly.add(POLYA_USAGE.map((f) => tu.total[f]).join(',')); z.konec = POLYA_USAGE.map((f) => tu.total[f]);
+    },
+    itog(turnId) {
+      const z = hody.get(turnId);
+      const sluzhebno = { bez_turn: bezTurn, plohih };
+      if (!z) return { vyzovov: 0, polnota: 'net_uvedomlenij', ...sluzhebno };
+      const d = z.konec.map((v, i) => v - z.osnova[i]);
+      const [input, cached, cache_write, output, reasoning] = d;
+      return { vyzovov: z.totaly.size, input, cached, cache_write, output, reasoning,
+        polnota: d.some((v) => v < 0) ? 'protivorechie' : 'ok', ...sluzhebno };
+    },
+  };
+}
 
 export const PREDEL_GRANICY_MS = 10 * 60 * 1000;
 export const PREDEL_ZAVERSHENIYA_MS = 15 * 60 * 1000;
@@ -14,8 +46,10 @@ export const PREDEL_TREVOGI_STOPA_MS = 5 * 60 * 1000;
 
 // RU: sozdatKlienta: JSON-RPC дочерний Codex app-server позволяет steer и явный stop точного thread/turn. Давление использует steer, Telegram stop — interrupt; подмена модели обнаруживается по уведомлению и не отзывает уже выданный текст.
 // EN: sozdatKlienta: A child Codex app-server JSON-RPC connection supports steering and explicit stopping of the exact thread/turn. Pressure uses steering; Telegram stop interrupts. Model rerouting is detected by notification and cannot retract text already emitted.
-export function sozdatKlienta({ bin, args = ['app-server', '--listen', 'stdio://'], env, log, spawnImpl = spawn }) {
+export function sozdatKlienta({ bin, args = ['app-server', '--listen', 'stdio://'], env, log, spawnImpl = spawn, onSpawn, beforeSpawn }) {
+  try{beforeSpawn?.(env??process.env,args)}catch{try{log?.('[usage] AUTH_SOURCE_UNPROVEN')}catch{}}
   const child = spawnImpl(bin, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  try{onSpawn?.(child)}catch{try{log?.('[usage] G_PROCESS_UNPROVEN')}catch{}}
   let n = 0, buf = '', zakryt = false, konec = null;
   const zhdut = new Map(), slushateli = [];
   child.stdout.setEncoding('utf8');
@@ -42,10 +76,15 @@ export function sozdatKlienta({ bin, args = ['app-server', '--listen', 'stdio://
   child.once('error', (e) => { zakryt = true; konec = { oshibka: e.message }; for (const { rej } of zhdut.values()) rej(e); zhdut.clear(); });
   umer.then(() => { for (const { rej } of zhdut.values()) rej(new Error(`app-server завершился (${JSON.stringify(konec)}); stderr: ${stderrHvost.slice(-300)}`)); zhdut.clear(); });
   return {
-    zapros(method, params) {
+    zapros(method, params, {timeoutMs} = {}) {
       if (zakryt) return Promise.reject(new Error(`app-server уже завершён (${JSON.stringify(konec)})`));
       const id = ++n;
-      return new Promise((res, rej) => { zhdut.set(id, { res, rej }); child.stdin.write(JSON.stringify({ id, method, params }) + '\n'); });
+      return new Promise((res, rej) => {
+        let timer;const done=fn=>value=>{clearTimeout(timer);fn(value)};
+        zhdut.set(id,{res:done(res),rej:done(rej)});
+        if(Number.isFinite(timeoutMs)&&timeoutMs>0)timer=setTimeout(()=>{const waiting=zhdut.get(id);if(!waiting)return;zhdut.delete(id);const e=Error('ACCOUNT_READ_TIMEOUT');e.code='ACCOUNT_READ_TIMEOUT';waiting.rej(e)},timeoutMs);
+        try{child.stdin.write(JSON.stringify({ id, method, params }) + '\n')}catch(e){zhdut.delete(id);clearTimeout(timer);rej(e)}
+      });
     },
     uvedomit(method, params) { if (!zakryt) child.stdin.write(JSON.stringify({ method, ...(params ? { params } : {}) }) + '\n'); },
     slushat(f) { slushateli.push(f); },
@@ -61,8 +100,10 @@ export function sozdatKlienta({ bin, args = ['app-server', '--listen', 'stdio://
 export async function* progonAppServer({ bin, env, log, zapros, sessiya, cwd, model, sandbox, effort, config, porog, tekstSignala,
                                          predelGranicyMs = PREDEL_GRANICY_MS, predelZaversheniyaMs = PREDEL_ZAVERSHENIYA_MS,
                                          predelTrevogiMs = PREDEL_TREVOGI_STOPA_MS,
-                                         klientImpl = sozdatKlienta, clientVersion = '0', registerTaskControl, onPressureAccepted, onThread }) {
-  const k = klientImpl({ bin, env, log });
+                                         klientImpl = sozdatKlienta, clientVersion = '0', registerTaskControl, onPressureAccepted, onThread, usageObserver }) {
+  const usage=(method,...args)=>{try{return usageObserver?.[method]?.(...args)}catch{try{usageObserver?.fail('SOURCE_GAP')}catch{}}};
+  usage('codexSpawn',env??process.env);
+  const k = klientImpl({ bin, env, log, beforeSpawn:(_env,args)=>usage('codexSpawnArgs',args), onSpawn:child=>usage('engineProcess',child) });
   const ochered = []; let budit = null; const polozhit = (e) => { ochered.push(e); if (budit) { budit(); budit = null; } };
   const P = porog?.porog;
   let turnId = null, threadId = null, zanyato = null, vzveden = false, steerPoslan = false, vzvedenV = null, steerV = null;
@@ -73,6 +114,7 @@ export async function* progonAppServer({ bin, env, log, zapros, sessiya, cwd, mo
   let pressureAccepted = false;
   let appCompletionBound = null;
   const safeLog = (text) => log(vychistit(text, sekretyProcessa(env ?? {})));
+  const usageHoda = schetUsageHoda();
   // Observe only: warning never interrupts Codex or authorizes restart.
   const warnPressure = () => {
     if (!pressureWatch || pressureWatch.warned || fullyClosed) return;
@@ -141,6 +183,8 @@ export async function* progonAppServer({ bin, env, log, zapros, sessiya, cwd, mo
     }
   };
   k.slushat(async (method, p) => {
+    if(method==='account/updated'){void usage('codexAccountUpdated');return}
+    usage('protocol',method,p); // before root-thread filtering: native children are metering facts too
     if (threadId && p.threadId && p.threadId !== threadId) return;
     if (podmena && method !== 'turn/completed') return;
     if (method === 'turn/started') { remoteActiveTurn = p.turn?.id ?? p.turnId ?? remoteActiveTurn; return; }
@@ -152,6 +196,7 @@ export async function* progonAppServer({ bin, env, log, zapros, sessiya, cwd, mo
       return;
     }
     if (method === 'thread/tokenUsage/updated') {
+      try { usageHoda.prinyat(p); } catch {}
       const z = p.tokenUsage?.last?.inputTokens;
       if (Number.isSafeInteger(z)) {
         zanyato = z;
@@ -207,16 +252,20 @@ export async function* progonAppServer({ bin, env, log, zapros, sessiya, cwd, mo
     }
   });
   try {
-    await k.zapros('initialize', { clientInfo: { name: 'subscription-gateway', version: clientVersion } });
+    const initializeReply=await k.zapros('initialize', { clientInfo: { name: 'subscription-gateway', version: clientVersion }, capabilities:{experimentalApi:true} });
+    usage('codexVersion',initializeReply,(env ?? process.env).CODEX_INTERNAL_ORIGINATOR_OVERRIDE || 'subscription-gateway');
     k.uvedomit('initialized');
+    await usage('codexInitialized',k,{cwd});
     const nastrojki = { ...(cwd ? { cwd } : {}), ...(model ? { model } : {}), ...(sandbox ? { sandbox } : {}), approvalPolicy: 'never', ...(config ? { config } : {}) };
     const t = sessiya ? await k.zapros('thread/resume', { threadId: sessiya, ...nastrojki }) : await k.zapros('thread/start', nastrojki);
     threadId = t?.thread?.id;
     if (!threadId) throw new Error('app-server не вернул id нити');
     if (poBelomu(threadId, 'id') !== threadId) throw new Error(`app-server вернул id нити не по белому списку формы: ${poBelomu(threadId, 'id')}`);
     onThread?.(threadId);
+    usage('protocol','thread/started',{thread:t.thread});
     const r = await k.zapros('turn/start', { threadId, input: [{ type: 'text', text: zapros }], ...(effort ? { effort } : {}) });
     turnId = r?.turn?.id ?? null; remoteActiveTurn ??= turnId;
+    if(turnId)usage('ready',{thread_id:threadId,turn_id:turnId});
     if (turnId && earlyTerminals.has(turnId)) terminalExact = true;   // (б) ранний terminal того же id — доказательство; иной — закрыл ход без доказательства
     earlyTerminals.clear();
     if (turnId && !podmena && registerTaskControl) unregisterTaskControl = registerTaskControl(async (packet) => {
@@ -280,8 +329,20 @@ export async function* progonAppServer({ bin, env, log, zapros, sessiya, cwd, mo
       if (kon?.umer && !zaversheno && !ochered.length) throw new Error(`app-server завершился посреди хода (${JSON.stringify(kon.umer)})`);
     }
     const st = zaversheno.status;
+    try {
+      const it = usageHoda.itog(turnId);
+      const pole = (k) => it[k] ?? 'нет';
+      safeLog(`usage хода: turn=${poBelomu(turnId, 'id')} thread=${poBelomu(threadId, 'id')} статус=${poBelomu(st, 'status')} вызовов=${it.vyzovov}`
+        + ` input=${pole('input')} cached=${pole('cached')} cache_write=${pole('cache_write')} output=${pole('output')} reasoning=${pole('reasoning')}`
+        + ` полнота=${it.polnota} без_turn=${it.bez_turn} негодных=${it.plohih}`);
+      const dom = String(env?.CODEX_HOME ?? '').trim();
+      if (dom) fs.appendFileSync(path.join(dom, 'dsh-usage-hodov.jsonl'),
+        JSON.stringify({ ts: new Date().toISOString(), thread: threadId, turn: turnId, status: st, ...it }) + '\n', { mode: 0o600 });
+      else safeLog('usage хода: CODEX_HOME не задан — в файл не записано');
+    } catch (e) { safeLog('usage хода: не записано — ' + poBelomu(String(e?.code ?? e?.message ?? e), 'prichina')); }
     if(!terminalExact&&registerTaskControl)safeLog('[codex-app-server] ход закрыт без точного terminal — stop/replace получат unknown (HOLD)');
     if(terminalExact&&['completed','interrupted','failed'].includes(st))registerTaskControl?.terminal?.({thread_id:threadId,turn_id:turnId,status:st,proof:'codex-turn/completed'});
+    if(terminalExact&&['completed','interrupted','failed'].includes(st)){await usage('codexBeforeTerminal');usage('terminal',{thread_id:threadId,turn_id:turnId,status:st,proof:'codex-turn/completed'})}
     if (st === 'failed') throw new Error(String(zaversheno.error?.message ?? 'ход Codex failed без текста'));
     if (st !== 'completed') log(`[codex-app-server] ⚠️ ход закончен со статусом «${poBelomu(st, 'status')}»`);
 
@@ -301,6 +362,7 @@ export async function* progonAppServer({ bin, env, log, zapros, sessiya, cwd, mo
       closeResolved = true;
       if (steerPoslan) safeLog('[codex-app-server] local close resolved after soft-stop');
     } finally {
+      usage('codexFinished');
       fullyClosed = true;
       if (pressureTimer) clearTimeout(pressureTimer);
       if (pressureWatch?.warned) safeLog(closeResolved

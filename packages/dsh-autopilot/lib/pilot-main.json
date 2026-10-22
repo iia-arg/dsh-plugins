@@ -1,0 +1,15 @@
+{
+  "upstream_sha": "9fc898cbe941d5b8a369f1dd657e9119676eb44f",
+  "repository": "https://github.com/nick-vels/skills",
+  "phase_sha256": {
+    "0-memory.md": "66f131d4b2dc91216bd49ea2333a6b3a7958428a77c99c4f877ff5d03bfc77a4",
+    "0-preflight.md": "a1fe78e2ba45fb99ff9d7d7dc5f023a848ce19181af778ac2a7c30d09201f956",
+    "0-resume.md": "4a1efe74d32e28df348bda14035f0b195c2a8f8dccb954b35bf68d178c0ee3f8",
+    "3-spec.md": "1114100f0c370129048fc9284b934bd774cce2d595e873d1c3f834aef0c62365",
+    "4-plan.md": "b86a8740c3e8bc122728be045060e9cb3437c0f54f297bf62f6384d626066fc1",
+    "5-subagents.md": "1ddcc81b1b12e67910c71ed3b7f97b21624b8946dfea761b5f5e83eeff033ed4",
+    "5-repair.md": "efc7da968ef95528f5a95a0c7349cf48672664b36a8f3d23b6cc1e881cfecd1c",
+    "6-review.md": "6c12194127fce772f79d08c47ce1098217dd4423f1d7ae4ef038fb36c6fd2e5a",
+    "8-final.md": "9a6b6fd09b9dbb30c6f53e184e52aec5b09562eb0b139638961a75bb4d38b7c6"
+  }
+}

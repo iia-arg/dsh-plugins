@@ -135,8 +135,10 @@ proba('ПРИЗНАК ЗАКРЫТИЯ a22 (КЛАСС): ВСЕ строки м�
   //     guards ANY line emitted during mounting, including ones not yet written. The denominator comes from
   //     what was emitted and is printed: "N lines, M matching the pattern".
   const a = podelnyjCtx(); const b = podelnyjCtx()
-  apply(a, nabor('probe-vse-stroki')); apply(b, nabor('probe-vse-stroki'))
-  const vse = [...a.stroki, ...b.stroki]
+  const stdout = [], originalLog = console.log
+  try { console.log = (...args) => stdout.push(args.join(' ')); apply(a, nabor('probe-vse-stroki')); apply(b, nabor('probe-vse-stroki')) }
+  finally { console.log = originalLog }
+  const vse = [...stdout, ...a.stroki, ...b.stroki]
   if (vse.length < 2) throw new Error(`строк ${vse.length} — меньше двух видов, стенд не мерит класс`)
   const ne_po = vse.filter((s) => !OBRAZEC.test(s))
   if (ne_po.length) {

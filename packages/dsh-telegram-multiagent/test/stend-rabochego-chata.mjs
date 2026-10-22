@@ -1,3 +1,4 @@
+import {droppedPublisher} from '../src/autopilot-notice.js';
 // RU: Изолированный стенд stend-rabochego-chata.mjs: проверяет реальные границы модуля на управляемых входах. Условия внешних сервисов и код слепоты читай в сценариях; прохождение не доказывает живую доставку.
 // EN: Isolated harness stend-rabochego-chata.mjs: exercises module boundaries using controlled inputs. Read its scenarios for external-service requirements and blind outcomes; passing does not prove live delivery.
 import { sGostem } from './gost-kontekst.mjs';
@@ -43,7 +44,7 @@ function stend(nado = {}) {
   const ORIGIN_MARK = vm.runInNewContext(markText);
   const stripMark = (x) => String(x).replace(ORIGIN_MARK, '').trimStart();
   const kontekstChata = new M.KontekstChata();
-  const ctx = {rotateConversation,process,
+  const ctx = {rotateConversation,process,autopilot:null,droppedPublisher,
     newSessionRefusal, descriptionsInFlight:new Map(), conversations:{current:key=>({session_id:`telegram-${key}`,session_created:null})},
     deployment:{},ownerChatId:()=>OWNER, settings: () => SETTINGS, config: { agentName: 'помощник', mergeChatIntoA2A: OWNER                                                 }, log: (m) => s.log.push(m),
     nastrojkaGruppy: M.nastrojkaGruppy, obrashchenie: M.obrashchenie, bezNikaKomandy: M.bezNikaKomandy,

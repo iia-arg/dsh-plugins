@@ -22,7 +22,7 @@ try {
   const held=l.receive('held',Buffer.from('hold'),{hold:true});l.db.prepare("UPDATE receipts SET received_at=0,blocked='dispatch_unknown' WHERE id=?").run(held.id);l.holdTick();
   assert(l.db.prepare("SELECT body FROM outbox WHERE id LIKE '%:held:%'").all().some(x=>x.body.includes('operator-fixture')));
   assert.equal(l.db.prepare("SELECT value FROM meta WHERE key='receipt_reviewer'").get().value,'operator-fixture');
-  const keys=generateKeyPairSync('ed25519');fs.writeFileSync(path.join(root,'policy.json'),JSON.stringify({version:1,status:'approved',maxLifetimeMs:60000,clockSkewMs:0,keys:{fixture:keys.publicKey.export({type:'spki',format:'pem'})}}));
+  const keys=generateKeyPairSync('ed25519');fs.writeFileSync(path.join(root,'policy.json'),JSON.stringify({version:1,status:'approved',maxLifetimeMs:60000,clockSkewMs:0,keys:{fixture:keys.publicKey.export({type:'spki',format:'pem'})}}),{mode:0o600});
   const real=fs.lstatSync;fs.lstatSync=function(file,...args){const stat=real.call(this,file,...args);if(file===path.join(root,'policy.json'))stat.uid=0;return stat;};
   try{const signed=signCoordinator(Buffer.from('body'),{action:'message',delivery_id:'probe',key_id:'fixture',ledger_uuid:l.protocolIdentity(),recipient:'executor',issued_at:1000000,expires_at:1060000},keys.privateKey);assert.equal(l.coordinator(signed,'executor').trusted,true);}finally{fs.lstatSync=real;}
   assert.equal(TRUST_FILE,'');

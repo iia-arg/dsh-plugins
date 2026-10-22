@@ -1,6 +1,6 @@
 # dsh-storozha-mashiny — сторожа и приборы машины, на которой работают несколько ИИ-агентов
 
-Версия · Version: 3.1.3
+Версия · Version: 3.1.6
 
 *English version — [below](#english).*
 
@@ -186,6 +186,9 @@ sudo systemctl enable --now predel-dliny-watch@<агент>.timer storozh-dvizhk
 | | ключи файла `SERVICES` | пусто | службы и таймеры через пробел; `юнит:часы` — свежесть последнего успешного запуска разовой службы |
 | | `MEMORY_HEALTH_URL` | пусто — не проверять | адрес проверки живости памяти |
 | | `DISK_PATHS`, `DISK_MIN_FREE_PCT` | `/`, `10` | где мерить место и ниже какого процента свободного тревожить |
+| | `DISK_WARN_FREE_PCT`, `DISK_RATE_DROP_GIB` | `20`, `2` | предупреждение ниже 20% свободного и падение ≥2 GiB за фактический интервал; у 20%, 10% и скорости отдельные ключи тишины |
+| | `DISK_KNOWN_WRITERS` | обязательно, пусто → СЛЕПОТА/2 | 1..16 записей `юнит=/каталог`; пример раскладки sadik: `sadik-backup.service=/backups backup-verify.service=/tmp`. Перед монтажом сверить с кодом и средой юнитов; добавлять в существующий WATCHDOG_CONF, не заменять весь конфиг |
+| | `DISK_RATE_MAX_GAP_SEC`, `DISK_DU_TIMEOUT_SEC`, `DISK_DU_MAX_MIB` | `900`, `8`, `256` | при большем разрыве скорость не считается; общий бюджет du — 8 с, память 256 MiB; неполная диагностика не даёт исключения плановому писателю |
 | | `COOLDOWN_MIN` | `30` | окно тишины на одну беду, мин |
 | apt-updates-notify.sh | `APTUN_CONF` | `/etc/apt-updates-notify/apt-updates-notify.conf` | файл настройки (bash), необязателен; на боевой машине его нет |
 | | `APTUN_STATE`, `APTUN_ALERT` | `/var/lib/apt-updates-notify`, `/usr/local/bin/agent-alert` | состояние (создаёт systemd, `StateDirectory=`) и канал |
@@ -306,6 +309,8 @@ sudo systemctl enable --now predel-dliny-watch@<агент>.timer storozh-dvizhk
 - Пакет не сторожит сам себя: смерть таймера видит другой сторож (`sadik-watch` по перечню суточных,
   `agent-watchdog.sh` по `SERVICES`).
 - Все сторожа — снимок на такте. Что случилось и прошло между тактами, они не видят.
+- `agent-watchdog.sh` 3.1.5: список `DISK_KNOWN_WRITERS` обязателен при обновлении скрипта. Active/activating писатель освобождает только 20% и скорость, если полные сравнимые du подтверждают ожидаемый каталог без чужого роста; в журнале «ожидаемо: идёт <юнит>» и прогноз, если он вычислим. Ниже 10% исключения нет. Все ступени сохраняют свою тишину `COOLDOWN_MIN` (30 мин по умолчанию); чужой рост получает отдельные ключи. X=2 GiB/интервал — допущение, а не калибровка по суточному ряду. Нет/ошибка списка или юнита — именованная слепота/2. НЕ ловит чужую запись внутри разрешённого `/tmp`, open-deleted/metadata/резерв, смену каталога писателя через `BACKUP_LOCAL_DIR`, `TMPDIR` или `PrivateTmp` без правки конфига. Нет сравнимого падения — числовой прогноз не выдумывается.
+- Атрибуция дискового роста идёт по каталогу, а не по процессу: весь `/tmp` покрыт записью `backup-verify.service=/tmp`. Пока `backup-verify.service` active/activating, рост `/tmp` **любым процессом** относится к плановому писателю; сторож не устанавливает, кто записал данные. Это осознанная цена исключения для планового писателя; ступень 10% сохраняется без исключений.
 - `agent-watchdog.sh`: `юнит:часы` годится только для `Type=oneshot`. Он не видит «успешный» по коду запуск, который
   ничего не проверил. Последнюю строку без перевода строки `read` теряет (спящий дефект, в бою вход от `journalctl`).
 - `apt-updates-notify.sh` знает только скачанные списки apt: уязвимость без выпущенного пакета, обновления npm и pypi,
@@ -537,6 +542,9 @@ exists but cannot be read — refusal, exit 2. The third kind is the modules' ow
 | | file key `SERVICES` | empty | units and timers separated by spaces; `unit:hours` — freshness of the last successful run of a oneshot service |
 | | `MEMORY_HEALTH_URL` | empty — do not check | memory liveness URL |
 | | `DISK_PATHS`, `DISK_MIN_FREE_PCT` | `/`, `10` | where to measure space and below which free percent to alert |
+| | `DISK_WARN_FREE_PCT`, `DISK_RATE_DROP_GIB` | `20`, `2` | warn below 20% free and on a drop ≥2 GiB over the actual interval; 20%, 10% and rate have separate quiet-window keys |
+| | `DISK_KNOWN_WRITERS` | required; empty → blindness/2 | 1..16 `unit=/directory` records; sadik layout example: `sadik-backup.service=/backups backup-verify.service=/tmp`. Verify against unit code and environment before mounting; append to the existing WATCHDOG_CONF, do not replace the whole settings file |
+| | `DISK_RATE_MAX_GAP_SEC`, `DISK_DU_TIMEOUT_SEC`, `DISK_DU_MAX_MIB` | `900`, `8`, `256` | no rate estimate after a longer gap; total du budget 8 s, memory 256 MiB; incomplete diagnostics never exempt a scheduled writer |
 | | `COOLDOWN_MIN` | `30` | quiet window per problem, min |
 | apt-updates-notify.sh | `APTUN_CONF` | `/etc/apt-updates-notify/apt-updates-notify.conf` | settings file (bash), optional; absent on the production machine |
 | | `APTUN_STATE`, `APTUN_ALERT` | `/var/lib/apt-updates-notify`, `/usr/local/bin/agent-alert` | state (created by systemd, `StateDirectory=`) and channel |
@@ -658,6 +666,8 @@ code as is, 70 — the script crashed, 71 — no script.
 - The package does not watch itself: a dead timer is seen by another watchdog (the daily watchdog `sadik-watch` through the daily list,
   `agent-watchdog.sh` through `SERVICES`).
 - All watchdogs take a snapshot per tick. What happened and passed between ticks they do not see.
+- `agent-watchdog.sh` 3.1.5: updating the script requires `DISK_KNOWN_WRITERS`. An active/activating writer exempts only 20% and rate when complete comparable du snapshots establish expected directory growth with no foreign growth; the journal records the writer and an ETA when calculable. There is no exemption below 10%. Each tier keeps its own `COOLDOWN_MIN` quiet window (30 min by default); foreign growth uses separate keys. X=2 GiB/interval is an assumption, not a threshold calibrated from daily history. A missing/invalid list or unit gives named blindness/2. Does NOT detect another process writing inside allowed `/tmp`, open-deleted/metadata/reserved space, or a writer directory changed via `BACKUP_LOCAL_DIR`, `TMPDIR` or `PrivateTmp` without a config update. Without a comparable drop, no numeric ETA is invented.
+- Disk-growth attribution is by directory, not by process: the entire `/tmp` is covered by `backup-verify.service=/tmp`. While `backup-verify.service` is active/activating, growth in `/tmp` caused by **any process** is attributed to the scheduled writer; the watchdog does not identify which process wrote the data. This is an explicit trade-off of the scheduled-writer exemption; the 10% tier remains unconditional.
 - `agent-watchdog.sh`: `unit:hours` works only for `Type=oneshot`. It does not see a run that "succeeded" by exit
   code but checked nothing. `read` loses a last line without a trailing newline (a dormant defect; live input comes
   from `journalctl`).

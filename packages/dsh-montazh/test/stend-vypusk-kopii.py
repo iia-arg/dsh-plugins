@@ -96,6 +96,50 @@ with tempfile.TemporaryDirectory(prefix='gamma-vypusk-copies-',dir=os.environ.ge
  check('second copy changed by behavior run refuses in final comparison',lambda:refused(invoke(bypass=False,extra={'OBHODCHIK':str(walker)})))
  (second/'src/main.js').write_bytes(original)
  setrows(rows[:2]);check('final restore passes without creating tag',lambda:valid(invoke()))
+
+ # NEP_PRINYATO (18.10.2026, замысел Вениамина 09:14 МСК, наряд Забавы 06:14Z): узкий объявленный пропуск одной неизмеренной пробы.
+ #   Подставной обходчик печатает метки «STEND-NEPRIMENIMO» и факты «STEND-PROGNAN» для стенда test/stend-a.sh копии first.
+ #   Ожидания до запуска: (г) без пары → 2; (а) пара → 0, довод в выводе и в подсказке метки; (б) пара + другая неизмеренная → 2;
+ #   (в) пара на несуществующую пробу → 2 «объявление не применено»; края: пара без меток, пара при STENDY_INACHE, пара на
+ #   измеренную пробу, строка не той формы → 2. Возврат (ворота без правки) — (а) снова 2: стенд гонять и по основе.
+ nwalk=root/'walker-nep.sh';NP='legacy-window-from-live-current';SA=str(first)+'/test/stend-a.sh'
+ def nep_walker(marks,kats=(first,)):
+  lines=['ПАКЕТ: зелёных 1 красных 0 слепых 0']+['КАТАЛОГ ПАКЕТА: '+str(k)+'/' for k in kats]
+  for k in kats:lines.append('STEND-PROGNAN: '+str(k)+'/test/stend-a.sh\t-\t0')
+  lines+=['STEND-NEPRIMENIMO: '+SA+'\t-\t'+m+': по построению не измерима (проба стенда)' for m in marks]
+  nwalk.write_text('#!/usr/bin/python3\n'+''.join('print('+repr(l)+')\n' for l in lines));nwalk.chmod(0o755)
+ def nep(prinyato=None,bypass=False):
+  ex={'OBHODCHIK':str(nwalk)}
+  if prinyato is not None:ex['NEP_PRINYATO']=prinyato
+  p=invoke(bypass=bypass,extra=ex);return p,p.stdout+p.stderr
+ DOV="довод проба: живое ядро каталожное, в bwrap root виден как nobody"
+ def kod(p,o,k,*est):
+  assert p.returncode==k,'код %d ≠ %d: %s'%(p.returncode,k,o[-1500:])
+  for e in est:assert e in o,'нет «%s»: %s'%(e,o[-1500:])
+ setrows(rows[:2])
+ nep_walker([NP])
+ check('NEP (г) без объявления: неизмеренная проба — СЛЕПОТА 2',lambda:kod(*nep(),2,'НЕ ИЗМЕРЕНА'))
+ def nep_a(stend):
+  p,o=nep(stend+':'+NP+'='+DOV);kod(p,o,0,'не применимо по объявлению: test/stend-a.sh · «'+NP+'» — '+DOV,'СВЕРКА КОПИЙ: 2 из 2')
+  import shlex
+  tag=[l for l in p.stdout.splitlines() if 'git tag -a' in l]
+  msgs=[(lambda a:a[a.index('-m')+1])(shlex.split(l.strip())) for l in tag]
+  assert msgs and all(('test/stend-a.sh · «'+NP+'» — '+DOV) in m for m in msgs),'довод не во всех подсказках метки: '+repr(msgs)
+ check('NEP (а) пара «путь:проба=довод» → 0, довод в выводе и в каждой подсказке метки',lambda:nep_a('test/stend-a.sh'))
+ check('NEP (а) пара по имени файла стенда → 0',lambda:nep_a('stend-a.sh'))
+ nep_walker([NP,'drugaya-proba'])
+ check('NEP (б) пара + другая неизмеренная без пары → 2, названа другая',lambda:kod(*nep('test/stend-a.sh:'+NP+'='+DOV),2,'НЕ ИЗМЕРЕНА','drugaya-proba'))
+ nep_walker([NP])
+ check('NEP (в) пара на несуществующую пробу → 2 «объявление не применено»',lambda:kod(*nep('test/stend-a.sh:legacy-window-from-live-curent='+DOV),2,'объявление не применено'))
+ check('NEP (в) пара на чужой стенд → 2 «объявление не применено»',lambda:kod(*nep('test/stend-b.sh:'+NP+'='+DOV),2,'объявление не применено'))
+ check('NEP строка без довода → 2',lambda:kod(*nep('test/stend-a.sh:'+NP+'='),2,'не той формы'))
+ check('NEP пара при STENDY_INACHE (стенды не прогнаны) → 2',lambda:kod(*nep('test/stend-a.sh:'+NP+'='+DOV,bypass=True),2,'объявление не применено'))
+ nep_walker([])
+ check('NEP пара, а меток «не применимо» нет → 2',lambda:kod(*nep('test/stend-a.sh:'+NP+'='+DOV),2,'объявление не применено'))
+ nep_walker([NP],kats=(first,second))
+ check('NEP пара на пробу, измеренную на другой копии → 2',lambda:kod(*nep('test/stend-a.sh:'+NP+'='+DOV),2,'объявление не применено'))
+ nep_walker([NP])
+ check('NEP возврат: та же проба без объявления снова 2',lambda:kod(*nep(),2,'НЕ ИЗМЕРЕНА'))
  # A behavior walker may name an older copy outside this explicit release.
  setrows(rows)
  walker.write_text(chr(10).join(['#!/usr/bin/python3', 'print('+repr('ПАКЕТ: зелёных 1 красных 0 слепых 0')+')', 'print('+repr('КАТАЛОГ ПАКЕТА: '+str(third)+'/')+')'])+chr(10));walker.chmod(0o755)
@@ -214,7 +258,7 @@ with tempfile.TemporaryDirectory(prefix='gamma-vypusk-copies-',dir=os.environ.ge
   assert p.returncode==0,p.stdout+p.stderr
   assert 'МЕСТА СВЕРЕНЫ: svc-derevo — '+str(n)+' из '+str(n) in p.stdout and 'АННОТАЦИЯ ОБЛАСТИ: derevo=svc-derevo' in p.stdout,p.stdout
  setderevo()
- check('B-N-1904 no directory copies, derevo places equal release -> places compared',lambda:mesta_ok(invoke()))
+ check('B-N-1904 no directory copies: automatic derevo places compared',lambda:mesta_ok(invoke()))
  m_before=sha(mesta/'main.js');(mesta/'main.js').write_text('PLACE CORRUPTION B-N-1904')
  m_count=subprocess.run(['grep','-cF','PLACE CORRUPTION B-N-1904',str(mesta/'main.js')],capture_output=True,text=True)
  assert m_count.stdout.strip()=='1' and m_before!=sha(mesta/'main.js')
@@ -239,9 +283,9 @@ with tempfile.TemporaryDirectory(prefix='gamma-vypusk-copies-',dir=os.environ.ge
   p=invoke();assert p.returncode==2 and 'запись отстала' in p.stdout,p.stdout+p.stderr
  check('B-N-1904 derevo naming a file absent from release is blindness',stale_record)
  setderevo(plugins=rows[:2])
- def copies_win():
-  p=invoke();valid(p);assert 'МЕСТА СВЕРЕНЫ' not in p.stdout,p.stdout
- check('B-N-1904 directory copies present -> copies compared, derevo not used',copies_win)
+ def mixed_requires_scope():
+  p=invoke();assert p.returncode==2 and 'область не задана' in p.stdout and 'svc-derevo' in p.stdout,p.stdout+p.stderr
+ check('B-N-VYPUSK-KOPII directory copies plus derevo require explicit scope',mixed_requires_scope)
  # B-N-1914: этап стендов — НАСТОЯЩИЙ обходчик (без STENDY_INACHE). Отдельная подстава, чтобы стенды дерева не трогали пробы выше.
  r14=root/'p1914';rel14=r14/'dsh-st-1914';(rel14/'src').mkdir(parents=True);(rel14/'test').mkdir()
  (rel14/'package.json').write_text(json.dumps({'name':'dsh-st-1914','version':'0.0.1','files':['src']}))

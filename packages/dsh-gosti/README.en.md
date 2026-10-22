@@ -2,7 +2,7 @@ Russian version: [README.md](README.md) · English below
 
 # dsh-gosti — guest circuit of Varvara and "Ostrov"
 
-**Version:** 3.1.2
+**Version:** 3.1.3
 
 Service software of sadik: the adapter "website chat (Chatwoot) ↔ Varvara", a 30-day retention period for visitor conversations, a reader of the
 "Ostrov" staff list, a guest sandbox runner without journal access, an OMEGA gateway for guest agents and its stand.

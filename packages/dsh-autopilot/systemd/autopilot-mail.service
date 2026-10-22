@@ -1,0 +1,37 @@
+[Unit]
+Description=Dedicated Autopilot postman (kernel-authenticated Unix socket)
+After=local-fs.target
+OnFailure=autopilot-mail-failed@%n.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=30
+User=autopilot-post
+Group=autopilot-post
+SupplementaryGroups=autopilot-mail
+RuntimeDirectory=autopilot-mail
+RuntimeDirectoryMode=0750
+StateDirectory=autopilot-mail
+StateDirectoryMode=0700
+Environment=AGENT_ALERT_CHEREZ_SPUL=1 AGENT_ALERT_ITOG_ZHDAT=10
+ExecStartPre=/usr/bin/test -x /var/spool/dsh-trevogi/itog
+ExecStartPre=/usr/local/bin/agent-alert --proverit-nastrojku
+ExecStart=/usr/bin/python3 /opt/autopilot/post/0.1.10/pilot/mail_service.py
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=7
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+InaccessiblePaths=/var/spool/a2a /etc/agent-registry /etc/dsh-telegram
+ReadWritePaths=/run/autopilot-mail /var/lib/autopilot-mail /var/spool/dsh-trevogi
+UMask=0077
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

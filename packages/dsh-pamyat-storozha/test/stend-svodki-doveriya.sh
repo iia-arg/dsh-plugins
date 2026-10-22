@@ -1,16 +1,27 @@
 #!/bin/bash
 # СТЕНД НЕДЕЛЬНОЙ СВОДКИ ДОВЕРИЯ omega-kopiya-watch (признак 5б). 26.09.2026; переносимая редакция.
-# ЗОВУЩИЙ — ворота правки omega-kopiya-watch (автор + приёмщик). В СУТОЧНЫЙ ОБХОД НЕ СТАВИТЬ: sudo + копия боевой OMEGA (~1–2 мин).
-# Всё в своём /tmp (trap убирает при любом выходе); боевая OMEGA — копия (чтение); признак 6 читает боевую поставку и systemctl (чтение).
+# ЗОВУЩИЕ — ворота правки omega-kopiya-watch (автор + приёмщик) и НОЧНОЙ ОБХОД: строка perechen-boevyh-stendov.txt, доводы — таблица
+#   vse-stendy-boevye.sh (A-N-1711, 07.10.2026). Прежнее «в суточный обход не ставить» (26.09) снято: sudo в среде обхода есть,
+#   ночью ~10 с (замер 17.10). Признак 6 читает БОЕВУЮ поставку OMEGA (метки правок): красное от него ночью — живое
+#   состояние машины (правка стёрта), а не дефект стенда; поставка без правки — СЛЕПОТА, код 2.
+# Всё в своём /tmp (trap убирает при любом выходе); боевая OMEGA — копия (чтение); признак 6 читает боевую поставку (чтение).
+# 18.10.2026 (журнал 2G, ночь 18.10 с0 красный от живой слепоты признака 7): systemctl, journalctl и каталог модели — ПОДСТАВНЫЕ
+#   (старт службы = начало стенда, журнал — фиксированная строка «Startup RSS», модель — три файла): признаки 6–7 с журналом и
+#   стартом службы мерят свои стенды (stend-pravki-postavki-omega.sh — «новее старта», stend-modeli-omega.sh — признак 7).
 # Счётчик ядра — подставной node (строки счёта из файла); «прошли сутки» — сдвиг ВСЕХ дат в своём STATE. Вердикт автоматом: rc 1 при расхождении.
 # Доводы: $1 сторож; $2 (необяз.) сторож-основа для такта «осн». STEND_PAMYAT — база pamyat.db любого агента для копии
 #   (умолч. — подставная пустая: счёт подаёт подставной node, содержимое базы сводке не нужно).
 #   STEND_KONF — файл настройки пакета для сторожа (DSH_PAMYAT_STOROZHA_CONF); умолч. — пустой.
 # EN: STAND FOR THE WEEKLY TRUST SUMMARY of omega-kopiya-watch (sign 5b). 26.09.2026; portable edition.
-#     THE CALLER is the omega-kopiya-watch edit gate (author + acceptor). DO NOT PUT INTO THE DAILY ROUND: sudo
-#     + a copy of production OMEGA (~1–2 min).
+#     CALLERS: the omega-kopiya-watch edit gate (author + acceptor) and the NIGHTLY ROUND (perechen-boevyh-stendov.txt line,
+#     arguments from the vse-stendy-boevye.sh table; A-N-1711, 07.10.2026). The former "not for the daily round" (26.09) is
+#     withdrawn: sudo is available there, ~10 s at night (measured 17.10). Sign 6 reads the PRODUCTION OMEGA install (patch
+#     labels): red from it at night is live machine state (patch wiped), not a stand defect; an install without the patch
+#     is BLINDNESS, code 2.
 #     Everything in its own /tmp (trap removes it on any exit); production OMEGA — a copy (read); sign 6 reads
-#     the production distribution and systemctl (read).
+#     the production distribution (read). 18.10.2026 (2G journal; night 18.10 с0 red from live sign-7 blindness): systemctl,
+#     journalctl and the model directory are STAND-INS (service start = stand start, a fixed "Startup RSS" line, three model
+#     files); signs 6–7 with journal and service start are measured by their own stands.
 #     The core counter is a stand-in node (count lines from a file); "a day passed" — a shift of ALL dates in
 #     its own STATE. The verdict is automatic: rc 1 on a divergence.
 #     Arguments: $1 watcher; $2 (optional) the base watcher for the "осн" cycle. STEND_PAMYAT — any agent's
@@ -35,6 +46,9 @@ else python3 -c "import sqlite3,sys; sqlite3.connect(sys.argv[1]).execute('CREAT
 printf '#!/bin/bash\ncat %s/schet.txt; exit $(cat %s/node-kod)\n' $T $T > $T/node
 printf '#!/bin/bash\nprintf "%%s\\t%%s\\n" "$(cat %s/kanal)" "$1" >> %s/kanal.log; [ "$(cat %s/kanal)" = ok ]\n' $T $T $T > $T/alert
 chmod +x $T/node $T/alert; echo ok > $T/kanal; echo 0 > $T/node-kod; : > $T/kanal.log
+printf '#!/bin/bash\necho ActiveState=active; echo ExecMainStartTimestamp=@%s\n' "$(date +%s)" > $T/systemctl
+printf '#!/bin/bash\necho "%s.000000 sadik omega[1]: WARNING:omega.server:Startup RSS: 81.3 MB, PID: 1, transport: http"\n' "$(date +%s)" > $T/journalctl
+mkdir -p $T/model; for f in model.onnx model.onnx_data tokenizer.json; do printf x > $T/model/$f; done; chmod +x $T/systemctl $T/journalctl
 s() { printf 'доверие %s: знаний %s · otmenena %s · oprovergnuta 0 · otmetka-negodna 0 · utochnena %s · podtverzhdena 0 · bez-podtverzhdeniya %s · obychnaya 0 · otmenena_id [%s]\n' "$@"; }
 schet_A() { { s agent-a 201 0 17 11 ''; s agent-b 0 0 0 0 ''; s agent-c 322 0 0 21 ''; s agent-d 3460 0 31 237 ''; s agent-e 284 1 13 15 65; } > $T/schet.txt; }
 schet_B() { { s agent-a 210 0 19 11 ''; s agent-b 0 0 0 0 ''; s agent-c 322 0 0 21 ''; s agent-d 3460 0 31 237 ''; s agent-n 5 0 0 1 ''; s agent-e 284 2 13 15 65,70; } > $T/schet.txt; }
@@ -62,7 +76,7 @@ PY
 takt() {   # $1 имя, $2 ожид. новых писем сводки, $3 слово (в выводе или новых письмах; «-» — не проверять), $4 сторож (необяз.) · EN: $1 name, $2 expected new summary letters, $3 word (in the output or new letters; "-" — do not check), $4 watcher (optional)
   local w=${4:-$W} do_=$(wc -l < $T/kanal.log)
   env -i DSH_PROBA=1 PATH=/usr/bin:/bin DSH_PAMYAT_STOROZHA_CONF="${STEND_KONF:-$T/net.conf}" OKW_OMEGA_DB=$T/omega.db OKW_PAMYAT="$T/pam/*/pamyat/pamyat.db" OKW_STATE=$T/state.json OKW_ALERT=$T/alert \
-    OKW_CORE=$T/core OKW_NODE=$T/node python3 "$w" > $T/out-$1.txt 2>&1; local kod=$?
+    OKW_CORE=$T/core OKW_NODE=$T/node OKW_SYSTEMCTL=$T/systemctl OKW_JOURNALCTL=$T/journalctl OKW_OMEGA_MODEL_DIR=$T/model python3 "$w" > $T/out-$1.txt 2>&1; local kod=$?
   tail -n +$((do_+1)) $T/kanal.log > $T/nov-$1.txt
   local n=$(grep -c 'недельная сводка' $T/nov-$1.txt); local ok=1
   [ "$n" = "$2" ] || ok=

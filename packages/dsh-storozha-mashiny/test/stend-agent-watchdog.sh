@@ -42,6 +42,7 @@ cat > "$S/systemctl" <<EOF
 #!/bin/sh
 echo "systemctl \$*" >> "$T/calls"
 if [ "\$1" = is-active ] && grep -qxF "\$2" "$T/failed" 2>/dev/null; then echo failed; exit 3; fi
+if [ "\$1" = show ]; then printf 'LoadState=loaded\nActiveState=inactive\n'; exit 0; fi
 echo active
 EOF
 printf '#!/bin/sh\necho "curl $*" >> "%s/calls"\necho "{\\"status\\":\\"ok\\"}"\n' "$T" > "$S/curl"
@@ -56,7 +57,7 @@ for c in logger systemctl journalctl curl df du; do
   [ "$(command -v "$c")" = "$S/$c" ] || { echo "ОТКАЗ: $c разрешается в $(command -v "$c"), а не в заглушку — пробы не начаты"; exit 2; }
 done
 
-printf 'SERVICES="proba-a.service proba-b.service"\nMEMORY_HEALTH_URL=""\nDISK_PATHS="/"\nDISK_MIN_FREE_PCT=10\nCOOLDOWN_MIN=30\n' > "$T/conf"
+printf 'SERVICES="proba-a.service proba-b.service"\nMEMORY_HEALTH_URL=""\nDISK_PATHS="/"\nDISK_KNOWN_WRITERS="fixture-backup.service=/tmp"\nDISK_MIN_FREE_PCT=10\nCOOLDOWN_MIN=30\n' > "$T/conf"
 progon() { # RU: прогон с подставной настройкой · EN: run with the fake settings
   : > "$T/alerts"
   OUT="$(WATCHDOG_CONF="$T/conf" WATCHDOG_STATE="$T/state" WATCHDOG_ALERT="$S/alert" bash "$CEL" 2>&1)"; RC=$?
@@ -90,7 +91,7 @@ OUT="$(WATCHDOG_CONF="$T/net-takogo.conf" WATCHDOG_STATE="$T/state2" WATCHDOG_AL
 po_sc=$(grep -c '^systemctl ' "$T/calls")
 # RU: r2 (условие ворот): без настройки — провал кодом 2 и причина, не немой успех.
 # EN: r2 (gate condition): no settings — failure exit 2 with the reason, not a silent success.
-[ "$RC" = 2 ] && grep -qF 'настройки нет' <<<"$OUT" && grep -qF 'проверка неполна: настройки нет' <<<"$OUT" && [ "$do_sc" = "$po_sc" ] \
+[ "$RC" = 2 ] && grep -qF 'настройки нет' <<<"$OUT" && grep -qF 'проверка неполна:' <<<"$OUT" && [ "$do_sc" = "$po_sc" ] \
   && p "без настройки: код 2, «настройки нет» и «проверка неполна», службы не опрашивались" || f "без настройки: код $RC, systemctl $do_sc→$po_sc | $OUT"
 
 echo "── 5. 1.0.1: помощника тревоги нет — код 3, не 0"

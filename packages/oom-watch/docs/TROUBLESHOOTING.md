@@ -1,6 +1,6 @@
 # Поломки и лечение · Troubleshooting
 
-Автор · Author: Aleksandr Argelander · Лицензия · License: MIT · Код · Code: `bin/oom-watch` 3.1.3
+Автор · Author: Aleksandr Argelander · Лицензия · License: MIT · Код · Code: `bin/oom-watch` 3.1.4
 
 Каждая запись: признак → причина → лечение. Причины выведены из кода и из наших прогонов; где причина установлена только чтением кода, это сказано.
 

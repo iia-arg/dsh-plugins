@@ -1,0 +1,20 @@
+{
+  "repo": "/opt/coders/gamma/workspace/AP019-PRODUCER-G-20261017/repo",
+  "commit": "359a5066f90c193957c56c5a0e8d88fe2def039e",
+  "subdir": "packages/dsh-subscription-gateway",
+  "files": [
+    {
+      "path": "usage-producer.mjs",
+      "sha256": "53bc8c58d180fa7798053ca86b01743131b08c8b522019eb2443680b80f253c7"
+    },
+    {
+      "path": "engine-process.mjs",
+      "sha256": "d927f22800a84f2a77df27e23051a059ac136958e5912e1378be84d8d38dfb1c"
+    },
+    {
+      "path": "usage-limits.json",
+      "sha256": "e8c6f5a2551908862cd670f61d0edbdae33bf63b675156039300766c8fc0cf3a"
+    }
+  ],
+  "meaning": "Verbatim actual package files for contract test; not an implementation of the safety predicate."
+}

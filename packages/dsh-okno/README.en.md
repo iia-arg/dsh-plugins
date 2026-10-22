@@ -2,7 +2,7 @@ Russian version: [README.md](README.md) · English below
 
 # dsh-okno — update-window tools
 
-**Version:** 3.1.3
+**Version:** 3.1.6
 
 Service software on sadik for update windows: the admission check for step Ш5 and the atomic name exchange when the
 SDK layer is replaced, a content-based inventory of the layer, repacking of session logs before DSH 0.2, and creation
@@ -27,23 +27,25 @@ production on 07.10.2026).
 | `libexec/sdk-okno/dopusk-sh5.sh` | `/usr/local/libexec/sdk-okno/dopusk-sh5.sh` | a root operator in the SDK-layer window (B-N-1501, step Ш5) | 755 | root:root |
 | `libexec/sdk-okno/obmen-imyon.py` | `/usr/local/libexec/sdk-okno/obmen-imyon.py` | a root operator in the SDK-layer window (B-N-1501) | 755 | root:root |
 | `libexec/sdk-okno/opis-sloya.py` | `/usr/local/libexec/sdk-okno/opis-sloya.py` | an operator in the SDK-layer window (B-N-1501) | 755 | root:root |
+| `libexec/sdk-okno/priznak-zagruzki.sh` | `/usr/local/libexec/sdk-okno/priznak-zagruzki.sh` | a root operator in the SDK-layer window — the closing load check (os-upgrade §9.7) | 755 | root:root |
 | `sbin/perepak-okna` | `/usr/local/sbin/perepak-okna` | a root operator in the DSH 0.2 window (B-N-738) | 755 | root:root |
 | `sbin/sozdat-klyuch-omega` | `/usr/local/sbin/sozdat-klyuch-omega` | a root operator (A-N-1173-ost) | 755 | root:root |
 
 ## Invocation and exit codes
 
-Arguments and codes were taken from the code. In all five tools an unknown argument is refused with no action.
+Arguments and codes were taken from the code. In all six tools an unknown argument is refused with no action.
 
 | command | arguments | exit codes | what it changes on disk |
 |---|---|---|---|
 | `dopusk-sh5.sh <T1> <T2>` | `T1` — time of the Ш1 exchange, `T2` — time of the Ш2 `daemon-reload`, both in unix seconds (10 digits) | 0 — admitted; 1 — not admitted (a unit was started before the threshold, is not `active`, or its start time could not be read); 2 — invalid invocation | nothing: only `systemctl show` |
 | `obmen-imyon.py <имя1> <имя2>` | two existing names in the same directory; no options | 0 — exchanged; 2 — invalid invocation, a name does not exist, the names are in different directories, or the kernel refused (`ничего не изменено`, "nothing changed") | atomically swaps the two names (`renameat2 RENAME_EXCHANGE`) |
 | `opis-sloya.py <каталог> [--spisok]` | a real directory (pass a symlink as its target); `--spisok` — print the inventory as lines | 0 — inventory taken; 2 — invalid invocation, the path does not exist, or it is not a directory; 3 — no permission on a file or subdirectory | nothing: prints one line per object `путь · вид · значение · режим` (path · kind · value · mode) — kind `f` (file, value is sha256), `l` (symlink, value is the target), `o` (other, value is the type: `fifo`, `sock`, `chr`, `blk`, `inoe`; since 1.0.3, earlier such objects were silently skipped) — and the total `объектов N · опись sha256 …` (objects N · inventory sha256 …); skips the `.sostoyanie.json` file in the root |
+| `priznak-zagruzki.sh <claude-версия> <codex-версия>` | the `claude-agent-sdk` and `codex-sdk` versions of the new layer; exactly two arguments; root only | 0 — every unit that loaded the SDK has the new versions; 1 — an old one is present (JS/binary mix or not restarted); 2 — BLINDNESS for at least one unit (the process journal was not read or is empty, no MainPID), an invalid invocation, or not root | nothing: `systemctl show` and `journalctl _PID=…` for 11 gateways; «не загружал» ("did not load") only when the journal was read and has no «SDK … взят из слоя» line |
 | `perepak-okna --progon \| --v-boj \| --otkat <агент> [--agent <имя>]… [--strahovka <кат.>] [--koren <кат.>]` | exactly one mode; `--agent` narrows the list of agents from the registry; `--strahovka` — default `/var/backups/montazh/B-N-738-zhurnaly`; `--koren` — a trial run on a copy (a root that leads to production paths is refused). Root only | 0 — all agents passed; 1 — at least one agent was refused (the others proceed); 2 — invalid invocation, not root, or the registry is unusable (not read, not parsed, no `agenty` list, an agent has no `namerenie.sluzhba`) — «НИЧЕГО не сделано» ("NOTHING was done") before any `systemctl` | `--progon` — nothing, only the plan and the count; `--v-boj` — rewrites the agent's `session.jsonl.zstd` via a temporary name and `rename`, puts the previous file into the backup, moves 10 unopenable directories to `<страховка>/neotkryvaemye/<агент>/`; `--otkat` — restores from the backup byte for byte |
 | `sozdat-klyuch-omega` | no arguments; root only | 0 — the key was created or already existed (left untouched); 2 — refusal | creates `/etc/omega/mcp-klyuch.env` 0600 root and the directory `/etc/omega` 0755; the value is not printed and is not passed in argv |
 
-**Hard-wired for sadik.** `dopusk-sh5.sh` checks a named list of sadik units (`dopusk-sh5.sh:21–23`: four
-`claude-oauth-gateway@…` units and five coder gateways); `perepak-okna` moves 10 unopenable sessions from the
+**Hard-wired for sadik.** `dopusk-sh5.sh` checks a named list of sadik units (`dopusk-sh5.sh:21–23`: five
+`claude-oauth-gateway@…` units and eleven coder gateways); `priznak-zagruzki.sh` names 17 sadik gateways (the `for u in …` line); `perepak-okna` moves 10 unopenable sessions from the
 `NEOTKRYVAEMYE` list in `perepak-okna` (agent · path · sha256). On another machine both lists are meaningless: adjust
 them to your own units and logs before running, otherwise `dopusk-sh5.sh` will answer «нет» ("no") because of names
 that are not yours, and `perepak-okna` will not find the unopenable sessions and will skip moving them.

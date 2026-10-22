@@ -12,7 +12,7 @@ export class TelegramClient {
   // RU: constructor: Инициализирует состояние и схему этого компонента; не выполняет завершённую доставку автоматически.
 // EN: constructor: Initializes component state/schema without claiming completed delivery.
 constructor(token, log, {allowedUpdates=['message']}={}) {
-    if(!Array.isArray(allowedUpdates)||!allowedUpdates.length||allowedUpdates.some(k=>!['message','channel_post','edited_channel_post','callback_query'].includes(k)))throw Error('Telegram update types rejected');
+    if(!Array.isArray(allowedUpdates)||!allowedUpdates.length||allowedUpdates.some(k=>!['message','edited_message','channel_post','edited_channel_post','callback_query'].includes(k)))throw Error('Telegram update types rejected');
     this.allowedUpdates=[...new Set(allowedUpdates)];this.token = token;
     this.log = log ?? (() => {});
     this.offset = 0;

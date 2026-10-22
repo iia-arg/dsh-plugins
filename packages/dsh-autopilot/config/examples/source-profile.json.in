@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "mailDatabase": "__MAIL_DATABASE_ABSOLUTE_PATH__",
+  "projectRoots": [
+    "__PROJECT_ROOT_ABSOLUTE_PATH__"
+  ],
+  "participants": [
+    {
+      "name": "__OPERATOR_UNIX__",
+      "uid": "__OPERATOR_UID_INTEGER__",
+      "engine": "codex",
+      "home": "__OPERATOR_SOURCE_HOME_ABSOLUTE_PATH__",
+      "runtimeSource": {
+        "raw": "__OPERATOR_LEDGER_ROOT_ABSOLUTE_PATH__/usage-runtime-v1.jsonl"
+      }
+    },
+    {
+      "name": "__WORKER_1_UNIX__",
+      "uid": "__WORKER_1_UID_INTEGER__",
+      "engine": "codex",
+      "home": "__WORKER_1_SOURCE_HOME_ABSOLUTE_PATH__",
+      "runtimeSource": {
+        "raw": "__WORKER_1_LEDGER_ROOT_ABSOLUTE_PATH__/usage-runtime-v1.jsonl"
+      }
+    },
+    {
+      "name": "__WORKER_2_UNIX__",
+      "uid": "__WORKER_2_UID_INTEGER__",
+      "engine": "codex",
+      "home": "__WORKER_2_SOURCE_HOME_ABSOLUTE_PATH__",
+      "runtimeSource": {
+        "raw": "__WORKER_2_LEDGER_ROOT_ABSOLUTE_PATH__/usage-runtime-v1.jsonl"
+      }
+    },
+    {
+      "name": "__WORKER_3_UNIX__",
+      "uid": "__WORKER_3_UID_INTEGER__",
+      "engine": "codex",
+      "home": "__WORKER_3_SOURCE_HOME_ABSOLUTE_PATH__",
+      "runtimeSource": {
+        "raw": "__WORKER_3_LEDGER_ROOT_ABSOLUTE_PATH__/usage-runtime-v1.jsonl"
+      }
+    },
+    {
+      "name": "__WORKER_4_UNIX__",
+      "uid": "__WORKER_4_UID_INTEGER__",
+      "engine": "codex",
+      "home": "__WORKER_4_SOURCE_HOME_ABSOLUTE_PATH__",
+      "runtimeSource": {
+        "raw": "__WORKER_4_LEDGER_ROOT_ABSOLUTE_PATH__/usage-runtime-v1.jsonl"
+      }
+    },
+    {
+      "name": "__WORKER_5_UNIX__",
+      "uid": "__WORKER_5_UID_INTEGER__",
+      "engine": "codex",
+      "home": "__WORKER_5_SOURCE_HOME_ABSOLUTE_PATH__",
+      "runtimeSource": {
+        "raw": "__WORKER_5_LEDGER_ROOT_ABSOLUTE_PATH__/usage-runtime-v1.jsonl"
+      }
+    },
+    {
+      "name": "__REVIEWER_UNIX__",
+      "uid": "__REVIEWER_UID_INTEGER__",
+      "engine": "claude",
+      "home": "__REVIEWER_SOURCE_HOME_ABSOLUTE_PATH__",
+      "runtimeSource": {
+        "raw": "__REVIEWER_LEDGER_ROOT_ABSOLUTE_PATH__/usage-runtime-v1.jsonl"
+      }
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "[\"pid:336337:08816f7b-f371-428e-ad27-38d45e296bfb\",\"c1c54b09-3776-41aa-9d51-110cfcd7d84d\"]": {
+    "kind": "request",
+    "requestId": "c1c54b09-3776-41aa-9d51-110cfcd7d84d",
+    "jobId": "wc-sova-accept",
+    "sessionId": "telegram-autopilot-team",
+    "sessionCreated": 1792148288027,
+    "turn": 32,
+    "claimedAt": "2026-10-19T04:08:49.051000+00:00",
+    "finishedAt": "2026-10-19T04:11:27.813000+00:00",
+    "requestGeneration": "pid:336337:08816f7b-f371-428e-ad27-38d45e296bfb"
+  }
+}

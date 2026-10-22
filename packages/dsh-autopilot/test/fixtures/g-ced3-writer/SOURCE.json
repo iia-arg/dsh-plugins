@@ -1,0 +1,15 @@
+{
+  "author": "Gamma",
+  "commit": "ced3d2438fe57f4703d8e6fb557cdc5eef3e2750",
+  "files": [
+    {
+      "path": "usage-producer.mjs",
+      "sha256": "a8183a3530a3a37453aff2d8c641842436df5951ef4e3c4eb70686ffa2f7547c"
+    },
+    {
+      "path": "engine-process.mjs",
+      "sha256": "d927f22800a84f2a77df27e23051a059ac136958e5912e1378be84d8d38dfb1c"
+    }
+  ],
+  "testSupportAuthor": "Beta"
+}

@@ -1,0 +1,7 @@
+[Unit]
+Description=Сверка пакетов между машинами 06:00 UTC
+[Timer]
+OnCalendar=*-*-* 06:00:00 UTC
+Persistent=true
+[Install]
+WantedBy=timers.target

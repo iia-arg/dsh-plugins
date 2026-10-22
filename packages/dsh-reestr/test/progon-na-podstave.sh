@@ -75,6 +75,7 @@ progon stend-storozha-reestrov.sh podstava
 progon stend-uchteno-v.sh kak-est   # №26 аудита 16: свой стенд uchteno_v — в счёт; ему подстава не нужна (временный реестр сам)
 progon stend-nahodok-audita-16.sh kak-est   # пробы к находкам кода аудита 16 на bin/ пакета
 progon stend-svezhej-osnovy.py python
+progon stend-owner-reader.py python   # B-N-2104(2): actual UIDiskra/root0640 JSON, bounded privileged reader
 # №19 аудита 16: под root у stend-pravki-reestra пять проб EPERM слепы по построению (root их не воспроизводит) — это
 # названо, а не скрыто: зелёный pravki — только от не-root учётки с sudo -n (docs/GUARDS.md).
 [ "$(id -u)" = 0 ] && echo "  ⚠️ прогон под root: stend-pravki-reestra слеп на 5 пробах EPERM по построению — гоняйте от учётки с sudo -n"

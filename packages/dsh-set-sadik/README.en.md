@@ -2,7 +2,7 @@ Russian version: [README.md](README.md) · English below
 
 # dsh-set-sadik — network of the sadik machine: RU split, reply routing, VPN switching, killswitch and network check
 
-Версия · Version: 3.1.2
+Версия · Version: 3.1.5
 
 ## Purpose
 

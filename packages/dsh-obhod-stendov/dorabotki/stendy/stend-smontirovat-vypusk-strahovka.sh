@@ -8,10 +8,13 @@
 #   владелец файлов (от iskra всё своё — права проверяются, владелец нет); правки боя вне состава (их и не страхуем).
 set -u
 TOOL=${SMV_TOOL:-/usr/local/sbin/smontirovat-vypusk}
+FIXTURE=$(dirname -- "$0")/smv_fixture.py
+[ -r "$FIXTURE" ] || { echo "СЛЕПОТА: нет fixture $FIXTURE"; exit 2; }
+SOURCE_GIT=(sudo -n -u "$(stat -c %U /opt/iskra/workspace/dsh-plugins)" git -C /opt/iskra/workspace/dsh-plugins)
 [ -r "$TOOL" ] || { echo "СЛЕПОТА: предмета нет: $TOOL"; exit 2; }
 grep -q 'SMV_MONTAZH' "$TOOL" || { echo "СЛЕПОТА: предмет не знает SMV_MONTAZH — прогон задел бы /var/backups/montazh; не запускаю"; exit 2; }
 M1=7ae0e14; M2=ae348a0; P=packages/telegram-multiagent
-for c in $M1 $M2; do git -C /opt/iskra/workspace/dsh-plugins cat-file -e "$c^{commit}" 2>/dev/null || { echo "СЛЕПОТА: коммита $c в дереве нет"; exit 2; }; done
+for c in $M1 $M2; do "${SOURCE_GIT[@]}" cat-file -e "$c^{commit}" 2>/dev/null || { echo "СЛЕПОТА: коммита $c в дереве нет"; exit 2; }; done
 [ "$(id -u)" = 0 ] || { echo "СЛЕПОТА: нужен root — с B-N-2025 окно монтажа публикует только root (montazh-okno: writer requires root), обход зовёт @root"; exit 2; }
 W=$(mktemp -d /tmp/stend-smv-str-XXXXXX) || exit 2
 trap 'rm -rf "$W"' EXIT
@@ -21,7 +24,7 @@ trap 'rm -rf "$W"' EXIT
 export MO_STATE_DIR=$W/okna SMV_ZAMOK=$W/zamok; mkdir -m 0755 "$MO_STATE_DIR" || exit 2
 zel=0; kras=0
 ok(){ echo "✅ $1"; zel=$((zel+1)); }; no(){ echo "❌ $1"; kras=$((kras+1)); }
-run(){ rm -f "$MO_STATE_DIR"/*.json; SMV_MONTAZH=$W/mont SMF_RUKA='Stend <stend@sadik>' bash "$TOOL" "$1" "$P" "$2" --v-boj "$3" > "$W/out-$3" 2>&1; echo $?; }
+run(){ rm -f "$MO_STATE_DIR"/*.json; SMV_MONTAZH=$W/mont SMF_RUKA='Stend <stend@sadik>' python3 -B "$FIXTURE" "$W" "$TOOL" "$1" "$P" "$2" -- "$1" "$P" "$2" --v-boj "$3" > "$W/out-$3" 2>&1; echo $?; }
 summa(){ (cd "$1" && { find . -printf '%y %m %p\n' | LC_ALL=C sort; find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum; }) | sha256sum | cut -c1-16; }
 str_of(){ ls "$W/mont/$1"/*.tgz 2>/dev/null | head -1; }
 echo "== стенд страховки smontirovat-vypusk $(date -u +%H:%M:%SZ) · предмет $(sha256sum "$TOOL" | cut -c1-8)"
@@ -34,7 +37,7 @@ S0=$(summa "$B")
 k=$(run $M2 "$B" PROBA1); STR=$(str_of PROBA1)
 [ "$k" = 0 ] && [ -n "$STR" ] && [ "${STR%.po-sostavu.tgz}" != "$STR" ] && ok "монтаж 1.5.59 код 0, страховка новой формы: $(basename "$STR")" || no "монтаж/страховка (код $k, «$STR»)"
 VZ=$(tar -tzf "$STR" | grep -c '^fajly/.*[^/]$'); NOV=$(tar -xzOf "$STR" NOVYE.txt | LC_ALL=C sort | tr '\n' ' ')
-OBSHCH=$(git -C /opt/iskra/workspace/dsh-plugins diff --name-status $M1 $M2 -- $P | grep -c '^A')
+OBSHCH=$("${SOURCE_GIT[@]}" diff --name-status $M1 $M2 -- $P | grep -c '^A')
 [ "$VZ" = 100 ] && [ "$NOV" = "src/live-session.js test/stend-live-session-owner.mjs " ] && [ "$OBSHCH" = 2 ] \
   && ok "внутри ровно: заменяемых 100, новые = 2 по git (src/live-session.js, test/stend-live-session-owner.mjs)" || no "состав страховки: заменяемых $VZ, новые «$NOV», по git новых $OBSHCH"
 tar -tzf "$STR" | grep -qF 'chuzhoe.txt' && no "чужой файл вне состава попал в страховку" || ok "чужой файл вне состава в страховку не попал"
@@ -72,7 +75,7 @@ else
   echo "   порча инструмента внесена: $(diff "$TOOL" "$PT" | grep -c '^>') строка; sha $(sha256sum "$TOOL" | cut -c1-8) → $(sha256sum "$PT" | cut -c1-8)"
   B=$W/boj4; mkdir -p "$B"; run $M1 "$B" OSNOVA4 >/dev/null; S0=$(summa "$B")
   rm -f "$MO_STATE_DIR"/*.json
-  k=$(SMV_MONTAZH=$W/mont SMF_RUKA='Stend <stend@sadik>' bash "$PT" $M2 "$P" "$B" --v-boj PROBA4 > "$W/out-PROBA4" 2>&1; echo $?)
+  k=$(SMV_MONTAZH=$W/mont SMF_RUKA='Stend <stend@sadik>' python3 -B "$FIXTURE" "$W" "$PT" "$M2" "$P" "$B" -- "$M2" "$P" "$B" --v-boj PROBA4 > "$W/out-PROBA4" 2>&1; echo $?)
   [ "$k" = 1 ] && grep -q 'страховка не сошлась' "$W/out-PROBA4" && [ "$(summa "$B")" = "$S0" ] && [ -z "$(str_of PROBA4)" ] \
     && ok "инструмент с порчей: «страховка не сошлась», код 1, бой не тронут, страховки нет" || no "порча инструмента не поймана (код $k)"
 fi

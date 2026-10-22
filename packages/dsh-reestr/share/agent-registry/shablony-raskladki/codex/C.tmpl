@@ -1,0 +1,18 @@
+# Окружение шлюза кодера @@IMYA@@ (coder-gateway) — семейство codex. B-H-081 Ш6.
+# СЕКРЕТОВ ЗДЕСЬ НЕТ: Codex авторизуется своим auth.json в CODEX_HOME (ссылка на общий вход подписки), токен Anthropic не нужен.
+GATEWAY_PORT=@@PORT_SHLYUZA@@
+GATEWAY_POSTAVSHIK=openai
+GATEWAY_WORK_DIR=@@DOM@@/workspace
+KOMPAKT_AGENT=@@KOMPAKT_AGENT@@
+CODEX_HOME=/var/lib/coder-gateway-@@IMYA@@/codex-home
+GATEWAY_MAX_TURNS=200
+GATEWAY_PESOCHNICA=@@PESOCHNICA@@
+# путь Codex: app-server — стоп модели на пороге платформы с продолжением (A-N-721 Б)
+GATEWAY_CODEX_PUT=app-server
+@@ESLI EFFORT@@
+# уровень рассуждений Codex (turn/start effort) — из namerenie.reasoning реестра; нет значения — строки нет (B-N-codex-modeli)
+GATEWAY_EFFORT=@@EFFORT@@
+@@/ESLI EFFORT@@
+@@ESLI BAZA_SESSIJ_YAVNO@@
+GATEWAY_BAZA_SESSIJ=/var/lib/coder-gateway-@@IMYA@@/sessii.db
+@@/ESLI BAZA_SESSIJ_YAVNO@@

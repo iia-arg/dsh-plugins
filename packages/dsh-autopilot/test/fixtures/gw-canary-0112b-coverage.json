@@ -1,0 +1,24 @@
+{
+  "at": "2026-10-20T11:25:26.627563+00:00",
+  "machine": "sadik",
+  "hand": "gamma",
+  "mail": {
+    "id": "79a53135aadc50ad8d2872e06d59d564561a8411a80e490f5382b4dc1e58bda0",
+    "sender": "master",
+    "sender_uid": 1006,
+    "recipient": "sova",
+    "acked": 1,
+    "acked_at": 1792488185.5364172,
+    "kind": "task",
+    "runId": "48135b6a47b242f7a4cfaa15de036f15",
+    "jobId": "gw-sdk-agent-canary"
+  },
+  "r": {
+    "path": "/opt/sova/workspace/.message-receipts/usage-runtime-v1.jsonl",
+    "bytes": 1658082,
+    "sha256": "b8760fdcbf28d51ae689655ff6da7e598664ef1def7dc2f16a6f437a47e36f07",
+    "rows": 10962,
+    "requestMatches": 0,
+    "deliveryMarkers": []
+  }
+}

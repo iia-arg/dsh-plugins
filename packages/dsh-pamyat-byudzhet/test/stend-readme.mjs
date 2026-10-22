@@ -34,6 +34,12 @@ try {
   process.exit(2)
 }
 import { execFileSync } from 'node:child_process';
+// RU: B-N-2048: состав разбирает помощник npm-sostav (dsh-pribory ≥ 3.1.2), ищется по PATH; нет его — ОТКАЗ кодом 2, не красное и не тихий ноль.
+// EN: B-N-2048: the npm-sostav helper (dsh-pribory ≥ 3.1.2) parses the contents and is looked up on PATH; without it — REFUSAL with exit 2, not red and not a silent zero.
+try { execFileSync('sh', ['-c', 'command -v npm-sostav'], { stdio: 'ignore' }); } catch {
+  console.log('СЛЕПОТА: npm-sostav не найден — нужен dsh-pribory ≥ 3.1.2');
+  process.exit(2);
+}
 
 const koren = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ru = readFileSync(join(koren, 'README.md'), 'utf8');
@@ -111,7 +117,9 @@ function sostavPublikacii() {
     vyvod = execFileSync('npm', ['pack', '--dry-run', '--json'], {
       cwd: koren, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
     });
-    return JSON.parse(vyvod)[0].files.map((f) => f.path);
+    // RU: B-N-2048: npm 11 отдаёт pack --json массивом, npm 12 — объектом; разбор одним правилом у помощника npm-sostav (dsh-pribory), его ОТКАЗ — исключение с причиной.
+    // EN: B-N-2048: npm 11 prints pack --json as an array, npm 12 as an object; one rule parses both in the npm-sostav helper (dsh-pribory), its REFUSAL throws with the reason.
+    return execFileSync('npm-sostav', ['--files'], { input: vyvod, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).split('\n').filter(Boolean);
   } catch (e) { throw new Slepota('npm pack --dry-run не ответил составом: ' + String(e?.message ?? e).slice(0, 120)); }
 }
 

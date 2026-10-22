@@ -4,6 +4,7 @@
 import { marshrutyGostya } from '../src/guest-channel.js';
 export function sGostem(c) {
   if (!c || typeof c !== 'object') return c;
+  if (!Object.hasOwn(c, 'autopilot')) c.autopilot = null;
   const allowed = c.allowed instanceof Set ? c.allowed : new Set(Array.isArray(c.allowed) ? c.allowed.map(Number) : []);
   const imena = marshrutyGostya(c.config ?? {}, { allowed, groups: () => (typeof c.settings === 'function' ? c.settings()?.groups : undefined),
     mergeChat: () => c.MERGE_CHAT ?? null, a2aChat: () => c.A2A_CHAT ?? 'a2a' });

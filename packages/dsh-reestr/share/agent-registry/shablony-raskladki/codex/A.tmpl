@@ -1,0 +1,266 @@
+# Слой Агента-@@IMYA_RU@@ поверх сборки профиля. Заведён 15.09.2026 по слову владельца.
+# Синтаксис: строка с id — ПРАВКА существующей; новая строка только через insert.
+
+- insert:
+    - name: dsh-subscription-adapter
+      id: dsh-subscription-adapter
+      config:
+        contextWindow: @@OKNO@@
+        baseURL: http://127.0.0.1:@@PORT_SHLYUZA@@
+@@ESLI TASK_CONTROL_PILOT@@
+        taskControlCodex: true
+@@/ESLI TASK_CONTROL_PILOT@@
+@@ESLI DSH02@@
+        # B-N-738, живой подъём 0.2.0-rc.2: DSH 0.2 сверяет выбор модели с каталогом адаптера — модели агента в нём не было
+        # («session/model-unavailable: Select an available model», 0.1.1 пропускал). Запись из одного id: окно и maxTokens —
+        # общие настройки адаптера, как у незаявленной модели сейчас (resolveModel). У Codex — ТОЛЬКО модель агента:
+        # claude-opus-5 здесь модель чужой ветки — выбор прошёл бы каталог и упал в шлюзе Codex (low Вениамина 17:4xZ).
+        models:
+          - id: @@MODEL@@
+@@/ESLI DSH02@@
+
+- id: agent-default-model
+  config:
+    provider: claude-oauth
+    model: @@MODEL@@
+
+- insert:
+    # в составе профиля — только путь, значения здесь нет.
+    - name: dsh-telegram-multiagent
+      id: dsh-telegram-multiagent
+      config:
+@@ESLI IMYA_KANALA_RU@@
+        agentName: @@IMYA_RU_STROCH@@
+@@/ESLI IMYA_KANALA_RU@@
+@@ESLI AP_POCHTA@@
+        agentName: "@@IMYA@@"
+        autopilotMail:
+          noticeDir: "@@AP_NOTICE_DIR@@"
+          trafficChatId: @@AP_CHAT@@
+          publisherBotIds: @@AP_BOTY@@
+          names: @@AP_IMENA@@
+@@/ESLI AP_POCHTA@@
+@@ESLI SOCPRIYOM@@
+        # B-N-2027: соцприём Анны (namerenie.raskladka.socpriyom); техническое имя латиницей строчными — слово владельца 16.10.
+        agentName: "@@IMYA@@"
+        social:
+          serviceUrl: "@@SOC_URL@@"
+          keyFile: "@@SOC_KLYUCH@@"
+          channelId: @@SOC_KANAL@@
+          discussionId: @@SOC_OBSUZHDENIE@@
+@@/ESLI SOCPRIYOM@@
+        spoolDir: @@SPOOL_DIR@@
+        tokenFile: /etc/dsh-telegram/@@IMYA@@.token
+        appDir: @@DOM@@/app
+        workspace: @@DOM@@/workspace
+        a2aDir: @@DOM@@/a2a
+@@ESLI TASK_CONTROL_PILOT@@
+        a2aCoordinatorPrefixes:
+          - zabava
+          - z-g
+@@/ESLI TASK_CONTROL_PILOT@@
+        transcribeCommand: /usr/local/bin/transcribe-correct-wrap
+        # C-N-1138 (слово владельца 29.09 02:49 МСК «включай всем агентам садика с пометкой»): описатель картинок — внешняя
+        # команда по образцу голоса; допись агенту — «ДАННЫЕ», с пометкой сверять ЧИСЛА. Умолчание таймаута 120 с (живой замер 17 с).
+        describeCommand: /usr/local/bin/opisat-kartinku
+        # Пусто означало бы «пускать всех» — к боту заходят живые люди.
+        allowedUsers:
+          - @@VLADELEC_TELEGRAM@@
+          @@SPISOK DOP_POLZOVATELI@@
+        # Право ставить цель отдельно от права разговаривать.
+        goalUsers:
+          - @@VLADELEC_TELEGRAM@@
+        # 🔴 ЕДИНАЯ ИСТОРИЯ (15.09, поручение владельца). Чат владельца СЛИВАЕТСЯ в ту же
+        # в тот же контекст. Это НЕ две копии агента, а один агент с одной историей —
+        # так же, как у Искры и у Петровича: ID владельца задаётся в реестре.
+        mergeChatIntoA2A: @@VLADELEC_TELEGRAM@@
+        a2aSession: @@A2A_SESSION@@
+        goalA2ASenders: @@GOAL_A2A_SENDERS@@
+        # 🔴 ПРЕСЕТ ОБЪЯВЛЯЕТСЯ ЗДЕСЬ, А НЕ НАЛИЧИЕМ ФАЙЛА. 15.09 я положила
+        # .agent-presets/@@IMYA@@/agent.cordis.yml и приняла это за подключение — файл лежал,
+        # платформа его не звала, компакт молчал. Класс «механизм есть, зовущего нет».
+        preset: @@IMYA@@
+
+- insert:
+    # Мост инструментов. БЕЗ НЕГО платформа не кладёт состав в тело запроса, шлюз не
+    # собирает конфиг MCP, и Codex честно отвечает «инструмента нет» — потому что списка
+    # ему никто не дал. Найдено по коду Искрой 15.09 (gateway.mjs:894 против :371).
+    - name: dsh-tool-bridge
+      id: dsh-tool-bridge
+      config:
+        # Имя сервера идёт ПРИСТАВКОЙ в имя каждого инструмента у модели.
+        serverName: @@IMYA@@dsh
+        # 🔴 КУДА ЛОЖИТСЯ ПИСЬМО ОБ УПОРЕ В ПРЕДЕЛ САМОПРОБУЖДЕНИЯ (15.09.2026, Забава).
+        # До этой строки каталог не был задан, и мост честно печатал при подъёме:
+        # «письмо об остановке только в журнал: каталог не задан (умолчание)».
+        # Значит @@IMYA_RU@@ встала бы МОЛЧА, и её остановка была бы неотличима ни от
+        # «работы нет», ни от паралича. У Петровича на этом месте notifyCmd=tell-owner.
+        # Выровнено по ИСКРЕ, у которой то же поле задано как /opt/iskra/a2a/out.
+        # 🔴 ЧИТАТЕЛЬ КАТАЛОГА ДОКАЗАН СОБЫТИЕМ, а не чтением кода: 19:10Z положила
+        # подставной файл <ms>-predel-heartbeat.txt — за 40 с он исчез из каталога и
+        # пришёл координатору дословно. Каталог с читателем, а не яма.
+        heartbeatNoticeDir: @@DOM@@/a2a/out
+        # A-N-1513 (04.10.2026, Забава): прежние умолчания моста 0.3.26 явными ключами — в 0.3.27 умолчания нейтральные.
+        limitsDir: /etc/agent-limits
+        alertCommand: /usr/local/bin/agent-alert
+
+# ── ПАМЯТЬ АГЕНТА ─────────────────────────────────────────────────────────────
+# Смонтирована 15.09.2026 рукой Забавы по поручению владельца («прикрутить, всё
+# у нас записано, что копирование образца кодерам уже давало чужие значения.
+
+- insert:
+    - name: dsh-pamyat-core
+      id: dsh-pamyat-core
+      config:
+        putBazy: @@DOM@@/pamyat/pamyat.db
+        agent: @@IMYA@@
+@@ESLI SLED_PODYOMOV@@
+        # A-N-1707 (Искра 07.10): след подъёмов — пишет podyom-uzla («ДО/ПОСЛЕ | <служба>»); свидетель ядра сверяет
+        # по нему «подъём ОБЪЯВЛЕН» вместо «объявление НЕ ПРОВЕРЕНО». Блок — только агентам области podyom-uzla, не гостю.
+        sledPodyomov: @@SLED_PODYOMOV@@
+@@/ESLI SLED_PODYOMOV@@
+        sprashivat: [ogranichenie, navyk]
+        klassyZnaniy: [reshenie, urok, vyvod, ogranichenie, oshibka, poryadok, nablyudenie, fakt]
+        # Отвечающего на этом узле нет: без ключа запись класса ask ОТКАЗЫВАЕТ, то есть
+        # знание молча теряется. С ключом проходит и несёт отметку bez_podtverzhdeniya.
+        otvechayushchegoNet: true
+        chtenieSkolko: 20
+        zhurnalSkolko: 20
+        # Привратник: у Искры включён персональным словом владельца 04.09 («конкретно для
+        # Искры»), умолчание кода false. Владелец 15.09 сказал «все настройки аналогично
+        # Искре» — включаю и здесь. Без него всякий инструмент, требующий подтверждения,
+        # отказывает ВСЕГДА, а отвечающего на узле нет.
+        otvechatNaSprosRazresheniya: true
+
+- insert:
+    - name: dsh-pamyat-restore
+      id: dsh-pamyat-restore
+      config:
+        klassSvodki: svodka-kompakcii
+        restoreEnabled: true
+        welcomeEnabled: true
+        welcomeBudget: 15200
+        ignoreAfterMs: 604800000
+        useVeraThreshold: 0.7
+        welcomeInterval: 86400000
+        welcomeOtmetki: @@DOM@@/pamyat/welcome-otmetki.json
+
+- insert:
+    - name: dsh-pamyat-omega
+      id: dsh-pamyat-omega
+      config:
+        # Экземпляр OMEGA на sadik ОДИН, адрес общий для узлов машины.
+        adres: http://127.0.0.1:8377/mcp/
+        tajmautMs: 10000
+        # A-N-1173-ost: ИМЯ переменной с ключом OMEGA ≥1.5.19 (dsh-pamyat-omega ≥ a26); значение — из окружения службы.
+        klyuchIzOkruzheniya: OMEGA_MCP_API_KEY
+        # A-N-1264: выдача Б всем агентам sadik; выдача А выключена (слово владельца 30.09 22:12 МСК).
+        vydacha:
+          vkl: true
+          koren: @@IMYA@@
+          avto: false
+          sistemnyeKorni: @@SISTEMNYE_KORNI@@
+          gostevyeKorni: @@GOSTEVYE_KORNI@@
+          gosti: obertka
+
+- insert:
+    - name: dsh-pamyat-secretary
+      id: dsh-pamyat-secretary
+      config:
+        klass: svodka-kompakcii
+        vklyuchen: true
+        putOtklonennyh: @@DOM@@/pamyat/otklonennye-svodki
+        # A-N-1107 (27.09.2026, Искра; решение Забавы 26.09 22:4xZ, ворота Вениамина 00:45Z): ХОДОВОЙ ЗОВ дистилляции.
+        # У Codex-агента сжатия платформы нет (0 compaction/* за 766 ходов у кодеров) — зовущий turn/end, окно ~160 тыс.
+        hodovojZov:
+          vkl: false
+        distillyaciya: true
+        model: deepseek-flash
+        putZhurnala: @@DOM@@/.dsh/sessions/@@ZHURNAL_KAT@@/telegram-@@A2A_SESSION@@/session.jsonl.zstd
+        # Порядок источников в пакете: klyuchFajl → klyuchPass → klyuchOkruzhenie, и
+        # ЗАДАННЫЙ, НО НЕЧИТАЕМЫЙ источник НЕ подменяется следующим (README пакета).
+        @@KLYUCH_STROKA@@
+        maxTokenovTem: 32000
+        maxTokenovStati: 0
+        predelTem: 0
+
+- insert:
+    - name: dsh-pamyat-byudzhet
+      id: dsh-pamyat-byudzhet
+      config:
+        predel: 2000
+        poryadok: svezhest
+        porogVery: 0.5
+
+- insert:
+    - name: dsh-pamyat-nudzh
+      id: dsh-pamyat-nudzh
+      config:
+        predel: @@OKNO@@
+        dolyaTrevogi: 0.7
+        otmetkiPuti: [0.5, 0.6, 0.7, 0.85, 0.9, 0.95]
+
+- insert:
+    - name: dsh-pamyat-storozha
+      id: dsh-pamyat-storozha
+      config:
+        ispolnenieInstrumentov: sdk
+        agent: @@IMYA@@
+        predel: @@OKNO@@
+        stupeni: [0.85, 0.9]
+        komandaStoka: 'agent-alert'
+
+# ── РАСПИСАНИЕ ПЛАТФОРМЫ (самопробуждение), 15.09.2026 рукой Забавы ───────────
+# 🔴 ЗАЧЕМ. Мост объявлял движку три инструмента расписания ПО СВОЕМУ ФАЙЛУ
+# src/raspisanie.json, а слоя платформы под ними не было: вызов schedule_create
+# 15.09 17:43Z вернул «не зарегистрирован у живого агента: слой платформы не
+# смонтирован». Пределы самопробуждения в мосте при этом работали исправно —
+# сторож без предмета: проверять было НЕЧЕГО, и его молчание читалось как исправность.
+# Пакет лежал на диске всё это время: @@DOM@@/app/node_modules/@deepseek-ai/
+# dsh-schedule 0.1.1-rc.2 — та же версия, что в бою у Петровича. Не хватало ОБЪЯВЛЕНИЯ.
+#
+# Образец — Петрович, /opt/dsh/.dsh/profiles/web/cordis.patch.yml:79. У него настроек
+# у плагина нет вовсе; единственный встроенный предел MIN_EVERY_INTERVAL_SECONDS = 300.
+# 🔴 РАЗНИЦА С ПЕТРОВИЧЕМ, которую нельзя терять: у него поверх стоит отдельный плагин
+# 48 в сутки, 1800 с, лесенка. Второй сторож ей НЕ НУЖЕН и был бы двойным счётом.
+- insert:
+    - name: '@deepseek-ai/dsh-schedule'
+      id: @@IMYA@@-schedule
+
+@@ESLI COMPACT_OUTCOMES@@
+- insert:
+    - id: compact-outcomes-turns
+      name: @@CO_DOM@@/plugins/dsh-compact-outcomes/turn-sensor.mjs
+      config:
+        agent: @@IMYA@@
+        appDir: @@DOM@@/app
+        gatewayDb: /var/lib/coder-gateway-@@IMYA@@/sessii.db
+        logDir: @@CO_DOM@@/pamyat/compact-outcomes/turns
+@@/ESLI COMPACT_OUTCOMES@@
+
+# A-N-1094 (26.09.2026, Аврора; находка Вениамина 20:33Z): веб-поиск платформы подключён базовым
+# профилем dsh-base (id web-search-deepseek) и берёт модель config.model ?? "deepseek-v4-flash" —
+# имя СНЯТОЙ модели (api-docs.deepseek.com/news/news260910: «Set your model to deepseek-flash»).
+# 🔴 Правка по id ЗАМЕНЯЕТ config целиком, а не сливает (cordis-plugin-include: target[key] = value),
+# поэтому apiKeyEnv из базы перенесён сюда дословно — без него остался бы только умолчанием кода.
+- id: web-search-deepseek
+  config:
+    apiKeyEnv: DEEPSEEK_API_KEY
+    model: deepseek-flash
+@@ESLI DSH02@@
+
+# ── ПРЕСЕТ АГЕНТА НА DSH 0.2 (B-N-738, 29.09.2026) ──────────────────────────────
+# DSH 0.2 каталог .agent-presets НЕ читает (dsh-agent-preset-registry 0.2.0-rc.2: «neither scans directories nor accepts
+# preset paths»): пресет — строка композиции '@deepseek-ai/dsh-agent-preset', форма — как у заводских (dsh-web-app
+# 0.2.0-rc.2 presets/standard.patch.yml). config.id — то имя, что называют `preset:` выше и agentPreset сессий моста
+# (agentPresets.resolve — тот же вызов, что в 0.1). Строки ниже — СБОРКА B.tmpl этого семейства: agent-registry
+# вкладывает её сюда при mashina.raskladka_obshchee.dsh_pokolenie: "0.2"; отдельного файла B в этом поколении нет.
+- insert:
+    - id: preset-@@IMYA@@
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: @@IMYA@@
+        name: @@IMYA_RU@@
+        plugins:
+          @@VSTAVKA PRESET_B@@
+@@/ESLI DSH02@@

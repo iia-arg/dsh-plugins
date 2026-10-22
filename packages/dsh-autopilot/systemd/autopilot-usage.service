@@ -1,0 +1,17 @@
+[Unit]
+Description=Approximate Autopilot end-of-turn usage statistics
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/bin/python3 -I -B /opt/autopilot/current/tools/collect-team-usage.py
+TimeoutStartSec=70
+KillMode=control-group
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/autopilot-usage /srv/autopilot/projects /srv/autopilot/public/master

@@ -57,9 +57,9 @@ The plugin declares nothing in `inject`: the core `pamyat` service (`sessiyaIskl
 
 ## Установка · Installation
 
-**Откуда ставить.** Пакет публикуется в npm выпуском 3.1.2 (порядок и окно — по решению владельца). До выхода в реестре npm лежит старая редакция `0.1.0-alpha.*` (замер 10.10.2026, `npm view dsh-pamyat-omega version`): `npm install dsh-pamyat-omega` поставит её, а не описанную здесь. До выпуска ставьте из дерева исходников: `npm pack <дерево>/packages/dsh-pamyat-omega` и затем `npm install ./dsh-pamyat-omega-<версия>.tgz`.
+**Откуда ставить.** В npm доступна редакция `3.1.2` (замер 15.10.2026, `npm view dsh-pamyat-omega version`). По решению владельца от 14.10.2026 изменения после публикации ведутся локально и в npm не выкладываются. Для актуальной локальной редакции подготовьте архив из выбранной головы дерева: `npm pack <дерево>/packages/dsh-pamyat-omega`, затем `npm install ./dsh-pamyat-omega-<версия>.tgz`.
 
-**Where to install from.** The package is published to npm with release 3.1.2 (order and window — by the owner's decision). Until then the npm registry holds an old `0.1.0-alpha.*` edition (measured 10.10.2026, `npm view dsh-pamyat-omega version`): `npm install dsh-pamyat-omega` installs that one, not the one described here. Until the release, install from the source tree: `npm pack <дерево>/packages/dsh-pamyat-omega`, then `npm install ./dsh-pamyat-omega-<версия>.tgz`.
+**Where to install from.** npm provides `3.1.2` (checked on 2026-10-15 with `npm view dsh-pamyat-omega version`). By the owner's decision of 2026-10-14, changes after publication are maintained locally and are not republished to npm. For the current local edition, pack the selected source revision with `npm pack <tree>/packages/dsh-pamyat-omega`, then run `npm install ./dsh-pamyat-omega-<version>.tgz`.
 
 На машине пакет ставится один раз в общий каталог `/opt/agent-plugins` и подключается профилям ссылкой:
 

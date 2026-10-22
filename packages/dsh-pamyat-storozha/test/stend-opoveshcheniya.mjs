@@ -78,7 +78,9 @@ function stend(nastrojki = {}, marshrut = 'net', archived = () => false) {
     effect: (fn) => { const d = fn(); if (typeof d === 'function') disposery.push(d); return () => {} },
   }
   const cfg = new Config(nastrojki)
-  const api = apply(ctx, cfg)
+  let api; const originalLog = console.log
+  try { console.log = (...args) => stroki.push(args.join(' ')); api = apply(ctx, cfg) }
+  finally { console.log = originalLog }
   razmontirovatPredydushchij = () => { for (const f of disposery) f() }
   // RU: Подставная сессия отвечает тем же методом, что живая: requestContext() — «latest resolved route
   //     metadata» платформы. Четыре состояния взяты из её объявления: метода нет вовсе ('bez-metoda') ·

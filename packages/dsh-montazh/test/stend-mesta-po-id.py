@@ -44,10 +44,10 @@ with tempfile.TemporaryDirectory(prefix='stend-mesta-po-id-',dir=os.environ.get(
  OBA='МЕСТА СВЕРЕНЫ: socseti — 2 из 2'
  check('1 две записи одного subdir, оба места = выпуску → 0, названы оба ID',isxod(0,OBA,'МЕСТА СВЕРЕНЫ: socseti-anna — 2 из 2','АННОТАЦИЯ ОБЛАСТИ: derevo=socseti,socseti-anna;'))
  check('1б порядок записей обратный → тот же набор и исход',isxod(0,OBA,'derevo=socseti,socseti-anna;',services=list(reversed(DVE))))
- # старый бой Варвары: без области — отказ по её ID (не выбор «совпавшей»); с областью Анны — 0, Варвара «вне выпуска»
+ # Без копий К3 автоматически судит обе записи; subset Анны остаётся явным.
  before=hashlib.sha256((mV/'a.js').read_bytes()).hexdigest()[:16];(mV/'a.js').write_text('export const a = 125; // B-N-2033 STARYJ BOJ\n')
  print('ПОРЧА старый бой Варвары a.js:',before,'→',hashlib.sha256((mV/'a.js').read_bytes()).hexdigest()[:16])
- check('2 без области старый бой одной записи → 1 по её ID',isxod(1,'ОТКАЗ: выпуск ≠ бою по местам (socseti): src/a.js → '+str(mV/'a.js'),net=('(socseti-anna):',)))
+ check('2 автоматическая K3 область: старый бой одной записи → 1 по её ID',isxod(1,'ОТКАЗ: выпуск ≠ бою по местам (socseti): src/a.js → '+str(mV/'a.js'),net=('(socseti-anna):',)))
  check('2б область [socseti-anna] → 0, socseti названа вне выпуска',isxod(0,'МЕСТА СВЕРЕНЫ: socseti-anna — 2 из 2','ВНЕ ЭТОГО ВЫПУСКА (явный subset): socseti',net=('МЕСТА СВЕРЕНЫ: socseti —',),ids=['socseti-anna']))
  shutil.copy2(kat/'src/a.js',mV/'a.js')
  bA=hashlib.sha256((mA/'b.js').read_bytes()).hexdigest()[:16];(mA/'b.js').write_text('B-N-2033 PORCHA\n');print('ПОРЧА место Анны b.js:',bA,'→',hashlib.sha256((mA/'b.js').read_bytes()).hexdigest()[:16])
@@ -86,7 +86,7 @@ with tempfile.TemporaryDirectory(prefix='stend-mesta-po-id-',dir=os.environ.get(
    assert p.returncode==0 and 'ОБЛАСТЬ СТЕНДОВ ВЫПУСКА: пакет по местам (derevo '+nabor+')' in o and 'derevo='+nabor+';' in o,o[-2500:]
    assert (v.get('OBLAST_STENDOV') or '').split('\n')[0]==str(kat.resolve())+'/' and Path(v.get('PERECHEN_STENDOV') or '/net').name=='perechen-vypuska','область: '+repr(v)
   return f
- check('9 план без области: стенды дерева выпуска, набор ID плана = сверки',plan(None,'socseti,socseti-anna'))
+ check('9 автоматический план K3: стенды дерева выпуска, набор ID плана = сверки',plan(None,'socseti,socseti-anna'))
  check('9б план с областью [socseti-anna]: план DEREVO принят под VYPUSK_KOPII',plan(['socseti-anna'],'socseti-anna'))
  walker.write_text(walker.read_text().replace('#SMENA','open('+repr(str(registry))+',"a").write("# смена реестра за прогон\\n")'))
  check('10 реестр сменился между планом и сверкой → 2',isxod(2,'план стендов и сверка разошлись в записях derevo',bypass=False))

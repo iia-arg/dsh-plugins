@@ -17,7 +17,7 @@ dsh-limity-zamer: переключатель ждёт концов ходов д
 ЧЕГО НЕ ЛОВИТ: подписку Claude с номером вне 1–3 (переключатель их не знает) · исчерпание по несвежему замеру · расход вне sadik.
 Подмены путей — ТОЛЬКО при DSH_LIMITY_AVTO_STEND=1 (стенд); иное значение — отказ.
 Коды: 0 — проход состоялся (в т.ч. «нечего», «некуда», «рано»); 2 — слепота; 3 — ошибка вызова."""
-import json, os, re, subprocess, sys, time
+import html, json, os, re, subprocess, sys, time
 from pathlib import Path
 for _l in (os.environ.get('DSH_LIMITY_LIB'), Path(__file__).resolve().parent.parent / 'lib', '/usr/local/lib/dsh-limity'):
     if _l and (Path(_l) / 'dsh_limity_konfig.py').is_file(): sys.path.insert(0, str(_l)); break
@@ -41,10 +41,12 @@ ISCHERPANA = 0.99                     # слово Забавы 08.10 (наря�
 SVEZHEST_MIN = 2 * 60 + 10            # = SVEZHEST_MIN dsh-limity-zamer: замер простаивающей раз в час ×2 + такт таймера 10 мин
 RAZ_V_MIN = 30                        # попытка переключения не чаще; переключатель сам ждёт концов ходов до 10 мин
 IMENA = {'iskra': 'Искра', 'zarya': 'Заря', 'avrora': 'Аврора', 'spartak': 'Спартак', 'varvara': 'Варвара', 'alfa': 'Альфа',
-         'beta': 'Бета', 'gamma': 'Гамма', 'marc': 'Марк', 'anna': 'Анна', 'master': 'Мастер', 'petrovich': 'Петрович'}
+         'beta': 'Бета', 'gamma': 'Гамма', 'marc': 'Марк', 'anna': 'Анна', 'master': 'Мастер', 'petrovich': 'Петрович',
+         'vintik': 'Винтик', 'shpuntik': 'Шпунтик', 'gayka': 'Гайка', 'shurup': 'Шуруп', 'sova': 'Сова',
+         'tumbler': 'Тумблер'}   # 14.10.2026: команда Мастера (наряд Забавы 20:35:04Z)
 
-def trevoga(tekst):
-    try: return os.access(ALERT, os.X_OK) and subprocess.run([ALERT, tekst], capture_output=True, timeout=60).returncode == 0
+def trevoga(tekst):   # agent-alert без --plain шлёт HTML: «<0.9» из вердикта заслона Telegram отверг (19.10 05:37:11Z) — экранирую всё
+    try: return os.access(ALERT, os.X_OK) and subprocess.run([ALERT, html.escape(tekst, quote=False)], capture_output=True, timeout=60).returncode == 0
     except (OSError, subprocess.SubprocessError): return False
 
 def kto_gde():
@@ -83,9 +85,10 @@ def prohod():
     teper, svod = time.time(), []
     sost = dsh_limity_konfig.prochitat_sostoyanie(SOST, 'avtoperekl')
     def zapisat(): dsh_limity_konfig.zapisat_json(SOST, sost)
-    def skazat(klyuch, tekst):   # по переходу: та же картина — молчу; «сказано» — по доставке
-        if sost.get(klyuch) == tekst: return
-        if trevoga(tekst): sost[klyuch] = tekst; svod.append(f'{klyuch}: доставлено')
+    def skazat(klyuch, tekst, sostoyanie=None):   # по переходу: та же картина — молчу; «сказано» — по доставке
+        metka = sostoyanie or tekst   # 3.1.8: отметка — состояние, не текст («N мин назад» и доли внутри уровня меняли текст каждым проходом)
+        if sost.get(klyuch) == metka: return
+        if trevoga(tekst): sost[klyuch] = metka; svod.append(f'{klyuch}: доставлено')
         else: svod.append(f'{klyuch}: НЕ доставлено — повтор следующим проходом')
     try:
         konfig, oshibki, _ = dsh_limity_konfig.prochitat_rabochij(PODPISKI)
@@ -110,18 +113,21 @@ def prohod():
         sost.pop('nekuda', None); zapisat()
         print('dsh-limity-avtoperekl: общие на ' + ', '.join(imya(n) for n in na) + ' — не исчерпана, переключать нечего'); return 0
     src, pochemu = istochnik
-    kandidaty, net = [], []
+    kandidaty, net, kak = [], [], []   # kak — состояние «некуда» без чисел: номер подписки и класс причины
     for n in sorted(claude):
         if n in na and ischerpana(n): continue
         svezho, okna, sn = sostoyanie(n)
-        if not 1 <= n <= 3: net.append(f'{imya(n)} — переключатель её не знает'); continue
-        if ischerpana(n): net.append(f'{imya(n)} {ischerpana(n)}'); continue
+        if not 1 <= n <= 3: net.append(f'{imya(n)} — переключатель её не знает'); kak.append(f'{n}:neznaet'); continue
+        if ischerpana(n): net.append(f'{imya(n)} {ischerpana(n)}'); kak.append(f'{n}:ischerpana ' + re.sub(r' \d+%', '', ischerpana(n))); continue
         r = subprocess.run([CHITATEL, str(n)], capture_output=True, text=True, timeout=30)
         if r.returncode == 0 and r.stdout.startswith('free'): kandidaty.append((okna.get('неделя', (1, 0))[0], okna.get('5 ч', (1, 0))[0], n)); continue
-        if not svezho: net.append(f'{imya(n)} — нет свежего замера' + (f' ({int((teper - sn) // 60)} мин)' if isinstance(sn, (int, float)) else ''))
-        else: net.append(f'{imya(n)} ' + ' · '.join(f'{m} {round(d * 100)}%' for m, (d, _) in okna.items()))
+        if not svezho: net.append(f'{imya(n)} — нет свежего замера' + (f' ({int((teper - sn) // 60)} мин)' if isinstance(sn, (int, float)) else '')); kak.append(f'{n}:nesvezho')
+        else:   # B-N-1806 16.10: свежо по выдаче, а заслон не признал свободной — его вердикт, а не проценты (печать «0%» скрывала «не измерено»)
+            vrd = re.sub(r'/\S+', '…', r.stdout.strip().partition('\t')[2]) or f'заслон не ответил (код {r.returncode})'
+            net.append(f'{imya(n)} — заслон: {vrd[:160]}'); kak.append(f'{n}:zaslon ' + (r.stdout.partition('\t')[0].strip() or f'kod {r.returncode}'))
     if not kandidaty:
-        skazat('nekuda', f'🔴 Claude: {imya(src)} {pochemu} — переключить некуда: ' + '; '.join(net or ['других включённых нет']))
+        skazat('nekuda', f'🔴 Claude: {imya(src)} {pochemu} — переключить некуда: ' + '; '.join(net or ['других включённых нет']),
+               f'{src}:' + re.sub(r' \d+%', '', pochemu) + ' | ' + ' · '.join(kak))
         zapisat(); print('dsh-limity-avtoperekl: некуда · ' + ' · '.join(svod)); return 0
     cel = min(kandidaty)[2]
     proshlo = teper - sost.get('popytka', 0)

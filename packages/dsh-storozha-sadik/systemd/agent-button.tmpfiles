@@ -1,0 +1,9 @@
+# B-N-2088: pending сохраняет root:agent-button 3770; обычные заявки обрабатывает только pending/*.cmd.
+# Codex 0.162.1: заранее созданные точки защищённых метаданных .git .codex .agents .aws;
+# при обновлении Codex список проверить заново моделью sandbox. Новые имена будущих версий эта мера не покрывает.
+# Тип d и возраст -: --clean/--remove содержимое не вычищают. Группа agent-button должна существовать.
+d /var/lib/agent-button/pending          3770 root agent-button -
+d /var/lib/agent-button/pending/.git     0755 root root         -
+d /var/lib/agent-button/pending/.codex   0755 root root         -
+d /var/lib/agent-button/pending/.agents  0755 root root         -
+d /var/lib/agent-button/pending/.aws     0755 root root         -

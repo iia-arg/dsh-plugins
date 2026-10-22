@@ -1,0 +1,15 @@
+# B-N-2055 способ 2 → /etc/tmpfiles.d/dsh-trevogi-spul.conf. tmp/ и vhod/ — запись группе отправителей (agent-button на
+# sadik), липкий бит: чужое не удалить и не переименовать; чтения нет. itog/ — проход, файлы итога 0600 владельца.
+# Отдельным учёткам вне группы (на sadik — varvara) ACL кладёт машинный файл dsh-trevogi-spul-acl.conf, не пакет.
+d /var/spool/dsh-trevogi       0755 root root         -
+d /var/spool/dsh-trevogi/tmp   1730 root agent-button -
+d /var/spool/dsh-trevogi/vhod  1730 root agent-button -
+d /var/spool/dsh-trevogi/itog  0711 root root         -
+d /var/spool/dsh-trevogi/work  0700 root root         -
+# B-N-2086: песочница Codex 0.162.1 (bwrap) в каждом корне writable_roots монтирует только-чтением .git .codex .agents .aws
+# и при отсутствии создаёт их сама — в верху спула (root 755) не может, и тогда не стартует ни одна команда агента.
+# Пустые root 755 прав не расширяют (в песочнице — только чтение); отправитель верх спула не перебирает. Новое имя в Codex — строкой сюда.
+d /var/spool/dsh-trevogi/.git     0755 root root         -
+d /var/spool/dsh-trevogi/.codex   0755 root root         -
+d /var/spool/dsh-trevogi/.agents  0755 root root         -
+d /var/spool/dsh-trevogi/.aws     0755 root root         -

@@ -1,0 +1,6 @@
+[Unit]
+Description=Снимок реестра пакетов для межмашинной сверки (agent-plugins snimok; verify тем же кодом внутри)
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/agent-plugins snimok
+TimeoutStartSec=600

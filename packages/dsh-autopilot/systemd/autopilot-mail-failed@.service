@@ -1,0 +1,14 @@
+[Unit]
+Description=Autopilot mail failure alert (%i)
+
+[Service]
+Type=oneshot
+User=autopilot-post
+Group=autopilot-post
+Environment=AGENT_ALERT_CHEREZ_SPUL=1 AGENT_ALERT_ITOG_ZHDAT=10
+ExecStart=/usr/bin/python3 /opt/autopilot/post/0.1.3/pilot/mail_failure.py %i
+TimeoutStartSec=20
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/spool/dsh-trevogi

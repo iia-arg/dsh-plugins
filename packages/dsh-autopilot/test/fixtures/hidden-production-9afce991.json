@@ -1,0 +1,30 @@
+{
+  "sourceCensusSha256": "9afce991f77581f08e2f79952378976bb9d2c2bd4e6c7f790b6f55a07f726545",
+  "sourceMeasuredAt": [
+    "2026-10-17T06:35:13.875914Z",
+    "2026-10-17T06:35:31.096568Z"
+  ],
+  "contract": "Historical metadata for semantic private-fixture replay; original state bytes are not archived here. Not a fresh machine census.",
+  "records": [
+    {
+      "path": "/var/tmp/stend-ap-window-0wfihfqu/root/opt/master/project/.autopilot/state.js",
+      "sha256": "d6f6c2fd9b8f430307d507bf8b16c4071d389989522497731ede7ae09ce4bccd",
+      "runId": "5608e879024b4ca293527b508d980ba4",
+      "projectId": "dba13507966e45ddaaaec31274a9021b",
+      "release": "9fc898cbe941d5b8a369f1dd657e9119676eb44f-a13-b5-c2",
+      "status": "unfinished",
+      "classification": "attested_isolated_fixture",
+      "potentialProductionPin": false
+    },
+    {
+      "path": "/var/tmp/stend-ap-window-xo98ufdz/root/opt/master/project/.autopilot/state.js",
+      "sha256": "ddb72da2d0179d74e807b04503006a50c8b6a19c85897fd5f4681c1a64754682",
+      "runId": "6cb7ba04c7d144fcaff14d4d6f0bca23",
+      "projectId": "a94e155be61746aa99273f28b1bf2abf",
+      "release": "9fc898cbe941d5b8a369f1dd657e9119676eb44f-a15-b7-c2",
+      "status": "unfinished",
+      "classification": "attested_isolated_fixture",
+      "potentialProductionPin": false
+    }
+  ]
+}

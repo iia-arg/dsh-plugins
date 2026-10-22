@@ -26,6 +26,13 @@ PY = "/opt/omega/venv/bin/python3"
 EMB = ["OMEGA_EMBEDDING_MODEL=bge-m3", "OMEGA_EMBEDDING_MODEL_DIR=/var/lib/omega/.cache/omega/models/bge-m3-onnx",
        "OMEGA_EMBEDDING_DIM=1024", "OMEGA_EMBEDDING_POOLING=cls", "OMEGA_EMBEDDING_PAD_TOKEN=<pad>", "OMEGA_EMBEDDING_PAD_ID=1",
        "HF_HUB_OFFLINE=1", "OMEGA_RERANKER_AUTODOWNLOAD=0"]
+# Предел памяти копии службы (19.10.2026, Вениамин 08:17 и 08:24 МСК): ЭМПИРИЧЕСКИЙ — 3/3 без OOM (memory.peak ≤ 3,456 ГиБ); ночной пик
+#   19.10 > 4 ГиБ не измерен; при 6G, 19.10: 5×3,70 + 1×5,24 ·10⁹ Б (второй горб) → 7G — снова ОЦЕНКА СНИЗУ (порог снят
+#   наблюдением); пересчитать по ряду ночных замеров. Пик печатается каждым прогоном (строка «ПАМЯТЬ копии»);
+#   выше ZHELTOE_DOLYA предела — строка FAIL ЖЁЛТОЕ с числом и код 1: её несёт в ночной отчёт читатель обхода.
+MEMORY_MAX = "7G"
+ZHELTOE_DOLYA = 0.80
+PIK = {}
 ok = fail = slep = 0
 def pas(n, d=""):
     global ok; ok += 1; print(f"{n:<66} ok {d}")
@@ -34,7 +41,12 @@ def bad(n, d=""):
 def blind(n, d=""):
     global slep; slep += 1; print(f"{n:<66} СЛЕПОТА {d}")
 def sh(*a, **k): return subprocess.run(list(a), capture_output=True, text=True, **k)
-def stop(u): sh("systemctl", "stop", u); sh("systemctl", "reset-failed", u)
+def stop(u):
+    if u == U_UP:   # пик и предел копии — ДО остановки: после неё временный юнит собирается, счётчики пропадают
+        cg = Path(f"/sys/fs/cgroup/system.slice/{u}.service")
+        try: PIK.update(peak=int((cg / "memory.peak").read_text()), max=int((cg / "memory.max").read_text()))
+        except (OSError, ValueError) as e: PIK.update(oshibka=f"{type(e).__name__}: {e}"[:120])
+    sh("systemctl", "stop", u); sh("systemctl", "reset-failed", u)
 def health(port, sek=90):
     for _ in range(sek):
         try:
@@ -61,8 +73,10 @@ async def mcp_call(port, key, tool, args):
                 return sorted(t.name for t in (await s.list_tools()).tools)
             res = await s.call_tool(tool, args)
             return "".join(getattr(c, "text", "") for c in res.content)
-def call(port, key, tool, args=None):
-    try: return asyncio.run(mcp_call(port, key, tool, args or {}))
+def call(port, key, tool, args=None, sek=45):
+    # 19.10.2026 (ночной обход, код 124): копия службы умерла OOM посреди посева, вызов ждал без предела до 120 с обходчика.
+    #   Предел вызова — 45 с; исход — строка __ИСКЛЮЧЕНИЕ__, по ней блоки дают слепоту, а не висят.
+    try: return asyncio.run(asyncio.wait_for(mcp_call(port, key, tool, args or {}), sek))
     except Exception as e: return f"__ИСКЛЮЧЕНИЕ__ {type(e).__name__}: {e}"
 def http_kod(port, key):
     req = urllib.request.Request(f"http://127.0.0.1:{port}/mcp/", data=b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}', method="POST",
@@ -118,7 +132,7 @@ def main():
         sh("sudo", "-u", "omega", "sh", "-c", f"umask 077; cat > {H}/.omega/mcp_api_key", input=kup + "\n")
         envs = sum([["-p", f"Environment={e}"] for e in [f"HOME={H}", f"OMEGA_HOME={H}/.omega", "OMEGA_TRANSPORT=http",
                     f"OMEGA_HTTP_PORT={P_UP}", "OMEGA_IDLE_TIMEOUT=0"] + EMB], [])
-        r = sh("systemd-run", f"--unit={U_UP}", *VREMENNYJ, "-p", "MemoryMax=4G", "-p", "MemorySwapMax=0", "-p", "User=omega", "-p", f"WorkingDirectory={H}", *envs, PY, "-m", "omega.server.mcp_server")
+        r = sh("systemd-run", f"--unit={U_UP}", *VREMENNYJ, "-p", f"MemoryMax={MEMORY_MAX}", "-p", "MemorySwapMax=0", "-p", "User=omega", "-p", f"WorkingDirectory={H}", *envs, PY, "-m", "omega.server.mcp_server")
         if r.returncode != 0 or not health(P_UP): blind("копия службы поднялась", (r.stderr or "health нет")[-200:]); return 2
         pas("копия службы на копии базы поднялась", f"порт {P_UP}")
         # 1. шлюз под проверкой
@@ -140,7 +154,10 @@ def main():
         rv = call(P_GW, kg, "omega_store", {"content": f"{V} гость пишет METKA {rnd}", "event_type": "fakt"})
         rc = call(P_UP, kup, "omega_store", {"content": f"{C} системная запись METKA {rnd}", "event_type": "fakt", "entity_id": "avrora"})
         idv, idc = (re.search(r"mem-[0-9a-f]{12}", rv) or [None])[0], (re.search(r"mem-[0-9a-f]{12}", rc) or [None])[0]
-        if not idv or not idc: blind("посев V (через шлюз) и C (в копию)", f"V: {rv[:120]} | C: {rc[:120]}"); return 2
+        if not idv or not idc:
+            # итог юнита копии — из журнала: CollectMode=inactive-or-failed стирает Result, systemctl show дал бы «success/inactive»
+            kop = [l for l in sh("journalctl", "-u", U_UP, "-n", "30", "--no-pager", "-o", "cat").stdout.splitlines() if "Failed with result" in l or "OOM" in l]
+            blind("посев V (через шлюз) и C (в копию)", f"копия службы: {(kop or ['в журнале юнита отказа нет'])[-1][-80:]} · V: {rv[:120]} | C: {rc[:120]}"); return 2
         rl = call(P_UP, kup, "omega_call", {"tool": "omega_memory", "args": {"action": "link", "memory_id": idv, "target_id": idc}})
         if "Linked" not in rl: blind("связь V→C", rl[:160]); return 2
         pas("посев: V через шлюз, C в копию, связь V→C", f"{idv} {idc}")
@@ -341,7 +358,15 @@ def main():
         sled = [p for u in (U_GW, U_GW_DEAD) for p in (f"/var/lib/{u}", f"/var/lib/private/{u}", f"/run/{u}", f"/run/private/{u}")
                 if os.path.lexists(p)]
         (pas if not sled else bad)("У1 после стенда каталогов состояния шлюзов нет", "; ".join(sled))
-    print("-" * 70); print(f"сошлось: {ok}   FAIL: {fail}   ПРОПУЩЕНО: {slep}")
+        if "peak" in PIK:
+            dolya = PIK["peak"] / PIK["max"]
+            PIK["tekst"] = f"memory.peak={PIK['peak']} Б ({PIK['peak'] / 2**30:.3f} ГиБ) = {dolya:.0%} предела MemoryMax={MEMORY_MAX}"
+            if dolya > ZHELTOE_DOLYA: bad("ПАМЯТЬ копии службы", f"ЖЁЛТОЕ · {PIK['tekst']} > {ZHELTOE_DOLYA:.0%} — поднять предел по ряду замеров")
+            else: pas("ПАМЯТЬ копии службы", PIK["tekst"])
+        else:
+            PIK["tekst"] = f"memory.peak не снят ({PIK.get('oshibka', 'юнит копии уже собран')})"
+            blind("ПАМЯТЬ копии службы", PIK["tekst"])
+    print("-" * 70); print(f"сошлось: {ok}   FAIL: {fail}   ПРОПУЩЕНО: {slep}   ПАМЯТЬ копии: {PIK.get('tekst', '—')}")
     return 2 if slep else (1 if fail else 0)
 
 if __name__ == "__main__":

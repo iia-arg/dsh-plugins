@@ -1,0 +1,13 @@
+{
+  "[\"pid:239030:c039d3cd-89d4-4e5c-b3bd-6797b0eaef86\",\"3797c4b9-bc93-483d-8695-e9d8e3d7b1a5\"]": {
+    "kind": "request",
+    "requestId": "3797c4b9-bc93-483d-8695-e9d8e3d7b1a5",
+    "jobId": "operator-ab913c0804086489f7a598268137fb046813c57ea3220df394ab4c651a61af56",
+    "sessionId": "telegram-autopilot-team",
+    "sessionCreated": 1792148289159,
+    "turn": 63,
+    "claimedAt": "2026-10-19T03:41:37.869000+00:00",
+    "finishedAt": "2026-10-19T03:42:51.531000+00:00",
+    "requestGeneration": "pid:239030:c039d3cd-89d4-4e5c-b3bd-6797b0eaef86"
+  }
+}

@@ -1,5 +1,10 @@
 # dsh-telegram-multiagent — Telegram, A2A file mail and website chat channel for DSH agents, with durable receipts
 
+
+Local edition 3.1.9: the “опрос жив … ПРОСТОЙ/НЕ БЫЛО” log line is **human-readable diagnostics**, not an automatic idle watchdog. No automated consumer reads the `ПРОСТОЙ`/`НЕ БЫЛО` fields; `dsh-compact-watch` checks only for the “опрос жив” substring and does not parse those fields.
+
+Here “idle” means that the process has completed **no turns of any kind** for 30 minutes, including A2A, managed, headless and internal turns. It does not mean that the owner has received no answers. Every `turn/end` records completion before receipt/chat routing exits. Every 20 successful polling cycles the log reports completion age rounded to minutes, with `🔴 ПРОСТОЙ` at ≥30; the next completed turn updates the timestamp. Before the first completion after startup it reports `НЕ БЫЛО`, meaning there is no measurement yet. These diagnostics do not detect a stalled poll or send a separate alert. Run `node test/stend-prostoya.mjs` for nine isolated handler/loop scenarios.
+
 ## Purpose
 
 The `dsh-telegram-multiagent` module is a DSH platform plugin (`main: src/index.js`, `inject: ['agents']`). It collects incoming messages from Telegram (private chats, working groups, guests of an open bot), from file mail (`<a2aDir>/in` and the mail-carrier spool `spoolDir`) and, when enabled, from the website chat spool. It records each message as an SQLite receipt (`<workspace>/.message-receipts/receipts.sqlite`), binds it to the agent's session generation, queues it into DSH, and sends the answer back to where the question came from. Input is persisted before the Telegram offset advances, and the session log is flushed to disk before wakeup. If the outcome of a turn is unknown, the receipt is held for the operator; model work is never blindly repeated.
@@ -70,7 +75,7 @@ What the module creates itself at runtime:
 
 ## Installation
 
-The package is published to npm with release 3.1.7 (order and window — by the owner's decision); until then it is installed from the tree: here the package is mounted through the gates; the author does not deploy it. Source — the tree `/opt/iskra/workspace/dsh-plugins/packages/dsh-telegram-multiagent`.
+npm provides `3.1.7` (checked on 2026-10-15 with `npm view dsh-telegram-multiagent version`). By the owner's decision of 2026-10-14, changes after publication are maintained locally and are not republished to npm. Deploy the current local edition from the source tree through the review gates; the author does not deploy it. Source: `/opt/iskra/workspace/dsh-plugins/packages/dsh-telegram-multiagent`.
 
 1. Release: version number and heading in `CHANGELOG.md`, `vypusk-tegom` gate, commit and tag in the tree.
 2. Dry run of the mount (writes nothing):
@@ -239,3 +244,10 @@ Passing tests does not prove live delivery: `sent_at` in a receipt is the Bot AP
 - The Telegram message handler is awaited inside the polling loop (accepted risk, finding №10): while a voice message from an allowed user is being transcribed, the whole channel intake stops — Telegram, service mail, the postman mailbox, the receipt tick — for up to `transcribeTimeoutMs` (default 300 000 ms) plus about 10 s; text while the agent is busy holds intake for up to 15 s (waiting for the agent to go idle). Inputs are not lost — they are already in receipts — but stop letters and replies to other chats are delayed.
 - In a working group (`groups`) a voice message from an allowed user (with `openBot` — from any participant) is downloaded and passed to the external `transcribeCommand` BEFORE the addressing check: this is how the bot's name is searched for in speech. So every such voice message in the group is transcribed, even if not addressed to the bot: transcriber time and cost, and other people's conversations handed to an external command.
 - Compatibility was checked on DSH `0.2.0-rc.2` and Node.js `24.19.0` (`engines`: Node ≥ 24 is the verified environment; the built-in `node:sqlite` also exists in Node 22.13+, but with `ExperimentalWarning`, and we have not checked the package on 22).
+
+
+Runtime R size reset uses the shared `/etc/dsh-telegram-multiagent/usage-runtime-policy.json`: proposed file cap 32 MiB, record cap 64 KiB. An empty temp is fsynced and renamed over the current file, followed by directory fsync; there is no archive. Restart preserves a healthy file below cap; one LF closes a partial tail before append. Install the incremental reader and watcher before the writer. On inode change the reader starts at offset zero and keeps one notice that some rows may have been lost in every receipt for the affected accumulated sum. R can repeat the same native-turn snapshot; stable keys and fixture probes are described in [USAGE-RUNTIME.md](USAGE-RUNTIME.md). This candidate does not change the release number, CHANGELOG or tag.
+
+LOW policy boundary: if the policy is removed after the last successful check of an in-flight append, that operation may finish; the next queued append stops with R_POLICY_INVALID. Reset has its own policy check; there is no extra check before LF/write.
+
+Records over recordMaxBytes are skipped without latching a source failure; the process log reports `[usage] R_RECORD_TOO_LARGE skipped=N`, counted per writer instance. The next normal record proceeds; the heartbeat wire shape has no new counter field. After R_POLICY_INVALID, the next append rechecks the policy and resumes without a service restart once it is repaired; missed facts are not replayed. R_RESET_FAILED remains latched because rename may have completed before directory fsync failed: after `[usage] R_RESET_FAILED`, restart the service when the agent is idle. Other source failures remain latched.

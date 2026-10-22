@@ -93,6 +93,10 @@ try:
     vse = trevogi()
     proba('П16 ни одна тревога не про выключенную, без путей/токенов/префикса, одна строка',
           vse and not any('выкл' in x or '/' in x or 'sk-ant' in x or 'лимиты подписок' in x or '\n' in x for x in vse), vse)
+    plohoj = r / 'a<b & c>' / 'sost.json'; plohoj.parent.mkdir(); plohoj.write_text('{негодно')   # 3.1.7: agent-alert шлёт HTML
+    ENV['DSH_LIMITY_ZAMER_SOST'] = str(plohoj); k, v, t = prohod(); ENV['DSH_LIMITY_ZAMER_SOST'] = str(r / 'sost.json')
+    proba('П20 ошибка с «<» и «&» (путь состояния в str(e)) → в канал «a&lt;b &amp; c&gt;», голых «<» и «&» нет',
+          k == 2 and len(t) == 1 and 'a&lt;b &amp; c&gt;' in t[0] and '<' not in t[0] and '& ' not in t[0], (k, t, v[-300:]))
 finally:
     shutil.rmtree(r, ignore_errors=True)
 print(f'ИТОГ: {ok} из {vsego}')

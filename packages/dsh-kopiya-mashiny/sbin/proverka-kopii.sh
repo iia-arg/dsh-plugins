@@ -42,6 +42,7 @@
 # ИСПОЛЬЗОВАНИЕ:  proverka-kopii.sh <архив.tar.gz>
 #
 # КОДЫ: 0 — полный профиль пройден | 1 — выявлена негодность | 2 — заключения нет | 8 — пройден только частичный профиль
+#       3 — профиль пройден, но образцов разметки нет ни в копии, ни на машине (неполна по составу, B-N-2101)
 set -uo pipefail
 DECLARED_CODE=""
 RAB=""
@@ -51,7 +52,7 @@ itog_proverki() {
   local raw=$? code verdict
   trap - EXIT
   code="${DECLARED_CODE:-2}"
-  case "$code" in 0) verdict=passed;; 1) verdict=failed;; 8) verdict=partial;; *) code=2; verdict=unknown;; esac
+  case "$code" in 0) verdict=passed;; 1) verdict=failed;; 3) verdict=incomplete;; 8) verdict=partial;; *) code=2; verdict=unknown;; esac
   [ -n "$RAB" ] && ubrat
   if [ -z "$DECLARED_CODE" ]; then printf 'СЛЕПОТА: неожиданный выход raw_rc=%s, предмет=%q\n' "$raw" "$ARH"; fi
   printf 'VERIFY_RESULT verdict=%s checkpoint=not_applicable notification=not_required code=%s предмет=%q\n' "$verdict" "$code" "$ARH"
@@ -621,21 +622,46 @@ exec(open(os.path.join(rab, '.indeks.py')).read())  # B-H-1427: наличие �
 IDX, KAT = zagruzit(rab)
 def est(p):
     return est_v(p.lstrip('/'), IDX, KAT)
-net=[]; vsego=0; ne_raskr=[]   # п.406: маска, не раскрывшаяся на живой машине, — НЕ «в порядке»
+# B-N-2101: путь без маски, которого нет и на машине, — не дыра сборщика: взять было нечего.
+# Отсутствие доказано, только если ближайший существующий предок открыт на проход; не видно — считаем «есть» (строже).
+def net_na_mashine(p):
+    if os.path.lexists(p): return False
+    d=os.path.dirname(p.rstrip('/')) or '/'
+    while not os.path.lexists(d): d=os.path.dirname(d) or '/'
+    return os.path.isdir(d) and os.access(d, os.X_OK)
+# r2 (ворота Вениамина 04:58Z): «взять не могла» верно, только если пути не было В МОМЕНТ СБОРКИ. Свидетель — запись сборщика ЭТОЙ
+# копии (backup-coverage.json в архиве, propushcheno «в реестре есть, на диске нет»). Записи нет или не читается — мягкого вердикта нет.
+sbor_net=None
+try:
+    m_=json.load(open(os.path.join(rab,'backup-coverage.json'),encoding='utf-8'))
+    if m_.get('format')=='sadik-backup-coverage-v1' and isinstance(m_.get('propushcheno'),list):
+        sbor_net={x.get('istochnik') for x in m_['propushcheno'] if isinstance(x,dict) and x.get('prichina')=='в реестре есть, на диске нет'}
+except Exception:
+    m_=None
+net=[]; netdisk=[]; netpoter=[]; vsego=0; ne_raskr=[]   # п.406: маска, не раскрывшаяся на живой машине, — НЕ «в порядке»
+def razobrat(put, raskr):
+    if any(est(r) for r in raskr): return
+    if not all(net_na_mashine(r) for r in raskr): net.append(put)          # на машине есть, в копии нет
+    elif sbor_net is not None and put in sbor_net: netdisk.append(put)     # не было при сборке (слово сборщика) и нет сейчас
+    else: netpoter.append(put)                                             # нет сейчас, а при сборке — не объявлено: возможна потеря
 for agent, dom in d.get('doma',{}).items():
     for obr in d.get('komnaty',{}).get(agent,{}).get('klast',[]):
         put = obr if obr.startswith('/') else os.path.join(dom,obr)
         raskr = glob.glob(put) or ([put] if '*' not in put else [])
         if not raskr: ne_raskr.append(put); continue
         vsego += 1
-        if not any(est(r) for r in raskr): net.append(put)
+        razobrat(put, raskr)
 for it in d.get('obshchee',[]):
     put=it['put']; raskr=glob.glob(put) or [put]
     vsego += 1
-    if not any(est(r) for r in raskr): net.append(put)
-print('ITOG', vsego, len(net))
+    razobrat(put, raskr)
+# 5в судит пропуски сборщика: если ВСЕ они — «нет на диске» по путям, разобранным здесь как netdisk, и непокрытых нет, 5в не повторяет отказ.
+sborvse = sbor_net is not None and not (m_.get('nepokrytye') or []) and len(sbor_net)==len(m_['propushcheno']) and sbor_net<=set(netdisk)
+print('ITOG', vsego, len(net), len(netdisk), len(netpoter), 'da' if sbor_net is not None else 'net', 'da' if sborvse else 'net')
 for x in ne_raskr[:25]: print('NERASKR', x)
 for x in net[:25]: print('NET', x)
+for x in netdisk[:25]: print('NETDISK', x)
+for x in netpoter[:25]: print('NETPOTER', x)
 for x in nep: print('NEPOLN', x.get('imya'), '—', '; '.join(x.get('prichiny') or []))
 " 2>"$RAB/.polnota.err")
 if [ -z "$POLNOTA" ] || [ "$POLNOTA" = "SLEPOTA" ]; then
@@ -644,6 +670,10 @@ if [ -z "$POLNOTA" ] || [ "$POLNOTA" = "SLEPOTA" ]; then
 fi
 P_VSEGO=$(printf '%s' "$POLNOTA" | awk '/^ITOG/{print $2}')
 P_NET=$(printf '%s' "$POLNOTA" | awk '/^ITOG/{print $3}')
+P_NETDISK=$(printf '%s' "$POLNOTA" | awk '/^ITOG/{print $4}')
+P_NETPOTER=$(printf '%s' "$POLNOTA" | awk '/^ITOG/{print $5}')
+P_SBOR=$(printf '%s' "$POLNOTA" | awk '/^ITOG/{print $6}')
+P_SBORVSE=$(printf '%s' "$POLNOTA" | awk '/^ITOG/{print $7}')
 # 🔴 п.406, ВТОРАЯ СТОРОНА (07.09.2026): маска, НЕ РАСКРЫВШАЯСЯ на живой машине,
 # прежде выпадала из счёта молча (`continue`), и vsego её не считал. Это ложно-ЗЕЛЁНОЕ:
 # прибор, заведённый проверять сохранность копии, был слеп ровно к случаю, ради которого
@@ -663,7 +693,7 @@ if [ "${P_NEPOLN:-0}" -gt 0 ]; then
   printf '%s\n' "$POLNOTA" | awk '/^NEPOLN/{$1=""; print "    " $0}' >&2
   SLEPOTA_POLNOTY=2
 fi
-echo "  состав: образцов разметки $P_VSEGO | нет в копии $P_NET"
+echo "  состав: образцов разметки $P_VSEGO | нет в копии $P_NET | нет ни в копии, ни на машине: не было при сборке $P_NETDISK, не объявлено сборщиком $P_NETPOTER"
 # C-H-490 (02.10.2026, Заря; класс #226-Б, на aclaude закрыт Михалычем 21.09): ноль образцов разметки — не «все в копии есть»,
 # а «судить не по чему». «Каждый образец есть в копии» на пустом множестве истинно: годный по форме pokrytie без единого
 # дома и общего образца давал «✅ ПРОФИЛЬ ПРИЁМКИ ПРОЙДЕН … все 0 образцов», код 0 (проба 02.10). Код 2 — как у соседних слепот.
@@ -671,7 +701,7 @@ if [ "${P_VSEGO:-0}" -eq 0 ]; then
   echo "🔴 ЗАКЛЮЧЕНИЯ НЕТ: разметка копии из реестра пуста — 0 образцов; полноту состава судить не по чему" >&2
   zavershit 2
 fi
-if [ "${P_NET:-0}" -gt 0 ]; then
+if [ "${P_NET:-0}" -gt 0 ] || [ "${P_NETPOTER:-0}" -gt 0 ]; then
   # 🔴 ДВА ЧТЕНИЯ ОДНОГО ОТСУТСТВИЯ, И ОНИ НЕ РАЗЛИЧАЮТСЯ БЕЗ ВОЗРАСТА:
   #   «внесено в реестр ПОСЛЕ снятия копии» — физически не могло попасть;
   #   «БЫЛО и пропало» — настоящая беда.
@@ -687,10 +717,34 @@ if [ "${P_NET:-0}" -gt 0 ]; then
     echo "⚠️ ВОЗРАСТ КОПИИ ПРОТИВ РЕЕСТРА НЕ ПРОВЕРЯЛСЯ (нужен ключ --kopiya-snyata <ISO8601>)." >&2
     echo "   Значит «нет в копии» ниже может означать «внесено в реестр после снятия копии»." >&2
   fi
-  echo "🔴 КОПИЯ НЕПОЛНА: образцов разметки нет в копии — $P_NET из $P_VSEGO." >&2
-  echo "   Секреты открываются, но восстанавливать ими нечего. Отсутствуют:" >&2
-  printf '%s\n' "$POLNOTA" | awk '/^NET/{$1=""; print "    " $0}' >&2
+  # B-N-2101 r2 (ворота Вениамина 04:58Z): код 1 называет, ЧЕГО нет, а не «не восстановима» — секреты при этом открылись.
+  if [ "${P_NET:-0}" -gt 0 ]; then
+    echo "🔴 КОПИЯ НЕПОЛНА: данных, которые есть на машине, в копии нет — $P_NET путей:" >&2
+    printf '%s\n' "$POLNOTA" | awk '/^NET /{$1=""; print "    " $0}' >&2
+  fi
+  if [ "${P_NETPOTER:-0}" -gt 0 ]; then
+    echo "🔴 КОПИЯ НЕПОЛНА: в копии нет и на машине уже нет, а сборщик этой копии отсутствия при сборке не объявил (запись сборщика прочитана: $P_SBOR) — возможна потеря, $P_NETPOTER путей:" >&2
+    printf '%s\n' "$POLNOTA" | awk '/^NETPOTER /{$1=""; print "    " $0}' >&2
+  fi
+  if [ "${P_NETDISK:-0}" -gt 0 ]; then
+    echo "   Кроме того, нет ни в копии, ни на машине — $P_NETDISK:" >&2
+    printf '%s\n' "$POLNOTA" | awk '/^NETDISK /{$1=""; print "    " $0}' >&2
+  fi
   zavershit 1
+fi
+# B-N-2101 (17.10.2026): образец, которого нет НИ в копии, НИ на машине, — не «не восстановима». 16.10 шесть путей,
+# снятых с машины (priyomka, .config пятерых команды Мастера), дали «КОПИЯ НЕПОЛНА … не восстановима» при 298/298
+# открытых секретах. Два чтения: путь в реестре лишний — или данные пропали с машины ДО копии (копия их не спасёт).
+# Код 3 — после ВСЕХ прочих проверок (базы, ACL, подключения): отказ любой из них остаётся кодом 1.
+# r2: мягко — ТОЛЬКО путь, которого нет сейчас И который сборщик ЭТОЙ копии назвал отсутствующим при сборке
+# (backup-coverage.json: «в реестре есть, на диске нет»). Был при сборке и не взят, а потом удалён — код 1 (NETPOTER).
+# ЧЕГО НЕ ЛОВИТ: путь, который есть на машине, но не виден руке приёмки, считается «есть» — остаётся кодом 1;
+# слово сборщика о себе не перепроверяется (если он ошибочно не увидел живой путь — это сторож покрытия).
+if [ "${P_NETDISK:-0}" -gt 0 ]; then
+  echo "🟠 НЕПОЛНА ПО СОСТАВУ: в разметке реестра есть, на машине нет — $P_NETDISK из $P_VSEGO (сборщик этой копии назвал их отсутствующими при сборке):" >&2
+  printf '%s\n' "$POLNOTA" | awk '/^NETDISK /{$1=""; print "    " $0}' >&2
+  echo "   Либо путь в реестре лишний (чинится реестром), либо данные пропали с машины до копии (искать в прежних копиях)." >&2
+  NEPOLNA_SOSTAV=3
 fi
 fi
 
@@ -792,7 +846,11 @@ else
   # разряд называется НЕ ОБЪЯВЛЕННЫМ, и это видно в выводе.
   echo "  |   ⚠️  полнота сборки НЕ ОБЪЯВЛЕНА: манифеста backup-coverage.json в копии нет"
 fi
-if [ "$POLN_SOST" = net ]; then
+# B-N-2101 r2: все пропуски сборщика — «в реестре есть, на диске нет» по путям, которые раздел 5 уже назвал 🟠 (нет и сейчас),
+# непокрытых домов нет — это тот же вердикт «неполна по составу», а не второй отказ. Любой иной пропуск — код 1, как прежде.
+if [ "$POLN_SOST" = net ] && [ "${P_SBORVSE:-net}" = da ] && [ "${NEPOLNA_SOSTAV:-0}" = 3 ]; then
+  echo "  |   полнота сборки: пропуски сборщика — только пути, которых не было при сборке и нет сейчас (названы выше, 🟠)"
+elif [ "$POLN_SOST" = net ]; then
   echo "🔴 КОПИЯ НЕПОЛНА ПО СЛОВУ СОБРАВШЕГО: перечень выше. Копия годна к восстановлению того, что в ней есть, но взято не всё объявленное." >&2
   zavershit 1
 fi
@@ -956,6 +1014,8 @@ if [ "${SLEPOTA_POLNOTY:-0}" = 2 ]; then
 fi
 if [ "$TOLKO_SEKRETY" = 1 ]; then
   echo "ЧАСТИЧНО: проверены $otkr секретов; полная приёмка не запрашивалась"
+elif [ "${NEPOLNA_SOSTAV:-0}" = 3 ]; then
+  echo "🟠 КОПИЯ ВОССТАНОВИМА, НО НЕПОЛНА ПО СОСТАВУ: все $otkr записей открыты ключом из копии; без ключа не открывается"
 else
   echo "✅ ПРОФИЛЬ ПРИЁМКИ ПРОЙДЕН: все $otkr записей открыты ключом из копии; без ключа не открывается"
 fi
@@ -975,7 +1035,11 @@ if [ "$TOLKO_SEKRETY" = "1" ]; then
     echo "     полнота не объявлена: про состав здесь НЕ СКАЗАНО НИЧЕГО."
   fi
 else
-  echo "   состав: все $P_VSEGO образцов разметки в копии есть (проверено НАЛИЧИЕМ, не открытием)"
+  if [ "${NEPOLNA_SOSTAV:-0}" = 3 ]; then
+    echo "   состав: в копии есть $((P_VSEGO-P_NETDISK)) из $P_VSEGO образцов разметки; $P_NETDISK нет ни в копии, ни на машине (названы выше)"
+  else
+    echo "   состав: все $P_VSEGO образцов разметки в копии есть (проверено НАЛИЧИЕМ, не открытием)"
+  fi
   echo "   подключения плагинов: $PODKL_ITOG, цели действующих на месте"
   # 🔴 БАЗЫ НАЗЫВАЮТСЯ В ВЕРДИКТЕ, А НЕ ТОЛЬКО ПО ХОДУ. Довод (19.09.2026):
   # проверка открывала каждую .db и печатала строку ВЫШЕ вердикта, где та тонула.
@@ -990,6 +1054,8 @@ else
   # «полнота» читается шире проверенного: как будто копия взяла всё, что на машине есть.
   if [ "$POLN_SOST" = da ]; then
     echo "   полнота сборки: собрано БЕЗ ПРОПУСКОВ — по слову самого сборщика (манифест в копии)"
+  elif [ "$POLN_SOST" = net ]; then
+    echo "   полнота сборки: сборщик объявил пропуски — только пути, которых не было при сборке и нет сейчас (🟠 выше)"
   else
     echo "   полнота сборки: НЕ ОБЪЯВЛЕНА — манифеста в копии нет; это не «полна» и не «неполна»"
   fi
@@ -1005,4 +1071,5 @@ fi
 # ключ и хранилище.
 echo "   снимок ACL: $ACL_ITOG"
 [ "$TOLKO_SEKRETY" = 1 ] && zavershit 8
+[ "${NEPOLNA_SOSTAV:-0}" = 3 ] && zavershit 3
 zavershit 0

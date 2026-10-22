@@ -1,3 +1,4 @@
+import {droppedPublisher} from '../src/autopilot-notice.js';
 import test from 'node:test';import assert from 'node:assert/strict';import http from 'node:http';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {MessageReceipts,stableJson} from '../src/message-receipts.js';import {TelegramClient} from '../src/client.js';
 let sut={};try{sut=await import('../src/social-ingress.js')}catch(e){if(e.code!=='ERR_MODULE_NOT_FOUND')throw e}
@@ -14,7 +15,7 @@ async function fixture(t){
 // Break caught: everyone receives channel posts or callback events even without opt-in.
 test('social updates are opt-in only Anna and poll preserves enabled update types',async()=>{
  assert.equal(typeof sut.socialUpdates,'function','profile-controlled update catalog missing');assert.deepEqual(sut.socialUpdates({}),['message']);assert.throws(()=>sut.socialUpdates({agentName:'beta',social:{}}),/Anna/);
- const updates=sut.socialUpdates({agentName:'anna',social:{}});assert.deepEqual(updates,['message','channel_post','edited_channel_post','callback_query']);const client=new TelegramClient('synthetic',()=>{},{allowedUpdates:updates});let sent;
+ const updates=sut.socialUpdates({agentName:'anna',social:{}});assert.deepEqual(updates,['message','edited_message','channel_post','edited_channel_post','callback_query']);const client=new TelegramClient('synthetic',()=>{},{allowedUpdates:updates});let sent;
  client.call=async(name,args)=>{assert.equal(name,'getUpdates');sent=args;return[{update_id:5,channel_post:{chat:{id:channel},message_id:1,text:'Пост'}}]};await client.poll(0,async()=>{});assert.deepEqual(sent.allowed_updates,updates);assert.equal(client.offset,6);
 });
 // Break caught: from.id requirement discards channel posts or replays create duplicate intake.
@@ -40,7 +41,7 @@ test('callback goes only to queue authority and never model dispatch',async t=>{
 // Break caught: actual channel handler falls through to goal/model commands for subscriber data.
 test('actual handleUpdate routes social data before commands and model admission',async t=>{
  const {extractFunction}=await import('./extract.mjs'),vm=await import('node:vm'),f=await fixture(t),ingress=f.open();const source=fs.readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
- const handler=vm.runInNewContext('('+extractFunction(source,'handleUpdate')+')',{config:f.config,socialIngress:ingress,botKto:async()=>({id:77}),tg:{call:async()=>true},agentFor(){throw Error('subscriber reached model')},isAllowed(){throw Error('subscriber became human principal')},settings:()=>({}),nastrojkaGruppy:()=>null,log(){}});
+ const handler=vm.runInNewContext('('+extractFunction(source,'handleUpdate')+')',{autopilot:null,droppedPublisher,config:f.config,socialIngress:ingress,botKto:async()=>({id:77}),tg:{call:async()=>true},agentFor(){throw Error('subscriber reached model')},isAllowed(){throw Error('subscriber became human principal')},settings:()=>({}),nastrojkaGruppy:()=>null,log(){}});
  const u={update_id:9,message:{chat:{id:discussion,type:'supergroup'},message_id:13,from:{id:999,is_bot:false},text:'/goal новое поручение'}};await handler(u,f.receipt(u));assert.equal(f.ledger.get(f.receipt(u).id).outcome,'social_ingested');assert.equal(f.requests.at(-1).body.events[0].text,'/goal новое поручение');
 });
 // Break caught: broken service is retried without a numeric stopping point.
@@ -48,4 +49,17 @@ test('failed social delivery stops automatically after 3 persisted attempts',asy
  const f=await fixture(t),ingress=f.open(),u={update_id:10,channel_post:{chat:{id:channel,type:'channel'},message_id:15,text:'Пост'}},r=f.receipt(u);
  for(let n=0;n<3;n++){f.lose();await assert.rejects(()=>ingress.handle(u,r,77));ingress.fail(r.id)}
  assert.equal(f.ledger.get(r.id).blocked,'social_ingress_held');assert.equal(f.requests.filter(x=>x.route==='/channel/ingress').length,3);await assert.rejects(()=>f.open().handle(u,r,77),/3 attempts/);assert.equal(f.requests.filter(x=>x.route==='/channel/ingress').length,3);
+});
+
+// Non-AP discussion pseudousers must keep the 3.1.10 SocialIngress path.
+test('non-AP Channel_Bot and GroupAnonymousBot reach SocialIngress before general bot filtering',async t=>{
+ const {extractFunction}=await import('./extract.mjs'),vm=await import('node:vm'),f=await fixture(t),ingress=f.open();
+ const source=fs.readFileSync(new URL('../src/index.js',import.meta.url),'utf8');
+ const handler=vm.runInNewContext('('+extractFunction(source,'handleUpdate')+')',{autopilot:null,droppedPublisher,config:f.config,socialIngress:ingress,botKto:async()=>({id:77}),tg:{call:async()=>true},agentFor(){throw Error('discussion bot reached model')},settings:()=>({}),log(){}});
+ for(const [n,username] of ['Channel_Bot','GroupAnonymousBot'].entries()){
+  const u={update_id:50+n,message:{chat:{id:discussion,type:'supergroup'},message_id:50+n,from:{id:900+n,is_bot:true,username},sender_chat:{id:channel,type:'channel'},text:'discussion '+username}};
+  const receipt=f.receipt(u);await handler(u,receipt);
+  assert.equal(f.ledger.get(receipt.id).outcome,'social_ingested',username+' must reach actual SocialIngress');
+  assert.equal(f.requests.at(-1).body.events[0].kind,'comment');
+ }
 });

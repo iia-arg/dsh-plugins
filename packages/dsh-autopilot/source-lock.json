@@ -1,0 +1,17 @@
+{
+  "repository": "https://github.com/nick-vels/skills",
+  "upstream_sha": "9fc898cbe941d5b8a369f1dd657e9119676eb44f",
+  "skill_version": "2.1.0",
+  "local_revision": "a20-b42-c2-ap016",
+  "archive": "vendor/autopilot-9fc898cb.tar.gz",
+  "archive_sha256": "f8b0b7a456cda7053790909b863258b1e3a837acce6d8936d11f92d4e053b1ac",
+  "runtime_operator": "master",
+  "runtime_guard_sha256": "3a4a580e700397f1f0bb9011b9b0feb328157a58214eef9ba909e647abe37402",
+  "source_exclusions": [
+    "skills/autopilot/tools/__pycache__/sync.cpython-314.pyc"
+  ],
+  "upstream_ref": "refs/heads/main",
+  "part_b_manifest_sha256": "a1a6c61e604e5727873d1efa0ba568282c7140a5cd027f9e3ddd01eb67cc2ea6",
+  "pilot_manifest_sha256": "8c10fca41cf5a9a20e57bf70c6afda9850bf3a99f0e67ec9ab7ea0f22d4f5c23",
+  "pilot_revision": "bc285e232488e2e20c496639c23ee94be38c46f4"
+}

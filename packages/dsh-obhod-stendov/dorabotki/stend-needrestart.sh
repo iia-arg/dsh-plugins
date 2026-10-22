@@ -132,7 +132,7 @@ sudo -n mv "$NASH.STEND-OTKLYUCHEN" "$NASH"
   && zeleno "код 1 при целом файле рядом" || { zakonnyj_otkaz && propusk "needrestart не установлен — проверять действие нечем" || krasno "код=$c: $(tail -1 "$OUT")"; }
 
 # --- 6. слепота отделена от расхождения -----------------------------------
-sluchaj "битый конфиг: СЛЕПОТА (код 2), а не расхождение"
+sluchaj "битый конфиг: слепота прибора (код 2), а не расхождение"
 echo '$nrconf{blacklist_rc} = [ qr(^bez-zakrytiya ;' | sudo -n tee "$CONFD/99-STEND-bityj.conf" >/dev/null
 c=$(zapusk)
 nr=$(sudo -n NEEDRESTART_MODE=l needrestart -b -r l >/dev/null 2>&1; echo $?)
@@ -153,7 +153,7 @@ elif ! sudo -n bash -c 'command -v needrestart' >/dev/null 2>&1; then
   # `apt-get -y purge needrestart`; наш /etc/needrestart/conf.d/50-agent-services.conf
   # при этом уцелел и лежит БЕЗ ПРИМЕНЕНИЯ. Пока пакета нет — автоперезапуска нет,
   # значит и угрозы нет; но нет и защиты, и вернётся она молча вместе с пакетом.
-  propusk "needrestart НЕ УСТАНОВЛЕН (purge 02.09.2026 14:28) — проверять действие нечем; наш конфиг лежит без применения и заработает сам, если пакет вернут"
+  propusk "needrestart не установлен — проверять действие нечем (purge 02.09.2026 14:28); наш конфиг лежит без применения и заработает сам, если пакет вернут"
 else
   D=/opt/iskra/workspace/nrproba-stend
   mkdir -p "$D"; cp /usr/lib/x86_64-linux-gnu/libz.so.1 "$D/libz.so.1"

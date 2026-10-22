@@ -49,6 +49,24 @@ class Audit(unittest.TestCase):
     def mismatch(self):
         (self.live/'index.js').write_text('changed\n')
 
+    def test_27_missing_or_empty_repo_refuses_before_helper_alert_and_state(self):
+        helper=self.bin/'window-helper';calls=self.d/'helper-calls'
+        helper.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$PROBE_MO_CALLS"\nprintf "0\\n"\n');helper.chmod(0o755)
+        for value in [None,'']:
+            for flags in [[],['--avto-montazh']]:
+                with self.subTest(repo=value,flags=flags):
+                    env=self.env|{'MONTAZH_OKNO_BIN':str(helper),'PROBE_MO_CALLS':str(calls)}
+                    if value is None:env.pop('VYPUSK_REPO',None)
+                    else:env['VYPUSK_REPO']=value
+                    self.channel.unlink(missing_ok=True);calls.unlink(missing_ok=True)
+                    self.state.write_text('protected-state\n');blind=Path(str(self.state)+'.slepota');blind.unlink(missing_ok=True)
+                    q=subprocess.run(['bash',str(WATCH),*flags],env=env,capture_output=True,text=True,timeout=10)
+                    print(json.dumps({'repo':value,'flags':flags,'exit':q.returncode,'alert_calls':len(self.alerts()),'helper_called':calls.exists()},ensure_ascii=False),flush=True)
+                    self.assertEqual(q.returncode,3,q.stdout+q.stderr)
+                    self.assertIn('ОТКАЗ',q.stderr);self.assertIn('VYPUSK_REPO',q.stderr)
+                    self.assertFalse(self.alerts());self.assertFalse(calls.exists())
+                    self.assertEqual(self.state.read_text(),'protected-state\n');self.assertFalse(blind.exists())
+
     def test_01_packaged_default_exceptions_allows_healthy_start(self):
         q=self.invoke(drop=['VYPUSK_ISKLYUCHENIYA'])
         self.assertEqual(q.returncode,0,q.stdout+q.stderr);self.assertFalse(self.alerts())

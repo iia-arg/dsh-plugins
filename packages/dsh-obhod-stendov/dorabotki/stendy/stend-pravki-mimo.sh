@@ -6,8 +6,8 @@
 # строка журнала несёт sha легшего; A3 кривой пункт — отказ; A4 ротация по montazh: дубль git старше 30 — удалён, уникальный —
 # цел, копия рядом с реестром не тронута. B1 исправное — молчит; B2 порча install+mv мимо pravka — тревога с коммитом;
 # B3 снять (установка pravka) — «снова в порядке»; B4 подложная строка «установлено» от не-root не гасит тревогу;
-# B5 та же строка от root — гасит (sadik-watch читает только _UID=0). Звать: рука при правке agent-plugins/sadik-watch (B2–B3 гоняют весь
-# sadik-watch ~74 с каждая — ~4 мин; в ночной обход не входит). Звать от iskra (не root): подложная строка B4 пишется от id -u,
+# B5 та же строка от root — гасит (sadik-watch читает только _UID=0). Звать: рука при правке agent-plugins/sadik-watch;
+# B1–B5 зовут общий код 2г без чтения журналов других служб. Звать не от root: подложная строка B4 пишется от id -u,
 # а sadik-watch верит только _UID=0 — под root «не-root» подлога нет, и B4/B5 невоспроизводимы: печатаются СЛЕПОТОЙ, код 2.
 set -u
 # RU: Стенд меряет через sudo. Нет sudo (оболочка агента в bwrap с NoNewPrivs, нет прав) — СЛЕПОТА, код 2, а не ложное красное.
@@ -30,7 +30,7 @@ cat > "$T/shim/journalctl" <<SH
 case " \$* " in *" -t agent-plugins "*)
   u=""; for a in "\$@"; do case "\$a" in _UID=*) u="\${a#_UID=}" ;; esac; done
   awk -F'\t' -v u="\$u" 'u=="" || \$1==u { sub(/^[^\t]*\t/, ""); print }' "$T/zhurnal" 2>/dev/null; exit 0 ;; esac
-exec /usr/bin/journalctl "\$@"
+echo "ОТКАЗ: узкий стенд запросил посторонний журнал" >&2; exit 97
 SH
 chmod 755 "$T/shim/"*
 novaya() { python3 - "$R/plugins.yaml" "$T/novaya.yaml" "$1" <<'PY'
@@ -60,19 +60,54 @@ vsego=$(find "$T/montazh" -name 'plugins.yaml.bak-pre-pravka-*' | wc -l)
 [ "$K" = 0 ] && [ -e "$T/montazh/STARYE/plugins.yaml.bak-pre-pravka-20190101-000000" ] && [ -e "$R/plugins.yaml.bak-pre-pravka-20180101-000000" ] && [ "$vsego" = 31 ] \
   && sud "A4 ротация по montazh: осталось 30 последних + 1 уникальный, копия рядом с реестром цела" ok || sud "A4" fail "код $K, копий в montazh $vsego (ждали 31); $(grep -a 'страховок' "$T/vyvod" | tail -1)"
 git -C "$R" -c user.name=stend -c user.email=s@s commit -qam v3
-# B — sadik-watch ветка 2г (весь sadik-watch под root: состояние временное, канал — заглушка)
+# B — общий код 2г; полный sadik-watch не исполняется. Каналы и состояние частные.
 printf '#!/bin/sh\necho "$1" >> %s/trevogi\n' "$T" > "$T/alert"; chmod 755 "$T/alert"; mkdir -p "$T/sost"; : > "$T/perechen-sut"
 # B-N-991 (условие Вениамина): ЗАПАСНОЙ канал sadik-watch (a2a-send Искре при отказе основного, :100–110) — тоже заглушка.
 # Без неё отказ $T/alert (скажем, $T уже убран) отправил бы Искре НАСТОЯЩЕЕ письмо из пробы. Нет $T — нет и заглушки,
 # а sadik-watch зовёт запасной только если он исполняем: письмо не уйдёт никуда.
 printf '#!/bin/sh\necho x >> %s/a2a-schyot\ncat >> %s/a2a-pisma\nexit 0\n' "$T" "$T" > "$T/a2a"; chmod 755 "$T/a2a"
 # временный реестр — мой, sadik-watch — root: без safe.directory git ответит «dubious ownership», и строка коммита выйдет пустой
+# Функции канала/групп берём из настоящего watcher, не переписываем их модель.
+# Срез ограничен определениями функций и настройкой запасного канала; нет main/owner-helper.
+LIB="$(dirname -- "$SW")/../libexec/sadik-watch-pravka.sh"
+[ -r "$SW" ] && [ -r "$LIB" ] || { echo "СЛЕПОТА: watcher/общая библиотека 2г не читается: $SW; $LIB"; exit 2; }
+python3 - "$SW" "$T/funk.sh" <<'PY'
+from pathlib import Path
+import sys
+s = Path(sys.argv[1]).read_text()
+try:
+    start = s.index('\nlog() {')
+    end = s.index('# ── ПОДТВЕРЖДЕНИЕ', start)
+except ValueError:
+    sys.exit('СЛЕПОТА: границы функций watcher не найдены')
+Path(sys.argv[2]).write_text(s[start:end])
+PY
+[ "$?" = 0 ] || exit 2
+cat > "$T/proverit.sh" <<'SH'
+#!/bin/bash
+set -uo pipefail
+ALERT=$SADIK_ALERT_BIN; SOST=$SADIK_WATCH_SOST
+SEYCHAS=$(date +%s); BEDY=0
+. "$1"
+. "$2" || exit 2
+declare -F log kanal gruppa sadik_proverit_pravku >/dev/null || exit 2
+sadik_proverit_pravku
+SH
+for f in "$T/funk.sh" "$T/proverit.sh"; do
+  bash -n "$f" || { echo "СЛЕПОТА: функции watcher не разобраны"; exit 2; }
+done
 sw() { rm -f "$T/trevogi"; sudo -n env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$R" PATH="$T/shim:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" SADIK_WATCH_MESTNO=1 SADIK_WATCH_SOST="$T/sost" \
-  SADIK_ALERT_BIN="$T/alert" SADIK_A2A_BIN="$T/a2a" SADIK_SUTOCHNYE="$T/perechen-sut" SADIK_REESTR_PLAGINOV="$R/plugins.yaml" "$SW" > "$T/sw" 2>&1; }
+  SADIK_ALERT_BIN="$T/alert" SADIK_A2A_BIN="$T/a2a" SADIK_VLADELEC_WATCH_BIN=/bin/false SADIK_SUTOCHNYE="$T/perechen-sut" SADIK_REESTR_PLAGINOV="$R/plugins.yaml" /bin/bash "$T/proverit.sh" "$T/funk.sh" "$LIB" > "$T/sw" 2>&1; }
+
 sw; grep -qF "реестр плагинов: живой ${leg:0:0}" "$T/sw" && ! grep -qF "реестр плагинов" "$T/trevogi" 2>/dev/null \
   && sud "B1 исправное (живой = последняя установка pravka) — молчит" ok || sud "B1" fail "$(grep -a 'реестр плагинов' "$T/sw" | head -1 | cut -c1-150)"
 # B2 порча: install+mv мимо pravka + коммит
+sha_do=$(sha256sum "$R/plugins.yaml" | cut -d' ' -f1)
 novaya 4; install -m 644 "$T/novaya.yaml" "$R/.pl.new"; mv "$R/.pl.new" "$R/plugins.yaml"; git -C "$R" -c user.name=stend -c user.email=s@s commit -qam "порча мимо pravka"
+sha_posle=$(sha256sum "$R/plugins.yaml" | cut -d' ' -f1)
+vneseno=$(grep -cF '# правка стенда 4' "$R/plugins.yaml")
+echo "  порча B2: замен 1; образцов=$vneseno; sha256 $sha_do → $sha_posle"
+[ "$sha_do" != "$sha_posle" ] && [ "$vneseno" = 1 ] || { echo 'СЛЕПОТА: порча B2 не внесена'; exit 2; }
 kom=$(git -C "$R" log -1 --format=%h); sw
 grep -qF "ПРАВЛЕН МИМО pravka" "$T/trevogi" 2>/dev/null && grep -qF "$kom" "$T/trevogi" \
   && sud "B2 порча install+mv мимо pravka — тревога с коммитом $kom" ok || sud "B2" fail "тревоги: $(cut -c1-160 "$T/trevogi" 2>/dev/null)"
@@ -87,8 +122,12 @@ if [ "$(id -u)" = 0 ]; then
 else
 novaya 6; install -m 644 "$T/novaya.yaml" "$R/.pl.new"; mv "$R/.pl.new" "$R/plugins.yaml"; git -C "$R" -c user.name=stend -c user.email=s@s commit -qam "мимо pravka с подлогом"
 kom=$(git -C "$R" log -1 --format=%h); zh=$(sha256sum "$R/plugins.yaml" | cut -d' ' -f1)
+zh_do=$(sha256sum "$T/zhurnal" | cut -d' ' -f1)
 env STEND_UID="$(id -u)" "$T/shim/logger" -t agent-plugins -- "pravka: установлено $R/plugins.yaml sha256 $zh пункт PODLOG"
-grep -qF "$(id -u)	pravka: установлено $R/plugins.yaml sha256 $zh" "$T/zhurnal" || echo "  (подлог НЕ внесён в журнал — B4 без предмета)"
+zh_posle=$(sha256sum "$T/zhurnal" | cut -d' ' -f1)
+podlog=$(grep -cF "$(id -u)	pravka: установлено $R/plugins.yaml sha256 $zh" "$T/zhurnal")
+echo "  подлог B4: uid=$(id -u), строк=$podlog; sha256 журнала $zh_do → $zh_posle"
+[ "$podlog" = 1 ] && [ "$zh_do" != "$zh_posle" ] || { echo 'СЛЕПОТА: подлог B4 не внесён'; exit 2; }
 sw; grep -qF "ПРАВЛЕН МИМО pravka" "$T/trevogi" 2>/dev/null && grep -qF "$kom" "$T/trevogi" \
   && sud "B4 подложная строка от uid $(id -u) не гасит тревогу — ПРАВЛЕН МИМО, коммит $kom" ok || sud "B4" fail "тревоги: $(cut -c1-160 "$T/trevogi" 2>/dev/null)"
 # B5 та же строка от root (uid 0) — гасит

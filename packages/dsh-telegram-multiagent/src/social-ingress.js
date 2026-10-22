@@ -2,8 +2,8 @@
 // Model delivery uses the separate SocialDispatcher and ordinary Anna conversation (owner variant a).
 import fs from 'node:fs';import crypto from 'node:crypto';
 const digest=x=>crypto.createHash('sha256').update(JSON.stringify(x)).digest('hex');
-export function socialUpdates(config){if(config.social===undefined)return ['message'];if(config.agentName!=='anna')throw Error('Social input is only Anna');return ['message','channel_post','edited_channel_post','callback_query']}
-export function socialRoute(update,config){if(!config.social)return update.message?.chat?.id??null;return (update.message??update.channel_post??update.edited_channel_post??update.callback_query?.message)?.chat?.id??null}
+export function socialUpdates(config){if(config.social===undefined)return ['message'];if(config.agentName!=='anna')throw Error('Social input is only Anna');return ['message','edited_message','channel_post','edited_channel_post','callback_query']}
+export function socialRoute(update,config){if(!config.social)return update.message?.chat?.id??null;return (update.message??update.edited_message??update.channel_post??update.edited_channel_post??update.callback_query?.message)?.chat?.id??null}
 function key(file){const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);try{const st=fs.fstatSync(fd);if(!st.isFile()||![0,process.getuid()].includes(st.uid)||(st.mode&0o137)!==0||st.nlink!==1||st.size>256)throw Error('social key rejected');const data=Buffer.alloc(257),n=fs.readSync(fd,data,0,257,0),text=data.subarray(0,n).toString().trim();if(!/^[a-f0-9]{64}$/.test(text))throw Error('social key rejected');return text}finally{fs.closeSync(fd)}}
 export class SocialIngress{
  constructor({config,ledger,log=()=>{}}){
@@ -12,17 +12,19 @@ export class SocialIngress{
   if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||!url.port||url.username||url.password||url.search||url.hash||url.pathname!=='/'||!Number.isSafeInteger(Number(url.port))||Number(url.port)<1024||typeof c.keyFile!=='string'||!c.keyFile.startsWith('/')||c.channelId!==-1001925584120||c.discussionId!==-1002103269359||Object.keys(c).some(k=>!['serviceUrl','keyFile','channelId','discussionId'].includes(k)))throw Error('social config rejected');
   this.url=url.origin;ledger.db.exec("CREATE TABLE IF NOT EXISTS social_requests(receipt_id TEXT PRIMARY KEY,input_hash TEXT NOT NULL,request_json TEXT,state TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0); UPDATE social_requests SET request_json=NULL WHERE state='done'");
  }
- handles(u){return Boolean(u.channel_post||u.edited_channel_post||u.callback_query||u.message?.chat?.id===this.config.discussionId)}
+ handles(u){return Boolean(u.channel_post||u.edited_channel_post||u.callback_query||u.message?.chat?.id===this.config.discussionId||u.edited_message?.chat?.id===this.config.discussionId)}
  normalize(u,botId){
-  let m=u.channel_post??u.edited_channel_post??u.message;if(!m||!Number.isSafeInteger(m.message_id)||m.message_id<1)return null;
+  let m=u.channel_post??u.edited_channel_post??u.edited_message??u.message;if(!m||!Number.isSafeInteger(m.message_id)||m.message_id<1)return null;
   const chat=m.chat?.id,c=this.config;
   if(![c.channelId,c.discussionId].includes(chat)||m.from?.id===botId)return null;
   const forward=chat===c.discussionId&&m.is_automatic_forward===true&&m.forward_origin?.type==='channel'&&m.forward_origin.chat?.id===c.channelId&&Number.isSafeInteger(m.forward_origin.message_id);
-  const post=chat===c.channelId||forward,edited=Boolean(u.edited_channel_post),id=forward?m.forward_origin.message_id:m.message_id;
+  const post=chat===c.channelId||forward,edited=Boolean(u.edited_channel_post||u.edited_message),id=forward?m.forward_origin.message_id:m.message_id;
   const text=typeof m.text==='string'?m.text:typeof m.caption==='string'?m.caption:['photo','video','document','audio','voice','sticker','animation'].filter(k=>m[k]).map(k=>'['+k+']').join(' ');
   if(!text.trim())return null;
   if(edited&&!Number.isSafeInteger(m.edit_date))throw Error('social edit identity rejected');
-  return {platform:'telegram',account_id:String(c.channelId),provider_id:(edited?'edit':'post')+':'+(post?c.channelId:c.discussionId)+':'+id+(edited?':'+m.edit_date:''),kind:edited?'edited_post':post?'post':'comment',conversation_id:String(post?c.channelId:c.discussionId),subject_id:post?'channel':String(m.from?.id??m.sender_chat?.id??'anonymous'),text};
+  const commentEdit=edited&&!post;
+  if(commentEdit&&!Number.isSafeInteger(u.update_id))throw Error('social edit identity rejected');
+  return {platform:'telegram',account_id:String(c.channelId),provider_id:(edited?'edit':'post')+':'+(post?c.channelId:c.discussionId)+':'+id+(edited?':'+m.edit_date:'')+(commentEdit?':'+u.update_id:''),kind:post?(edited?'edited_post':'post'):'comment',conversation_id:String(post?c.channelId:c.discussionId),subject_id:post?'channel':String(m.from?.id??m.sender_chat?.id??'anonymous'),text:commentEdit?'[Правка комментария Telegram '+c.discussionId+':'+id+'; edit_date='+m.edit_date+'; update_id='+u.update_id+']\n'+text:text};
  }
  async post(route,body){
   try{

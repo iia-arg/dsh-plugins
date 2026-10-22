@@ -32,6 +32,19 @@ nft add rule inet ru_split output ip daddr { 46.19.64.6, 186.246.17.63, 201.51.2
 nft add rule inet ru_split output ip daddr 37.139.38.0/24 return
 nft add rule inet ru_split output meta mark 0xca6c return
 nft add rule inet ru_split output ip daddr @ru_v4 meta mark set 0xa2c9
+# 14.10.2026 (Михалыч, слово Александра 18:38 МСК): российские адреса через RU и для КОНТЕЙНЕРОВ. Цепочка output видит
+# только трафик самой машины; проходящий из сетей Docker (docker0, br-*) метится здесь, до выбора маршрута.
+nft add chain inet ru_split prerouting '{ type filter hook prerouting priority mangle ; policy accept ; }' 2>/dev/null || true
+nft flush chain inet ru_split prerouting
+nft add rule inet ru_split prerouting ct direction reply return
+nft add rule inet ru_split prerouting ip daddr { 46.19.64.6, 186.246.17.63, 201.51.21.218 } return
+nft add rule inet ru_split prerouting ip daddr 37.139.38.0/24 return
+nft add rule inet ru_split prerouting iifname "docker0" ip daddr @ru_v4 meta mark set 0xa2c9
+nft add rule inet ru_split prerouting iifname "br-*" ip daddr @ru_v4 meta mark set 0xa2c9
+# MSS под туннель для проходящего в awg-ru (PMTU: сеть контейнера 1500 → туннель 1420).
+nft add chain inet ru_split forward '{ type filter hook forward priority mangle ; policy accept ; }' 2>/dev/null || true
+nft flush chain inet ru_split forward
+nft add rule inet ru_split forward oifname "awg-ru" tcp flags syn tcp option maxseg size set rt mtu
 nft add chain inet ru_split postrouting '{ type nat hook postrouting priority srcnat ; policy accept ; }' 2>/dev/null || true
 nft flush chain inet ru_split postrouting
 nft add rule inet ru_split postrouting oifname "awg-ru" masquerade

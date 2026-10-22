@@ -1,0 +1,504 @@
+{
+  "schemaVersion": 1,
+  "measurements": [
+    {
+      "state": "BOUND",
+      "operator": {
+        "sessionId": "s",
+        "sessionCreated": 42,
+        "turn": 1
+      },
+      "gatewayBytes": 134217728,
+      "metadataBytes": 12997,
+      "gatewaySeconds": 2.4886634971480817,
+      "metadataSeconds": 0.009853899013251066,
+      "elapsedSeconds": 2.6607897530775517,
+      "peakRssKiB": 978912,
+      "measurementGSecondsLimit": 30,
+      "releaseDeadlineSelected": false,
+      "uid": 1003,
+      "groups": [
+        982,
+        986,
+        1004,
+        1008
+      ],
+      "machine": "sadik",
+      "measuredAt": "2026-10-17T21:35:27Z",
+      "bytes": 134217728,
+      "rowBytes": 512,
+      "rows": 262122,
+      "residentPagesBefore": 0,
+      "totalPages": 32768,
+      "coldMethod": "firstafter128MiBcounterwrite/fsync+ownfileFADV_DONTNEED+mincore",
+      "synthetic": true,
+      "ownerIPC": false,
+      "gParser": "unchanged6c52",
+      "prefilter": false,
+      "sourceChangedForBenchmark": false
+    },
+    {
+      "state": "BOUND",
+      "operator": {
+        "sessionId": "s",
+        "sessionCreated": 42,
+        "turn": 1
+      },
+      "gatewayBytes": 134217728,
+      "metadataBytes": 12997,
+      "gatewaySeconds": 0.7031587581150234,
+      "metadataSeconds": 0.009198847925290465,
+      "elapsedSeconds": 0.7344734880607575,
+      "peakRssKiB": 601592,
+      "measurementGSecondsLimit": 30.0,
+      "releaseDeadlineSelected": false,
+      "uid": 1003,
+      "groups": [
+        982,
+        986,
+        1004,
+        1008
+      ],
+      "machine": "sadik",
+      "measuredAt": "2026-10-17T21:36:22Z",
+      "bytes": 134217728,
+      "rowBytes": 4096,
+      "rows": 32770,
+      "residentPagesBefore": 0,
+      "totalPages": 32768,
+      "coldMethod": "firstafter128MiBcounterwrite/fsync+ownfileFADV_DONTNEED+mincore",
+      "synthetic": true,
+      "ownerIPC": false,
+      "gParser": "unchanged6c52",
+      "prefilter": false,
+      "sourceChangedForBenchmark": false
+    },
+    {
+      "state": "BOUND",
+      "operator": {
+        "sessionId": "s",
+        "sessionCreated": 42,
+        "turn": 1
+      },
+      "gatewayBytes": 134217728,
+      "metadataBytes": 12997,
+      "gatewaySeconds": 2.4548278278671205,
+      "metadataSeconds": 0.010769964195787907,
+      "elapsedSeconds": 2.63154040905647,
+      "peakRssKiB": 978604,
+      "measurementGSecondsLimit": 3.0,
+      "releaseDeadlineSelected": false,
+      "uid": 1003,
+      "groups": [
+        982,
+        986,
+        1004,
+        1008
+      ],
+      "machine": "sadik",
+      "measuredAt": "2026-10-17T21:37:24Z",
+      "bytes": 134217728,
+      "rowBytes": 512,
+      "rows": 262122,
+      "residentPagesBefore": 0,
+      "totalPages": 32768,
+      "coldMethod": "firstafter128MiBcounterwrite/fsync+ownfileFADV_DONTNEED+mincore",
+      "synthetic": true,
+      "ownerIPC": false,
+      "gParser": "unchanged6c52",
+      "prefilter": false,
+      "sourceChangedForBenchmark": false
+    },
+    {
+      "state": "BOUND",
+      "operator": {
+        "sessionId": "s",
+        "sessionCreated": 42,
+        "turn": 1
+      },
+      "gatewayBytes": 134217728,
+      "metadataBytes": 12997,
+      "gatewaySeconds": 3.5405704928562045,
+      "metadataSeconds": 0.013912079157307744,
+      "elapsedSeconds": 3.7860834528692067,
+      "peakRssKiB": 1202444,
+      "measurementGSecondsLimit": 30.0,
+      "releaseDeadlineSelected": false,
+      "uid": 1003,
+      "groups": [
+        982,
+        986,
+        1004,
+        1008
+      ],
+      "machine": "sadik",
+      "measuredAt": "2026-10-17T23:21:16Z",
+      "bytes": 134217728,
+      "rowBytes": 335,
+      "rows": 400627,
+      "residentPagesBefore": 0,
+      "totalPages": 32768,
+      "coldMethod": "firstafter128MiBcounterwrite/fsync+ownfileFADV_DONTNEED+mincore",
+      "synthetic": true,
+      "ownerIPC": false,
+      "gParser": "unchanged6c52",
+      "prefilter": false,
+      "sourceChangedForBenchmark": false
+    },
+    {
+      "state": "BOUND",
+      "operator": {
+        "sessionId": "s",
+        "sessionCreated": 42,
+        "turn": 1
+      },
+      "gatewayBytes": 134217728,
+      "metadataBytes": 12997,
+      "gatewaySeconds": 3.752396944910288,
+      "metadataSeconds": 0.010348658077418804,
+      "elapsedSeconds": 4.003932832973078,
+      "peakRssKiB": 1211160,
+      "measurementGSecondsLimit": 30.0,
+      "releaseDeadlineSelected": false,
+      "uid": 1003,
+      "groups": [
+        982,
+        986,
+        1004,
+        1008
+      ],
+      "machine": "sadik",
+      "measuredAt": "2026-10-17T23:23:45Z",
+      "bytes": 134217728,
+      "rowBytes": 332,
+      "rows": 404248,
+      "residentPagesBefore": 0,
+      "totalPages": 32768,
+      "coldMethod": "firstafter128MiBcounterwrite/fsync+ownfileFADV_DONTNEED+mincore",
+      "synthetic": true,
+      "ownerIPC": false,
+      "gParser": "unchanged6c52",
+      "prefilter": false,
+      "sourceChangedForBenchmark": false
+    },
+    {
+      "state": "UNBOUND",
+      "reason": "REGISTRATION_CONTEXT_UNAVAILABLE",
+      "gatewayBytes": 134217603,
+      "metadataBytes": 0,
+      "gatewaySeconds": 2.919805819867179,
+      "metadataSeconds": 0.009132394101470709,
+      "elapsedSeconds": 3.1798425500746816,
+      "peakRssKiB": 1096420,
+      "measurementGSecondsLimit": 30.0,
+      "releaseDeadlineSelected": false,
+      "uid": 1003,
+      "groups": [
+        982,
+        986,
+        1004,
+        1008
+      ],
+      "machine": "sadik",
+      "measuredAt": "2026-10-17T23:21:15Z",
+      "bytes": 134217603,
+      "targetWriterBytes": 134217728,
+      "unusedTailBytes": 125,
+      "rowBytes": 237,
+      "rows": 566319,
+      "residentPagesBefore": 0,
+      "totalPages": 32768,
+      "coldMethod": "firstafter128MiBcounterwrite/fsync+ownfileFADV_DONTNEED+mincore",
+      "synthetic": true,
+      "ownerIPC": false,
+      "gParser": "unchanged6c52",
+      "prefilter": false,
+      "recordKind": "source_gap",
+      "expectedOutcome": "UNBOUND on real minimum source_gap; read/decode scale probe, not healthy run",
+      "sourceChangedForBenchmark": false
+    },
+    {
+      "state": "UNBOUND",
+      "reason": "REGISTRATION_CONTEXT_UNAVAILABLE",
+      "gatewayBytes": 134217720,
+      "metadataBytes": 0,
+      "gatewaySeconds": 2.7301246251445264,
+      "metadataSeconds": 0.009055878967046738,
+      "elapsedSeconds": 2.9831686050165445,
+      "peakRssKiB": 1088852,
+      "measurementGSecondsLimit": 30.0,
+      "releaseDeadlineSelected": false,
+      "uid": 1003,
+      "groups": [
+        982,
+        986,
+        1004,
+        1008
+      ],
+      "machine": "sadik",
+      "measuredAt": "2026-10-17T23:25:25Z",
+      "bytes": 134217720,
+      "targetWriterBytes": 134217728,
+      "unusedTailBytes": 8,
+      "rowBytes": 234,
+      "rows": 573580,
+      "residentPagesBefore": 0,
+      "totalPages": 32768,
+      "coldMethod": "firstafter128MiBcounterwrite/fsync+ownfileFADV_DONTNEED+mincore",
+      "synthetic": true,
+      "ownerIPC": false,
+      "gParser": "unchanged6c52",
+      "prefilter": false,
+      "recordKind": "source_gap",
+      "expectedOutcome": "UNBOUND on real minimum source_gap; read/decode scale probe, not healthy run",
+      "sourceChangedForBenchmark": false
+    }
+  ],
+  "selection": {
+    "minimumWriterRecordBytes": 234,
+    "minimumValidContextRecordBytes": 332,
+    "benchmarkShortestRecordBytes": 234,
+    "worstGatewaySeconds": 3.752396944910288,
+    "safetyFactor": 2,
+    "minimumRecordConfirmed": true,
+    "finalReleaseReady": false,
+    "measuredBy": "Beta per coordinator23:13:36Z; not Gamma readback",
+    "minimumScope": "UID0 actual private child gives absolute known-path minimum; UID1003 observed237/335",
+    "worstShape": "332-byte valid watermark context; shortest234-byte source_gap correctly refuses"
+  },
+  "producer": {
+    "commit": "ced3d2438fe57f4703d8e6fb557cdc5eef3e2750",
+    "repository": "/opt/coders/gamma/workspace/AP019-PRODUCER-G-20261017/repo",
+    "workingHEAD": "1fc061e870eea7a3c33cc1066967876bc6dba6c7",
+    "pins": [
+      {
+        "path": "packages/dsh-subscription-gateway/usage-producer.mjs",
+        "sha256": "a8183a3530a3a37453aff2d8c641842436df5951ef4e3c4eb70686ffa2f7547c"
+      },
+      {
+        "path": "packages/dsh-subscription-gateway/engine-process.mjs",
+        "sha256": "d927f22800a84f2a77df27e23051a059ac136958e5912e1378be84d8d38dfb1c"
+      }
+    ],
+    "lines": {
+      "invalidBinding": 25,
+      "heartbeat": 26,
+      "serializer": 34,
+      "recordGuard": 35,
+      "writerGuard": 45
+    },
+    "liveRoot": {
+      "producerCommit": "ced3d2438fe57f4703d8e6fb557cdc5eef3e2750",
+      "uid": 0,
+      "childPid": 10,
+      "modelsCalled": 0,
+      "serializer": "JSON.stringify(no indentation)+LF",
+      "minimumValidContext": {
+        "kind": "watermark",
+        "bytesWithLF": 332,
+        "row": {
+          "schemaVersion": 1,
+          "processGeneration": "bc8d01fd-93bd-4a5f-86b0-5b4049364f5f",
+          "generation": "f0d32ad0-af0c-4460-b0b1-9914e39ed6c7",
+          "seq": 1,
+          "requestId": "r",
+          "sessionId": "s",
+          "sessionCreated": 0,
+          "dshTurn": 0,
+          "requestGeneration": "g",
+          "recipient": "a",
+          "uid": 0,
+          "engine": "codex",
+          "observedAt": 1792279411928,
+          "kind": "watermark",
+          "at": 1792279411928
+        },
+        "serialized": "{\"schemaVersion\":1,\"processGeneration\":\"bc8d01fd-93bd-4a5f-86b0-5b4049364f5f\",\"generation\":\"f0d32ad0-af0c-4460-b0b1-9914e39ed6c7\",\"seq\":1,\"requestId\":\"r\",\"sessionId\":\"s\",\"sessionCreated\":0,\"dshTurn\":0,\"requestGeneration\":\"g\",\"recipient\":\"a\",\"uid\":0,\"engine\":\"codex\",\"observedAt\":1792279411928,\"kind\":\"watermark\",\"at\":1792279411928}\n"
+      },
+      "minimumIncludingError": {
+        "kind": "source_gap",
+        "bytesWithLF": 234,
+        "row": {
+          "schemaVersion": 1,
+          "processGeneration": "bc8d01fd-93bd-4a5f-86b0-5b4049364f5f",
+          "generation": "5c93968c-9d30-421e-8058-a6171f640c60",
+          "seq": 1,
+          "uid": 0,
+          "observedAt": 1792279411949,
+          "kind": "source_gap",
+          "reason": "SOURCE_GAP",
+          "scope": "process"
+        },
+        "serialized": "{\"schemaVersion\":1,\"processGeneration\":\"bc8d01fd-93bd-4a5f-86b0-5b4049364f5f\",\"generation\":\"5c93968c-9d30-421e-8058-a6171f640c60\",\"seq\":1,\"uid\":0,\"observedAt\":1792279411949,\"kind\":\"source_gap\",\"reason\":\"SOURCE_GAP\",\"scope\":\"process\"}\n"
+      },
+      "validRows": [
+        {
+          "kind": "watermark",
+          "bytesWithLF": 332
+        },
+        {
+          "kind": "watermark",
+          "bytesWithLF": 332
+        },
+        {
+          "kind": "watermark",
+          "bytesWithLF": 332
+        },
+        {
+          "kind": "watermark",
+          "bytesWithLF": 332
+        },
+        {
+          "kind": "engine_process_start",
+          "bytesWithLF": 452
+        },
+        {
+          "kind": "engine_process_binding",
+          "bytesWithLF": 589
+        },
+        {
+          "kind": "engine_ready",
+          "bytesWithLF": 398
+        },
+        {
+          "kind": "auth",
+          "bytesWithLF": 460
+        },
+        {
+          "kind": "engine_terminal",
+          "bytesWithLF": 435
+        },
+        {
+          "kind": "engine_process_closed",
+          "bytesWithLF": 411
+        }
+      ],
+      "errorRows": [
+        {
+          "kind": "source_gap",
+          "bytesWithLF": 242
+        },
+        {
+          "kind": "source_gap",
+          "bytesWithLF": 234
+        }
+      ],
+      "realEngineProcessBinding": true,
+      "bindingFailure": "G_BINDING_UNPROVEN",
+      "overflowFailure": "SOURCE_GAP",
+      "queuePressure": 1023,
+      "measuredAt": "2026-10-17T23:23:31.950Z",
+      "isolation": "root-only privatePID/network/tmp/run/varlib; hostRO; clearenv; not a production gateway"
+    },
+    "liveCoders": {
+      "producerCommit": "ced3d2438fe57f4703d8e6fb557cdc5eef3e2750",
+      "uid": 1003,
+      "childPid": 3832180,
+      "modelsCalled": 0,
+      "serializer": "JSON.stringify(no indentation)+LF",
+      "minimumValidContext": {
+        "kind": "watermark",
+        "bytesWithLF": 335,
+        "row": {
+          "schemaVersion": 1,
+          "processGeneration": "602b821b-1e29-4c5a-b10c-76c02777c099",
+          "generation": "97224f20-5b56-4870-8c7b-0396bfb6fbe1",
+          "seq": 1,
+          "requestId": "r",
+          "sessionId": "s",
+          "sessionCreated": 0,
+          "dshTurn": 0,
+          "requestGeneration": "g",
+          "recipient": "a",
+          "uid": 1003,
+          "engine": "codex",
+          "observedAt": 1792279161231,
+          "kind": "watermark",
+          "at": 1792279161231
+        },
+        "serialized": "{\"schemaVersion\":1,\"processGeneration\":\"602b821b-1e29-4c5a-b10c-76c02777c099\",\"generation\":\"97224f20-5b56-4870-8c7b-0396bfb6fbe1\",\"seq\":1,\"requestId\":\"r\",\"sessionId\":\"s\",\"sessionCreated\":0,\"dshTurn\":0,\"requestGeneration\":\"g\",\"recipient\":\"a\",\"uid\":1003,\"engine\":\"codex\",\"observedAt\":1792279161231,\"kind\":\"watermark\",\"at\":1792279161231}\n"
+      },
+      "minimumIncludingError": {
+        "kind": "source_gap",
+        "bytesWithLF": 237,
+        "row": {
+          "schemaVersion": 1,
+          "processGeneration": "602b821b-1e29-4c5a-b10c-76c02777c099",
+          "generation": "dc8f8e20-9711-4591-b801-28a8601d6f81",
+          "seq": 1,
+          "uid": 1003,
+          "observedAt": 1792279161283,
+          "kind": "source_gap",
+          "reason": "SOURCE_GAP",
+          "scope": "process"
+        },
+        "serialized": "{\"schemaVersion\":1,\"processGeneration\":\"602b821b-1e29-4c5a-b10c-76c02777c099\",\"generation\":\"dc8f8e20-9711-4591-b801-28a8601d6f81\",\"seq\":1,\"uid\":1003,\"observedAt\":1792279161283,\"kind\":\"source_gap\",\"reason\":\"SOURCE_GAP\",\"scope\":\"process\"}\n"
+      },
+      "validRows": [
+        {
+          "kind": "watermark",
+          "bytesWithLF": 335
+        },
+        {
+          "kind": "watermark",
+          "bytesWithLF": 335
+        },
+        {
+          "kind": "watermark",
+          "bytesWithLF": 335
+        },
+        {
+          "kind": "watermark",
+          "bytesWithLF": 335
+        },
+        {
+          "kind": "watermark",
+          "bytesWithLF": 335
+        },
+        {
+          "kind": "engine_process_start",
+          "bytesWithLF": 455
+        },
+        {
+          "kind": "engine_process_binding",
+          "bytesWithLF": 602
+        },
+        {
+          "kind": "engine_ready",
+          "bytesWithLF": 401
+        },
+        {
+          "kind": "auth",
+          "bytesWithLF": 463
+        },
+        {
+          "kind": "engine_terminal",
+          "bytesWithLF": 439
+        },
+        {
+          "kind": "engine_process_closed",
+          "bytesWithLF": 414
+        }
+      ],
+      "errorRows": [
+        {
+          "kind": "source_gap",
+          "bytesWithLF": 245
+        },
+        {
+          "kind": "source_gap",
+          "bytesWithLF": 237
+        }
+      ],
+      "realEngineProcessBinding": true,
+      "bindingFailure": "G_BINDING_UNPROVEN",
+      "overflowFailure": "SOURCE_GAP",
+      "queuePressure": 1023,
+      "measuredAt": "2026-10-17T23:19:21.286Z"
+    }
+  },
+  "sourceCodeBeforeFormula": {
+    "usage_registration": "a7dbbf54b6e28dc9082d72f275e5bee073c66187c05410263de0c8ad74512af0",
+    "runtime_receipt_source": "e1ed13e004dfb1e4f34ac8ca9e57c28151f8278135b6de797abdcd989b964635"
+  }
+}

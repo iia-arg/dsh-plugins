@@ -1,5 +1,7 @@
 # Design notes: the tool bridge, self-waking, the subscription route
 
+> Current package versions as of 2026-10-22: [package catalogue](PACKAGES.md). Dated version numbers and results below refer to the measurements stated in the text.
+
 A companion to the package READMEs. They say how to install; this says how it is
 built, what the evidence is, and where the boundaries are. The most important
 part of this document is Part IV: a reader can work out the structure from the

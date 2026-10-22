@@ -20,7 +20,8 @@ The package itself is a watchdog: it guards the "production = own release" contr
 | вышел более новый выпуск, своя метка на месте · a newer release exists, own tag in place | `INFO` | 0 | нет · no |
 | у пакета дерева нет боевого каталога · tree package has no production dir | «вне области» · "out of scope" | 0 | нет · no |
 | расхождение в чужой копии (`VYPUSK_INFO_KORNI`) · divergence in a foreign copy | сведение владельцу копии · information for the copy owner | 0 | нет · no |
-| не задана обязательная настройка или строка «пусто = выкл» · a required setting or an "empty = off" line is missing | `СЛЕПОТА: не задана настройка …` · blindness naming the setting | 2 | да, отдельная · yes, separate |
+| VYPUSK_REPO отсутствует/пуст · missing/empty | `ОТКАЗ: задайте непустой VYPUSK_REPO` | 3 | нет: до helper/состояния · no: before helper/state |
+| не задана другая обязательная настройка при непустом REPO · another required setting is missing with nonempty REPO | `СЛЕПОТА: не задана настройка …` · blindness naming the setting | 2 | да, отдельная · yes, separate |
 | передан иной довод командной строки · an unsupported argument was passed | `ОТКАЗ` до чтения дерева · refused before reading the tree | 3 | нет · no |
 
 **Кто читает исход.** Тревогу — получатель канала `agent-alert` (одна попытка на картину, предел 90 с на отправку и 5 с на завершение). Код выхода и полный вывод — журнал службы, которая запускает сторож по таймеру. Таймер и юнит пакет не ставит: без них сторож не зовётся вовсе (см. [ARCHITECTURE.md](ARCHITECTURE.md#install)).
@@ -43,7 +44,7 @@ All stands use temporary git trees, temporary production dirs and a stub alarm c
 | договор «бой = своему выпуску» · "production = own release" contract | `bash test/stend-svoej-metki.sh` (→ `stend-svoej-metki.py`) | 16 сценариев × 3 прогона · 16 scenarios × 3 runs | правило тревоги по всем веткам (см. ниже); прогон на исправном, на порче и после возврата · the alarm rule on every branch (see below); run on the healthy file, on a corruption and after restore |
 | соответствия · correspondences | `bash test/stend-sootvetstviya.sh` (→ `stend-sootvetstviya.py`) | 11 | сверка пакетов вне корней по составу публикации; канал зовётся ровно при коде ≠ 0 · checking packages outside the roots by published file list; the channel fires exactly on exit ≠ 0 |
 | доводы командной строки · command-line arguments | `bash test/stend-dovodov.sh` | 6 | любой иной довод — отказ с кодом 3 до чтения дерева, без канала и без отметки состояния · any other argument is refused with exit 3 before reading the tree, without the channel and without a state mark |
-| настройки · settings | `bash test/stend-nastroek.sh` | 7 | незаданная обязательная настройка и незаданная настройка «пусто = выкл» — слепота с именем, код 2; явно пустые значения принимаются · a missing required setting and a missing "empty = off" setting are blindness naming it, exit 2; explicit empty values are accepted |
+| настройки · settings | `bash test/stend-nastroek.sh` | 7 | REPO отсутствует/пуст — отказ3 без канала; при непустом REPO остальные незаданные настройки — слепота2; явно пустые необязательные значения принимаются · missing/empty REPO refuses3 without alerts; with nonempty REPO other missing settings are blindness2; optional empty values are accepted |
 | прежние имена · former names | `bash test/stend-prezhnih-imen.sh` (→ `stend-prezhnih-imen.py`) | 10 | после переименования каталога/имени пакета (`dsh.prezhnie_imena` в `package.json`) метка версии боя, ключ `VYPUSK_SOOTVETSTVIYA`, каталог в метке и запись `derevo` находятся по прежнему имени; без поля — прежние ложные исходы (невыпущенное, вне области, слепота); кривое поле — слепота · after a package rename the live tag, correspondence key, in-tag directory and `derevo` record are found by the former name; without the field — the old false outcomes; malformed field — blindness |
 | починки · fixes | `bash test/stend-pochinki.sh` (→ `stend-pochinki.py`) | 5 | `VYPUSK_NAPOMINAT` не число — слепота с именем, код 2; файл состава сверяется целиком, а не подстрокой; отметка расхождения — атомарно (ссылка на месте состояния заменяется, цель не трогается); тихий режим не создаёт каталог состояния · non-numeric `VYPUSK_NAPOMINAT` is blindness naming it, exit 2; a contents file is matched whole, not as a substring; the mismatch mark is atomic (a symlink at the state path is replaced, its target untouched); quiet mode does not create the state directory |
 
@@ -109,9 +110,9 @@ No arguments — the usual path (in the isolated environment it ends in blindnes
 
 ### Настройки — 7 проб · Settings — 7 probes
 
-Настроек нет вовсе — слепота «не задана настройка VYPUSK_REPO», код 2, канал позван один раз · нет `VYPUSK_KORNI` — слепота с именем (а не «всё вне области», код 0) · нет строки `VYPUSK_SSYLKI` — слепота с именем (а не «живых 0 из 0») · нет ни `VYPUSK_AGENT_KORNI`, ни `VYPUSK_AGENT_POISK` — слепота · нет строки `VYPUSK_RASKLADKA` — слепота · нет строки `VYPUSK_REESTR` — слепота · все заданы, необязательные пусты — проверка настроек пройдена, сторож идёт дальше.
+Настроек нет вовсе — отказ VYPUSK_REPO, код 3, канал не вызывается · нет `VYPUSK_KORNI` — слепота с именем (а не «всё вне области», код 0) · нет строки `VYPUSK_SSYLKI` — слепота с именем (а не «живых 0 из 0») · нет ни `VYPUSK_AGENT_KORNI`, ни `VYPUSK_AGENT_POISK` — слепота · нет строки `VYPUSK_RASKLADKA` — слепота · нет строки `VYPUSK_REESTR` — слепота · все заданы, необязательные пусты — проверка настроек пройдена, сторож идёт дальше.
 
-No settings at all — blindness "VYPUSK_REPO not set", exit 2, channel called once · no `VYPUSK_KORNI` — blindness naming it (not "everything out of scope", exit 0) · no `VYPUSK_SSYLKI` line — blindness naming it (not "alive 0 of 0") · neither `VYPUSK_AGENT_KORNI` nor `VYPUSK_AGENT_POISK` — blindness · missing `VYPUSK_RASKLADKA` — blindness · missing `VYPUSK_REESTR` — blindness · all set, optional ones empty — the settings check passes and the watchdog goes on.
+No settings at all — VYPUSK_REPO invocation refusal, exit 3, no channel call · no `VYPUSK_KORNI` — blindness naming it (not "everything out of scope", exit 0) · no `VYPUSK_SSYLKI` line — blindness naming it (not "alive 0 of 0") · neither `VYPUSK_AGENT_KORNI` nor `VYPUSK_AGENT_POISK` — blindness · missing `VYPUSK_RASKLADKA` — blindness · missing `VYPUSK_REESTR` — blindness · all set, optional ones empty — the settings check passes and the watchdog goes on.
 
 ## Подавление повторов · Repeat suppression
 
@@ -135,7 +136,7 @@ The watchdog sends the same divergence picture once; after that it only writes t
 8. **Расхождение боя с незакоммиченным деревом.** Предмет сверки — метка, а не рабочее дерево.
 9. **Правку файлов боя вне состава** у пакетов, сверяемых через пары соответствий.
 10. **Исправность цели ссылки монтажа** (её файлы сверяет основной цикл) и ссылки, не названные в `VYPUSK_SSYLKI`.
-11. **Неверное значение переменной окружения и опечатку в имени необязательной:** `VYPUSK_TIHO=да` — не «1», режим остаётся боевым; `VYPUSK_TIHO`, `VYPUSK_NAPOMINAT`, `VYPUSK_ALERT`, `VYPUSK_SOSTOYANIE`, `VYPUSK_ISKLYUCHENIYA` с опечаткой молча не действуют. Опечатка в имени настройки из перечня обязательных ловится — это слепота «не задана».
+11. **Неверное значение переменной окружения и опечатку в имени необязательной:** `VYPUSK_TIHO=да` — не «1», режим остаётся боевым; `VYPUSK_TIHO`, `VYPUSK_NAPOMINAT`, `VYPUSK_ALERT`, `VYPUSK_SOSTOYANIE`, `VYPUSK_ISKLYUCHENIYA` с опечаткой молча не действуют. Опечатка обязательного имени ловится: VYPUSK_REPO — отказ3 без канала, остальные — слепота2 «не задана».
 
 1. **"Installed and tagged" is indistinguishable from "not installed at all".** Both give "tag = production", i.e. green. The watchdog catches production diverging from its release, not the absence of work. A newer release is INFO only; not installing it is not an alarm.
 2. **An in-memory change in a process.** The watchdog compares disk with disk. Only the live process's journal shows which version runs.
@@ -147,7 +148,7 @@ The watchdog sends the same divergence picture once; after that it only writes t
 8. **Production diverging from an uncommitted tree.** The reference is the tag, not the working tree.
 9. **Edits to production files outside the published list** for packages checked through correspondence pairs.
 10. **The health of an install link's target** (its files are checked by the main loop) and links not named in `VYPUSK_SSYLKI`.
-11. **A wrong environment value or a typo in an optional variable's name:** `VYPUSK_TIHO=yes` is not "1", the mode stays live; misspelled `VYPUSK_TIHO`, `VYPUSK_NAPOMINAT`, `VYPUSK_ALERT`, `VYPUSK_SOSTOYANIE`, `VYPUSK_ISKLYUCHENIYA` silently have no effect. A typo in a required setting's name is caught — it is blindness "not set".
+11. **A wrong environment value or a typo in an optional variable's name:** `VYPUSK_TIHO=yes` is not "1", the mode stays live; misspelled `VYPUSK_TIHO`, `VYPUSK_NAPOMINAT`, `VYPUSK_ALERT`, `VYPUSK_SOSTOYANIE`, `VYPUSK_ISKLYUCHENIYA` silently have no effect. A typo in a required setting's name is caught: VYPUSK_REPO refuses3 without alerts; the others report blindness2 "not set".
 
 ## Чего не ловят стенды · What the stands miss
 
@@ -184,3 +185,7 @@ The shell stand runs 7 real consumer checks and 1 actual VOW wiring check, on pr
 `test/stend-pustoj-zapisi.sh` извлекает единственный `PY_CHANGELOG` из общего `src/copy-compare.sh`; source-watch аргумент указывает на соседний consumer. Без него/при неоднозначности — слепота2, без чтения другого боевого файла. Проверяет 9 именованных входов, отказ Python не считается «запись есть».
 
 The empty-entry stand extracts the unique block from the shared consumer. A source-watch argument resolves to its adjacent consumer. Missing/ambiguous block means blindness2, without a production fallback; Python failure never means a valid entry.
+
+Ручной вход без дерева: stend-audit-runtime.py test_27 проверяет отсутствующий/пустой VYPUSK_REPO × обычный/--avto-montazh: четыре случая, rc3, helper0, alert0, state неизменён. При снятии раннего guard возвращается rc2/тревога.
+
+Manual entry without a tree: test_27 checks absent/empty VYPUSK_REPO × ordinary/--avto-montazh (four cases): rc3, no helper or alert, unchanged state. Removing the early guard restores blindness2/alert.

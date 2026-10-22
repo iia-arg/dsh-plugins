@@ -77,7 +77,10 @@ KATALOG = '/etc/claude-oauth/codex-podpiska-{n}'
 DOMA = ('/var/lib/coder-gateway-alfa/codex-home /var/lib/coder-gateway-beta/codex-home '
         '/var/lib/coder-gateway-gamma/codex-home /var/lib/coder-gateway-marc/codex-home '
         '/var/lib/coder-gateway-anna/codex-home '   # B-N-1837: Анна
-        '/var/lib/coder-gateway-master/codex-home')   # 13.10.2026: Мастер
+        '/var/lib/coder-gateway-master/codex-home '   # 13.10.2026: Мастер
+        '/var/lib/coder-gateway-vintik/codex-home /var/lib/coder-gateway-shpuntik/codex-home '
+        '/var/lib/coder-gateway-gayka/codex-home /var/lib/coder-gateway-shurup/codex-home '
+        '/var/lib/coder-gateway-tumbler/codex-home')   # 14.10.2026: команда Мастера (наряд Забавы 20:35:04Z); 15.10.2026 + Тумблер (наряд Забавы 14.10 21:44:06Z)
 NASTROJKA = '/etc/codex-limit/nastrojka.json'
 SOST = '/var/lib/codex-limit-watch/sostoyanie.json'
 DOM_CHT = '/var/lib/codex-limit-watch'

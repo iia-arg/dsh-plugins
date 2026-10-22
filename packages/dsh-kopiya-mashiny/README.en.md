@@ -2,7 +2,7 @@ Russian version: [README.md](README.md) · English below
 
 # dsh-kopiya-mashiny — backup of the sadik machine, its acceptance and watchers
 
-**Version:** 3.1.2
+**Version:** 3.1.5
 
 Service software of sadik: the nightly machine backup (`sadik-backup.py`, narrow upload route via NL), scheduled
 acceptance of the backup by action (download it back and check it), watchers for backup coverage and size, backup of the
@@ -68,7 +68,7 @@ git stores only the "executable" flag, so mode and owner on disk are given in th
 `README.md`, `README.en.md`, `CHANGELOG.md` and `LICENSE` are not installed on the machine.
 
 Purpose of the files:
-- `sadik-backup.py` — builder of the machine backup; retention — drop-in `20-hranenie-2.conf` (`BACKUP_RETAIN_LOCAL=2`).
+- `sadik-backup.py` — builder of the machine backup; retention — drop-in `20-hranenie-2.conf` (`BACKUP_RETAIN_LOCAL=1` since 3.1.7; the name «-2» is kept — rename to `-1` is a ticket for the next obhod release, where the ledger holds the path).
 - `kopiya-put-nl` — narrow route for uploading the backup via awg0 (NL), B-N-762.
 - `proverka-svezhesti-kopii.sh` — scheduled acceptance: download what was uploaded and check it; calls `proverka-kopii.sh`.
 - `proverka-kopii.sh` — acceptance of the backup by action, not by comparing lists.
@@ -115,7 +115,7 @@ build and do not upload. Any other first argument is refused, code 2.
 | `BACKUP_LOCAL_DIR` | `/backups` | local shelf; directory 0700, archive 0600 |
 | `BACKUP_STATE` | `/var/lib/sadik-backup/last.json` | stamp of the last successful backup (0644); if the directory is missing, it is created 0755 |
 | `BACKUP_RETAIN` | `30` | how many own archives to keep on Drive |
-| `BACKUP_RETAIN_LOCAL` | `15` | in production the drop-in `20-hranenie-2.conf` gives `2`; how many own archives to keep on the shelf; below 1 — shelf rotation does not run |
+| `BACKUP_RETAIN_LOCAL` | `15` | in production the drop-in `20-hranenie-2.conf` gives `1` (since 3.1.7); how many own archives to keep on the shelf; below 1 — shelf rotation does not run |
 | `BACKUP_PRISTAVKA` | `own-chain-` | archive name prefix and selection of own archives during rotation |
 | `AGENT_ALERT_BIN` | `/usr/local/bin/agent-alert` | alert sender |
 | `DRY` | — | `1` — do not upload, keep the archive, send no alerts |
@@ -225,9 +225,9 @@ the alert — 120, 120 and 60 s.
 | `sadik-backup.py` | build: 0 built and uploaded (completeness is in the stamp and in `backup-coverage.json` inside the archive, not in the code; a rotation failure on Drive after the upload does not change the code — see below) · 1 built but not uploaded · 3 registry unreadable or contract invalid · 4 build failed · 5 entry unreadable from the store or token not issued; an uncaught Python exception also gives 1. `--sostav`: 0 frame complete · 4 gaps or uncovered agents · 3 registry · 2 extra arguments. `--skachat`: 0 downloaded · 1 HTTP not 200 or 0 bytes · 4 permissions of the downloaded file wider than 0600 · 5 token · 2 arguments or no directory. Unit without `SuccessExitStatus`: any non-zero code — failed → `sadik-backup-failed.service` → `kopiya-upala` |
 | `kopiya-put-nl` | 0 brought up or down (`down` — always 0) · 1 `up` failed (no `awg0`, route or rule not set, foreign rule at 39) · 2 unknown input. In the unit `ExecStartPre=-`: an `up` failure does not stop the build |
 | `kopiya-upala` | 0 alert delivered or not needed (`notification=sent`) · 1 not delivered — the alert unit itself is failed · 2 input refused |
-| `proverka-kopii.sh` | 0 full profile passed · 1 defect found (including «🔴 НЕГОДНА: в архиве члены, ведущие вне корня распаковки …» (INVALID: archive members leading outside the extraction root) — absolute path, «..», path through an archive link, link above the root; such an archive is not extracted) · 2 no conclusion · 8 only the partial profile passed (`--tolko-sekrety`); last line — `VERIFY_RESULT verdict=… code=…` |
+| `proverka-kopii.sh` | 0 full profile passed · 1 defect found (including «🔴 НЕГОДНА: в архиве члены, ведущие вне корня распаковки …» (INVALID: archive members leading outside the extraction root) — absolute path, «..», path through an archive link, link above the root; such an archive is not extracted) · 2 no conclusion · 3 profile passed, but registry patterns are missing both from the copy and from the machine, and the collector of this copy named them absent at build time — «incomplete by composition», not «not restorable» (B-N-2101; present on the machine and not taken, or absence not declared by the collector — 1 «КОПИЯ НЕПОЛНА») · 8 only the partial profile passed (`--tolko-sekrety`); last line — `VERIFY_RESULT verdict=… code=…` |
 | `proverka-otmetki-priyomki.sh` | 0 acceptance is running · 1 stamp older than the limit and the timer has not fired · 2 measurement did not take place |
-| `proverka-svezhesti-kopii.sh` | 0 accepted, stamp written · 1 not accepted · 2 unknown (blindness, not ready, refusal due to space or timeout) · 4 accepted, stamp not saved · 5/6/7 — same as 1/2/4, but the alert was not delivered · 8 partial profile; last line — `BACKUP_RESULT verdict=… notification=… code=…`. In production the unit succeeds only on 0 (drop-in `zz-itogi-priyomki.conf` resets `SuccessExitStatus`); any other code — failed → `backup-verify-failed.service` → `kopiya-upala`, which stays silent on `notification=sent` |
+| `proverka-svezhesti-kopii.sh` | 0 accepted, stamp written · 1 not accepted · 2 unknown (blindness, not ready, refusal due to space or timeout) · 4 accepted, stamp not saved · 5/6/7 — same as 1/2/4, but the alert was not delivered · 8 partial profile · 1 for composition prints «НЕПОЛНА» (INCOMPLETE), other 1 — «НЕГОДНА / не восстановима» (INVALID / not restorable) · 9 restorable but incomplete by composition: registry paths are missing both from the copy and from the machine (the collector named them absent at build time) — alert «🟠 … ВОССТАНОВИМА, но НЕПОЛНА ПО СОСТАВУ» (RESTORABLE but INCOMPLETE BY COMPOSITION) with the list, stamp not written (if not delivered — still 9, `notification=failed`); last line — `BACKUP_RESULT verdict=… notification=… code=…`. In production the unit succeeds only on 0 (drop-in `zz-itogi-priyomki.conf` resets `SuccessExitStatus`); any other code — failed → `backup-verify-failed.service` → `kopiya-upala`, which stays silent on `notification=sent` |
 | `razmer-kopii-watch` | 0 clean · 1 alert raised (step, lack of space, or «ступенька НЕ мерена» (step NOT measured) when the shelf has no previous archive) · 2 blindness, also goes to a human. In the unit `SuccessExitStatus=1`; a Python crash — 70 via `python-padenie-70`. The unit has no `OnFailure=` |
 | `backup-coverage-watch` | 0 coverage complete · 1 uncovered found (including one suppressed as a repeat) · 3 registry unreadable or empty · 4 walk failed or dpkg lists not read · 5 walk root without a mask is empty. In the unit `SuccessExitStatus=1`; a Python crash — 70. The unit has no `OnFailure=` |
 | `omega-db-backup.sh` | 0 backup made and checked · 1 no database, too little space, copying, check or compression failed. Unit without `SuccessExitStatus`: 1 — failed → `omega-db-backup-failed.service` → `kopiya-upala` |
@@ -295,7 +295,13 @@ move the file to a backup copy (`mv`), `daemon-reload`, `mask`; to restore — `
 - `sadik-backup.py`: symlinks are stored as symlinks — a target outside the markup does not go into the backup; "built" ≠ "complete"
   (completeness is in the stamp); the ACL snapshot is taken at the end of the walk, paths with a newline stay without ACL; a `ne_klast`
   mask starting with «**» is not applied; a night that did not reach Drive and was pushed out by newer ones loses its only copy;
-  `--sostav` gives source roots, not the archive listing; `--skachat` moves bytes, it is not acceptance.
+  `--sostav` gives source roots, not the archive listing; `--skachat` moves bytes, it is not acceptance; a file that vanished
+  between the walk and packing is a "vanished during build" line in the journal, not a failure, and is not in the manifest (3.1.4);
+  nobody reads the "vanished during build: N" line — loss of a WHOLE markup pattern is caught by acceptance (`proverka-kopii.sh`,
+  composition section: a pattern with no items in the archive), partial loss inside a pattern is caught by nobody (3.1.5);
+  an unfinished archive on the shelf is only `….tar.gz.chast`: the backup name goes to an archive that passed 0600 and
+  `proverit_arhiv`; a build failure deletes `.chast`, a run killed by a signal leaves it until the next run (removed if older than an
+  hour); there is no lock against a parallel run; rotation, `razmer-kopii-watch` and restore "from the shelf" take only `*.tar.gz` (3.1.5).
 - `kopiya-put-nl` does not catch degradation of the tunnel itself; without `awg0` marked packets take the usual route.
 - `kopiya-upala` does not catch a unit that did not start; it sees a hang only through `TimeoutStartSec`; nobody sees the death of
   the alert unit itself.
@@ -322,11 +328,11 @@ The package has no test stands of its own. The stands are in the package dsh-obh
 | stand | subject | conditions | what it checks |
 |---|---|---|---|
 | `stend-priyomki-kopii.sh` | `proverka-kopii.sh` | no sudo; needs `gpg`, `python3`, a readable registry | acceptance with its own key and store through a substitute registry; `--tolko-sekrety` expects 8; codes 0/1/2 |
-| `stend-priyomki-po-raspisaniyu.sh` | `proverka-svezhesti-kopii.sh` | needs `sudo -n` (otherwise «СЛЕПОТА», code 2); substitute builds via `systemd-run` | 33 probes and the live unit success policy; codes 0/1/2 |
+| `stend-priyomki-po-raspisaniyu.sh` | `proverka-svezhesti-kopii.sh` | needs `sudo -n` (otherwise «СЛЕПОТА», code 2); substitute builds via `systemd-run` | 37 probes and the live unit success policy; codes 0/1/2 |
 | `stend-otmetki-priyomki.sh` | `proverka-otmetki-priyomki.sh` | no sudo; substitute `systemctl` | 13 checks of codes |
 | `stend-razmer-kopii-watch.sh` | `razmer-kopii-watch` | no sudo; `RKW_*` overrides | coupling of the numbers with acceptance, space on a substitute shelf, the step without work zones; codes 0/1/2 |
 | `stend-pokrytiya.sh` | `backup-coverage-watch` | installed files, overrides of `COVERAGE_SOSTOYANIE`, `AGENT_ALERT_BIN`, `AGENTS_REGISTRY` | sees what is uncovered, stays silent about what is marked up; does not damage the live machine; codes 0/1/2 |
-| `stendy/stend-sborshchika-kopii.sh` | `sadik-backup.py` (build) | without root, ~3 s | recoverable `__pycache__` and parsing of foreign `.pyc` in a subprocess |
+| `stendy/stend-sborshchika-kopii.sh` | `sadik-backup.py` (build) | without root, ~3 s | recoverable `__pycache__` and parsing of foreign `.pyc` in a subprocess; a file vanishing between the walk and `tar.add`, and the «-journal» of a snapshotted database |
 | `stendy/stend-dogovora-trevogi.sh` | `sadik-backup.py` against `agent-alert` | no sudo | three anchors of the alert contract on the production sender and on broken copies of it; codes 0/1/2 |
 
 `kopiya-put-nl`, `kopiya-upala` and `omega-db-backup.sh` have no stands.

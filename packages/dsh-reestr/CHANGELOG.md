@@ -1,5 +1,56 @@
 # CHANGELOG · dsh-reestr
 
+## 3.1.10 — 20.10.2026 · текст тревоги сравнителя: порядок по важности, «ТОЛЬКО НА» хвостом, урезание update (код Михалыча r3, ворота Вениамина 23:50:42 МСК; в дерево — Искра, наряд Забавы 20:50Z)
+
+- Меняется только `bin/sverka-paketov` (a1f80fa7 → 5a06f308); `agent-plugins` и юниты — как в 3.1.9.
+- Тревога: строка счёта; затем НОВОЕ/ИЗМЕНИЛОСЬ по важности — СЛЕПОТА, ЛИШНИЙ СНИМОК, РАЗОШЛОСЬ, ОТСТАЁТ, НЕЛЬЗЯ СРАВНИТЬ, НЕГОДНАЯ СТРОКА; затем закрытое; блок «ТОЛЬКО НА» — хвостом, сводкой по составу машин.
+- Предел тревоги 3800 знаков, хвосту оставляется 500. Текст `update` в находке ОТСТАЁТ урезается до самого длинного из 300/120/80/40/0 знаков, при котором важное укладывается; полный текст — только в `nahodki.json`. Не влезло и важное — «… обрезано (важное не влезло целиком)» с отсылкой к `nahodki.json`.
+- НЕ МЕНЯЕТСЯ: сравнение, исходы, коды, `nahodki.json` и состояние — урезается только текст тревоги.
+- Alert text of the comparator: findings ordered by severity, "only on" summary last, `update` text shortened to fit the 3800-char limit; full text stays in `nahodki.json`.
+
+## 3.1.9 — 20.10.2026 · сверка пакетов между машинами: `agent-plugins snimok` и сравнитель `sverka-paketov` (код Михалыча r2, ворота Вениамина 23:17:50 МСК; в дерево — Искра, наряд Забавы 20:21Z)
+
+- `agent-plugins snimok [--stdout]`: снимок реестра машины для межмашинной сверки. Прямо перед снимком гоняет `verify` тем же кодом и кладёт итог в снимок (`verify_kod`, `verify_itog`); отпечаток — фактический (`fingerprint_check` исполняется сейчас). Поля — белым списком (`id, version, origin, fingerprint_fakt, fingerprint_sost, derevo_ref, derevo_commit, update`). Запись атомарная в `/var/lib/sverka-paketov/snimok.json` (0644). Ничего не правит. Коды: 0 — снимок записан, 2 — не записан.
+- `bin/sverka-paketov` — сравнитель, ставится ТОЛЬКО на bclaude (на sadik — `not_installed`). Машины — из `/etc/sverka-paketov/mashiny.conf`, чужие снимки — по ssh учётки `sverka` с `restrict,command=`. Исходы: РАЗОШЛОСЬ, ОТСТАЁТ, НЕЛЬЗЯ СРАВНИТЬ, ТОЛЬКО НА, СЛЕПОТА, ЛИШНИЙ СНИМОК; покрытие числом; `update` с признаками секрета — «скрыто». Недоставка тревоги — код 4.
+- `systemd/sverka-snimok.{service,timer}` — снимок 05:30 UTC на каждой машине сверки; `systemd/sverka-paketov.{service,timer}` — сравнитель 06:00 UTC, ставится только на bclaude (на sadik — `not_installed`). Таймеры не включать до первого ручного прогона (лист монтажа, шаг 4).
+- НЕ ЛОВИТ: содержимое записей без `fingerprint_check` (между машинами сравниваются номера метки/версии); commit — только где есть дерево меток.
+- Cross-machine package reconciliation: `agent-plugins snimok` writes a per-host registry snapshot (verify inside); `sverka-paketov` (bclaude only) compares snapshots from all hosts.
+
+## 3.1.8 — 17.10.2026 · покрытие installed_check: каждый local из derevo.files назван в проверке записи (Искра; правило Вениамина 20:10 МСК, наряд Забавы 17:10Z/17:20Z)
+
+- Новый стенд `test/stend-pokrytiya-installed-check.py` (без аргументов; `PLUGINS_REGISTRY`, по умолчанию живой реестр; `POKRYTIE_ISKL`, по умолчанию файл рядом): у каждой записи с `derevo.files` каждый `local` обязан стоять в `installed_check` ОТДЕЛЬНЫМ СЛОВОМ (подстрока не годится: `montazh-okno` совпал бы внутри `montazh-okno-watch`). Иначе verify подмену файла не видит — 17.10 dsh-montazh `montazh-okno` 0ea088d7 → bdd9e3ca прошёл «совпадает».
+- Исключение — ДАННЫМИ, двумя признаками: строка «id<TAB>признак<TAB>причина» в `test/pokrytie-installed-check.isklyucheniya.tsv` И признак стоит в `installed_check` записи; иначе «исключение не действует». Сейчас одна строка: dsh-autopilot · `--manifest` (layout-check.py, 160 файлов по манифесту). Исключение без записи с derevo — красное «снять строку».
+- Коды: 0 — покрыто всё; 1 — поимённо «запись: путь»; 2 — слепота (реестр/исключения не прочитаны или кривые; нет файла исключений; аргументы — отказ).
+- НЕ ЛОВИТ: слово в installed_check, не входящее в сумму (echo/комментарий); `derevo.links`; сам манифест dsh-autopilot не открывает.
+- Номер 3.1.8: 3.1.7 оставлен очереди (по слову Забавы — Гамма); кандидата 3.1.7 на диске нет (17.10 17:2xZ) — если не появится, перенумеровать до окна.
+- New stand: every derevo.files local must be a separate word in the entry's installed_check; manifest-checked entries are exempted by data (id + marker present in the check).
+
+## 3.1.6 — 17.10.2026 · B-N-2104(2): владелец тревог читается рукой сверки
+
+- При PermissionError JSON доставки читается существующим `_prochest`: прямое чтение, затем `sudo -n cat` с пределом15с. Весь verify и стенд остаются под iskra; ACL/группы/JSON не меняются. Это несекретные настройки доставки, не tokenFile.
+- При отказе sudo остаётся СЛЕПОТА; отсутствующий, битый/необъектный JSON и owner вне allowedUsers остаются красными. Приоритет JSON над config (включая null) сохранён.
+- Новый стенд с настоящим UIDiskra/root:coders0640 и фактическимsudo проверяет чтение, порчу/возврат и отказ привилегированного чтения. V11 старого стенда явно отказывает sudo, вместо предположения, что chmod000 ослепляет и root-reader.
+
+## 3.1.5 — 16.10.2026 · соцприём Анны в сборке A (Искра; B-N-2027, наряд Забавы 13:03:36Z, контракт Беты b5672a5d)
+
+- `agent-registry`: признак `namerenie.raskladka.socpriyom` {`serviceUrl` http://127.0.0.1:<1024..65535>/, `keyFile` абсолютный, `channelId`/`discussionId` разные целые < 0} — ровно ключи `config.social` канала (`dsh-telegram-multiagent` src/social-ingress.js). Параметры `SOCPRIYOM`, `SOC_URL`, `SOC_KLYUCH`, `SOC_KANAL`, `SOC_OBSUZHDENIE` выводятся ПОСЛЕ цикла отличий. `agentName` = имя записи латиницей строчными («anna»: канал 3.1.11 требует ровно его; слово владельца 16.10 13:10Z — технические имена строчными). Отказ: не у записи anna; вместе с `autopilot_pochta`; негодная форма.
+- Параметр прежней строки agentName переименован `BEZ_AP_POCHTA` → `IMYA_KANALA_RU` (= ни почты AP, ни соцприёма): прежний код на новых шаблонах и новый на прежних отказывают, а не теряют блок молча.
+- Шаблоны `codex/A.tmpl`, `sdk-claude/A.tmpl`: блок `SOCPRIYOM` — `agentName: "<IMYA>"` + `social`.
+- `test/stend-soc-anna.py`: кандидат 3/3 (без признака — прежнее; с признаком — блок; 21 порча — отказ), бой 3.1.4 — 0/3.
+- ЧЕГО НЕ ЛОВИТ: точные channelId/discussionId (их сверяет канал при запуске), наличие/права keyFile, живость socseti, draft/publish и карточки socseti — не в этом выпуске.
+- Social intake for Anna in the A profile: `raskladka.socpriyom` gives `agentName: "anna"` + `social`; no TG change needed.
+
+## 3.1.4 — 16.10.2026 · реестр агентов: agent-registry из a2a-bus, init, zavesti, владелец-тревог по TG 3.1.11 (Искра; B-N-2071, наряд Забавы 11:11:23Z, ворота Вениамина 11:27:47Z)
+
+- Перенос из `a2a-bus` без правки содержимого (отдельный коммит, 11 переименований 100%): `bin/agent-registry`, 7 шаблонов `share/agent-registry/shablony-raskladki/`, стенды `stend-ap-pochta.py`, `stend-obratno-granica.py`, `stend-yashchik-rezhim.py`. Пути на машине те же — условие (1): один монтаж, `/usr/local/bin/agent-registry` не меняется.
+- `agent-registry init --mashina <имя> [--iz <образец>] [--kuda <путь>]` — минимальный `agents.yaml` (O_EXCL: существующий не перезаписывается; нет каталога — отказ).
+- `agent-registry zavesti <агент> --po-obrazcu <образец> [--iz …] [--pole путь=знач]… --kuda <кандидат>` — условие (2): отказ на совпадение полей-тождеств с образцом/другим агентом, на неизвестное поле, на `--kuda` = живой реестр; кандидат сверяется «прежний + ровно одна запись» до записи.
+- `verify` «владелец-тревог» — условие (3): правило TG 3.1.11 (`ownerChatId` JSON доставки → конфиг, ∈ `allowedUsers`) вместо `mergeChatIntoA2A`. Прежняя проверка была ложно красной у агента без почты и ложно зелёной у агента с `mergeChatIntoA2A` без `ownerChatId` (стенд V1/V2 на боевом коде).
+- Граница шапки уточнена: инструмент не правит СУЩЕСТВУЮЩИХ файлов; пишут только `init` (новый реестр), `zavesti`/`sobrat --kuda` (новые кандидаты).
+- `test/stend-init-zavesti.py` (30 проб): кандидат 30/30; боевой код 3.1.6 — 6/30 (нет init/zavesti; V1 ложно красная, V2 ложно зелёная).
+- Дельта (находка Альфы 16.10 11:43Z, наряд Забавы 11:43:28Z): `zavesti --iz` с ДРУГОЙ машины (`mashina.imya` образца ≠ целевому) — тождества сверяются только с агентами целевого реестра; совпадение с образцом печатается, не отказ (на bclaude команда — те же имена и порты). Своя машина или имя машины не установлено — строго, как было. Стенд +4 (Z9–Z12): 34/34; код до дельты (3f4805e9) — 31/34. Живые данные: клон master из копии реестра sadik в пустой «bclaude» — 0 (5 полей названы); повтор в реестр с master — отказ; второй агент с тождествами master — отказ.
+- `package.json`: `bin.agent-registry`, `files` += `share`. Agent registry moved here from a2a-bus; new init/zavesti; alarm-owner rule follows TG 3.1.11.
+
 ## 3.1.3 — 14.10.2026 · подготовка к публикации · release prep (Аврора, наряд Забавы 07:18Z)
 
 - `engines.node` ">=18" — кода на Node в пакете нет (bash/python), это граница установки через npm, а не проверенная среда кода · `engines.node` ">=18" — no Node code in the package (bash/python); the bound is for npm installation, not a tested code runtime

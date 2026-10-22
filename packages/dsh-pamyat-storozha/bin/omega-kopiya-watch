@@ -282,6 +282,44 @@ def pravka_postavki():
         prichiny.append(f'НА ДИСКЕ, НЕ В ПАМЯТИ: {OMEGA_UNIT} стартовала {ts(start)}, файлы правки изменены {ts(mtime)} — нужен перезапуск')
     return ' · '.join(chasti), prichiny
 
+VEKTOR_OKNO_SUT = 7   # признак 7: база — записи со старта службы, не старше 7 сут (замер 18.10: 7 сут — 375 записей, 0,1 с; пиковые 14 сут — 7502, 2,7 с; сторож идёт раз в 10 мин) · EN: sign 7: DB — records since the service start, at most 7 days
+
+def hesh_vektor(tekst, dim):
+    """= omega.embedding._hash_embedding (embedding.py:409–422): md5 → зерно → gauss → норма. Равенство с подлинником
+    проверяет стенд stend-modeli-omega.sh (такт «хэш»), а не эта копия."""
+    # EN: = omega.embedding._hash_embedding: md5 → seed → gauss → norm. Equality with the original is checked by the stand.
+    import math, random
+    rng = random.Random(int.from_bytes(hashlib.md5(tekst.encode()).digest()[:4], byteorder='big'))
+    v = [rng.gauss(0, 1) for _ in range(dim)]; m = math.sqrt(sum(x * x for x in v))
+    return [x / m for x in v] if m else [1.0 / math.sqrt(dim)] * dim
+
+def vektory_s(ot):
+    """Признак 7, база: записи OMEGA с момента ot → (всего, [id без годного вектора], [id с хэш-вектором своего текста]).
+    Без вектора — деградация «модель была → хэш» (store отбрасывает хэш, _store.py:109–113); хэш-вектор — модели не было
+    с самого старта (embedding.py:527). Векторы — сырыми чанками vec0, без расширения sqlite-vec. Годность меряется
+    СОДЕРЖИМЫМ, а не фактом строки в соединении (урок 02.10 mem-1fa67236276a): бит действительности слота = 1 и норма
+    = 1 ± 0,01 (бой 18.10: 20131 из 20131 — бит 1, норма 1,0)."""
+    # EN: Sign 7, DB: OMEGA records since ot → (total, [ids without vector], [ids whose vector is the hash of their text]).
+    import struct
+    om = sqlite3.connect(f'file:{OMEGA_DB}?mode=ro', uri=True)
+    try:
+        rows = om.execute('SELECT m.id, m.content, r.chunk_id, r.chunk_offset FROM memories m LEFT JOIN memories_vec_rowids r ON r.rowid = m.id '
+                          'WHERE m.created_at >= ?', (time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(ot)),)).fetchall()
+        chanki, bez, hesh = {}, [], []
+        for i, tekst, ch, off in rows:
+            if ch is None: bez.append(i); continue
+            if ch not in chanki:
+                razm, prav = om.execute('SELECT size, validity FROM memories_vec_chunks WHERE chunk_id = ?', (ch,)).fetchone()
+                blob = om.execute('SELECT vectors FROM memories_vec_vector_chunks00 WHERE rowid = ?', (ch,)).fetchone()[0]
+                chanki[ch] = (blob, len(blob) // (4 * razm), prav)
+            blob, dim, prav = chanki[ch]
+            v = struct.unpack_from(f'{dim}f', blob, off * dim * 4); norma = sum(x * x for x in v) ** 0.5
+            if not (prav[off // 8] >> (off % 8)) & 1 or not abs(norma - 1) < 0.01: bez.append(i); continue
+            if sum(x * y for x, y in zip(v, hesh_vektor(tekst, dim))) > 0.999: hesh.append(i)
+        return len(rows), bez, hesh
+    finally:
+        om.close()
+
 def model_embeddinga():
     """Признак 7 → (строка-различитель, [причины], [виды]); нечитаемое — исключение (уходит в слепоту).
     Виды — ключ тревоги БЕЗ чисел: число строк журнала растёт с каждой попыткой загрузки, и ключ с числом давал бы
@@ -302,18 +340,49 @@ def model_embeddinga():
                        capture_output=True, text=True, timeout=30)
     pole = dict(l.split('=', 1) for l in r.stdout.splitlines() if '=' in l)
     if r.returncode != 0 or not pole.get('ExecMainStartTimestamp', '').startswith('@'):
-        raise RuntimeError(f'{OMEGA_UNIT}: старт не измерить (код {r.returncode})')
+        # Причины по файлам не теряются за слепотой старта (условие ворот 18.10): есть — вернуть с припиской; нет — слепота.
+        # EN: File causes are not lost behind start blindness (gate condition 18.10): present — return them noted; none — blindness.
+        if not prichiny: raise RuntimeError(f'{OMEGA_UNIT}: старт не измерить (код {r.returncode})')
+        chasti.append(f'старт не измерен (код {r.returncode}) — база и журнал не проверены')
+        return OMEGA_MODEL_DIR + ': ' + ' · '.join(chasti), prichiny, vidy
     start = pole['ExecMainStartTimestamp']
-    j = subprocess.run([JOURNALCTL, '-u', OMEGA_UNIT, '--since', start, '-o', 'cat', '--no-pager'], capture_output=True, text=True, timeout=120)
-    if j.returncode != 0: raise RuntimeError(f'журнал {OMEGA_UNIT} не прочитан (код {j.returncode}): {j.stderr.strip()[:80]}')
-    if not any('Startup RSS' in l for l in j.stdout.splitlines()):    # служба пишет её при КАЖДОМ старте (mcp_server.py:1031) · EN: the service writes it on EVERY start (mcp_server.py:1031)
-        raise RuntimeError(f'журнал {OMEGA_UNIT} с её старта без строки «Startup RSS» — журнал не виден (права? ротация?)')
-    hesh = sum('No embedding model loaded' in l or 'hash-fallback' in l for l in j.stdout.splitlines())
-    ts = time.strftime('%Y-%m-%d %H:%M:%SZ', time.gmtime(int(start[1:])))
-    chasti.append(f'журнал с {ts}: строк {len(j.stdout.splitlines())}, про хэш-вектор {hesh}')
-    if hesh:
-        prichiny.append(f'ВЕКТОР = ХЭШ: в журнале {OMEGA_UNIT} с {ts} строк «No embedding model loaded/hash-fallback» {hesh}')
+    st = int(start[1:]); ts = time.strftime('%Y-%m-%d %H:%M:%SZ', time.gmtime(st))
+    # Источник 1 — БАЗА OMEGA (журнал 2G с 17.10 вытесняет строки старта за ~1,5 сут; база не вытесняется). Окно — со
+    # старта службы, не дольше VEKTOR_OKNO_SUT сут.
+    # EN: Source 1 — the OMEGA DATABASE (the 2G journal since 17.10 evicts start-up lines in ~1.5 days; the database is
+    #     not evicted). Window — from the service start, at most VEKTOR_OKNO_SUT days.
+    ot = max(st, int(time.time()) - VEKTOR_OKNO_SUT * 86400)
+    try: vsego, bez, hesh_v = vektory_s(ot)
+    except Exception as e:                       # тот же порядок: причины по файлам — не терять · EN: same order: keep file causes
+        if not prichiny: raise
+        vsego, bez, hesh_v = None, [], []; chasti.append(f'база не прочитана ({e}) — вектор по базе не проверен')
+    if vsego is not None: chasti.append(f'база с {time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime(ot))}: записей {vsego}, без годного вектора {len(bez)}, вектор = хэш {len(hesh_v)}'
+                  + (' — НЕ ИЗМЕРЕНО: записей в окне нет' if not vsego else ''))
+    if bez:
+        prichiny.append(f'ВЕКТОР ОТБРОШЕН: в {OMEGA_DB} с {ts} записей без годного вектора {len(bez)} (id {bez[:5]}; нет строки, слот недействителен или норма ≠ 1) — модель отказала после загрузки, store писал «hash-fallback embedding discarded»')
+        vidy.append(f'ВЕКТОР ОТБРОШЕН с {start}')
+    if hesh_v:
+        prichiny.append(f'ВЕКТОР = ХЭШ: в {OMEGA_DB} с {ts} записей с хэш-вектором {len(hesh_v)} (id {hesh_v[:5]}) — модели не было с самого старта')
         vidy.append(f'ВЕКТОР = ХЭШ с {start}')     # новый старт службы при той же беде — новая тревога · EN: a new service start with the same trouble — a new alarm
+    # Источник 2 — журнал: только видимая часть, покрытие названо. «Startup RSS» больше не условие зрячести: её нет,
+    # когда служба старше глубины журнала, — это граница покрытия, а не слепота.
+    # EN: Source 2 — the journal: only the visible part, coverage named. "Startup RSS" is no longer a sightedness
+    #     condition: it is absent when the service is older than the journal depth — a coverage boundary, not blindness.
+    j = subprocess.run([JOURNALCTL, '-u', OMEGA_UNIT, '--since', start, '-o', 'short-unix', '--no-pager', '-q'], capture_output=True, text=True, timeout=120)
+    if j.returncode != 0:
+        chasti.append(f'журнал не прочитан (код {j.returncode}): {j.stderr.strip()[:80]}')
+    else:
+        stroki = [l for l in j.stdout.splitlines() if l.strip()]
+        hesh = sum('No embedding model loaded' in l or 'hash-fallback' in l for l in stroki)
+        if any('Startup RSS' in l for l in stroki): pokr = f'с {ts} (весь срок службы)'
+        elif stroki:
+            try: pokr = f'с {time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime(float(stroki[0].split()[0])))} (не покрыто от старта {ts})'
+            except ValueError: pokr = 'с неизвестного момента'
+        else: pokr = f'строк службы 0 с {ts} — покрытие журналом не установлено'
+        chasti.append(f'журнал {pokr}: строк {len(stroki)}, про хэш-вектор {hesh}')
+        if hesh:
+            prichiny.append(f'ВЕКТОР = ХЭШ: в журнале {OMEGA_UNIT} {pokr} строк «No embedding model loaded/hash-fallback» {hesh}')
+            vidy.append(f'ВЕКТОР = ХЭШ с {start}')
     return OMEGA_MODEL_DIR + ': ' + ' · '.join(chasti), prichiny, vidy
 
 def razobrat_schet(vyvod):

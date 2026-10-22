@@ -27,11 +27,12 @@ attach(agent,baseURL,{allowCancel=true,allowMessage=false,terminal=false}={}){
     const binding={generation:this.ledger.owner,recipient:this.recipient,ledger_uuid:this.ledger.protocolIdentity(),session_id:session.id,session_created:session.header.createdAt,turn};
     const messageEnabled=allowMessage===true&&this.sdkInputs?.compatible(agent)===true;
     const telemetry=terminal===true&&this.mailStopVersion===1;
-    const descriptor={binding,...(messageEnabled||telemetry?{request_id:randomUUID()}:{}),...(telemetry?{terminal:1}:{}),ticket:randomBytes(32).toString('hex'),operations:[...(allowCancel?['cancel']:[]),'stop',...(messageEnabled?['message']:[]),...(telemetry?['stop-exact']:[])]};
+    const descriptor={binding,...(messageEnabled||telemetry||this.usage?{request_id:randomUUID()}:{}),...(telemetry?{terminal:1}:{}),ticket:randomBytes(32).toString('hex'),operations:[...(allowCancel?['cancel']:[]),'stop',...(messageEnabled?['message']:[]),...(telemetry?['stop-exact']:[])]};
     let terminalResolve;const terminalPromise=new Promise(resolve=>{terminalResolve=resolve});
     const lifecycleId=descriptor.request_id??randomUUID();
     const lease={agent,session,descriptor,lifecycleId,url:url.origin,allowCancel,allowMessage:messageEnabled,ready:false,telemetry,terminalPromise,terminalResolve,terminalSeen:false};this.requests.add(lease);
     if(this.mailStopVersion)this.ledger.db.prepare("INSERT INTO mail_sdk_requests VALUES(?,?,?,?,?,?,?, ?,NULL,?)").run(lifecycleId,this.ledger.owner,session.id,session.header.createdAt,turn,stableJson({...binding,request_id:lifecycleId}),telemetry?'registered':'unknown',this.ledger.now(),telemetry?null:'no_telemetry');
+    try{this.usage?.request(agent,descriptor)}catch{try{this.usage?.fail('SOURCE_GAP')}catch{}}
     return {descriptor:structuredClone(descriptor),taskEvent:async event=>{
       if(!telemetry||stableJson(event.binding)!==stableJson(binding)||event.request_id!==descriptor.request_id||!['generation','thread_id','turn_id'].every(k=>typeof event.codex?.[k]==='string'&&event.codex[k].length))throw Error('stop: invalid_terminal_binding');
       if(event.state==='ready'){

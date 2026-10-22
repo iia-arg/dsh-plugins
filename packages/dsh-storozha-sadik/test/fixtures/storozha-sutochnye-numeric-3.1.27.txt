@@ -1,0 +1,176 @@
+# СУТОЧНЫЕ СТОРОЖА sadik, чью СОБСТВЕННУЮ жизнь проверяет sadik-watch (B-N-884, 25.09.2026). Читает /usr/local/sbin/sadik-watch
+# (ключ SADIK_SUTOCHNYE). Формат строки: <юнит> <срок_часов>. Красное: последний успешный прогон (журнал systemd: JOB_TYPE=start,
+# JOB_RESULT=done) старше срока, прогона в журнале нет вовсе, или юнит failed. Срок — период таймера + запас.
+# Кандидаты, НЕ включённые без слова Забавы: registry-watchdog 07:30Z, sadik-backup 03:03Z, backup-verify 06:15Z, dpkg-db-backup 00:00Z;
+# чаще суток — omega-db-backup (6 ч), receipt-watch и backup-coverage-watch (1 ч), vypusk-okno-watch (15 мин).
+vse-stendy-boevye.service 26
+dve-kopii-watch.service 26
+# 25.09 Забава (развилка Вениамина 15:46): суточные сторожа/копии под надзор
+registry-watchdog.service 26
+sadik-backup.service 26
+backup-verify.service 26
+dpkg-db-backup.service 26
+otkaz-klyuch-watch.service 26
+# 25.09 Забава (A-N-917): сторож копирования дистиллятов в OMEGA, таймер 10 мин
+omega-kopiya-watch.service 2
+# 25.09 Забава (B-H-487, ворота Вениамина): живая версия общих носителей, таймер ежечасный *:41
+zhivaya-versiya-watch.service 3
+# 25.09 Забава (B-N-903 Михалыча, ворота Вениамина 19:54Z): монтаж модулей без страховки, таймер 06:57
+strahovanie-modulej-watch.service 26
+# 26.09 Забава (B-N-1054 (б2), Заря): хвосты /var/tmp — отчёт, не удаление; таймер 05:17
+hvosty-vartmp-watch.service 26
+# 26.09 B-N-1062 (Заря, находка при B-N-1060: dsh-compact-watch был failed 6 ч, читателя не было): ВСЕ службы таймеров
+# /etc/systemd/system, у которых падение не читал никто, — сюда, одним механизмом (ветка 2в sadik-watch), а не OnFailure на каждый.
+# Срок = период таймера + запас, целыми часами (не меньше 1): 5 с…15 мин → 1 · 30 мин → 2 · час → 3 · 6 ч → 8 · 12 ч → 14 · сутки → 26.
+# ⚠️ Упавший прогон — не «done»: юнит, падающий КАЖДЫЙ раз, ловится и просрочкой; падающий ИНОГДА у частых служб
+#   (failed живёт до следующего прогона) — только если sadik-watch (раз в 10 мин) застанет его failed.
+# Не внесены: sadik-watch (себя не прочтёт — его жизнь: голос «жив», раздел 3); apt-daily-upgrade (таймер замаскирован).
+# B-N-1068: «!<служба> <причина>» — осознанно НЕ внесена; sadik-watch проверяет ПОЛНОТУ: служба нашего таймера (/etc/systemd/system)
+#   без строки и без «!» — красное. Замаскированный таймер (apt-daily-upgrade) в проверку не попадает сам.
+!sadik-watch.service себя не прочтёт — его жизнь: голос «жив» раз в 7 суток (sadik-watch, раздел 3)
+# каждые 5 мин
+dsh-compact-watch.service 1
+dsh-limity-avtoperekl.service 1
+agent-watchdog.service 1
+zastryalo-v-shcheli.service 1
+zastryalo-v-shcheli@avrora.service 1
+zastryalo-v-shcheli@zarya.service 1
+zastryalo-v-shcheli@varvara.service 1
+# чаще 5 мин: почтальон a2a (5 с после прогона), dsh-compact-outcomes (60 с), sadik-vpn-failover (30 с), oom-watch (минута)
+a2a-pochtalon.service 1
+dsh-compact-outcomes.service 1
+sadik-vpn-failover.service 1
+oom-watch.service 1
+# 15 мин
+predel-dliny-watch@alfa.service 1
+predel-dliny-watch@avrora.service 1
+predel-dliny-watch@beta.service 1
+predel-dliny-watch@gamma.service 1
+predel-dliny-watch@marc.service 1
+predel-dliny-watch@anna.service 1
+predel-dliny-watch@master.service 1
+predel-dliny-watch@vintik.service 1
+predel-dliny-watch@shpuntik.service 1
+predel-dliny-watch@gayka.service 1
+predel-dliny-watch@shurup.service 1
+predel-dliny-watch@tumbler.service 1
+predel-dliny-watch@zarya.service 1
+vypusk-okno-watch.service 1
+# 30 мин
+predel-dliny-watch.service 2
+inet6-poyavlenie-watch.service 2
+# час
+agent-alert-hvost-obrezka.service 3
+backup-coverage-watch.service 3
+codex-auth-watch.service 3
+# 12.10 B-N-2018 (Аврора, dsh-storozha-sadik 3.1.3): сторож отставания копии API Острова, таймер ежечасный *:23
+ostrov-kopiya-watch.service 3
+receipt-watch.service 3
+rubezh-otnoshenij-watch.service 3
+# 6 ч
+codex-obnovitel.service 8
+nezafiksirovano-watch.service 8
+omega-db-backup.service 8
+# 12 ч: tri-stolbca.service СНЯТ 07.10.2026 (B-N-1717, решение Забавы, Заря): дублировал vypusk-okno-watch (бой↔метка дерева, суммами,
+#   с тревогой), его столбцы github/npm застыли запретом публикации (вечный «ПРИЗРАК»), тревоги не имел. Таймер замаскирован (FARM-RULES п.9).
+# сутки
+apt-updates-notify.service 26
+dkms-kernel-coverage.service 26
+dsh-upstream-watch.service 26
+golos-watch.service 26
+pamyat-seam.service 26
+razmer-kopii-watch.service 26
+# 26.09 B-N-1074 (Аврора; решение Забавы): недельный прогон долгих стендов, таймер среда 01:30Z — срок 168 ч + запас 2 ч
+vse-stendy-nedelnye.service 170
+# 01.10 B-N-1342 (Заря; тревога sadik-watch владельцу 06:24Z): 11 таймеров, заведённых 28.09–01.10 без строки. Все — наши, падение не читал
+#   никто, кроме ветки 2в ⇒ строкой, ни одного «!». Срок — по правилу выше (период + запас). sessii-preset-watch НЕ внесён: таймер и служба
+#   замаскированы 30.09 14:00Z (claude) — проверка полноты его не видит; размаскируют без строки — красное, это и нужно (решение тогда).
+# каждые 1–15 мин
+aclaude-snaruzhi-sh1.service 1
+aclaude-snaruzhi-sh2.service 1
+model-podmena-watch.service 1
+codex-limit-watch.service 1
+podyom-mimo-vorot-watch.service 1
+# 10 мин после прошлого прогона (OnUnitInactiveSec); работа Марка, не сторож — падение иначе не читает никто
+marc-ostrov-2027-sync.service 1
+# час (*:17)
+rasshcheplenie-otmeny-watch.service 3
+# 6 ч (00/6:35) — как codex-obnovitel.service
+codex-obnovitel-4.service 8
+# сутки
+codex-katalog-watch.service 26
+montazh-srok.service 26
+pamyat-fill-watch.service 26
+# 01.10 B-N-1340 (а) (Заря): читатель прерванных дистилляций, таймер раз в час (*:23) — срок 3. Отказ канала/слепота — код ≠0 ⇒ failed ⇒ ветка 2в.
+zadaniya-prervany-watch.service 3
+
+# B-N-1460: минутный опрос writer-конфликтов; failed/отсутствие прогона читает sadik-watch.
+session-writer-watch.service 1
+
+# B-N-1496: минутный status socseti; жизнь сторожа и failed читает sadik-watch.
+socseti-watch.service 1
+# B-N-1492: минутный таймер; failed проверяется отдельно
+a2a-owner-copy-watch.service 1
+site-sroki-varvara.service 26
+# 04.10.2026 A-N-1533 storozha a43 (условие Вениамина): preset-watch — таймер 5 мин, срок 1 ч; без строки его отказы (код 2/3) никто не прочтёт.
+session-agent-preset-watch.service 1
+# 05.10 B-N-1633 (Заря, ворота Вениамина): сторож удержанной сессии /new, таймер 2 мин
+sessiya-uderzhana-watch.service 1
+# 05.10 D-N-1656 (Михалыч; находка Вениамина 11:22Z — пропуск при возврате RU split на sadik): обновление набора RU-сетей,
+#   таймер вс 04:17Z ±10 мин, Persistent — срок 168 ч + запас 2 ч (как vse-stendy-nedelnye)
+ru-cidr-update.service 170
+# 05.10 (Михалыч; такт Забавы 11:24Z — «СТОРОЖ НАД СТОРОЖАМИ» называл 7 наших таймеров без строки). Срок — по правилу выше:
+#   storozh-dvizhkov@<агент> — таймер 2 мин (шаблон, заведён 04.10) → 1 ч
+storozh-dvizhkov@avrora.service 1
+storozh-dvizhkov@iskra.service 1
+storozh-dvizhkov@spartak.service 1
+storozh-dvizhkov@sova.service 1
+storozh-dvizhkov@varvara.service 1
+storozh-dvizhkov@zarya.service 1
+#   spisok-sotrudnikov — таймер 10 мин ±30 с (B-N-1640) → 1 ч
+spisok-sotrudnikov.service 1
+#   svesti-dostup-watch — ежечасно в :25 UTC, Persistent (B-N-1621 k2) → 3 ч
+svesti-dostup-watch.service 3
+# 07.10 B-N-1741 (Аврора; слово Забавы 10:50Z): читатель ночного обхода → письмо координатору; таймер раз в час 04:50–10:50 UTC —
+#   между последним тактом дня и первым следующего 18 ч → срок 26. Отказ канала (1) и слепота (2) — failed ⇒ ветка 2в.
+chitatel-obhoda.service 26
+# 07.10.2026 Забава (B-N-1776, находка sadik-watch 19:44Z): служба лимитов, таймер раз в минуту
+dsh-limity.service 1
+# 07.10.2026 Забава (B-N-1776 1.0.9, ворота Вениамина 22:52Z, вариант (б)): баланс DeepSeek под limity-ds, таймер 10 мин;
+#   до 1.0.10 (снимок старше 130 мин → тревога) «баланс перестал мериться» видно только отсюда
+dsh-limity-deepseek.service 2
+# 07.10.2026 (B-N-1776, находка Зари: sadik-watch красный «строки в перечне НЕТ»): замер лимитов, таймер 10 мин
+dsh-limity-zamer.service 1
+# 07.10.2026 Забава (B-N-1745 r3, ворота Вениамина 19:34Z): сторож каталогов моделей, таймер 07:30Z
+provider-model-watch.service 26
+# 09.10.2026 Забава (B-N-1923, находка Искры 12:58Z: окно dsh-montazh 1.0.17 пропустило строку): сторож меток мимо ворот, таймер 15 мин
+metki-mimo-vorot-watch.service 1
+# 13.10.2026 Забава (продление ВК-ключа Анны, слово владельца 13:10; находка Вениамина 10:23Z): таймер 08:00 и 20:00 МСК
+vk-miniapp-token.service 13
+# B-N-2025: частый сторож, свежесть задаётся в секундах
+montazh-okno-watch.service 180s
+# 16.10.2026 (наряд Забавы 15.10 23:31Z, находка stend-storozha-nad-storozhami 8б 15.10 23:21Z, Искра): три наших таймера без строки
+#   сторож спула тревог, таймер 5 мин
+agent-alert-storozh-ocheredi.service 1
+#   сторож здоровья Meta Анны, таймер 30 мин
+anna-meta-watch.service 2
+#   Автопилот: проверка ключа, таймер 60 с
+dsh-autopilot-key-check.service 1
+
+# AP notice: merge these records into the machine daily-watcher list.
+# Mandate: Zabava 2026-10-17 12:50:05Z; 5-second timers, existing 1-hour rule.
+autopilot-mail-notice@master.service 1
+autopilot-mail-notice@vintik.service 1
+autopilot-mail-notice@shpuntik.service 1
+autopilot-mail-notice@gayka.service 1
+autopilot-mail-notice@sova.service 1
+autopilot-mail-notice@shurup.service 1
+autopilot-mail-notice@tumbler.service 1
+
+# 18.10.2026 Искра (наряд Забавы 18.10 01:26:04Z; окно 5 захода AP 0.1.9 — учёт, лист Авроры LIST-UCHET019 r1 99deca03; строка ставится ПОСЛЕ шага 6 — включения таймера, Вениамин 04:30 МСК):
+#   учёт команды autopilot-usage, таймер 60 с; срок = период 60 с + запас, как у montazh-okno-watch
+autopilot-usage.service 180s
+# 21.10.2026 Михалыч (наряд Забавы 20:00 МСК; sadik-watch 17:02Z назвал оба «таймер наш, строки в перечне НЕТ»): мои суточные.
+#   uborka-3sut — уборка старше 3 суток, OnCalendar 02:00 UTC; sverka-snimok — снимок пакетов для сверки трёх серверов, 05:30 UTC. Срок = сутки + 2 ч.
+uborka-3sut.service 26
+sverka-snimok.service 26

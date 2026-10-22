@@ -1,6 +1,6 @@
 # dsh-pamyat-kompakt-dsh
 
-**Версия:** 3.1.2
+**Версия:** 3.1.4
 
 ## Назначение · Purpose
 
@@ -242,6 +242,7 @@ The audit and alert stands compare external-command calls against the default pa
 | `stend-dostupa-audita` | имя службы из реестра, `sudo -n` только при отказе по правам | установка платформы рядом (`@deepseek-ai/dsh-llm` в `node_modules`); нет — СЛЕПОТА, код 2 |
 | `stend-pustogo-audita` | пустая история на настоящем `journalctl` — не тревога | право читать журнал напрямую или через `sudo -n`; установка платформы рядом (`@deepseek-ai/dsh-llm`), нет — СЛЕПОТА, код 2 |
 | `stend-kursora-audita` | курсор аудита, окно 7 сут, повтор при непринятом курсоре | `DSH_TEST_APP`, `STEND_BOLSHOJ_UNIT` (служба с ≥ 72 000 записей за 7 сут). Записи стенд считает сам, напрямую `/usr/bin/journalctl`, без `sudo`: без права читать журнал этой службы записей окажется меньше 72 000, и стенд выйдет с кодом 2 |
+| `stend-vremeni-audita` | время аудита формы S1 (окно 7 сут: поиск + сверка ид) на самой плотной службе агента из `agent-registry list`: < 20 с — ЗЕЛЁНОЕ (0), ≥ 20 с — ЖЁЛТОЕ (1), аудит не ok — КРАСНОЕ (1); порча для проб — `STEND_PORCHA=zaderzhka:<мс>` или `otkaz` | `DSH_TEST_APP`; учётке нужен доступ к журналам служб агентов (группа `systemd-journal`), иначе у всех 0 записей — код 2 |
 | `stend-yakorya-audita` | аудит берёт только строки формы `[kompakt-dsh <версия>] [continuation-marker] {…}` с начала | `DSH_TEST_APP` |
 | `stend-identifikatora-audita` | поиск отметок сужен полем `SYSLOG_IDENTIFIER` службы (не зашито); 0 отметок при строках `[kompakt-dsh` под другим идентификатором — слепота, курсор не двигается | `DSH_TEST_APP` |
 | `stend-nastrojki-i-rezolva` | файл настройки и двухшаговый резолв пакета платформы | установка платформы рядом (`@deepseek-ai/dsh-llm` в `node_modules`); нет — СЛЕПОТА, код 2 |
@@ -264,6 +265,7 @@ The audit and alert stands compare external-command calls against the default pa
 | `stend-dostupa-audita` | service name from the registry, `sudo -n` only on a permission failure | a platform installation next to it (`@deepseek-ai/dsh-llm` in `node_modules`); missing — BLINDNESS, exit 2 |
 | `stend-pustogo-audita` | an empty history on the real `journalctl` is not an alert | permission to read the journal directly or via `sudo -n`; a platform installation next to it (`@deepseek-ai/dsh-llm`), missing — BLINDNESS, exit 2 |
 | `stend-kursora-audita` | audit cursor, 7-day window, retry on a rejected cursor | `DSH_TEST_APP`, `STEND_BOLSHOJ_UNIT` (a service with ≥ 72,000 entries over 7 days). The stand counts the entries itself, directly with `/usr/bin/journalctl`, without `sudo`: without permission to read that service's journal it will find fewer than 72,000 entries and exit with code 2 |
+| `stend-vremeni-audita` | S1-form audit time (7-day window: search + id check) on the densest agent service from `agent-registry list`: < 20 s — GREEN (0), ≥ 20 s — YELLOW (1), audit not ok — RED (1); corruption for probes — `STEND_PORCHA=zaderzhka:<ms>` or `otkaz` | `DSH_TEST_APP`; the account needs access to agent service journals (`systemd-journal` group), otherwise all have 0 entries — code 2 |
 | `stend-yakorya-audita` | the audit takes only lines of the form `[kompakt-dsh <version>] [continuation-marker] {…}` from the start | `DSH_TEST_APP` |
 | `stend-identifikatora-audita` | the marker search is narrowed by the service's `SYSLOG_IDENTIFIER` field (not hard-coded); 0 markers while `[kompakt-dsh` lines are under another identifier — blindness, the cursor does not move | `DSH_TEST_APP` |
 | `stend-nastrojki-i-rezolva` | settings file and two-step resolution of the platform package | a platform installation next to it (`@deepseek-ai/dsh-llm` in `node_modules`); missing — BLINDNESS, exit 2 |

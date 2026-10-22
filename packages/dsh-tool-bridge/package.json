@@ -1,6 +1,6 @@
 {
   "name": "dsh-tool-bridge",
-  "version": "3.1.4",
+  "version": "3.1.9",
   "files": [
     "src/index.js",
     "src/paritet.json",
@@ -12,6 +12,7 @@
     "tools/izvlech-pamyat.mjs",
     "tools/izvlech-vydacha.mjs",
     "test/stend-cel-mosta.mjs",
+    "test/stend-cel-soderzhimoe.mjs",
     "test/stend-heartbeat.mjs",
     "test/stend-ostanovki.mjs",
     "test/stend-pamyat-otnoshenie.mjs",
@@ -19,6 +20,7 @@
     "test/stend-vydacha.mjs",
     "test/stend-predelov-iz-fajla.mjs",
     "test/stend-publikacii.mjs",
+    "test/stend-publikacii-kopii.mjs",
     "test/stend-rezhimov.mjs",
     "test/stend-rezyume.mjs",
     "test/stend-pravki-intervala.mjs",

@@ -1,6 +1,6 @@
 # dsh-tool-bridge — инструменты DSH для внешнего движка · DSH tools for an external engine
 
-Версия · Version: 3.1.4
+Версия · Version: 3.1.8
 
 Мост переносит инструменты живой платформы DeepSeek Harness в цикл внешнего движка, сохраняя владельца вызова и ограничивая автономные напоминания.
 The bridge carries live DeepSeek Harness tools into an external engine loop, preserving the call owner and limiting autonomous reminders.
@@ -156,3 +156,15 @@ The bridge is not a standalone agent, does not implement a complete MCP HTTP ser
 
 MIT, Iia-arg team. Общая документация проекта: [dsh-plugins](https://github.com/iia-arg/dsh-plugins). Публикация и нумерация версии выполняются отдельным выпуском; эта документация не подтверждает завершённый монтаж.
 MIT, Iia-arg team. System documentation: [dsh-plugins](https://github.com/iia-arg/dsh-plugins). Publication and version assignment are separate release steps; this documentation does not certify deployment.
+
+## Сверка загруженного кода · Loaded-source check (B-N-1983)
+
+При import мост запоминает полный SHA256 **src/index.js**; при apply печатает `[имя версия] src/index.js sha256=<64 hex> pid=<PID>`. `stend-cel-mosta` сравнивает байты своей копии с этой строкой текущего MainPID в журнале текущего подъёма и перепроверяет PID/старт после чтения. mtime кода не используется. Домонтаж только test/ или package.json при прежнем src остаётся зелёным; строки настроек сверяются с подписью подтверждённого загруженного кода, даже если номер манифеста на диске уже другой.
+
+При первом обновлении процессы без новой строки SHA256 дают СЛЕПОТУ 2: нужен один назначенный подъём после монтажа. Отсутствующая/битая/противоречивая квитанция, чужой PID, смена процесса или нечитаемый журнал не принимаются за совпадение. Разное содержимое — FAIL 1, возврат байтов — снова 0 при прочих исправных условиях. Caller — прежний обходчик/ручной stend-cel-mosta; новый `stend-cel-soderzhimoe` вызывается npm test и проверяет частную реальную цепочку.
+
+Граница: отпечаток относится только к src/index.js, не к зависимостям, прочим src-файлам или правильности всех инструментов. Он не аутентифицирует журнал против намеренной подделки. Файл читается в момент исполнения тела модуля после загрузки Node; гонка замены между чтением загрузчиком и исполнением тела не доказана этой квитанцией. Старый mtime-контроль YAML настроек остаётся отдельным условием. Нет автоповтора/подъёма: одна сверка завершится 0/1/2; journal subprocess ограничен timeout 10 с.
+
+At import the bridge records the full SHA256 of **src/index.js** and emits it with its import-time package signature and process PID at apply. cel-mosta compares the current copy against the receipt of the unit's current MainPID/start, then rechecks that process epoch. Code mtime is ignored. A test-only or manifest-only deployment with identical source stays green; expected startup lines use the verified loaded signature. The first deployment needs one assigned restart for old processes without receipts. Missing, malformed, conflicting or wrong-process evidence remains exit 2; different bytes are exit 1. This covers index.js only, not dependencies, other source files, correctness of every tool, forged journals, or a loader/read race. YAML policy checks stay separate. There is no automatic restart/retry.
+
+Первый выпуск с SHA-квитанцией B-N-1983 — **3.1.6**. Выпуск Зари **3.1.5** сохраняет прежний src; упоминание 3.1.5 в troubleshooting относится к рабочему номеру кандидата до разделения выпусков. / The first released SHA-receipt mechanism is 3.1.6; Zarya’s 3.1.5 retains the previous source.

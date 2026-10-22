@@ -1,0 +1,26 @@
+[
+  {
+    "id": "fix-p@1.0.0",
+    "name": "fix-p",
+    "version": "1.0.0",
+    "size": 174,
+    "unpackedSize": 53,
+    "shasum": "1111fa41301abbe8b3a604fecbb802de10579c16",
+    "integrity": "sha512-aQVBgLprSFBII1jKjxtDhPb2o5mGwsEN0nbCK/cPHiwhuTQ/B4CKPvSH1kpCL97I568Vsne8cie+UzF8WNJKyg==",
+    "filename": "fix-p-1.0.0.tgz",
+    "files": [
+      {
+        "path": "a.js",
+        "size": 2,
+        "mode": 420
+      },
+      {
+        "path": "package.json",
+        "size": 51,
+        "mode": 420
+      }
+    ],
+    "entryCount": 2,
+    "bundled": []
+  }
+]

@@ -2,7 +2,14 @@ Russian version: [README.md](README.md) · English below
 
 # dsh-montazh — installation, backups, release by tags, package checksums, acceptance summaries
 
-**Version:** 3.1.24
+**Version:** 3.1.46
+
+B-N-2111 item 31(c): after creating a backup, every nonzero `smontirovat-fajly` exit reports its final disk state on stderr: “ОТКАЗ: страховка СНЯТА/УДАЛЕНА: path” or “ОТКАЗ: страховка ОСТАЛАСЬ: path · sha256 …” (full disk hash). A nonregular file or unreadable hash reports blindness. The existing removal message on stdout is retained; the caller reads the final state with the refusal. This runs once at exit for the current backup only, preserving exit codes and cleanup. It does not prove rollback completeness, recover earlier backups, or track deletion after exit.
+
+B-N-2060: an external file joins a release-copy window only through the unchanged `derevo` record and its `owned_files`. If `release_copy` pinned `path`, `source.type`, or `source.address`, the file producer reads missing fields from the current registry, then compares the complete check; a subset alone is insufficient. Existing checks and the original 1..1800-second deadline remain intact. The protected rollback plan gains the file snapshot BEFORE replacement, or an absence check for a new file. Unowned files and any mismatch still fail. This reconciles producers; it neither authorizes root nor proves copy health.
+
+
+Parsing `npm pack --json` requires `npm-sostav` in PATH from installed dsh-pribory 3.1.2 or newer, installed before this version. The helper is located through PATH; absence returns code 2 with the reason “npm-sostav не найден — нужен dsh-pribory ≥ 3.1.2”. Callers retain npm flags, cwd and sudo; the helper only parses stdin. Publication checksums and copy admission support npm 11 and 12. Archive name and content checks remain in `montazh-okno`.
 
 Service software of the sadik machine: what installs releases and files into live, backs up the previous state, puts release
 tags, computes the checksum of a package, assembles the state summary and the acceptance verdicts, checks what is published
@@ -61,15 +68,20 @@ git stores only the "executable" bit, so the mode and owner on disk are in the t
 Purpose of the files (from their headers):
 - `smontirovat-fajly` — file-by-file installation with a backup that the tool makes itself (B-H-080); a new file — only with `--novyj`.
 - `smontirovat-vypusk` — installation of a release by the publication contents of a tag (not by an archive of the tree); `--progon` — dry run, `--v-boj <пункт>` — into live.
-- `montazh-srok` — cleaner of backups `/var/backups/montazh*` older than 14 days (B-N-1169).
+- `montazh-srok` — cleaner of backups `/var/backups/montazh*` older than 3 days (B-N-1169; since 3.1.35 — Mikhalych's r3, owner's word 17.10.2026 19:18 MSK, formerly 14).
+  Keeps: backups of an open or broken (failed) install window — by the opening time of the oldest such window and by its task number in the item name; window directory unreadable — deletes nothing (alert);
+  `ISKLYUCHENIYA` exceptions — by mask: `UBORKA-VOSSTANOVLENIE-20261016`, `B-N-2096-izvlecheno`, `DISK-20261017`, `*-ulika` (evidence, not backups);
+  anything marked `.HRANIT` — `<object>.HRANIT` next to it, `.HRANIT` inside, or for the whole item `<item>.HRANIT` / `<item>/.HRANIT`; lines `do: YYYY-MM-DD` (inclusive) or `do: poka <condition>`, `kto:`, `zachem:`.
+  An expired mark date raises the alert "срок хранения истёк" (retention expired) instead of deleting; undated marks are listed on Mondays; missing `kto`/`zachem` — kept with "пометка неполная" (incomplete mark).
 - `strahovka` — a backup copy whose age and owner do not lie.
 - `vypusk-tegom` — release by tag; calls the stand runner and, before «✅», the trace helper `zhurnal-zapis`. The gates do not call the private-name probe: its category has been switched off since 06.09.2026, and since 3.1.1 the check that the tool exists and its `--kontrol` are removed too.
+  A probe that a stand declares "not applicable" (`STEND-NEPRIMENIMO`) on every copy of the package is BLINDNESS 2. A narrow waiver of one such probe is `NEP_PRINYATO="<stand>:<probe>=<reason>"` (any number of lines; `<stand>` is the path from the package directory or the file name): a matching pair is printed as "не применимо по объявлению: …" and goes into every tag hint; the other stands of the package run as usual. An unmeasured probe without a pair is still BLINDNESS 2; a pair that matches no unmeasured probe (typo, probe measured, no markers, stands not run) and a malformed line are BLINDNESS 2 "объявление не применено". The gates do not judge whether the reason is true.
 - `vypusk-tegom/zhurnal-zapis` — root helper: writes the gates trace into the journal `/var/lib/vypusk-tegom/zhurnal.tsv` (section "Gates trace" below).
 - `metki-mimo-vorot-watch` — watcher: every tag of the registry trees must have a gates trace for the same contents (section "Watcher of tags past the gates" below).
 - `perenos-v-derevo` — moving a package from the live disk into the tree; a deletion does not pass silently.
 - `summa-predmeta-rezhim` — the checksum of a package by one method. (`summa-predmeta-kanon` was removed 07.10.2026, B-N-1770: «НЕ ЗВАТЬ» ("do not call"), replaced by `summa-predmeta-2`.)
 - `strahovanie-modulej-watch` — watcher: an installation into a package directory without a backup in montazh (sudo journal, B-N-903).
-- `zhivaya-versiya-watch` — the version in the journal of the live process against the version on disk, for shared carriers; since B-N-1979 also the «ИНСТРУМЕНТ» (tool) kind: the bridge line «[dsh-tool-bridge] ostrovApi НЕ установлен: <причина>» (ostrovApi NOT installed: <reason>) in the live pid journal (the plugin's latest apply) → an alert «ostrov_api не поставлен» (ostrov_api not installed) naming the service and the reason, repeated once a day, "back in order" after a restart or a re-apply without it. It does not see a missing `ostrovApi` block or `enabled: false` (the bridge stays silent) or tool failures at call time.
+- `zhivaya-versiya-watch` — the version in the journal of the live process against the version on disk, for shared carriers; since B-N-1979 also the «ИНСТРУМЕНТ» (tool) kind: the bridge line «[dsh-tool-bridge] ostrovApi НЕ установлен: <причина>» (ostrovApi NOT installed: <reason>) in the live pid journal (the plugin's latest apply) → an alert «ostrov_api не поставлен» (ostrov_api not installed) naming the service and the reason, repeated once a day, "back in order" after a restart or a re-apply without it. It does not see a missing `ostrovApi` block or `enabled: false` (the bridge stays silent) or tool failures at call time. Since 3.1.37 (B-N-2111 (25)) there is also the "shared directory" carrier: `/opt/agent-plugins/<package>/package.json` (for now only `dsh-telegram-multiagent`) against every agent service whose live pid journal has the startup line «[<package> X.Y.Z · …] подъём»; the service list comes from the journal, not from `used_by`. An agent service with no pair at all is named by the line «служба без пар: K — …» (service without pairs), the summary is «пар N · служб M · без пар K · …»; "without pairs" does not go into the alert. A service whose startup line was rotated out of the journal is not seen by the shared directory carrier.
 - `svodka/svodka-sostoyaniya.sh`, `svodka/verdikty-priyomki.sh`, `polozhit-svodku` — a snapshot "what is in live, on disk, in the registry" and the acceptance verdicts by measurement.
   ⚠️ The summary does not only read: on every call `verdikty-priyomki.sh` runs `git fetch --quiet` of the tree `/opt/iskra/workspace/dsh-plugins`
   from its `origin`, that is, it goes to the network. If the fetch fails — the line «⚠️ свежесть НЕ обновлена» ("freshness NOT updated") and the previous data. The verdicts themselves
@@ -79,6 +91,13 @@ Purpose of the files (from their headers):
 - `proverit-env-ekzemplyara` — a check of the env of a gateway instance before a restart.
 
 ## Dependencies
+
+- Runtime: executable `npm-sostav` in PATH, provided by dsh-pribory 3.1.2 or newer; it needs jq. Montazh is a tree package without package.json and declares no npm dependency. The deployment hand installs the helper first. Bash uses `command -v`, Python uses the equivalent `shutil.which`; absence returns code 2 with the reason above.
+- The single allowed declaration for an npm manifest is an optional peer with `^3.1.2`, never a required peer or a `>=` range. It does not replace the runtime check:
+
+```json
+{"peerDependencies":{"dsh-pribory":"^3.1.2"},"peerDependenciesMeta":{"dsh-pribory":{"optional":true}}}
+```
 
 - Programs: bash, python3, git, npm (pack/`--dry-run`), node, tar, sha256sum/md5sum, systemctl, journalctl, sudo,
   `systemd-run` (the gates run the stand runner as a separate service), `setpriv` (the trace helper and the tag watcher call git as the owner of `.git`).
@@ -144,7 +163,14 @@ The package's stands (both run the real gates on a copy and do not touch live):
   a temporary journal and a stub alert channel; it does not touch the live journal or `agent-alert`. Needs `sudo -n` (the helper and the watcher —
   as root). Temporary directory — `${TMPDIR:-/var/tmp}`. The nightly run calls it at the path `/usr/local/libexec/stend-metki-vorot.sh`
   with `TMPDIR=<каталог временных файлов обхода>` (the run's temporary directory): in the run's unit `/var/tmp` is private.
-Codes: 0 — all probes agreed, 1 — not; `stend-metki-vorot.sh` also has 2 — blindness (no `sudo -n`, no temporary directory).
+- `test/stend-metka-do-sleda.sh [ворота] [помощник]` (gates, helper) — 4 probes of B-N-2115(b): npm mode, "tag already exists"
+  checked before the trace is written (no tag → «✅» and a trace line; tag by directory / by package name exists → REFUSAL code 1,
+  no line; tags removed → «✅» again). Temporary git tree and its own trace journal; the live journal is not touched. Needs `sudo -n`;
+  stand runner — `STEND_OBHODCHIK`. Caller — the `vypusk-tegom` edit gate; not in the nightly run.
+- `test/stend-obshchaya-kopiya.py [ворота]` (gates) — B-N-2121 probes (3.1.43): a shared copy with the `obshchaya` field, transient systemd-run
+  services (direct node, a wrapper naming the root, a wrapper not naming it — found by process, a mention without execution), a root snapshot
+  before/after the stands. Needs a registered agent caller with `sudo -n`; stops its own services by name. Caller — the `vypusk-tegom` edit gate.
+Codes: 0 — all probes agreed, 1 — not; `stend-metki-vorot.sh`, `stend-metka-do-sleda.sh` and `stend-obshchaya-kopiya.py` also have 2 — blindness (no `sudo -n`, no temporary directory).
 
 
 ## Release scope of an npm package (B-N-1823)
@@ -160,7 +186,12 @@ The id, the directory name and the already installed version do not define the f
 are named one by one as "not judged". An access/read error of the metadata or a damaged
 JSON gives blindness, code 2. Explicitly selecting a non-judged entry also gives blindness.
 
-By default the release applies to the whole family. A partial release is given explicitly:
+By default the release applies to the whole family when the release directory has no matching `derevo` entry.
+When both directory copies of the npm family and matching derevo entries exist, an explicit
+`VYPUSK_KOPII` is mandatory: otherwise code2, "область не задана", with the entry IDs.
+With no directory copies, all matching derevo entries are judged automatically, as in K3.
+Adding a copy makes the scope ambiguous and requires an explicit choice; the gate does not
+create a default scope file. A partial release without `derevo` is also explicit:
 
 ```json
 {"package":"dsh-tool-bridge","version":"1.3.38-b1825","copies":["dsh-tool-bridge-varvara"]}
@@ -188,6 +219,9 @@ foreign copy. The mode of a tree package without `package.json` works by the for
 One pass, no retries; limits: 4096 `plugins` and `services` entries together, 256 selected copies,
 16384 tarball files. The gates install nothing and do not put the tag themselves.
 
+The acceptor also runs `python3 test/stend-derevo-kopii-scope.py <gate path>` from the candidate:
+implicit scope, renamed source, malformed subdir, external corruption and restoration.
+This is a separate source probe; the installed nightly suite does not call it automatically yet.
 Copy probes: `python3 test/stend-vypusk-kopii.py <путь ворот>`. The installed path
 of the stand is `/usr/local/libexec/stend-vypusk-kopii.py`; it is called by the standard
 `stend-vorot-vypuska.sh` from `dsh-obhod-stendov`, the candidate override is `STEND_KOPII`.
@@ -197,12 +231,13 @@ by the assigned installing hand after acceptance.
 
 ### Release by places (entry `derevo`, since 1.0.13)
 
-If there are no copy directories and `VYPUSK_KOPII` is not set, but the registry has a `derevo` entry whose
-`subdir` matches the end of the release directory path, the gates compare the executable by places:
+With no directory copies, all derevo IDs matching the release `subdir` are selected automatically.
+With copies present, an explicit `VYPUSK_KOPII` selects one or several matching IDs;
+same-family copy metadata remains a valid binding. The gates compare every declared place of the selected IDs:
 each `files.local` byte by byte with `files.remote` of the release tree; files from `expected_diff_files`
 are skipped. A mismatch is a REFUSAL with the list "remote → local", code 1. If the entry names a file
-that is not in the tree, or all places are skipped — BLINDNESS, code 2. More than one `derevo` entry for this
-directory — also blindness. No entry — the former blindness "no registered
+that is not in the tree, or all places are skipped — BLINDNESS, code 2. Mixing derevo IDs and copy IDs
+in one scope is not allowed. Excluded derevo IDs are named. No entry — the former blindness "no registered
 copies". Tag annotation: `derevo=<id>; files=N; registry_sha256=…`. The mode and owner of the places are not
 compared, only the bytes.
 
@@ -291,8 +326,8 @@ until the output is fully written: not written within 10 s — «СЛЕПОТА:
 |---|---|---|---|
 | trace written | 0 | «✅ можно ставить ЛОКАЛЬНЫЙ тег» ("a LOCAL tag may be put") | 0 |
 | release directory ≠ HEAD (dirty) | 3 | «🔴 ОТКАЗ … Закоммить и повтори» ("REFUSAL … commit and repeat") | 2 |
-| directory outside git (run on a copy) | 4 | «✅ ПРОБНЫЙ ПРОГОН, метку по нему сторож не примет» ("TRIAL RUN, the watcher will not accept a tag by it") | 0 |
-| blindness: no journal directory, it is not root or writable by group/others, `.git` is owned by root, git did not answer | 2 | «СЛЕПОТА: след ворот не записан» ("BLINDNESS: gates trace not written"), no «✅» | 2 |
+| directory outside git — no `.git` in it or above (run on a copy) | 4 | «✅ ПРОБНЫЙ ПРОГОН, метку по нему сторож не примет» ("TRIAL RUN, the watcher will not accept a tag by it") | 0 |
+| blindness: no journal directory, it is not root or writable by group/others, `.git` is owned by root, git did not answer — including `.git` found but git as its owner refused (dubious ownership; since 3.1.32, formerly "outside git" 4) | 2 | «СЛЕПОТА: след ворот не записан» ("BLINDNESS: gates trace not written"), no «✅» | 2 |
 
 The gates code 2 here also happens on a refusal (dirty directory): the general "refusal = 1" does not
 apply to the trace. The overrides `VYPUSK_ZHURNAL_ZAPIS` (helper path) and `VYPUSK_ZHURNAL_DIR` (journal
@@ -311,7 +346,11 @@ of the directory in the tag must equal the tree from the trace. Red is called by
 - «МИМО ВОРОТ» ("PAST THE GATES") — there is no trace for the tag;
 - «НЕ ТО, ЧТО СУДИЛИ» ("NOT WHAT WAS JUDGED") — the trace exists, but the contents of the directory in the tag differ;
 - «ПЕРЕНЕСЕНА историческая метка» ("historical tag MOVED") — a tag from the snapshot now points to another object;
-- «РЕЕСТР ССЫЛАЕТСЯ НА МЕТКУ, КОТОРОЙ НЕТ» ("THE REGISTRY REFERS TO A TAG THAT DOES NOT EXIST") — `derevo.ref` points to nothing.
+- «РЕЕСТР ССЫЛАЕТСЯ НА МЕТКУ, КОТОРОЙ НЕТ» ("THE REGISTRY REFERS TO A TAG THAT DOES NOT EXIST") — `derevo.ref` points to nothing. Since 3.1.28 (B-N-1978): if an
+  open `montazh-okno` window names `entry:<id>` of that record, this is the files → tag → record gap — the watcher prints
+  «ОТЛОЖЕНО …» and stays silent. Helper: `MMV_MONTAZH_OKNO` (default `/usr/local/sbin/montazh-okno`); no window, an expired
+  window or a helper failure keeps the old red. An overdue window is reported by `montazh-okno watch`. The other three kinds
+  are never deferred.
 
 Historical tags (put before the journal) are taken from the snapshot `--snimok` (see installation): with the
 same object — not red, they are counted as a number broken down by package in the summary. Without the snapshot the watcher
@@ -343,19 +382,43 @@ The read-only test/stend-flagi-okna.py checks Id, LoadState and effective ExecSt
 
 Entry closure also runs the current installed_check/fingerprint_check through the registry consumer's actual run(...,verify=True), at most15s each, for this entry only. The authoritative registry already grants these commands to root verify; window JSON accepts no command fields. This registry must be regular, root-owned and not world-writable; trust in its authorised write group is the existing registry-watchdog boundary. Command/value failures leave the window open. MO_REESTR_PRIBOR explicitly substitutes the existing run source in fixtures. Compared values and command stderr are not printed by the closure helper.
 
+## B-N-2082: removing a file from derevo (3.1.34)
+
+A file that is no longer in the entry and has not moved to another entry is accepted at window close only with a `--snyat` trace: the old name is absent, its bytes are in the backups `/var/backups/montazh/<task>/*.tar` (and `…-s-klyuchom`) exactly once, and exactly one `<name>.SNYATO-*` with the same sum lies next to it.
+**The `--punkt` of the removal must equal the window task; otherwise a removal from derevo does not close.** `--snyat` does not open a window itself.
+
+## B-N-2111 items 31(a)+(b): registry shape first, release window second (3.1.40)
+
+When a release changes the **registry entry's shape**, adding `installed_check`/`derevo` paths for files that **already exist on disk**, use this order (Veniamin's decision, Zabava's order of 17 October 2026 22:40:34 UTC):
+
+1. **A separate registry-only step before opening the release window.** Prepare the new entry shape with values for the **current installation** (`version`/`fingerprint` from its checks), preserve the previous entry, apply `agent-plugins pravka` against the captured baseline, then run strict `verify` without `--avto-montazh`: matching, not deferred. Do not substitute future release values or change files in this step. Accept the shape change separately; protection of existing files only grows at this point.
+2. **Then open the ordinary release window.** Its plan is built from the already expanded live entry. A `smontirovat-fajly --okno-id` join sees the declared path, and the check path set matches the plan at closure. The files, release tag and final entry values still pass the ordinary window checks; joining gains no right to expand the plan or extend its deadline.
+
+**Example — `dsh-pamyat-obsluzhivanie 3.1.5`:** `/usr/local/lib/systemd/system/dsh-pamyat-obsluzhivanie.service` already existed on disk but was absent from the entry. With those starting conditions, first include the existing unit in the entry's shape, recompute values from the current files and obtain a matching `verify`; only then open the release window. This is an ordering rule, not weaker “producer is outside immutable plan” or “check paths changed” checks.
+
+**Boundary:** when a release brings a new file into a directory covered by no entry, the absent file cannot be registered in advance and verified against the current installation. This order does not apply: return to design option (1), a plan naming the registry candidate at opening, and decide the specific case separately. That is not an implemented feature of the current CLI. Explicit expansion of an open plan, option (2), was rejected; there is no automatic workaround for this boundary.
+
+**Forward closure and rollback use different plans:** `zakryt`/`vosstanovit` verify forward `checks`; `otkat-proveren` uses its own inverse plan (the protected `rollback_plan` for a copy window, an accepted complete inverse plan for a generic window). Do not replace them with one shared forward plan. Verified rollback proves the original snapshot, not copy health.
+
 ## B-N-2034: one derevo entry, files in several directories
 
 The registry check now pins ALL `derevo.files` of the entry, not only the call's targets, so it is identical for calls in different directories. Order: the first `smontirovat-fajly` opens the window (prints "ОКНО МОНТАЖА: ID"); every further directory of the same entry joins with `--okno-id ID`; close with `montazh-okno zakryt ID` after the last directory, the tag and the registry write. A join adds only file checks of its own targets owned by an entry whose check is already in the window and equals the call's check; the deadline is not extended; a target already declared as a subject must match exactly; a file outside the window's entries refuses before replacement. The window cannot close before the last directory: the derevo/ref check sees unmounted files. NOT CAUGHT: a directory of the same entry mounted without any window (manual install) stays outside it and readers stay strict; files the derevo entry does not list.
 
 ## B-N-2039: a new package in several directories and entries without derevo
 
+**3.1.40 qualification:** the earlier B-N-2039 procedure below does not authorize bypassing items 31(a)+(b): a new file in a directory covered by no entry requires a separate decision under the boundary above; several separate windows do not automatically replace that decision.
+
 The "ОКНО МОНТАЖА" line names `--okno-id` ONLY when the window holds an `entry:` (a derevo entry already in the live registry). A new package in 2+ directories: one window per directory (no `--okno-id`), each closed right away; until the registry write nobody watches the package; strict acceptance is the release watcher's tick after the write. Single-file entries and profiles (entries without derevo) whose files are mounted are not covered by the window — either take them into the same window as the registry write or expect the registry-watchdog alert (Zarya's B-N-2039 design, option C).
+
+**Joining under a different task is refused before writing** (B-N-2111 (23)): with `--okno-id`, `smontirovat-fajly` requires the call’s `--punkt` to exactly match the window’s `task` before backups, temporary files or the installation lock. A mismatch exits 2 and names both values. An empty or missing `task` in an old window is also a refusal; it is not inferred from the call. An empty `--okno-id` is rejected. The same rule applies to `--progon`. Backups therefore remain under the window task directory used by `verify_removed`.
+
+The check applies only to joins with `--okno-id`: one JSON read with a 2 MiB limit, no writes or retries; it does not run without `--okno-id`. Full schema, phase, boot and deadline checks remain in `montazh-okno podgotovit`. This check does not exclude concurrent replacement of the window by another root between the early read and later installation, or installation outside the tool.
 
 ## B-N-2042: entries without derevo — in the window by the path in their check (3.1.14)
 
 Since 3.1.14 the B-N-2039 note on entries without derevo is narrowed. `podgotovit` puts `entry:<id>` into the window for every entry WITHOUT `derevo` that has an `installed_check`, when the call's target exactly equals an absolute path standing as an ARGUMENT in its `installed_check`/`fingerprint_check`. A path in command position (`/usr/local/bin/x --version`, `sudo -n /x …`) is a tool, not a subject. A bare "/", top-level directories and `/dev`, `/proc`, `/sys` are not taken. A target UNDER an entry's directory counts only for the directory of an explicit `cd` of depth ≥3 that no other entry `cd`s into or below; otherwise a line `СЛЕПОТА: запись <id> — cd …; окно её не берёт` is printed instead of an `entry:` for everything. `agent-plugins verify --avto-montazh` defers such an entry (`list --health` only entries with `montazh_consistency: true`). A file that is both in a package's `derevo.files` and in a single-file entry puts both `entry:` subjects into the window. A second directory of the same entry joins with `--okno-id`.
 
-**Order: files → registry `pravka` IN THE SAME STEP, within 1800 s → `zakryt`.** The window closes only when the entry's `version`/`fingerprint` match the machine: before `pravka`, `zakryt` reports "НЕ ЗАКРЫТО". Miss the window's deadline and the deferral ends; `montazh-okno-watch` alerts the owner about the overdue window. The "ОКНО МОНТАЖА" line says so.
+**Inside the window, after the preparatory step for an entry shape change (items 31(a)+(b)): files → registry `pravka` IN THE SAME STEP, within 1800 s → `zakryt`.** The window closes only when the entry's `version`/`fingerprint` match the machine: before `pravka`, `zakryt` reports "НЕ ЗАКРЫТО". Miss the window's deadline and the deferral ends; `montazh-okno-watch` alerts the owner about the overdue window. The "ОКНО МОНТАЖА" line says so.
 
 Coverage on the live registry, 14.10: 50 of 109 entries without derevo (45 of the 81 whose files were mounted in 7 days). Not covered: entries installed by `smontirovat-vypusk`, the platform window or npm (no registry is passed to the window); paths built through variables, substitutions and globs; a level-2 `cd` (`/opt/claude-oauth`, `/opt/subscription-gateway-guest`, `/opt/agent-skills-gws`) and omega's shared `site-packages`; entries without `installed_check` — for those the B-N-2039 rule stands (pravka in the same window or an expected alert).
 
@@ -432,3 +495,9 @@ Callers are VOW, strict consumer, helper closure/rollback/linked lookup and sing
 Copy rollback proves the exact old physical snapshot and full registry-entry digest, without executing old installed_check/health callbacks. It does not establish health; unit readers cannot treat it as a healthy release. Forward close and ordinary VOW retain strict current checks.
 
 The3.1.24 composition preserves Gamma3.1.23: source/archive/fullcopy remain pinned at C; a real refs/tags release may point to another commit only with the same package-subdirectory tree. Ordinary late zakryt refuses; explicit vosstanovit may record closed_late/closed_boot_id after strict verification, without renewing deferral.
+
+### B-N-ZV-ROTACIYA delta from 5688f149: copy ctime
+
+When the startup record is gone and the same PID predates the retained head of its UID journal family (`user-<uid>` for UID ≥ 1000, otherwise `system`) in the current boot, scan the entire copy including node_modules, directories, symlink inodes and targets. A later process-start second gives a separate TIME match, not a proven version. An older process gives SUSPICION and an alert. Equal seconds, unreadable metadata, failed journal reads or a replaced PID stay blind. A wholly unavailable copy has HISTORY only as an explanation inside alertable blindness. Missing history alone is never quiet success.
+
+The isolated child scan is limited to 20s and the remaining 420s total budget. TIME/history cannot announce green version recovery. chmod/chown may cause safe false positives. This is not proof of loaded bytes and does not protect against root, loading another path, or shared carriers that discovery never paired. Existing timer/service and root-only temporary-state tests remain; the ctime module is added to that runner. Deployment/versioning requires external gates.

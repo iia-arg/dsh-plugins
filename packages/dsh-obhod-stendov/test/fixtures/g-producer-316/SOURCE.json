@@ -1,0 +1,17 @@
+{
+  "repo": "sadik:/opt/iskra/workspace/dsh-plugins",
+  "commit": "0f45b1e45914196c98dadae638649de7f4860033",
+  "package": "dsh-subscription-gateway",
+  "version": "3.1.6",
+  "files": [
+    {
+      "path": "usage-producer.mjs",
+      "sha256": "a8183a3530a3a37453aff2d8c641842436df5951ef4e3c4eb70686ffa2f7547c"
+    },
+    {
+      "path": "engine-process.mjs",
+      "sha256": "d927f22800a84f2a77df27e23051a059ac136958e5912e1378be84d8d38dfb1c"
+    }
+  ],
+  "meaning": "Verbatim shipped AP0.1.9 producer; no usage-limits.json or startup initializer"
+}

@@ -2,9 +2,11 @@ Russian version: [README.md](README.md) · English below
 
 # dsh-obhod-stendov — nightly and weekly run of the live test stands on sadik
 
-**Version:** 3.1.51
+**Version:** 3.1.120
 
-Service software of sadik: a timer-driven run of test stands (nightly at 03:40 UTC and weekly on Wednesdays at 01:30 UTC), the runner
+Each root stand needs its own `OBLAST_STENDOV` entry; a comment in the stand does not grant privileges.
+
+Service software of sadik: a timer-driven run of test stands (nightly at 03:40 UTC and weekly on Wednesdays at 16:00 UTC), the runner
 `vse-stendy-boevye.sh` with the stand lists, the stands themselves and their data. The outcome of the run is read by `chitatel-obhoda`
 (package **dsh-storozha-sadik**).
 
@@ -21,6 +23,39 @@ The package is sources without `package.json`: `dorabotki/` mirrors the path `/o
 `iskra:iskra`), units and drop-ins are in `systemd/` (under `/etc/systemd/system/`). The number is the CHANGELOG heading and the tag
 `dsh-obhod-stendov-v<номер>`. Moved from live: the checksum of every file in the tree equals the checksum in live.
 
+The B-N-2063 nightly budget is **temporary**: `ceil100((mimo_limit+2500)*1.10)` = 4800 s at mimo=1800;
+the unit limit is 5100 s. **Recalculate after the first complete 2026-10-16 03:40Z run, by 2026-10-16 12:00Z.**
+This reserve enables measuring the full tail; it does not guarantee enough time for future growth.
+Profiling `pravki-mimo`/`sadik-watch` is assigned separately after mounting this candidate.
+
+The nightly wrapper calls adjacent `obhod-run-state.py` (install in the same `dorabotki/`, 644, iskra:iskra).
+The walker freezes its selection before the first stand and records starts, finishes and its own scope names in a private directory.
+On interruption the summary and alert name interrupted and unstarted paths. Before the selection is frozen, the declared list
+is explicitly labelled as a fallback. Only registered scope names with a unique run identifier receive TERM then KILL;
+cleanup is bounded to 10 s and multipart alerts to 22 s in total (2000 UTF-16 units per part, preserving all path lines).
+Before reading scope state, the wrapper stops its own separate launcher process group (`setsid`), including delayed dispatch;
+otherwise a not-yet-created scope could appear after cleanup. Nightly callers require a working scope0 and refuse stands
+when it fails; standalone gate behavior is unchanged. Launcher and scope cleanup share the same 10 s bound.
+Before each group signal, `/proc` must confirm both `pgrp=pid` and `session=pid`; otherwise cleanup logs a skip.
+A reused foreign leader PID receives no individual signal either.
+Failed state reads, cleanup or partial sends are reported as failures. SIGKILL of the wrapper itself or power loss cannot run
+its final report; the separate run reader covers missing runs. The weekly script is unchanged.
+Since 3.1.74, `notify()` logs `канал тревог <path>: код N` for each part and at most 20 combined
+stdout/stderr lines prefixed with `  канал: `. Exit codes and sending deadlines are unchanged.
+Iskra O9/O9б check this format; O6/O8 keep the B-N-2063 named-tail contract.
+Manual regression (not run nightly): `python3 -B test/test_night_abort.py`; needs sudo/systemd, uses only private stands,
+its own transient scopes, a neighbor fixture service and a stub alert sink. It does not run live agents or the owner channel.
+
+Since 3.1.86, the caller logs `КАНАЛ НЕ ВЫЗВАН` when the channel file is absent/inaccessible or not executable. The sender was never invoked, so its diagnostic belongs in the wrapper journal. The wrapper still exits 3 without another attempt. The existing exception stand covers the refusal and receiver recovery in cases О10/О10б/О11/О11б.
+
+Since 3.1.77, `s2_obertka` uses `--scope --collect` without `--wait`: finished failed scopes are collected;
+the calling walker captures exit status and output. S2 reads the journal rather than properties of collected units.
+Manual regression `sudo -n python3 -B test/test_s2_collect.py` executes the actual wrapper as `iskra`, checks exit 7
+and self-SIGKILL (exit 137), preserved streams/context, forwarded `--collect` and scope collection. Exact names are cleaned in `finally`.
+No memory pressure is induced: real OOM invokes the live `oom-watch` alerts. Self-SIGKILL does not reproduce OOM-failed state;
+the earlier failed-to-collected observation is retained in P7 and must not be repeated without coordination.
+Stands that inspect failed/OnFailure retain their units until observation and then clean only their own names.
+
 ## Contents — by calls (taken 07.10.2026)
 
 Method: for every file, the lines of the core (run scripts, lists, runner, stands) where the file name appears NOT in a
@@ -28,6 +63,59 @@ comment; a stand is in the package only if the run calls it, or a stand called b
 `stendy/` directory — only the lists. Of 54 disputed files in the root of `dorabotki`, 3 are taken — data and a helper read by
 `stend-kanarejki-shlyuza.sh`: `edinstvennye-sushchnosti-shlyuza.json`, `zayavlennye-proverki-kanarejki-shlyuza.json`,
 `sreda-yunita.py`; the other 51 are not in the package (below).
+
+## Live Codex gateways: app-server mode
+
+`test/stend-codex-app-server.py` is called nightly by its own `OBLAST_STENDOV` row with `@root` and is listed in the stand inventory. It discovers live gateways using `systemctl list-units 'coder-gateway*'` and MainPID, and identifies Codex from live `GATEWAY_POSTAVSHIK=openai` in `/proc/<MainPID>/environ`. Each must have `GATEWAY_CODEX_PUT=app-server` after trimming the same whitespace set as the gateway’s JS `.trim()`; an empty trimmed or absent value defaults to `exec`; an effective value other than `app-server` produces `КРАСНОЕ` with the unit name, exit 1. Every checked unit is named, followed by `Codex-шлюзов N · app-server M · иначе K`.
+
+Zero Codex gateways, unreadable or ambiguous environ, a systemctl error or a changed PID/starttime is blindness, exit 2. Process identity is rechecked after the read. The complete environ and unrelated variables are neither printed nor stored. The existing dsh-storozha-sadik `chitatel-obhoda` reads the outcome.
+
+One pass: at most 128 discovered units, 3 seconds per systemctl call and a 30-second overall timer; environ is limited to 1 MiB. No retries, state writes or restarts. Stopped gateways and non-openai providers are outside scope; a missing provider causes blindness rather than silent exclusion. This check does not prove a G binding, AP receipt completeness or app-server health. A process changing mode after startup, and changes after the final snapshot, remain outside its guarantee.
+
+Veniamin LOW for 3.1.103: versions 3.1.103–3.1.104 required exact bytes and falsely reported surrounding whitespace as red. Since 3.1.105 the stand follows the gateway’s `String(...).trim() || 'exec'`: a wrapped `app-server` is green; empty, whitespace-only and missing values are red `exec`. The JS trim set is shared with provider normalization; unrestricted Python `.strip()` is not used.
+
+## G: segments, size, rate, rotation and GC
+
+**3.1.120 — night 22.10: stend-atsiklichnosti names the real cause, stend-pokrytiya no longer asserts completeness of live marking (Gamma e2a27940).**
+**3.1.119 — g-source-contract: on Node failure the first 300 stderr bytes go into the reason text (Alfa 7059dc7e).**
+**3.1.118 — night 22.10: stand list +2 TG stands (stend-claude-turn-native/usage, AP 0.1.16 window debt); g-source-contract binds initializer files instead of the directory (Alfa 4ba93632).**
+**3.1.117 — gateway 3.1.10: 1 new gateway stand in the stand list (tree path; gateway 3.1.10 in master since 21.10 04:50Z).**
+
+**3.1.116 — for window 0.1.12 (gateway 3.1.9): 7 new gateway stands in the stand list (tree path; gateway 3.1.9 in master since 20.10 08:15Z).**
+
+**3.1.115 — stend-atsiklichnosti prints the subject under the second-ledger FAIL; two obhod stands no longer leave a root-owned `__pycache__` in the tree; SREDA_STENDOV environment for 5 dsh-tool-bridge stands of Iskra's copy.**
+
+**3.1.114 — for window Ш (gateway 3.1.8): 4 gateway stands in the stand list (tree path; goes live only in window Ш after the gateway merge), and the nightly canary stand parses an environment passed as an `env:` object property.**
+
+**3.1.113 — R watchdog for the simplified 0.1.10 accounting (Zabava's policy decision 18.10, Veniamin 18:01 MSK; Zarya's hand).** `test/stend-r-journal-size.py` is called by an `OBLAST_STENDOV` row `@root /opt/iskra/app` and a `SREDA_STENDOV` row; `chitatel-obhoda` reads the verdict. Until the accounting window the argument is `--otlozheno` ("not kept", code 0); the window replaces it with `--istochniki <Gamma's reader sources config>`. The limit comes only from ONE policy file shared by writer and reader, `/etc/dsh-telegram-multiagent/usage-runtime-policy.json` (root, no group/other write; exactly `{schemaVersion:1, fileMaxBytes, recordMaxBytes}`); the watchdog has no limits of its own, `--policy` is for probes only. Only `lstat` of R and `systemctl is-active` of the source's TG service; contents are not read. RED in exactly three cases, each naming its subject: (a) policy missing / unreadable / unprotected / wrong shape; (b) R larger than `fileMaxBytes` — truncation failed (exactly the limit is legal); (c) the service is active but R is missing or its mtime is older than 300 s — "writer silent" (writer heartbeat 15 s). No YELLOW. Unsafe R directory/file, unqueried service, missing sources config — BLIND (code 2); service not active and no R — "not judged". The sources config is Gamma's reader profile `/var/lib/autopilot-usage/source-profile.json` (`participants[]` → `name`, `uid`, `runtimeSource.raw`; the service is field `tgService`, a `POLE_SLUZHBY` placeholder until Gamma's P7); a defective profile or a missing service field is BLIND naming the participant; no own list. Not caught: a foreign `touch` of R (false green by mtime), events between nightly runs, R contents. Probes: `sudo -n python3 -I test/test_r_journal_size.py [probe]` — 32.
+
+**3.1.108 is a candidate for the combined AP0.1.10 window only: Gamma's segmented gateway3.1.8, Beta's reader/budget and this stand. Install after AP0.1.9 and only in that combined window.**
+
+The existing `OBLAST_STENDOV` root row calls `test/stend-g-journal-size.py`; `chitatel-obhoda` reads its verdict. Live Codex/Claude units are discovered via systemctl/MainPID and environ. Node exe/cmdline gateway.mjs selects each producer: absolute entrypoints through `/proc/PID/root`, relative ones through cwd. Producer and policy must be adjacent. Unknown wrappers/flags, parent links, traversal or unreadable identity give blindness2, without a main-build fallback. Segmented G uses CODEX_HOME/HOME through the same process root; parent identities are rechecked. Legacy schema1 retains the previous host G path.
+
+Strict policy JSON is bounded to256KiB: the two-key schema1 or writer3.1.8 schema3: schemaVersion plus legacyFileMaxBytes, segmentMaxBytes, segmentMaxAgeSeconds, rawRetentionSeconds and maxRecordBytes. Old schema2 and any additional directoryWarnBytes/closedCountWarn fields are rejected as unsupported; warning thresholds belong only to the stand settings. Bad schema/numbers, duplicate keys or missing file mean named blindness2, with no fallback128MiB. The size stand never imports JavaScript. On-disk policy can differ from the writer's in-memory value until restart.
+
+Schema3 uses `g_segment_source.py` for metadata/stat and observedAt in the first active line:0400 source anchor with required safe integer UTC epoch-ms sourceCreatedAt;0600 manifest/lock/active;0400 closed raw/seals;0700 directories. Known files must be regular, owned by gateway uid, nlink1 and not links. `g_safety` enforces the initializer's early guards, followed by segment metadata guards. Unsafe objects produce yellow G-disabled; invalid schema, missing required data, intent or unstable snapshot produce blindness2. Chmod alone cannot re-enable a writer disabled at startup: restart is a separate coordinated action. Green does not prove the writer is enabled. No manual UUID profile is maintained.
+
+All entries in `segments/` are counted. Expected count is `2*ceil(rawRetentionSeconds/segmentMaxAgeSeconds)+2`,338 for7days/1hour. Startup count WARN is strictly `>2*(7*24*2+2)` (>676), not policy.closedCountWarn512. Total bytes cover the whole source: active, anchor, raw/seals/metadata and extra regular files; filesystem allocated bytes are separate. Startup size WARN is strictly>1073741824bytes (1GiB). Orphans warn separately. The GC line reports the oldest closed segment; older than retention+3600seconds means “GC отстаёт”. Each measured schema3 source has three separate rows: GC, Growth and Reference. GC and growth have independent verdicts. The reference row has no FAIL/color and places actual whole-source file count (plus segments count) next to hourly expectation344, `2(N+1)+4+2`. This is an hourly reference, not an alarm threshold: size rotation can legitimately produce more files. These three rows use the existing STEND-G-METRIC transport; rotation below adds a fourth row, and maximum remains separate. These are soft warnings, not quotas or early-deletion instructions.
+
+The separate `РОТАЦИЯ` row warns for a **nonempty** active when `now-firstObservedAt > (policy.segmentMaxAgeSeconds+15*60)*1000`: `ротация стоит: <gateway>, первая запись <UTC>`. firstObservedAt comes from observedAt in the first active line, not manifest.active.openedAt or mtime. An old empty active receiving a fresh record remains green before the writer seals it. Metrics include both openedAtMs and firstObservedAtMs. Read at most maxRecordBytes+1 bytes (≤65537), with regular-file/uid/0600/nlink1/O_NOFOLLOW and before/after stat guards. Invalid JSON, duplicate keys, invalid/future timestamps and incomplete/oversized first lines produce blindness2. Full raw validation is outside scope. Equality at the age boundary is healthy. Empty active is neutral with firstObservedAtMs=None. No new state is written; GC/growth/reference verdicts stay independent.
+
+Stateless rate is the sum of validated seal byteLength with `now−604800000 < closedAt <= now`, divided by604800seconds. Active and older seals are excluded. This is a sliding seven-day closed-raw average, not a difference between total sizes across GC. Young sources still use the seven-day denominator, not elapsed lifetime.
+
+Operator settings are together at the top of `test/g_segment_source.py`: WARN_BYTES, WARN_FILES and THRESHOLD_STAGE. Thresholds stay fixed and explicitly labelled startup (“стартовые”). There is no learning, root measurement state or new reader. Each night `STEND-G-METRIC:` emits measuredAtMs, unit/participant, totalBytes, segmentFiles, closedBytes7d, bytes/second and thresholds. The existing collector forwards these rows to its stdout/journal even on exit0. A separate `STEND-G-METRIC: МАКСИМУМ` row names the fastest measured gateway and its rate; each gateway keeps its individual row. The maximum compares exact closedBytes7d, not summed or rounded rates. Incomplete coverage/blindness is labelled partial; no measured sources is unmeasured, not numeric zero. After a week, people inspect that series, calculate `2*(fastest gateway rate*7days)` and change constants/label in a normal reviewed window. The stand never recalibrates itself.
+
+Schema3 retires the old75%/100%128MiB active-file alarms. The AP contract now compares legacyFileMaxBytes ↔ G_WRITER_LIMIT and maxRecordBytes ↔ G_RECORD_ALLOWANCE separately; neither is a whole-source segmented limit.128MiB remains only the legacyS0 schema bound (+maxRecordBytes); normal segments use segmentMaxBytes. Volume warnings concern the whole source. They do not attest AP reader budget, P1/sequence/freshness, binding/completeness, raw SHA or coordinated rewriting by the same uid. The all-history inspectGatewaySegments helper has no P1/I/O budget and is not used; Beta owns the AP reader.
+
+Legacy schema1 preserves safe integer gatewayV1FileMaxBytes>65536, yellow `(limit*3+3)//4`, red limit, FAIL/source-size-gap warnings and the AP equality contract. Isolated `python3 -I -B -c` imports usage_registration from `/opt/autopilot/current/skill/tools`; module origin/release and symlink containment are checked before import. AP<producer and AP>producer are distinct red reasons with both values/paths. Missing module/import/limit gives blindness2. Beta confirmed the import is clean; author probes use a copy of the future layout. AP import is limited to3seconds/64KiB stdout/stderr, without pyc. Schema3 checks both pairs above; either mismatch is red with the pair, values and paths, while a missing G_RECORD_ALLOWANCE is blindness2. The AP usage-reader-limits.json is stamped before/after import and the initializer table. Import receives PATH and the existing unchanged parent HOME; other environment entries are filtered. This verifies the numeric contract, not a whole-source AP budget.
+
+Neither G nor producer means neutral “build without G” with path; G without producer is named blindness2. Policy is required whenever producer exists, even without G. Missing G in a process definitely newer than max(producer mtime,ctime) is yellow G-expected; an older process is neutral before-installation. Clock ambiguity/future timestamps are blindness2. Counts distinguish total/withG/withoutG/disabled; zero scope is blindness. Exit0 means no alert, not existence of G.
+
+The other existing root row calls stend-g-source-contract.py → live g-source-contract.py. Every process-discovered producer directory is checked once by dev/inode with all unit names, never a build-fixture fallback. Actual prepareGatewayUsage runs in temporary HOME: two providers × four directory states × seven file states,56cases. Schema3 also checks full metadata after initialization. Mismatch is red with case/source; errors give blindness2. Explicit --producer accepts an absolute usage-producer.mjs path.
+
+Pinned fixtures g-producer-359a/25d8 are for deterministic builds only (SOURCE.json/commit/SHA); the nightly row is the live contract.All four files of Gamma writer candidate25d8092059192ee3a456d99fd7e91123955d21cb from AP010-G-WRITER-LIMITS-ONLY-20261018 match their Git blobs; its external acceptance is not attested here. Actual prepare obtains sourceCreatedAt with the real clock in a scratch HOME, and the CLI runs through a temporary MainPID. Handcrafted metadata remains unit-level input, not a substitute for that owner probe. Forced seals invoke the writer method to test count/reference geometry, not production load. Fixture ap-limits-0516 contains Beta0516b410 actual usage_registration.py, mail_registration.py and usage-reader-limits.json in the future skill/tools layout, with hashes/origins in SOURCE.json. The old2 adaptation from r3 is removed: builds and the live contract use the actual schema3 writer. Recheck the joint candidate if the final writer changes; installation is not attested here.
+
+Size pass limits:128units, systemctl3seconds/call,30seconds overall, environ1MiB, cmdline/status64KiB;16384objects/source,8MiB/JSON and32MiB total metadata. Contract:90seconds overall, Node15seconds/build,256KiB stdout/stderr. bwrap exposes imports read-only, only scratch HOME/tmpfs writable, no external network/PID and no capabilities. Process and static initializer files (producer, engine-process, policy, plus usage-segments for3) are checked before/after. No retries/state/cleanup/restarts. Arbitrary future imports and deliberate file/mount alternation are not atomically covered; loaded memory code is not checked. Production HOME/gateway.mjs/services are not executed.
 
 ## Files
 
@@ -93,6 +181,7 @@ git stores only the "executable" bit, so the mode and owner on disk are in the t
 | `dorabotki/stendy/proba-kopij.sh` | `/opt/iskra/workspace/dorabotki/stendy/proba-kopij.sh` | stand stend-mest-kopij.sh | 755 | iskra:iskra |
 | `dorabotki/stendy/proba-prav-domov.sh` | `/opt/iskra/workspace/dorabotki/stendy/proba-prav-domov.sh` | stand stend-prav-domov.sh | 755 | iskra:iskra |
 | `dorabotki/stendy/smv-atomic-probe.py` | `/opt/iskra/workspace/dorabotki/stendy/smv-atomic-probe.py` | stand stend-smontirovat-vypusk-rezhimy.sh | 644 | iskra:iskra |
+| `dorabotki/stendy/smv_fixture.py` | `/opt/iskra/workspace/dorabotki/stendy/smv_fixture.py` | four stend-smontirovat-vypusk-*.sh and smv-atomic-probe.py; private fixtures only | 644 | iskra:iskra |
 | `dorabotki/stendy/stend-a2a-owner-copy-watch.sh` | `/opt/iskra/workspace/dorabotki/stendy/stend-a2a-owner-copy-watch.sh` | nightly run (perechen-boevyh-stendov.txt); runner vse-stendy-boevye.sh | 755 | iskra:iskra |
 | `dorabotki/stendy/stend-aclaude-snaruzhi.sh` | `/opt/iskra/workspace/dorabotki/stendy/stend-aclaude-snaruzhi.sh` | nightly run (perechen-boevyh-stendov.txt); runner vse-stendy-boevye.sh | 644 | iskra:iskra |
 | `dorabotki/stendy/stend-chitatelya-obhoda.py` | `/opt/iskra/workspace/dorabotki/stendy/stend-chitatelya-obhoda.py` | nightly run (perechen-boevyh-stendov.txt); runner vse-stendy-boevye.sh | 644 | iskra:iskra |
@@ -128,7 +217,6 @@ git stores only the "executable" bit, so the mode and owner on disk are in the t
 | `dorabotki/stendy/stend-pereklyuchatelya-podpiski.sh` | `/opt/iskra/workspace/dorabotki/stendy/stend-pereklyuchatelya-podpiski.sh` | nightly run (perechen-boevyh-stendov.txt); runner vse-stendy-boevye.sh | 755 | iskra:iskra |
 | `dorabotki/stendy/stend-prav-domov.sh` | `/opt/iskra/workspace/dorabotki/stendy/stend-prav-domov.sh` | nightly run (perechen-boevyh-stendov.txt); runner vse-stendy-boevye.sh | 755 | iskra:iskra |
 | `dorabotki/stendy/stend-pravki-mimo.sh` | `/opt/iskra/workspace/dorabotki/stendy/stend-pravki-mimo.sh` | nightly run (perechen-boevyh-stendov.txt); runner vse-stendy-boevye.sh; vse-stendy-po-tajmeru.sh | 755 | iskra:iskra |
-| `dorabotki/stendy/stend-pravki-postavki-omega.sh` | `/opt/iskra/workspace/dorabotki/stendy/stend-pravki-postavki-omega.sh` | nightly run (perechen-boevyh-stendov.txt); runner vse-stendy-boevye.sh | 755 | iskra:iskra |
 | `dorabotki/stendy/stend-priyomnik-itog.py` | `/opt/iskra/workspace/dorabotki/stendy/stend-priyomnik-itog.py` | stand stend-priyomnik-itog.sh | 755 | iskra:iskra |
 | `dorabotki/stendy/stend-priyomnik-itog.sh` | `/opt/iskra/workspace/dorabotki/stendy/stend-priyomnik-itog.sh` | nightly run (perechen-boevyh-stendov.txt); runner vse-stendy-boevye.sh | 755 | iskra:iskra |
 | `dorabotki/stendy/stend-profil.sh` | `/opt/iskra/workspace/dorabotki/stendy/stend-profil.sh` | nightly run (perechen-boevyh-stendov.txt); runner vse-stendy-boevye.sh (@root, HODPRIBOR, argument /usr/local/sbin/smontirovat-fajly) | 755 | iskra:iskra |
@@ -172,7 +260,7 @@ git stores only the "executable" bit, so the mode and owner on disk are in the t
 | `systemd/vse-stendy-boevye.service.d/30-stend-nabora.conf` | `/etc/systemd/system/vse-stendy-boevye.service.d/30-stend-nabora.conf` | drop-in: STEND_POLKA, STEND_PLAGINY for the set stand | 644 | root:root |
 | `systemd/vse-stendy-boevye.service.d/60-bash-padenie-70.conf` | `/etc/systemd/system/vse-stendy-boevye.service.d/60-bash-padenie-70.conf` | drop-in: run through bash-padenie-70 | 644 | root:root |
 | `systemd/vse-stendy-boevye.timer` | `/etc/systemd/system/vse-stendy-boevye.timer` | systemd (enabled) | 644 | root:root |
-| `systemd/vse-stendy-nedelnye.service` | `/etc/systemd/system/vse-stendy-nedelnye.service` | its own .timer, Wed 01:30 UTC | 644 | root:root |
+| `systemd/vse-stendy-nedelnye.service` | `/etc/systemd/system/vse-stendy-nedelnye.service` | its own .timer, Wed 16:00 UTC | 644 | root:root |
 | `systemd/vse-stendy-nedelnye.service.d/60-bash-padenie-70.conf` | `/etc/systemd/system/vse-stendy-nedelnye.service.d/60-bash-padenie-70.conf` | drop-in: run through bash-padenie-70 | 644 | root:root |
 | `systemd/vse-stendy-nedelnye.timer` | `/etc/systemd/system/vse-stendy-nedelnye.timer` | systemd (enabled) | 644 | root:root |
 
@@ -194,6 +282,12 @@ git stores only the "executable" bit, so the mode and owner on disk are in the t
 
 ## Dependencies
 
+- P-row canon: `/usr/local/bin/summa-predmeta-2` (dsh-pamyat), installed before this consumer. nashi passes one directory and reads one 16-character hex digest from the second output field; the hashing method is preserved. Missing canon, failed calls and empty/malformed digests cause named blindness and exit 2 before manifest checks or writes. Covers `/opt/iskra/plugins/*/` and `/opt/dsh-package-manager/*/package/`, not other roots or semantic package correctness; failures are not retried.
+- `stendy/stend-nashi-montazh.py` copies the real installed canon into its private `/usr/local/bin`; use `KANON_BIN` for a candidate. It checks healthy → empty-success → recovery and refuses --save without changing the manifest.
+- **dsh-pribory ≥ 3.1.2**: `nashi-dorabotki.sh --check` (§3 coverage) finds `npm-sostav --files` through PATH; the helper needs jq. Install `/usr/local/bin/npm-sostav` BEFORE this consumer, while npm 11 is still active. A missing helper returns 2 with the required dependency named. Parsing failure on npm 11/12 names the directory and reports coverage as unmeasured, code 2. A directory without `package.json` is skipped.
+- `stendy/stend-nashi-montazh.py` copies the real `npm-sostav` from PATH into its private `/usr/local`; use `NPM_SOSTAV_BIN` for a candidate.
+- Coverage uses `npm pack --ignore-scripts --dry-run --json`: package lifecycle scripts, including prepack/prepare, are not executed. The manual regression `--scenario hooks` requires both fixture hook markers to remain absent. This protects this pack invocation only; it does not audit npm or package contents and does not build missing outputs.
+- Manual §3 regression: `sudo python3 test/test_nashi_ohvat.py --helper <npm-sostav candidate> --npm-dir <npm library directory> --output <JSON>`; private mount/net namespaces, no npm PATH shim. Each case has a 120 s limit and temporary fixtures are removed on exit. Covers parsing and coverage only, not npm content correctness or other `--check` sections; the nightly runner does not call this manual test.
 - Programs: bash, python3, node, systemctl, journalctl, sudo, `systemd-run` (a scope for every stand), `setpriv` (the stand's account
   in the scope with the same groups), `setfacl` from the acl package (the guest agent's journal), `timeout` (the stand's time limit); `bash-padenie-70` from the package
   **dsh-storozha-mashiny** (drop-in of both units).
@@ -233,11 +327,11 @@ changes>` (a manual stand that changes the live machine) and `# ZHIVAYA-MASHINA-
 «⚠️ С1: <стенд>» with the first findings, «С1 (предупреждение, не красное): …» ("warning, not red"), «NET без проверки С2 (@root): N» ("NET without a С2 check"; a NET declaration of an
 @root stand cannot be checked by С2). С1 does not change the run's exit code.
 
-**С2 — detection afterwards, not protection.** Every stand runs in its own `sudo -n systemd-run --scope --unit=obhod-stend-<pid>-<N>` through
+**С2 — detection afterwards, not protection.** Every stand runs in its own `sudo -n systemd-run --scope --unit=obhod-stend-<pid>-<run>-<N>` through
 `setpriv` with the same uid, gid, groups and umask; the environment is passed in a 0600 file in the run's working directory (on the command line
 everyone would see it). After the run, one `sudo -n journalctl` query over the run window judges the sudo and shadow-utils records of every unit
 by the С1 rules. A finding is «🔴 С2: стенд <путь> изменил живую машину» ("stand <path> changed the live machine"). Stopping and resetting its own temporary units (`systemd-run --unit=`
-from the same stand) is not a finding. Sight is checked on every run: unit no. 0 calls `sudo -n /usr/bin/true obhod-stend-<pid>-0`; if its record is missing from the journal
+from the same stand) is not a finding. Sight is checked on every run: unit no. 0 calls `sudo -n /usr/bin/true obhod-stend-<pid>-<run>-0`; if its record is missing from the journal
 or the scope did not come up — «СЛЕПОТА С2» ("С2 blind"). Since 3.1.9 the query also takes records by `SYSLOG_IDENTIFIER`: when journald
 receives a record after the process has exited, it stores it without `_COMM` and `_SYSTEMD_UNIT`. The sight probe is recognised by the run tag;
 other such records of the own account and of shadow-utils are counted («записей без привязки к юниту N»), a changing one among them is
@@ -261,6 +355,75 @@ Runner exit codes: 0 — clean; 3 — only the expected (exceptions are in force
 an exception, an expired or unconfirmed exception, the coverage diverged from the list, **a С2 finding** (exceptions do not lift it);
 2 — completeness cannot be established: no stands, no list, the exceptions file not read, **С2 blind** (unless there is a reason for 1).
 
+## Stand duration series (3.1.100, B-N-2105)
+
+The nightly unit sets, by the drop-in `70-ryad-stendov.conf`, `VSE_STENDY_RYAD=/var/lib/vse-stendy-boevye/ryad.tsv` (`StateDirectory`, 0700, iskra);
+only a run with the run id from the nightly wrapper and without `PAKET_IMYA` writes (the gate takes the unit environment but does not write). The runner appends a line per
+stand right after it — a killed run keeps the lines written before the cut. Fields: night, run, path, account, seconds, code, the stand
+limit of that night, backup_running, load1 at start, iowait % over the stand. After the run the wrapper calls
+`dorabotki/sud-ryada-stendov.py` (thresholds and what it does not catch — in its header) and sends the signal by its own send. The reader is
+the coordinator via `chitatel-obhoda`; the action on a signal is a task to the stand owner "speed it up or justify the limit", not a
+default PREDEL raise. Regression: `python3 -B test/test_ryad_stendov.py` (sudo only for the fixtures' own scopes, as `test_night_abort.py`).
+
 ## Check
 
 The checksum of every package file = the checksum in live (`sha256sum`), modes = the table (`stat -c '%a %U:%G'`); the outcome of the run — the reader `chitatel-obhoda`.
+
+## SMV fixtures and backup samples (3.1.70, B-N-2065)
+
+The four `stend-smontirovat-vypusk-*` stands and `smv-atomic-probe.py` share `smv_fixture.py`.
+It creates a private owner registry, copy-checker configuration, state, lock, backups and npm cache.
+The source is cloned through its owner's upload-pack; only that clone's release tag is pinned
+to the historical commit under test (the current tag may have a different tree).
+Only `R` changes in a private copy of the real installer; `binding.json` records both hashes.
+Admission and copy verification remain real. Production source, registry, windows and copies stay untouched.
+Git calls are limited to 20s; installer runs to 90s plus 5s before SIGKILL; the outer stand limit is 120s.
+These cover named branches, not direct file changes bypassing the installer.
+
+`proba-kopij.sh` selects a regular sample from the current NUL-delimited backup inventory
+(or the `--koren` copy). Empty/failed enumeration, a vanished/changed sample, or failure to run
+the account probe means blindness, without retry or a green skip. Sample contents are not printed.
+Only EACCES/EPERM prove the expected read denial. The general readable-file scan and the other
+permission/legitimate-reader checks remain. This does not cover access between nightly runs,
+new backup locations outside the listed roots, or reads through sudo.
+
+Manual candidate regression: `sudo python3 -B test/test_b_n_2065.py --source-bundle <bundle-with-master-and-tags>`.
+It uses private mount/net namespaces and real temporary filesystem permissions; only the
+private probe's service User/LoadState responses are doubles. Host services are unchanged.
+
+### B-N-2063: shared registry check
+
+The normal watcher and narrow pravki-mimo stand call `libexec/sadik-watch-pravka.sh`. The stand reads the real channel/group function definitions without executing the watcher main, machine snapshot or owner helper. Its registry, state and channels are private. All nine checks and `_UID=0` filtering remain. The helper is installed as `/usr/local/libexec/sadik-watch-pravka.sh`, 0644 root:root, in derevo.files before the caller/stand. The source itself performs no IO. Run `python3 packages/dsh-obhod-stendov/test/test_pravki_isolation.py` from the tree with sudo available for A1–A4. This checks the real caller with isolated machine IO, never live delivery. The check does not cover agents.yaml, root forgery or semantic correctness of an accepted pravka.
+
+Autopilot 0.1.1: register `dsh-autopilot/test/stend-dsh-autopilot.sh` as one explicit `@root /opt/iskra/app` file with a 600s per-stand timeout (the wrapper has 480s internally). Enable the scope/list pair when the final accepted Autopilot 0.1.1 head is merged into Iskra's working-tree master and the wrapper at that canonical path matches the accepted hash. Installing `/opt/autopilot/packages/...` does not create this working-tree file; the walk can be enabled before that installation window. `vse-stendy-boevye.sh --predel-stenda <full path>` only queries the existing timeout table. Manual integration: `sudo -n env AP_STEND_SOURCE=<accepted 0.1.1 package> AP_ROUTE_EVIDENCE=<fresh directory> python3 -B test/test_autopilot_route.py`; actual walker/wrapper, isolated mounts/network, real root/ordinary UIDs, mutations and recovery.
+
+Run the same file with `NightlyRoute` and a separate fresh `AP_ROUTE_EVIDENCE` to check the AP-only nightly selection without `PAKET_IMYA`. With no arguments, only `AutopilotRoute` runs (six phases); the two manual runs must not share their evidence directory.
+
+Package selection also accepts a sole explicitly addressed stand at package root or in `test/`, without running it twice; coverage includes the exact file. `test/test_autopilot_gate.py` exercises the full unchanged gate against a private DEREVO registry/journal and creates only a local fixture tag.
+
+### Night accounting 3.1.109 — candidate for the combined0.1.10 window
+
+The existing root nightly dispatcher calls `test/stend-ap-accounting.py`; chitatel-obhoda consumes verdicts and STEND-AP-METRIC rows survive exit0. One pass30s, subprocess3s, ≤128units, environ1MiB/config256KiB, no retries/state/restarts/cleanup.
+
+Queue: sqlite3 -readonly on /var/lib/autopilot-mail/mail.sqlite inside a read-only filesystem namespace, so SQLite cannot create WAL-shm. One read transaction aggregates COUNT/MIN/MAX accepted_at; yellow at COUNT>=64. A missing table is no subject, not zero; a missing DB gives blindness2; an existing empty table yields COUNT0/NULL bounds. Bad schema/timestamps, read failures or inode replacement give blindness2. Missing required shm gives blindness2 rather than a write; immutable=1 is not used and WAL is not ignored.
+
+Providers: inspect every live openai coder-gateway using MainPID/environ CODEX_HOME and process-root config.toml. Any top-level model_provider, model_providers table or model_provider in any profiles.<name> table gives yellow with unit/path; config/env values are never printed. Missing config uses defaults. Recheck PID/starttime/environ/parent identity/config, including excluded non-openai processes. Eleven Codex gateways are expected; incomplete coverage gives blindness2. Every profile in this file is checked, including unselected profiles because a launch flag can select them. Launch flags, provider environment variables, overrides in other files and account/read RPC are outside scope.
+
+Account maps follow Beta07207242: root0644 /var/lib/autopilot-usage/codex-account-map.json, exact schemaVersion1/accounts with1–2 digest→codex-3/4 entries. Compare with tokens.account_id→SHA256UTF8 from /etc/claude-oauth/codex-podpiska-{3,4}/auth.json. No ID/token/email/digest is printed or stored. Bound map64KiB/auth1MiB each; root-owned regular single-link files, no writable group/other or unsafe parent, no-follow and before/after stat guards across all three files. Mismatch, incomplete map or identical account IDs in both slots give yellow «карта устарела». Missing/unsafe/invalid/changed input gives blindness2. Tests use synthetic auth in private namespaces, never live credentials. This is an observer, not the AP issuer or an installation.
+
+The metric is named exactly «принятые за 24 ч заявки, сейчас конечные UNBOUND (по причинам)» (requests accepted within 24 hours that are currently terminal UNBOUND, by reason). It scans every trusted root status in /var/lib/autopilot-usage/registrations independently of SQLite. Count requests with `now-86400 < acceptedAt <= now` that are **currently** state=UNBOUND and terminal=true, grouped by exact reason. Start N=8 per reason; yellow strictly above8. The row explicitly says acceptedAt: a request accepted more than24h ago but becoming terminal today is excluded. checkedAt is not the window timestamp; the coordinator chose this definition at05:24:50.
+
+The actual pinned Beta07207242 prune_terminal was checked before enabling green: it deletes terminal queue rows without an age minimum on a successful postal sweep (configured60s), or a new init, but retains root JSON tombstones. An isolated copy test retained1-second and2-day-old files byte-for-byte after removing their SQL rows. No age cleanup of tombstones exists in the reviewed callers. Manual root deletion or a new external cleaner remains outside that proof; changing the deployed owner/cleanup contract requires repeating it.
+
+Code/import of Beta's copy confirms a retry cutoff of180s from acceptance, rounding `2*(60+1)+15+35=172` up to60s. This is not a live latency measurement or completion SLA under infrastructure failure. Limits:4096statuses,16KiB each/32MiB total,128reasons, the same30s overall deadline, no retry/state. Exact schema1, safe root paths/files and all UTC timestamp forms are checked; pending requires a known pending reason and UTC retryUntil>=acceptedAt, not a hardcoded180s observer condition; every file and the directory set are rechecked. Invalid/missing/changed input or exceeded budget gives blindness2. An existing empty directory gives measured0/0 existing files, which alone does not attest a complete day of history; a missing directory gives blindness2. Pending/REGISTERED/out-of-window requests are excluded. The denominator counts existing root statuses in the window, not all accepted queue requests; a queued request without its first JSON status is absent from that denominator. All four rows now determine exit0/1/2; no permanent draft blindness remains. Candidate only: external review and the combined0.1.10 installation afterAP0.1.9 are required.
+
+The deterministic writer25d8 fixture also has a literal SHA256 pin for usage-limits.json from approved25d80920. Updating both fixture and SOURCE no longer bypasses the check. Moving an external donor HEAD while leaving the fixture unchanged is outside this package test; the author separately audits donor HEAD/blob before handoff.
+
+Forms were compared with Beta07207242/32ae983c pinned WIRE: queue epoch-seconds, exact UTF-8 account_id without trimming, a one-slot map cannot pass both-slot coverage. Read original root JSON, not the public projection dropping terminal. Legacy statuses without terminal/retryUntil give blindness2. This order covers default contract paths; custom profile mailDatabase and --index require a separately registered scope.
+
+
+### AP0.1.9 G without a policy sidecar
+
+The two G stands recognize only the shipped3.1.6 producer bytes pinned to SHA256 a8183a3530a3a37453aff2d8c641842436df5951ef4e3c4eb70686ffa2f7547c. That writer neither imports nor creates usage-limits.json. Its limit is derived from its actual inline guard, with no generic128MiB fallback. Another build missing its JSON remains blind; an unexpected sidecar next to the pinned legacy build also reports a mixed layout. Other policy-free legacy builds are outside this pin.
+
+Legacy G is created lazily on its first descriptor request, so a missing journal is neutral. Existing legacy size/safety thresholds remain. The live contract still compares the inline cap with AP G_WRITER_LIMIT; only the absent prepareGatewayUsage initializer is labelled not applicable, never56/56. JSON schema1/schema3 checks remain intact. The simplified R cursor does not remove the segmented G reader's policy dependency: Gamma5e9b2b7a still uses usage-limits.json/policyCli when gatewayTransport is configured. Flat legacy G and the R cursor do not need that G-sidecar; usage-runtime-policy.json is a separate R policy.

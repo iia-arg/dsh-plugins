@@ -1,0 +1,159 @@
+{
+  "source": {
+    "kind": "replay-archived-raw",
+    "base": "c2a510ed431b67a5517abab9bbb28ac89e5241d3",
+    "localRevision": "a20-b42-c2-limit-0141-time-v5-component",
+    "files": [
+      {
+        "source": "packages/dsh-autopilot/runtime/gateway_receipt_source.py",
+        "sha256": "a2fec7ad4aad88e60dcef8f8d45667da52309d27fd6c3705d949dd53489f34f1"
+      },
+      {
+        "source": "packages/dsh-autopilot/runtime/team_usage.py",
+        "sha256": "2ae70d3c5da3af252ebdf9b9446da182ccbb8efa316460c11de790849c188b1e"
+      }
+    ],
+    "replayBasis": "Time-v5 component worktree: actual process_requests(raw) == archived normalized",
+    "label": "Reader replay metadata only; archived raw/normalized/captureSource unchanged"
+  },
+  "participant": {
+    "uid": 1000,
+    "name": "master",
+    "engine": "codex"
+  },
+  "raw": [
+    {
+      "schemaVersion": 1,
+      "processGeneration": "process-ledger-fixture",
+      "generation": "observer-fixture",
+      "requestId": "request-fixture",
+      "requestGeneration": "request-ledger-fixture",
+      "uid": 1000,
+      "recipient": "master",
+      "engine": "codex",
+      "sessionId": "s",
+      "sessionCreated": 42,
+      "dshTurn": 1,
+      "processEpoch": "epoch-fixture",
+      "kind": "engine_process_start",
+      "seq": 1,
+      "observedAt": 1000
+    },
+    {
+      "schemaVersion": 1,
+      "processGeneration": "process-ledger-fixture",
+      "generation": "observer-fixture",
+      "requestId": "request-fixture",
+      "requestGeneration": "request-ledger-fixture",
+      "uid": 1000,
+      "recipient": "master",
+      "engine": "codex",
+      "sessionId": "s",
+      "sessionCreated": 42,
+      "dshTurn": 1,
+      "processEpoch": "epoch-fixture",
+      "kind": "engine_process_binding",
+      "seq": 2,
+      "observedAt": 1100,
+      "request_id": "request-fixture",
+      "turn": 1,
+      "enginePid": 123,
+      "engineStart": "1234",
+      "boot_id": "11111111-1111-4111-8111-111111111111"
+    },
+    {
+      "schemaVersion": 1,
+      "processGeneration": "process-ledger-fixture",
+      "generation": "observer-fixture",
+      "requestId": "request-fixture",
+      "requestGeneration": "request-ledger-fixture",
+      "uid": 1000,
+      "recipient": "master",
+      "engine": "codex",
+      "sessionId": "s",
+      "sessionCreated": 42,
+      "dshTurn": 1,
+      "processEpoch": "epoch-fixture",
+      "kind": "engine_ready",
+      "seq": 3,
+      "observedAt": 1150,
+      "threadId": "thread-fixture",
+      "turnId": "turn-fixture"
+    },
+    {
+      "schemaVersion": 1,
+      "processGeneration": "process-ledger-fixture",
+      "generation": "observer-fixture",
+      "requestId": "request-fixture",
+      "requestGeneration": "request-ledger-fixture",
+      "uid": 1000,
+      "recipient": "master",
+      "engine": "codex",
+      "sessionId": "s",
+      "sessionCreated": 42,
+      "dshTurn": 1,
+      "processEpoch": "epoch-fixture",
+      "kind": "watermark",
+      "seq": 4,
+      "observedAt": 2000,
+      "at": 2000
+    }
+  ],
+  "normalized": [
+    {
+      "kind": "request",
+      "requestId": "request-fixture",
+      "sessionId": "s",
+      "sessionCreated": 42,
+      "turn": 1,
+      "dshTurn": 1,
+      "uid": 1000,
+      "engine": "codex",
+      "startedAt": "1970-01-01T00:00:01.100000+00:00",
+      "endedAt": null,
+      "status": "running",
+      "subscription": null,
+      "authEpoch": null,
+      "sourceProcess": {
+        "pid": 123,
+        "boot": "11111111-1111-4111-8111-111111111111",
+        "start": "1234"
+      },
+      "requestGeneration": "request-ledger-fixture",
+      "request_id": "request-fixture"
+    },
+    {
+      "kind": "watermark",
+      "at": "1970-01-01T00:00:02+00:00"
+    }
+  ],
+  "operator": {
+    "uid": 1000,
+    "boot_id": "11111111-1111-4111-8111-111111111111",
+    "chain": [
+      {
+        "pid": 123,
+        "starttime": "1234"
+      }
+    ]
+  },
+  "startedAt": "1970-01-01T00:00:01.200000+00:00",
+  "expected": {
+    "sessionId": "s",
+    "sessionCreated": 42,
+    "turn": 1
+  },
+  "captureSource": {
+    "commit": "6c52b0635065d0ed05403521b37ae9e70c16a18e",
+    "files": [
+      {
+        "source": "packages/dsh-autopilot/runtime/gateway_receipt_source.py",
+        "sha256": "e3698b6fd29ee7d2c124b68f72b715c1a5c0af4b4a74483581453623bd2bfaf2"
+      },
+      {
+        "source": "packages/dsh-autopilot/runtime/team_usage.py",
+        "sha256": "dad3e5a5a1dbacfd68e9f31c7259b2bbaebf113d33a287fee07d90b8c49778f8"
+      }
+    ]
+  }
+}

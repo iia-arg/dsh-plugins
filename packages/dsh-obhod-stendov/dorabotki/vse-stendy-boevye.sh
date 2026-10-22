@@ -108,6 +108,9 @@ set -u
 #   свой HTTP на 127.0.0.1, временный каталог; предмет без довода — боевой /usr/local/sbin/ostrov-kopiya-watch.
 # B-N-2040 (14.10, Заря): +dsh-storozha-sadik/test/stend-pamyat-fill-predel.py БЕЗ @root — подставной journalctl (python -c), журналы
 #   машины не читает; предмет без довода — боевой /usr/local/libexec/pamyat-fill-watch.py (root 644, читается iskra). От iskra 6/6.
+# 3.1.98 ред.7 (17.10, Искра; выбор (а) Забавы 09:59Z, условие 2 Вениамина 08:27Z к dsh-storozha-sadik 3.1.19): +dsh-storozha-sadik/test/stend-enabled.py
+#   БЕЗ @root — настоящий сборщик/читатель sadik-watch-enabled.sh с подменёнными systemd/реестром, 24 случая, ~1,5 с, от iskra 24/24.
+#   Файл появляется в дереве ТОЛЬКО влитием 3.1.19 — в окне влитие идёт ДО монтажа этих строк (иначе «В ПЕРЕЧНЕ ЕСТЬ, НА ДИСКЕ НЕТ»).
 # B-N-2018 (12.10, Аврора; находка 17:45Z, наряд Забавы 17:45:53Z): stend-crm-caller Варвары — +OSTROV_API_MANIFEST/OSTROV_API_HEALTH:
 #   стенд (dsh-tool-bridge, следующий номер 3.1.2) теперь зовёт sverkaKopii — отставшая копия = СЛЕПОТА, а не молчаливый прогон по старому API.
 # B-N-1920 (09.10, Аврора; находка Зари 07:34Z): stend-mcp-input-schemas Варвары — @varvara вместо @root: под root (и под iskra —
@@ -115,13 +118,20 @@ set -u
 OBLAST_STENDOV="${OBLAST_STENDOV-/opt/iskra/workspace/dsh-plugins/packages/dsh-montazh/test/stend-montazh-okno.sh @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/dsh-montazh/test/stend-flagi-okna.py
 /opt/iskra/workspace/dsh-plugins/packages/dsh-montazh/test/stend-prewindow-gate.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-montazh/test/stend-copy-window.sh @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/dsh-montazh/test/stend-montazh-producer.sh @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/dsh-montazh/test/stend-zhivaya-montazh.sh @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/dsh-reestr/test/stend-montazh-mode.sh @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-mashiny/test/stend-dve-kopii-montazh.sh @root /opt/iskra/app
 /opt/agent-plugins/node_modules/dsh-vypusk-watch/test/stend-montazh-okno.py @root /opt/iskra/app
+/opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-preset-lifecycle.mjs @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-montazh-sutochnye.py
 /opt/iskra/workspace/dsh-plugins/packages/dsh-obhod-stendov/dorabotki/stendy/stend-nashi-montazh.py @root /opt/iskra/app
+/opt/iskra/workspace/dsh-plugins/packages/dsh-obhod-stendov/test/stend-codex-app-server.py @root /opt/iskra/app
+/opt/iskra/workspace/dsh-plugins/packages/dsh-obhod-stendov/test/stend-g-journal-size.py @root /opt/iskra/app
+/opt/iskra/workspace/dsh-plugins/packages/dsh-obhod-stendov/test/stend-r-journal-size.py @root /opt/iskra/app
+/opt/iskra/workspace/dsh-plugins/packages/dsh-obhod-stendov/test/stend-g-source-contract.py @root /opt/iskra/app
+/opt/iskra/workspace/dsh-plugins/packages/dsh-obhod-stendov/test/stend-ap-accounting.py @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/dsh-podpiski/test/stend-audit-kraev.py @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/dsh-limity/test/stend-audit-sostoyanie.py
 /opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-audit-kraev.py
@@ -129,12 +139,14 @@ OBLAST_STENDOV="${OBLAST_STENDOV-/opt/iskra/workspace/dsh-plugins/packages/dsh-m
 /opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-audit-yunits.py
 /opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-audit-porchi.py
 /opt/iskra/workspace/dsh-plugins/packages/a2a-bus/test/stend-alpha.py @root /opt/iskra/app
+/opt/iskra/workspace/dsh-plugins/packages/dsh-obhod-stendov/dorabotki/stendy/stend-reestr-verify-root.sh @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/a2a-bus/test/stend-limit-owner.py @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-b2023-reader.py @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-b2023-consumers.py @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-b2023-watch.py @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-b2023-watch-state.py @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/dsh-podpiski/test/stend-b2023-receiver.py @root /opt/iskra/app
+/opt/iskra/workspace/dsh-plugins/packages/dsh-podpiski/test/stend-switch-bot.py @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/dsh-socseti/test/stend-b2023-social.py @root /opt/iskra/app
 /opt/iskra/plugins/dsh-subscription-adapter/test/stend-audit-contract.mjs @iskra /opt/iskra/app
 /opt/iskra/plugins/dsh-subscription-adapter/test/stend-audit-docs.mjs @iskra /opt/iskra/app
@@ -165,6 +177,8 @@ OBLAST_STENDOV="${OBLAST_STENDOV-/opt/iskra/workspace/dsh-plugins/packages/dsh-m
 /opt/iskra/workspace/dorabotki/stendy/stend-oblasti-fajlom.sh
 /opt/iskra/workspace/dorabotki/stendy/stend-obsluzhivaniya-store-pin.sh
 /opt/iskra/workspace/dorabotki/stendy/stend-isklyuchenij-obhodchika.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-skillov.sh
+/opt/iskra/workspace/dorabotki/stendy/stend-propuska-paketa.sh
 /opt/iskra/workspace/dorabotki/stendy/stend-pokrytiya-kopij-mosta.sh
 /opt/iskra/workspace/dorabotki/stendy/stend-osnovy-versii.py
 /opt/iskra/workspace/dorabotki/stendy/stend-vorot-vypuska.sh
@@ -173,6 +187,7 @@ OBLAST_STENDOV="${OBLAST_STENDOV-/opt/iskra/workspace/dsh-plugins/packages/dsh-m
 /usr/local/libexec/stend-zagolovka-versii.py
 /usr/local/libexec/stend-source-only.py
 /usr/local/libexec/stend-mesta-po-id.py
+/usr/local/libexec/stend-vypusk-kopii.py
 /opt/iskra/workspace/dorabotki/stend-sekretov-na-mestah.sh
 /opt/iskra/workspace/dorabotki/stend-poteri-pisem.mjs
 /opt/iskra/workspace/dorabotki/stend-snyatie-ogranichitelej.mjs
@@ -259,12 +274,27 @@ OBLAST_STENDOV="${OBLAST_STENDOV-/opt/iskra/workspace/dsh-plugins/packages/dsh-m
 /opt/coders/gamma/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs @coders /opt/coders/gamma/app
 /opt/anna/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs @anna /opt/anna/app
 /opt/anna/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs @anna /opt/anna/app
+/opt/master/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs @master /opt/master/app
+/opt/master/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs @master /opt/master/app
+/opt/sova/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs @sova /opt/sova/app
+/opt/sova/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs @sova /opt/sova/app
+/opt/vintik/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs @vintik /opt/vintik/app
+/opt/vintik/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs @vintik /opt/vintik/app
+/opt/shpuntik/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs @shpuntik /opt/shpuntik/app
+/opt/shpuntik/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs @shpuntik /opt/shpuntik/app
+/opt/gayka/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs @gayka /opt/gayka/app
+/opt/gayka/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs @gayka /opt/gayka/app
+/opt/shurup/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs @shurup /opt/shurup/app
+/opt/shurup/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs @shurup /opt/shurup/app
+/opt/tumbler/plugins/dsh-tool-bridge/test/stend-cel-mosta.mjs @tumbler /opt/tumbler/app
+/opt/tumbler/plugins/dsh-tool-bridge/test/stend-predelov-iz-fajla.mjs @tumbler /opt/tumbler/app
 /opt/iskra/workspace/dorabotki/stend-kanarejki-shlyuza.sh @root /opt/iskra/app
 /opt/iskra/workspace/dorabotki/stendy/stend-rolej-shlyuza.mjs @root /opt/iskra/app
 /opt/iskra/workspace/dorabotki/stendy/stend-smontirovat-vypusk-git.sh @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-gruppy-prav.sh
 /opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-ostrov-kopiya-watch.py
 /opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-pamyat-fill-predel.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-enabled.py
 /opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/
 /opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-claude-task-control.mjs
 /opt/iskra/workspace/dsh-plugins/packages/dsh-subscription-gateway/test/stend-guest-tools.mjs
@@ -368,15 +398,26 @@ OBLAST_STENDOV="${OBLAST_STENDOV-/opt/iskra/workspace/dsh-plugins/packages/dsh-m
 /opt/iskra/workspace/dorabotki/stendy/stend-mashinnoj-redakcii.py
 /opt/iskra/workspace/dorabotki/stendy/stend-dogovora-trevogi.sh
 /opt/iskra/workspace/dsh-plugins/packages/a2a-bus/test/stend-outgoing-mirror.py
+/opt/iskra/workspace/dsh-plugins/packages/a2a-bus/test/stend-13-21.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-reestr/test/stend-init-zavesti.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-reestr/test/stend-ap-pochta.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-reestr/test/stend-obratno-granica.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-reestr/test/stend-yashchik-rezhim.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-reestr/test/stend-soc-anna.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-reestr/test/stend-pokrytiya-installed-check.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-reestr/test/stend-owner-reader.py
 /opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-nastroek-proby.py
 /opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-porchi.py
 /opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-watch-hvost.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-sposob2.py @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/oom-watch/test/stend-cli.py
 /opt/iskra/workspace/dsh-plugins/packages/oom-watch/test/stend-audit.py
 /opt/iskra/workspace/dsh-plugins/packages/oom-watch/test/stend-yunit-trevoga.py
 /opt/iskra/workspace/dsh-plugins/packages/voice-stack/test/stend-archive-warning.py
 /opt/iskra/workspace/dsh-plugins/packages/voice-stack/test/stend-voice-tools.py @root /opt/iskra/app
 /opt/iskra/workspace/dsh-plugins/packages/voice-stack/test/stend-runtime-contract.py
+/opt/iskra/workspace/dsh-plugins/packages/dsh-autopilot/test/stend-dsh-autopilot.sh @root /opt/iskra/app
+/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/test/stend-autopilot-mail-health.py @root /opt/iskra/app
 /usr/local/lib/omega-shlyuz/stend-shlyuza-omega.py @root /opt/iskra/app}"
 # Предел одного стенда: по умолчанию 120 с; B-N-1439, замеры Беты 02.10.2026 под iskra/PrivateTmp.
 # kontrakt: строка 185 с снята 07.10 (A-N-1728) вместе с двойником dorabotki; стенд пакета на systemd-resolved — 6/6 за 6 с, общих 120 с хватает.
@@ -386,9 +427,22 @@ OBLAST_STENDOV="${OBLAST_STENDOV-/opt/iskra/workspace/dsh-plugins/packages/dsh-m
 # B-N-1613 (05.10, Михалыч): stend-mail-stop-expired-delivery спит 150 с ради TTL 120 с — полный прогон под root: 2.5.78 151 с,
 # 2.5.81 150 с (код 0); 151 × 1,5 = 226,5 → 230 с.
 # A-N-1975 (10.10, Заря): +ветка метапакета, 286 с × 1,5 → 430 с (stend-vorot-vypuska; прежде 300 при ночном 275 с).
+# 3.1.97 (B-N-2093 r3, 17.10, Искра): stend-skillov — свой общий предел 300 с (17 скиллов × ≤30 с, остаток — СЛЕПОТОЙ);
+#   обходчику 330 с, чтобы обрыв по 124 не опередил собственную слепоту стенда. Замер полного прогона — 0,5 с (17.10, 3 прогона).
+# 3.1.98 (B-N-2104(1), 17.10, Искра; слово Забавы 06:22Z): stend-atsiklichnosti — 300 с. Ряд замеров под root (строка области @root):
+#   ночь 16.10 97 с (код 0) · ночь 17.10 108 с (код 1) · 17.10 06:16Z 126 с прямым прогоном (код 0; нагрузка 7,9) и 124 через обходчик
+#   (обрыв на 120 с в разделе 5: nashi --check 108,8 с + agent-plugins verify 21,9 с). Растёт с учётом (752 позиции + обход класса C),
+#   ночью рядом ночная копия. 300 = худший замер 126 с × 2,4 — запас на рост учёта и нагрузку копии.
+# 3.1.98 ред.4 (17.10, Искра; слово Забавы 07:52Z, ряд Зари B-N-2105, «годно» Вениамина 06:50Z к B-N-2104(2)): stend-reestra-agentov — 210 с.
+#   Ночь 17.10 убит по 124 (120/120). Основание — Беты: полный стенд 28/28 под iskra 136,172 с (с её новым читателем 125,9 с);
+#   210 = ceil(136,172 × 1,5 / 10) × 10. Число то же, что в обходе 3.1.97 Беты; здесь — чтобы встало этой ночью (до 03:40Z).
 PREDEL_STENDOV="${PREDEL_STENDOV-/usr/local/libexec/stend-varvara-fs-deny.mjs 30
+/opt/iskra/workspace/dorabotki/stendy/stend-skillov.sh 330
+/opt/iskra/workspace/dorabotki/stend-atsiklichnosti.sh 300
+/opt/iskra/workspace/dorabotki/stend-reestra-agentov.sh 210
 /opt/iskra/workspace/dorabotki/stendy/stend-pravki-mimo.sh 1800
 /opt/iskra/workspace/dorabotki/stendy/stend-vorot-vypuska.sh 430
+/opt/iskra/workspace/dsh-plugins/packages/dsh-autopilot/test/stend-dsh-autopilot.sh 600
 /opt/agent-plugins/dsh-telegram-multiagent/test/stend-mail-stop-expired-delivery.mjs 230}"
 predel_stenda() { local p s; while read -r p s; do [ "$p" = "$1" ] && { echo "$s"; return; }; done <<< "$PREDEL_STENDOV"; echo 120; }
 # Read-only query for the wrapper's derived budget, before enumeration or any stand execution.
@@ -412,7 +466,10 @@ fi
 # A-N-1711 (07.10, Аврора; наряд Забавы; находка Зари D6): всё ПОСЛЕ токена «--» в строке — ПОЗИЦИОННЫЕ доводы стенду (после пути);
 # до «--» — переменные, как прежде. Три стенда сторожа OMEGA требуют $1 «путь к сторожу» (без него «line N: 1: путь к сторожу», код 1 —
 # его гасило исключение «ОЖИДАЕМО», и признаки 5б/6/7 omega-kopiya-watch стендом в бою не мерились ни разу). stend-kursora-audita
-# (kompakt-dsh ≥1.1.29) без STEND_BOLSHOJ_UNIT слепнет (код 2); iskra.service — журнал >72 тыс. записей за 7 сут, учётка обхода его читает.
+# (kompakt-dsh ≥1.1.29) без STEND_BOLSHOJ_UNIT слепнет (код 2). С 3.1.107 (kompakt-dsh 3.1.4, (71)+(72), выбор (А) Забавы 18.10 06:21Z) —
+# a2a-owner-copy-watch.service: ≈ 150 тыс. записей в журнале 2G (≈ 1,5 сут), единственная служба выше порога 72 000; iskra.service — ≈ 5 тыс.,
+# слепота объёма. Учётка обхода (группа systemd-journal) журнал читает. Порог S2 3 с там держится только с kompakt-dsh 3.1.4 (сверка ид
+# через --since): на 3.1.3 S2 ≈ 20 с — строка меняется ТЕМ ЖЕ окном, что копия пакета.
 # STEND_KONF — боевая настройка пакета: без OKW_PRAVKI признак 6 сторожа слепнет и его слепота ломает такты стендов признаков 7 и 5б.
 #   Стенды перекрывают окружением все пишущие ключи (OKW_STATE/PAMYAT/ALERT/CORE) — из файла берутся только OKW_PRAVKI/IMYA/ISKLYUCHENIYA
 #   (сторож: os.environ.get(…) or _konf(…)); боевое otdano.json после прогона не меняется (замер 07.10). Пункты правки поставки —
@@ -447,6 +504,7 @@ SREDA_STENDOV="${SREDA_STENDOV-/opt/agent-plugins/node_modules/dsh-vypusk-watch/
 /opt/iskra/workspace/dsh-plugins/packages/dsh-pribory/test/stend-audit-runtime.py STEND_BIN=/usr/local/bin STEND_OBREZKA=/opt/iskra/workspace/dorabotki/proba-obrezki.sh STEND_POKRYTIE=/opt/iskra/workspace/dorabotki/pokrytie-ozhidaniem-prob.mjs STEND_MINY=/opt/iskra/workspace/dorabotki/iskat-miny-oblasti.mjs STEND_PRIZNAK=/usr/local/libexec/svodka/priznak-vzyatiya.mjs
 /opt/iskra/workspace/dsh-plugins/packages/a2a-bus/test/stend-alpha.py STEND_A2A_V2_SOURCE=/usr/local/libexec/a2a-v2.py
 /opt/agent-plugins/dsh-telegram-multiagent/test/stend-social-dispatch.mjs SOCSETI_TEST_ROOT=/opt/iskra/workspace/dsh-plugins/packages/dsh-socseti
+/opt/agent-plugins/dsh-telegram-multiagent/test/stend-social-edited-message.mjs SOCSETI_TEST_ROOT=/opt/iskra/workspace/dsh-plugins/packages/dsh-socseti
 /opt/socseti-anna/test/stend-meta-watch.mjs META_WATCH_CONFIG=/opt/anna/.config/socseti/config.json
 /opt/iskra/workspace/dsh-plugins/packages/a2a-bus/test/stend-limit-owner.py STEND_A2A_V2_SOURCE=/usr/local/libexec/a2a-v2.py
 /opt/iskra/workspace/dsh-plugins/packages/dsh-socseti/test/stend-b2023-social.py SOCSETI_TEST_NODE_MODULES=/opt/socseti/node_modules SOCSETI_WATCH_SOURCE=/opt/iskra/workspace/dsh-plugins/packages/dsh-storozha-sadik/sbin/socseti-watch
@@ -471,7 +529,8 @@ SREDA_STENDOV="${SREDA_STENDOV-/opt/agent-plugins/node_modules/dsh-vypusk-watch/
 /opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-modeli-omega.sh STEND_KONF=/etc/dsh-pamyat-storozha/dsh-pamyat-storozha.conf -- /usr/local/sbin/omega-kopiya-watch
 /opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-pravki-postavki-omega.sh STEND_PRAVKI=/etc/agent-registry/omega-pravki-postavki.txt STEND_PUNKT_SEARCH=B-N-982 STEND_PUNKT_BRIDGE=B-N-1061 STEND_PUNKT_HANDLERS=B-N-1072 -- /usr/local/sbin/omega-kopiya-watch
 /opt/agent-plugins/node_modules/dsh-pamyat-storozha/test/stend-svodki-doveriya.sh STEND_KONF=/etc/dsh-pamyat-storozha/dsh-pamyat-storozha.conf -- /usr/local/sbin/omega-kopiya-watch
-/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-kursora-audita.mjs STEND_BOLSHOJ_UNIT=iskra.service
+/opt/agent-plugins/node_modules/dsh-pamyat-kompakt-dsh/stend-kursora-audita.mjs STEND_BOLSHOJ_UNIT=a2a-owner-copy-watch.service
+/opt/iskra/workspace/dsh-plugins/packages/dsh-obhod-stendov/test/stend-r-journal-size.py -- --otlozheno
 /usr/local/lib/omega-shlyuz/stend-shlyuza-omega.py PATH=/opt/omega/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 /opt/iskra/workspace/dsh-plugins/packages/oom-watch/test/stend-cli.py -- /usr/local
 /opt/agent-plugins/dsh-telegram-multiagent/test/stend-guest-pdf.mjs BRIDGE_CANDIDATE=/opt/varvara/plugins/dsh-tool-bridge
@@ -516,10 +575,19 @@ SREDA_STENDOV="${SREDA_STENDOV-/opt/agent-plugins/node_modules/dsh-vypusk-watch/
 # 3.1.39 (B-N-2030/2033, Аврора): пробы плана гонят подставной обходчик через systemd-run ворот — входы вне частного /var/tmp юнита.
 /usr/local/libexec/stend-source-only.py TMPDIR=/opt/iskra/workspace/tmp-stendov
 /usr/local/libexec/stend-mesta-po-id.py TMPDIR=/opt/iskra/workspace/tmp-stendov
+# 3.1.52: копийный стенд зовёт временные юниты ворот; под PrivateTmp нужен общий TMPDIR, как у соседних воротных стендов.
+/usr/local/libexec/stend-vypusk-kopii.py TMPDIR=/opt/iskra/workspace/tmp-stendov
 # Наряд Забавы 12.10 17:06Z (Заря; ночь 12.10 — исключение просрочено 10-ю ночь подряд): stend-hodovogo-zova, проба 5 «настоящая форма» ждёт
 #   журнал кодера (STEND_ZHURNAL_KODERA), без него слепа по построению. Копия ОБЕЗЛИЧЕНА: 600 первых событий журнала кодера, все строки data
 #   (кроме type/role/id/preset/mode) — заполнителем той же длины; форма событий и счёт знаков настоящие. Под iskra 12.10 — 6 из 6, окно seq 0–443.
 /opt/agent-plugins/node_modules/dsh-pamyat-secretary/test/stend-hodovogo-zova.mjs STEND_ZHURNAL_KODERA=/opt/agent-plugins-stend/hodovoj-zov/zhurnal-kodera-obezl.jsonl
+# 3.1.115 (наряд Забавы 05:11Z; разбор Зари 04:58Z, её пробы под iskra: со средой код 0, без — код 2): та же среда, что у копии Варвары выше,
+#   для 5 стендов моей копии dsh-tool-bridge 3.1.9 (зовутся строкой /opt/iskra/plugins/*/). mcp-input-schemas — НЕ (гость 3.1.5 при боевом 3.1.8, тикет Забавы).
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-crm-caller.mjs TELEGRAM_TEST_PLUGIN_ROOT=/opt/agent-plugins/dsh-telegram-multiagent MARK_TEST_APP=/opt/agent-plugins-stend/ostrov-api/app OSTROV_API_MANIFEST=/opt/agent-plugins-stend/ostrov-api/manifest.json OSTROV_API_HEALTH=http://192.168.99.3:4215/internal/v1/assistant/health
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-site-turn-evidence.mjs TELEGRAM_TEST_PLUGIN_ROOT=/opt/agent-plugins/dsh-telegram-multiagent
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-owner-private-context.mjs TELEGRAM_TEST_PLUGIN_ROOT=/opt/agent-plugins/dsh-telegram-multiagent MARK_TEST_APP=/opt/agent-plugins-stend/ostrov-api/app OSTROV_API_MANIFEST=/opt/agent-plugins-stend/ostrov-api/manifest.json OSTROV_API_HEALTH=http://192.168.99.3:4215/internal/v1/assistant/health
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-ostrov-api.mjs TELEGRAM_TEST_PLUGIN_ROOT=/opt/agent-plugins/dsh-telegram-multiagent MARK_TEST_APP=/opt/agent-plugins-stend/ostrov-api/app OSTROV_API_MANIFEST=/opt/agent-plugins-stend/ostrov-api/manifest.json OSTROV_API_HEALTH=http://192.168.99.3:4215/internal/v1/assistant/health
+/opt/iskra/plugins/dsh-tool-bridge/test/stend-saved-plans.mjs MARK_TEST_APP=/opt/agent-plugins-stend/ostrov-api/app OSTROV_API_MANIFEST=/opt/agent-plugins-stend/ostrov-api/manifest.json OSTROV_API_HEALTH=http://192.168.99.3:4215/internal/v1/assistant/health
 /opt/varvara/plugins/dsh-tool-bridge/test/stend-saved-plans.mjs MARK_TEST_APP=/opt/agent-plugins-stend/ostrov-api/app OSTROV_API_MANIFEST=/opt/agent-plugins-stend/ostrov-api/manifest.json OSTROV_API_HEALTH=http://192.168.99.3:4215/internal/v1/assistant/health}"
 sreda_stenda() { local p s; while read -r p s; do [ "$p" = "$1" ] && { echo "$s"; return; }; done <<< "$SREDA_STENDOV"; }
 # Корень СВОЕЙ платформы для прогонов под своей учёткой (B-N-932 т.2, 26.09, Аврора; решение Забавы): стенд привратника core ищет
@@ -612,9 +680,16 @@ if [ -n "${PAKET_IMYA+x}" ]; then
     IFS=$'\t' read -r d kto app <<< "$zapis"
     # A-N-962 (25.09.2026): путь — ДОВОДОМ node (process.argv), не текстом JS: апостроф в пути каталога рвал литерал —
     # пакет «не находился ни в одном боевом каталоге» (код 2). Тот же приём, что в vypusk-tegom (A-N-960).
-    imya_pj=$(if [ -n "$kto" ]; then sudo -n -u "$kto" node -p 'require(require("path").resolve(process.argv[1])).name' "${d}package.json" 2>/dev/null
-              else node -p 'require(require("path").resolve(process.argv[1])).name' "${d}package.json" 2>/dev/null; fi)
-    [ "$imya_pj" = "$PAKET_IMYA" ] && otobrano+=("$zapis") && printf 'КАТАЛОГ ПАКЕТА: %s\t%s\n' "$d" "$kto"
+    # AP-STEND-V-OBHOD: адресный файл определяет пакет по родительскому package.json.
+    kor_paketa="$d"
+    if est_fajl "${d%/}" "$kto"; then
+      kor_paketa=$(dirname -- "${d%/}")
+      [ "${kor_paketa##*/}" != test ] || kor_paketa=$(dirname -- "$kor_paketa")
+      kor_paketa="${kor_paketa%/}/"
+    fi
+    imya_pj=$(if [ -n "$kto" ]; then sudo -n -u "$kto" node -p 'require(require("path").resolve(process.argv[1])).name' "${kor_paketa}package.json" 2>/dev/null
+              else node -p 'require(require("path").resolve(process.argv[1])).name' "${kor_paketa}package.json" 2>/dev/null; fi)
+    [ "$imya_pj" = "$PAKET_IMYA" ] && otobrano+=("$zapis") && printf 'КАТАЛОГ ПАКЕТА: %s\t%s\n' "$kor_paketa" "$kto"
   done
   if [ ${#otobrano[@]} -eq 0 ]; then
     echo "СЛЕПОТА: пакета «$PAKET_IMYA» нет ни в одном боевом каталоге со стендами в области обхода — судить нечего"
@@ -624,12 +699,40 @@ if [ -n "${PAKET_IMYA+x}" ]; then
   for zapis in "${katalogi[@]}"; do
     IFS=$'\t' read -r d kto app <<< "$zapis"
     est_fajl "${d%/}" "$kto" || continue
+    uzhe_vybran=""
+    for vz in "${otobrano[@]}"; do [ "$vz" != "$zapis" ] || { uzhe_vybran=1; break; }; done
+    [ -z "$uzhe_vybran" ] || continue
     for vz in "${otobrano[@]}"; do IFS=$'\t' read -r pd _ _ <<< "$vz"
       [[ "${d%/}" == "$pd"* ]] && { otobrano+=("$zapis"); printf 'СТЕНД ПАКЕТА ОТДЕЛЬНОЙ СТРОКОЙ: %s\t%s\n' "${d%/}" "$kto"; break; }
     done
   done
   katalogi=("${otobrano[@]}")
 fi
+# B-N-2071 (б) (решение Забавы 16.10 11:36:14Z): в пакетных воротах (PAKET_IMYA) НЕ судить стенды, уже записанные
+#   НЕДЕЛЬНЫМИ (perechen-nedelnyh-stendov.txt) или «ИСКЛЮЧЁН, ручной: <путь>» (комментарий боевого перечня). Ворота гоняют
+#   ВСЕ стенды каталога выпуска с пределом стенда: ручной откажет без ключа, недельный оборвётся (16.10, dsh-reestr 3.1.4:
+#   stend-krug-samoproverki код 2, stend-storozha-reestrov код 124 на 120 с). Сверка ПО ИМЕНИ файла: недельный прогон гоняет
+#   копию dorabotki, не файл дерева (stend-storozha-reestrov: da964079 ≠ 9c36f91b). Пропуск печатается строкой с именами —
+#   не прячется в ноль; из «объявленных» охвата пропущенные тоже исключаются. Ночной и недельный прогоны (без PAKET_IMYA) не
+#   затронуты. Перечня нет — пропуск НЕ применяется (судим больше, не меньше) и это печатается.
+#   ⚠️ Не ловит: одноимённый стенд ДРУГОГО пакета пропустится и там; пометку «ручной» не в форме «ИСКЛЮЧЁН, ручной: <путь>».
+PROPUSK_IMENA=""
+if [ -n "${PAKET_IMYA+x}" ]; then
+  PN="${PERECHEN_NEDELNYH_STENDOV:-/opt/iskra/workspace/dorabotki/perechen-nedelnyh-stendov.txt}"
+  PR="${PERECHEN_RUCHNYH_POMETOK:-/opt/iskra/workspace/dorabotki/perechen-boevyh-stendov.txt}"
+  if [ -r "$PN" ]; then
+    while IFS= read -r p; do case "$p" in \#*|'') continue;; esac; PROPUSK_IMENA+="${p##*/}"$'\t'"недельный"$'\n'; done < "$PN"
+  else echo "⚠️ ПРОПУСК НЕДЕЛЬНЫХ НЕ ПРИМЕНЁН: нет перечня $PN — недельные стенды пакета судятся"; fi
+  if [ -r "$PR" ]; then
+    while IFS= read -r p; do PROPUSK_IMENA+="${p##*/}"$'\t'"ручной"$'\n'; done < <(sed -n 's/^#.*ИСКЛЮЧЁН, ручной: \([^ ]*\).*/\1/p' "$PR")
+  else echo "⚠️ ПРОПУСК РУЧНЫХ НЕ ПРИМЕНЁН: нет перечня $PR — ручные стенды пакета судятся"; fi
+fi
+propusk_prichina() {   # $1 — путь стенда; печатает «недельный»/«ручной» и код 0, иначе код 1
+  [ -n "$PROPUSK_IMENA" ] || return 1
+  local r; r=$(awk -F'\t' -v i="${1##*/}" '$1 == i { print $2; exit }' <<< "$PROPUSK_IMENA")
+  [ -n "$r" ] && printf '%s' "$r"
+}
+bez_propuska() { local s; while IFS= read -r s; do propusk_prichina "$s" >/dev/null || printf '%s\n' "$s"; done; }
 # Учётка, под которой виден путь из перечня: первая область С УЧЁТКОЙ, чей шаблон — начало пути; иначе своя.
 kto_dlya() {
   local o sh kto app
@@ -764,31 +867,87 @@ if [ -z "${VSE_STENDY_PROGRESS_FILE:-}" ]; then
   VSE_STENDY_PROGRESS_FILE="$progress_dir/current.json"
   trap 'rm -rf -- "$progress_dir" ${ZHURNALY_OBHODA:+"$ZHURNALY_OBHODA"}' EXIT   # B-N-1919: и каталог журналов прогона
 fi
+RUN_STATE_DIR=$(dirname "$VSE_STENDY_PROGRESS_FILE")
+# B-N-2063: execution and the abort report share one frozen selection.
+declare -A PLAN_STENDY=()
+: > "$RUN_STATE_DIR/plan.new" || exit 2
+for zapis in "${katalogi[@]}"; do
+  IFS=$'\t' read -r d kto app <<< "$zapis"
+  PLAN_STENDY["$zapis"]="$(stendy_kataloga "$d" "$kto" | bez_propuska)"
+  [ -z "${PLAN_STENDY[$zapis]}" ] || printf '%s\n' "${PLAN_STENDY[$zapis]}" >> "$RUN_STATE_DIR/plan.new" || exit 2
+done
+mv -- "$RUN_STATE_DIR/plan.new" "$RUN_STATE_DIR/plan" || exit 2
+if [ -n "${PAKET_IMYA+x}" ]; then   # B-N-2071 (б): пропущенные — строкой с именами, и при нуле
+  propushcheno=""; n_prop=0
+  for zapis in "${katalogi[@]}"; do IFS=$'\t' read -r d kto app <<< "$zapis"
+    while IFS= read -r s; do r=$(propusk_prichina "$s") || continue
+      case $'\n'"$propushcheno" in *$'\n'"$s "*) continue;; esac
+      propushcheno+="$s ($r)"$'\n'; n_prop=$((n_prop+1))
+    done < <(stendy_kataloga "$d" "$kto")
+  done
+  echo "ПРОПУЩЕН (пакетные ворота): недельный/ручной, $n_prop${propushcheno:+: $(printf '%s' "$propushcheno" | sed 's#.*/##' | paste -sd ',' - | sed 's/,/, /g')}"
+fi
+: > "$RUN_STATE_DIR/started"; : > "$RUN_STATE_DIR/finished"
+# B-N-2105 (Заря; замысел 1a31c04f, ворота Вениамина 07:52Z): РЯД длительностей — строка на КАЖДЫЙ стенд сразу после finished, только
+#   при заданном VSE_STENDY_RYAD (drop-in ночного юнита) И id прохода от ночной обёртки, вне режима ворот (PAKET_IMYA) — см. условие ниже.
+#   Поля TSV: ночь, проход, путь, учётка, секунды, код, предел стенда ЭТОЙ ночи, копия_идёт, load1 на старте, iowait % за стенд.
+#   iowait мгновенного нет: строка cpu /proc/stat при running и при finished, доля Δiowait/Δсуммы. Отказ записи ряда — строка «РЯД:» в
+#   stderr, НЕ отказ обхода (ряд — наблюдение); неполноту ряда называет суд по счёту строк прохода против ИТОГА.
 progress() {
-  python3 - "$VSE_STENDY_PROGRESS_FILE" "$1" "$2" "${3:-}" <<'PY_PROGRESS'
-import datetime, json, os, sys, tempfile, time
-path,phase,stand,code=sys.argv[1:]
+  python3 - "$VSE_STENDY_PROGRESS_FILE" "$1" "$2" "${3:-}" "${4:-}" "${5:-}" <<'PY_PROGRESS'
+import datetime, json, os, subprocess, sys, tempfile, time
+path,phase,stand,code,kto,predel=sys.argv[1:]
+# Пишет ТОЛЬКО ночной проход: VSE_STENDY_RYAD_PROHOD ставит лишь обёртка-по-таймеру, а ворота (vypusk-tegom :319/:847) зовут обходчик
+#   со ВСЕЙ средой ночного юнита (с VSE_STENDY_RYAD) и PAKET_IMYA, от root — без этого условия они дописали бы ночь «-» и могли создать
+#   ряд владельцем root, после чего iskra не пишет.
+RYAD=os.environ.get('VSE_STENDY_RYAD','') if os.environ.get('VSE_STENDY_RYAD_PROHOD') and 'PAKET_IMYA' not in os.environ else ''
+def cpu():
+    with open('/proc/stat') as f: return [int(x) for x in f.readline().split()[1:]]
 try:
     if phase=='running':
         data={'phase':phase,'stand':stand,'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),
               'started_mono':time.monotonic()}
+        if RYAD:
+            try:
+                with open('/proc/loadavg') as f: data['ryad_load1']=f.read().split()[0]
+                data['ryad_cpu']=cpu()
+                k=subprocess.run(['systemctl','is-active',os.environ.get('VSE_STENDY_RYAD_KOPIYA','sadik-backup.service')],
+                                 capture_output=True,text=True,timeout=5).stdout.strip()
+                data['ryad_kopiya']=1 if k in ('active','activating','deactivating','reloading') else 0
+            except Exception as e:
+                print('РЯД: нагрузка на старте не снята: '+type(e).__name__,file=sys.stderr)
     else:
         with open(path) as stream: data=json.load(stream)
         if data.get('phase')!='running' or data.get('stand')!=stand: raise ValueError('progress mismatch')
         data.update(phase=phase,elapsed_seconds=int(time.monotonic()-data['started_mono']),exit_code=int(code))
+        if RYAD:
+            try:
+                io='-'
+                if isinstance(data.get('ryad_cpu'),list):
+                    d=[b-a for a,b in zip(data['ryad_cpu'],cpu())]; io=f'{100*d[4]/sum(d):.1f}' if sum(d)>0 else '0.0'
+                pole=lambda x: str(x).replace('\t',' ').replace('\n',' ')
+                prohod=os.environ.get('VSE_STENDY_RYAD_PROHOD','-')
+                stroka='\t'.join(map(pole,[prohod[:10],prohod,stand,kto or '-',data['elapsed_seconds'],data['exit_code'],predel or '-',
+                                           data.get('ryad_kopiya','-'),data.get('ryad_load1','-'),io]))+'\n'
+                fd=os.open(RYAD,os.O_WRONLY|os.O_APPEND|os.O_CREAT|os.O_NOFOLLOW,0o600)
+                with os.fdopen(fd,'a') as f: f.write(stroka)
+            except Exception as e:
+                print('РЯД: строка не записана: '+stand+': '+type(e).__name__,file=sys.stderr)
     fd,tmp=tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)),prefix='.progress-')
     try:
         with os.fdopen(fd,'w') as stream: json.dump(data,stream,ensure_ascii=False)
         os.replace(tmp,path)
     finally:
         if os.path.exists(tmp): os.unlink(tmp)
+    with open(os.path.join(os.path.dirname(path),'started' if phase=='running' else 'finished'),'a') as stream:
+        stream.write(stand+'\n')
     if phase=='finished': print(data['elapsed_seconds'])
 except Exception as error:
     print('СЛЕПОТА: отметка текущего стенда не записана: '+type(error).__name__,file=sys.stderr)
     sys.exit(2)
 PY_PROGRESS
 }
-# B-N-1929 такт 3 (Заря): С2 — «ОБНАРУЖЕНИЕ ПОСЛЕ», не защита. Каждый стенд — в СВОЁМ scope-юните obhod-stend-<pid>-<N>
+# B-N-1929 такт 3 (Заря): С2 — «ОБНАРУЖЕНИЕ ПОСЛЕ», не защита. Каждый стенд — в СВОЁМ scope-юните obhod-stend-<pid>-<run>-<N>
 #   (sudo systemd-run --scope: тот же процесс, те же пространства имён — частный /tmp обхода виден; меняется только cgroup).
 #   После прогона ОДИН запрос журнала по окну прогона: записи sudo (COMMAND=) и shadow-utils (useradd-семейство пишет само,
 #   и от root без sudo) с _SYSTEMD_UNIT этого прогона; меняющий глагол — правила С1 (skaner-zhivoj-mashiny.py рядом) ⇒
@@ -809,20 +968,29 @@ PY_PROGRESS
 #   ОТДЕЛЬНЫХ юнитов, которые стенд поднимает сам (systemd-run без --scope: их записи несут их юнит, не стенда); инструменты,
 #   не пишущие в журнал; изменение, сделанное и возвращённое, — ловится (запись есть), но красное и для честной пробы с возвратом.
 S1_SKANER="$(dirname "$0")/skaner-zhivoj-mashiny.py"; S1_N=0; S1_MARKER=0; S1_SLEP=0; S1_SPISOK=""; S1_NET_ROOT=0; S1_NET_SPISOK=""   # С1 — см. цикл стендов
-S2_PREFIKS="obhod-stend-$$-"; S2_N=0; S2_SLEP=""; S2_UID=$(id -u); S2_GID=$(id -g); S2_GRUPPY=$(id -G | tr ' ' ','); S2_UMASK=$(umask)
+S2_RUN=$(python3 -c 'import secrets; print(secrets.token_hex(8))') || exit 2
+S2_OWNER="$$-$S2_RUN"; S2_PREFIKS="obhod-stend-$S2_OWNER-"; S2_N=0; S2_SLEP=""; S2_UID=$(id -u); S2_GID=$(id -g); S2_GRUPPY=$(id -G | tr ' ' ','); S2_UMASK=$(umask)
 S2_NACHALO=$(date '+%Y-%m-%d %H:%M:%S')
 S2_KAT=$(dirname "$VSE_STENDY_PROGRESS_FILE"); S2_SREDA="$S2_KAT/.s2-sreda-$$"; S2_KARTA="$S2_KAT/.s2-karta-$$"
+printf '%s\n' "$S2_OWNER" > "$S2_KAT/scope-owner" || exit 2
+: > "$S2_KAT/scopes" || exit 2
 : > "$S2_KARTA" && chmod 600 "$S2_KARTA" || S2_SLEP="карта юнитов не пишется в $S2_KAT"
 s2_obertka() {   # $1 — номер юнита; дальше — команда
   local n=$1; shift
+  [ ! -e "$S2_KAT/cancelled" ] || return 143
   if [ -n "$S2_SLEP" ]; then "$@"; return; fi
   ( umask 077; env -0 > "$S2_SREDA" ) || { echo "СЛЕПОТА С2: среда стенда не записана"; return 2; }
-  sudo -n systemd-run --scope -q --unit="${S2_PREFIKS}$n" -- \
+  printf '%s\n' "${S2_PREFIKS}$n.scope" >> "$S2_KAT/scopes" || return 2
+  sudo -n systemd-run --scope --collect -q --unit="${S2_PREFIKS}$n" -- \
     setpriv --reuid="$S2_UID" --regid="$S2_GID" --groups="$S2_GRUPPY" -- /bin/bash --norc -c '
     umask "$1"; f=$2; shift 2; for v in $(compgen -e); do unset "$v" 2>/dev/null; done
     while IFS= read -r -d "" kv; do export "$kv" 2>/dev/null; done < "$f"; exec "$@"' _ "$S2_UMASK" "$S2_SREDA" "$@"
 }
 s2_obertka 0 sudo -n /usr/bin/true "${S2_PREFIKS}0" </dev/null >/dev/null 2>&1 || S2_SLEP="${S2_SLEP:-sudo systemd-run --scope не сработал (нужен sudo -n)}"
+if [ "${VSE_STENDY_SCOPE_REQUIRED:-0}" = 1 ] && [ -n "$S2_SLEP" ]; then
+  echo "СЛЕПОТА: ночной запуск без scope запрещён: $S2_SLEP"
+  exit 2
+fi
 # B-N-1482: среда только тестовая; EXIT этой функции не заменяет уборку progress родителя.
 prognat_stend() (
   local program="$1" limit copy_dir copy_name checksum_before checksum_copy
@@ -889,12 +1057,15 @@ for zapis in "${katalogi[@]}"; do
   # B-N-2019: оба имени платформы — корень этой копии; явная среда стенда ниже сохраняет приоритет.
   [ -n "$kto" ] && zapusk=(sudo -n -u "$kto" env DSH_TEST_APP="$app" STEND_APP="$app")
   ok=0; bad=0; bl=0; spisok=""; prichiny=""; sudy=""
-  vyp=$(versiya "$d" "$kto"); pk=$imya
+  vyp=$(versiya "$d" "$kto"); pk=$imya; metka=$imya
   # ключ исключений «пакет/стенд»: файл в <пакет>/test/ — имя пакета, иначе — каталог файла (B-N-939)
-  if est_fajl "${d%/}" "$kto"; then pk=$(basename "$(dirname "${d%/}")"); [ "$pk" = test ] && pk=$(basename "$(dirname "$(dirname "${d%/}")")"); fi
+  # Метка строки итога у строки-файла — ПОЛНЫЙ ПУТЬ (Заря, наряд Забавы 14.10 23:06Z): голое имя не различало одноимённые — 12 пар в области
+  #   (stend-audit-runtime.py dsh-pribory и dsh-vypusk-watch и др.); «пакет/стенд» тоже не различает — копии по агентам.
+  if est_fajl "${d%/}" "$kto"; then metka=${d%/}; pk=$(basename "$(dirname "${d%/}")"); [ "$pk" = test ] && pk=$(basename "$(dirname "$(dirname "${d%/}")")"); fi
   # 🔴 </dev/null у вызова стенда (Вениамин 02:54): цикл читает перечень из потока, и стенд наследует его как stdin —
   # стенд, читающий stdin, проглотил бы остаток стендов пакета, и сверка покраснела бы «прошло N из M» с ложным диагнозом.
   while IFS= read -r s; do
+    [ -n "$s" ] || continue
     prognany="$prognany$s"$'\n'
     read -ra sreda <<< "$(sreda_stenda "$s")"
     # A-N-1711: хвост строки после «--» — доводы стенда (только общая ветка prognat_stend; особые ветки доводов не берут).
@@ -927,8 +1098,16 @@ for zapis in "${katalogi[@]}"; do
       *.py) out=$(PY_ENV=PYTHONDONTWRITEBYTECODE=1 prognat_stend python3 2>&1); k=$? ;;
       *)    out=$(prognat_stend node 2>&1); k=$? ;;
     esac
-    printf '%s\n' "$out" | grep -E '^STEND-(TEMP|EXEC): ' || true
-    elapsed=$(progress finished "$s" "$k") || exit 2
+    printf '%s\n' "$out" | grep -E '^STEND-(TEMP|EXEC|G-METRIC|AP-METRIC|R-METRIC): ' || true
+    # B-N-2062 (Заря; решение Забавы 03:16Z, вариант А): метка стенда «STEND-NEPRIMENIMO: <проба>: <причина>» — наружу с путём стенда
+    #   и учёткой (поля через TAB): ворота судят, не осталась ли проба неизмеренной на ВСЕХ копиях. Код стенда этим не меняется.
+    printf '%s\n' "$out" | sed -n 's/^STEND-NEPRIMENIMO: //p' | while IFS= read -r nep; do
+      printf 'STEND-NEPRIMENIMO: %s\t%s\t%s\n' "$s" "${kto:--}" "$nep"; done
+    # B-N-2062 (LOW Вениамина 03:29Z): в режиме ворот (PAKET_IMYA) — ФАКТ прогона «STEND-PROGNAN: <путь>\t<учётка|->\t<код>»:
+    #   знаменатель суда меток в воротах — прогнанные, а не лежащие в каталоге (stend-X.py при stend-X.sh, вынесенные строкой и т. п.).
+    #   Ночной прогон строку не печатает: журнал не растёт.
+    [ -n "${PAKET_IMYA+x}" ] && printf 'STEND-PROGNAN: %s\t%s\t%s\n' "$s" "${kto:--}" "$k"
+    elapsed=$(progress finished "$s" "$k" "${kto:--}" "$(predel_stenda "$s")") || exit 2   # B-N-2105: учётка и предел — в ряд
     [ "$elapsed" -lt 30 ] || medlennye+=("$s · ${elapsed} с · код $k")
     klyuch="$pk/$(basename "$s")"
     if [ $k -eq 0 ]; then ok=$((ok+1))
@@ -943,7 +1122,15 @@ for zapis in "${katalogi[@]}"; do
     sud=$(sudit "$klyuch" "$vyp" "$k" "$out" "$s")
     [[ "${sud%%$'\t'*}" = OZH && "$sud" == *"· покрытие не судимо" ]] && { nesud_vsego=$((nesud_vsego+1)); nesud_spisok="$nesud_spisok $klyuch"; }
     if [ "${sud%%$'\t'*}" = OZH ]; then ozh_vsego=$((ozh_vsego+1)); sudy="$sudy      ОЖИДАЕМО: $klyuch (выпуск $vyp) · ${sud#*$'\t'}"$'\n'
-    else neozh_vsego=$((neozh_vsego+1)); sudy="$sudy      🔴 НЕОЖИДАННО: $klyuch (выпуск $vyp, код $k) — ${sud#*$'\t'}"$'\n'; fi
+    else
+      neozh_vsego=$((neozh_vsego+1))
+      # B-N-2108: слепота не поломка; неожиданный исход по-прежнему блокирует ворота кодом 1.
+      case "$k" in
+        2) sudy="$sudy      ⚠️ НЕОЖИДАННО: $klyuch (выпуск $vyp, код $k) — СЛЕПОТА: ${sud#*$'\t'}"$'\n' ;;
+        124) sudy="$sudy      🔴 НЕОЖИДАННО: $klyuch (выпуск $vyp, код $k) — ПРЕДЕЛ: ${sud#*$'\t'}"$'\n' ;;
+        *) sudy="$sudy      🔴 НЕОЖИДАННО: $klyuch (выпуск $vyp, код $k) — ${sud#*$'\t'}"$'\n' ;;
+      esac
+    fi
     {
       # 🔴 A-N-881 (25.09): ПРИЧИНА РАСХОЖДЕНИЯ — В ВЫВОД. Прежде от стенда оставались имя и код, а его строки «❌ проба: причина»
       # пропадали: плавающий отказ stend-otklonennoj-svodki.mjs в воротах 10:4xZ разобрать стало нечем (409 повторов зелёные).
@@ -979,10 +1166,10 @@ for zapis in "${katalogi[@]}"; do
       # Префикс — через ENVIRON (awk -v разбирает «\»); не while read: в UTF-8 он склеивает строку, обрезанную cut -c посреди буквы, со следующей.
       prichiny="$prichiny$(printf '%s\n' "$pr" | PREFIKS="      $(basename "$s"): " awk '{ print ENVIRON["PREFIKS"] $0 }')"$'\n'
     }
-  done < <(stendy_kataloga "$d" "$kto")
+  done <<< "${PLAN_STENDY[$zapis]}"
   [ $((ok+bad+bl)) -eq 0 ] && continue
   vsego_stendov=$((vsego_stendov+ok+bad+bl))
-  printf '%-26s зелёных %-3s расхождений %-3s слепот %s%s\n' "$imya" "$ok" "$bad" "$bl" "${kto:+ · под $kto, платформа $app}"
+  printf '%-26s зелёных %-3s расхождений %-3s слепот %s%s\n' "$metka" "$ok" "$bad" "$bl" "${kto:+ · под $kto, платформа $app}"
   [ -n "$spisok" ] && echo "   $spisok"
   [ -n "$prichiny" ] && printf '%s' "$prichiny"
   [ -n "$sudy" ] && printf '%s' "$sudy"
@@ -1117,9 +1304,10 @@ if [ -r "$PERECHEN" ]; then
     case "$p" in \#*|'') continue;; esac
     # Режим одного пакета: объявленное — только строки под его боевыми каталогами.
     if [ -n "${PAKET_IMYA:-}" ]; then
-      svoj=""; for zapis in "${katalogi[@]}"; do IFS=$'\t' read -r d _ _ <<< "$zapis"; [[ "$p" == "$d"* ]] && svoj=1; done
+      svoj=""; for zapis in "${katalogi[@]}"; do IFS=$'\t' read -r d _ _ <<< "$zapis"; [[ "$p" == "${d%/}" || "$p" == "$d"* ]] && svoj=1; done
       [ -n "$svoj" ] || continue
     fi
+    [ -n "${PAKET_IMYA+x}" ] && propusk_prichina "$p" >/dev/null && continue   # B-N-2071 (б): пропущенный — не объявленный
     obyavleno=$((obyavleno+1))
     kto=$(kto_dlya "$p")
     if [ -n "$kto" ]; then sudo -n -u "$kto" test -f "$p"; else [ -f "$p" ]; fi \
@@ -1132,7 +1320,7 @@ if [ -r "$PERECHEN" ]; then
     IFS=$'\t' read -r d kto app <<< "$zapis"
     while IFS= read -r s; do
       grep -qxF "$s" "$PERECHEN" || { echo "  🔴 НА ДИСКЕ ЕСТЬ, В ПЕРЕЧНЕ НЕТ: $s"; net_v_perechne=$((net_v_perechne+1)); }
-    done < <(stendy_kataloga "$d" "$kto")
+    done < <(stendy_kataloga "$d" "$kto" | { if [ -n "${PAKET_IMYA+x}" ]; then bez_propuska; else cat; fi; })
   done
   echo "ПОКРЫТИЕ: прошло $vsego_stendov из $obyavleno объявленных · пропало $net_na_diske · незаписанных $net_v_perechne · вне области $net_v_oblasti"
   if [ "$vsego_stendov" -ne "$obyavleno" ] || [ "$net_na_diske" -gt 0 ] || [ "$net_v_perechne" -gt 0 ] || [ "$net_v_oblasti" -gt 0 ]; then

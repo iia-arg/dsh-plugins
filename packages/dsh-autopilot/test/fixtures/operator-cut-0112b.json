@@ -1,0 +1,284 @@
+{
+  "schemaVersion": 1,
+  "provenance": "Captured metering-only 0112b: AP012-FOREIGN-TURN-DIAG-20261020/evidence; no text/prompts/auth",
+  "cause": {
+    "run": "48135b6a47b242f7a4cfaa15de036f15",
+    "proofAsOf": "2026-10-20T09:46:35.625047+00:00",
+    "receiptAsOf": "2026-10-20T09:46:35.625047+00:00",
+    "sameAsOf": true,
+    "apFinishedAt": "2026-10-20T09:24:19.286151+00:00",
+    "R": {
+      "_recordKey": "[\"pid:239030:c039d3cd-89d4-4e5c-b3bd-6797b0eaef86\",\"4fe7f69d-fdd3-48d7-a0ee-aef6785d5a4c\"]",
+      "claimedAt": "2026-10-20T09:21:52.856000+00:00",
+      "finishedAt": "2026-10-20T09:24:56.124000+00:00",
+      "jobId": "operator-412bf9fecf830a21398391dcbe3102190cc6f7bb75cc2e54cccc55236312c43e",
+      "kind": "request",
+      "requestGeneration": "pid:239030:c039d3cd-89d4-4e5c-b3bd-6797b0eaef86",
+      "requestId": "sdk-[\"pid:239030:c039d3cd-89d4-4e5c-b3bd-6797b0eaef86\",\"4fe7f69d-fdd3-48d7-a0ee-aef6785d5a4c\"]",
+      "sessionCreated": 1792148289159,
+      "sessionId": "telegram-autopilot-team",
+      "turn": 81
+    },
+    "G": {
+      "authEpoch": "85da5b6d44e4956f3096dd1cc7d2870046624af3050723710c00d48e5818c24e",
+      "authLinkMeaning": "route-not-applied-source",
+      "authLinkTargetAtStart": "/etc/claude-oauth/codex-podpiska-3/auth.json",
+      "childDiagnostics": [
+        "CHILD_VERSION_WITNESS_UNAVAILABLE"
+      ],
+      "childIncomplete": true,
+      "dshTurn": 81,
+      "endedAt": "2026-10-20T09:24:56.124000+00:00",
+      "engine": "codex",
+      "kind": "request",
+      "requestGeneration": "pid:239030:c039d3cd-89d4-4e5c-b3bd-6797b0eaef86",
+      "requestId": "sdk-[\"pid:239030:c039d3cd-89d4-4e5c-b3bd-6797b0eaef86\",\"4fe7f69d-fdd3-48d7-a0ee-aef6785d5a4c\"]",
+      "request_id": "sdk-[\"pid:239030:c039d3cd-89d4-4e5c-b3bd-6797b0eaef86\",\"4fe7f69d-fdd3-48d7-a0ee-aef6785d5a4c\"]",
+      "sessionCreated": 1792148289159,
+      "sessionId": "telegram-autopilot-team",
+      "sourceProcess": {
+        "boot": "7bda0ee3-ac07-4f77-92c5-a434300b5c36",
+        "pid": 1163442,
+        "start": "154978887"
+      },
+      "startedAt": "2026-10-20T09:21:53.731000+00:00",
+      "status": "completed",
+      "subscription": "codex-3",
+      "subscriptionSource": "engine-account-read",
+      "threadId": "01a1445c-cd58-7313-9efc-bc8b05c06894",
+      "totals": {
+        "cacheReadTokens": 3622912,
+        "cacheWriteTokens": 0,
+        "inputTokens": 3634647,
+        "modelCalls": 11,
+        "outputTokens": 4436,
+        "uncachedInputTokens": 11735
+      },
+      "turn": 81,
+      "turnId": "01a1589e-0640-76f3-bcf8-e47658191b79",
+      "uid": 1006
+    },
+    "preparedNativeStarts": [
+      "2026-10-20T09:21:53.731Z"
+    ],
+    "preparedNativeEnds": [],
+    "preparedUsageCount": 7,
+    "nativeUsageCount": 11,
+    "nativeTerminal": [
+      {
+        "line": 2332,
+        "type": "event_msg",
+        "event": "task_complete",
+        "at": "2026-10-20T09:24:56.124Z",
+        "turnId": "01a1589e-0640-76f3-bcf8-e47658191b79",
+        "responseId": null,
+        "usage": null
+      }
+    ],
+    "R_G_sessionTurnMatch": true,
+    "nativeHeaderCount": 1,
+    "foreignTurnPredicate317": true
+  },
+  "native": [
+    {
+      "type": "session_meta",
+      "payload": {
+        "id": "01a1445c-cd58-7313-9efc-bc8b05c06894",
+        "cli_version": "0.162.1"
+      }
+    },
+    {
+      "type": "event_msg",
+      "timestamp": "2026-10-20T09:21:53.731Z",
+      "payload": {
+        "type": "task_started",
+        "turn_id": "01a1589e-0640-76f3-bcf8-e47658191b79"
+      }
+    },
+    {
+      "type": "token_usage_record",
+      "timestamp": "2026-10-20T09:22:04.790Z",
+      "payload": {
+        "turn_id": "01a1589e-0640-76f3-bcf8-e47658191b79",
+        "response_id": "resp_0bd2f1584f1dcd47016ad732b461b881938381374ad329d66a",
+        "usage": {
+          "input_tokens": 326449,
+          "cached_input_tokens": 323840,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 189,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 326638
+        }
+      }
+    },
+    {
+      "type": "token_usage_record",
+      "timestamp": "2026-10-20T09:22:25.135Z",
+      "payload": {
+        "turn_id": "01a1589e-0640-76f3-bcf8-e47658191b79",
+        "response_id": "resp_0bd2f1584f1dcd47016ad732bd1c848193b2654b11fa6f07d4",
+        "usage": {
+          "input_tokens": 327315,
+          "cached_input_tokens": 326272,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 856,
+          "reasoning_output_tokens": 63,
+          "total_tokens": 328171
+        }
+      }
+    },
+    {
+      "type": "token_usage_record",
+      "timestamp": "2026-10-20T09:22:42.822Z",
+      "payload": {
+        "turn_id": "01a1589e-0640-76f3-bcf8-e47658191b79",
+        "response_id": "resp_0bd2f1584f1dcd47016ad732d18bd88193b88df1f5cd47b531",
+        "usage": {
+          "input_tokens": 328701,
+          "cached_input_tokens": 327168,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 762,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 329463
+        }
+      }
+    },
+    {
+      "type": "token_usage_record",
+      "timestamp": "2026-10-20T09:22:45.511Z",
+      "payload": {
+        "turn_id": "01a1589e-0640-76f3-bcf8-e47658191b79",
+        "response_id": "resp_0bd2f1584f1dcd47016ad732e30c30819382bc93bf17a09bd6",
+        "usage": {
+          "input_tokens": 330008,
+          "cached_input_tokens": 328576,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 19,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 330027
+        }
+      }
+    },
+    {
+      "type": "token_usage_record",
+      "timestamp": "2026-10-20T09:23:41.289Z",
+      "payload": {
+        "turn_id": "01a1589e-0640-76f3-bcf8-e47658191b79",
+        "response_id": "resp_0bd2f1584f1dcd47016ad733175058819389ecec6c2638bc28",
+        "usage": {
+          "input_tokens": 330050,
+          "cached_input_tokens": 329856,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 88,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 330138
+        }
+      }
+    },
+    {
+      "type": "token_usage_record",
+      "timestamp": "2026-10-20T09:23:48.185Z",
+      "payload": {
+        "turn_id": "01a1589e-0640-76f3-bcf8-e47658191b79",
+        "response_id": "resp_0bd2f1584f1dcd47016ad7331d84248193956d9a1d5d2b64c3",
+        "usage": {
+          "input_tokens": 330260,
+          "cached_input_tokens": 329856,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 244,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 330504
+        }
+      }
+    },
+    {
+      "type": "token_usage_record",
+      "timestamp": "2026-10-20T09:24:05.514Z",
+      "payload": {
+        "turn_id": "01a1589e-0640-76f3-bcf8-e47658191b79",
+        "response_id": "resp_0bd2f1584f1dcd47016ad7332469ec8193b74915e3a84a596f",
+        "usage": {
+          "input_tokens": 331075,
+          "cached_input_tokens": 330112,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 592,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 331667
+        }
+      }
+    },
+    {
+      "type": "token_usage_record",
+      "timestamp": "2026-10-20T09:24:19.331Z",
+      "payload": {
+        "turn_id": "01a1589e-0640-76f3-bcf8-e47658191b79",
+        "response_id": "resp_0bd2f1584f1dcd47016ad73335cda08193b9108841d0ca4795",
+        "usage": {
+          "input_tokens": 331803,
+          "cached_input_tokens": 330880,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 400,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 332203
+        }
+      }
+    },
+    {
+      "type": "token_usage_record",
+      "timestamp": "2026-10-20T09:24:27.250Z",
+      "payload": {
+        "turn_id": "01a1589e-0640-76f3-bcf8-e47658191b79",
+        "response_id": "resp_0bd2f1584f1dcd47016ad73343ad808193a8eb5740f8a4eba9",
+        "usage": {
+          "input_tokens": 332362,
+          "cached_input_tokens": 331648,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 199,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 332561
+        }
+      }
+    },
+    {
+      "type": "token_usage_record",
+      "timestamp": "2026-10-20T09:24:47.640Z",
+      "payload": {
+        "turn_id": "01a1589e-0640-76f3-bcf8-e47658191b79",
+        "response_id": "resp_0bd2f1584f1dcd47016ad7334b82908193a91d448e860ac316",
+        "usage": {
+          "input_tokens": 332763,
+          "cached_input_tokens": 332160,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 808,
+          "reasoning_output_tokens": 32,
+          "total_tokens": 333571
+        }
+      }
+    },
+    {
+      "type": "token_usage_record",
+      "timestamp": "2026-10-20T09:24:56.120Z",
+      "payload": {
+        "turn_id": "01a1589e-0640-76f3-bcf8-e47658191b79",
+        "response_id": "resp_0bd2f1584f1dcd47016ad7335ffeb48193927d35552028110a",
+        "usage": {
+          "input_tokens": 333861,
+          "cached_input_tokens": 332544,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 279,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 334140
+        }
+      }
+    },
+    {
+      "type": "event_msg",
+      "timestamp": "2026-10-20T09:24:56.124Z",
+      "payload": {
+        "type": "task_complete",
+        "turn_id": "01a1589e-0640-76f3-bcf8-e47658191b79"
+      }
+    }
+  ],
+  "registeredAt": 1792488112907
+}

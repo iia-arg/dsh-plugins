@@ -12,12 +12,20 @@ import sys
 import tempfile
 import time
 
+# RU: B-N-2067 (15.10.2026): pyc не писать — рукой от root (sudo, шебанг без -B) импорт nastrojki оставлял
+#     /usr/local/lib/dsh-trevogi/__pycache__ в бою (15.10 00:43:16Z, «agent-alert-otpravitel --help»). Действует при любом
+#     способе запуска, в отличие от -B юнита. EN: never write bytecode — a manual root run left __pycache__ in production.
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib' / 'dsh-trevogi'))
 try:
     from nastrojki import load
     LOAD_ERROR = None
 except ImportError as e:
     LOAD_ERROR = str(e)
+try:  # номер — константа читателя (3.1.6); старый читатель без неё не роняет сторожа
+    from nastrojki import VERSIYA
+except ImportError:
+    VERSIYA = 'неизвестна'
 
 TEG = 'otkaz-klyuch-watch'
 PRIZNAK = 'исход=отказ-ключ'
@@ -43,7 +51,7 @@ def run_bounded(argv, timeout):
 
 def zhurnal(text):
     try:
-        run_bounded(['logger', '-t', TEG, '--', 'версия=3.1.1 ' + text], 5)
+        run_bounded(['logger', '-t', TEG, '--', f'версия={VERSIYA} ' + text], 5)
     except (OSError, subprocess.SubprocessError):
         pass  # stdout/stderr still carries the same result; journald availability is not guaranteed.
 

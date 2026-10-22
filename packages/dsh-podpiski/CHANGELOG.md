@@ -1,5 +1,25 @@
 # История изменений dsh-podpiski
 
+## 3.1.6 — 16.10.2026 · B-N-1806: простаивающая подписка — «окно не начато», а не «сброс неизвестен» (наряд Забавы 17:13:23Z; Заря)
+
+- `libexec/pereklyuchatel-podpiski-limity.py`: доля 0 без сброса (и не `rejected`) — окно не начато, судится как свободное по прежним
+  порогам доли и возраста. Было: «не измерено … (сброс неизвестен)» на каждом замере простаивающей подписки — заслон не признавал её
+  свободной НИ ПРИ КАКОЙ частоте замера, автопереключатель говорил «некуда». База 16.10: 341 из 341 строк five_hour с пустым сбросом —
+  с долей 0. Возраст судится как прежде (замер 229 мин → «не измерено»); доля > 0 без сброса — по-прежнему «не измерено».
+- ЧЕГО НЕ ЛОВИТ (LOW Вениамина 17:23:32Z): если API начнёт отдавать для ЗАНЯТОГО окна долю 0 без сброса, подписка будет
+  «свободна» до первого `rejected`. Признак — «0 без сброса» у подписки в работе (на неё идёт трафик общих шлюзов); на 16.10 таких строк 0.
+
+## 3.1.5 — 15.10.2026 · команда Мастера (перенос r8 на master 0aba21e2: 3.1.4 занят Авророй, /switch; прежде 3.1.4 от 14.10): +vintik/shpuntik/gayka/shurup/tumbler в DOMA (наряд Забавы 14.10 20:35:04Z; Искра)
+
+- `pereklyuchatel-codex`, `codex-auth-watch`, `codex-limit-watch`: дома codex-home шлюзов `coder-gateway-vintik|shpuntik|gayka|shurup|tumbler` в DOMA по образцу master. Только список, логика не менялась. README: имена агентов переключателя. · Master team: the four new Codex gateway homes added to DOMA as for master; list only, logic unchanged; README agent names.
+- ⚠️ Ставить ПОСЛЕ того, как у всех четырёх есть дом шлюза со ссылкой auth.json на подписку: до этого переключатель отказывает целиком (код 2), сторож токена тревожит каждый такт, заслон лимита считает «делёж» и автопереключение не действует. · Install only after all four gateway homes exist with an auth.json link: before that the switcher refuses (exit 2), the token watch alarms every run, the limit guard sees a split and auto-switch is off.
+
+## 3.1.4 — 15.10.2026 · приёмник /switch — на своём боте · /switch receiver on its own bot (Аврора; B-N-2055 №1, слово владельца 15.10 01:40 МСК)
+
+- `sbin/sadik-komandy-priyomnik`: токен — `/etc/dsh-switch.token` (бот `@arg_dsh_switch_bot`), не `/etc/dsh-alert.token`; offset — свой файл `/var/lib/sadik-komandy/offset-switch-bot` (нумерация `update_id` у каждого бота своя); суффикс команды `…@arg_dsh_switch_bot`, прежний `…@arg_dsh_alert_bot` — подсказка, не исполнение. Довод: токен бота тревог читают многие учётки, а `getUpdates` приёмника — личные команды владельца. · Token `/etc/dsh-switch.token`, own offset file, command suffix of the new bot; the alert bot token is no longer read.
+- `systemd/sadik-komandy.service`: только описание (имя бота).
+- `test/stend-switch-bot.py` (новый, от root): подставной Telegram с двумя ботами по токену — команда владельца своему боту исполнена, боту тревог — не исполнена и бот тревог не опрошен, не-владелец — нет, суффиксы; порча `--porcha-staryj-token` → новый бот глух. `test/receiver-switch.py`: суффикс в трёх пробах — новый бот.
+
 ## 3.1.3 — 14.10.2026 · подготовка к публикации · release prep (Аврора, наряд Забавы 07:18Z)
 
 - README: строка «Версия · Version: 3.1.3» под заголовком. · README: version line under the heading.

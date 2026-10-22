@@ -1,6 +1,6 @@
 {
   "name": "dsh-pribory",
-  "version": "3.1.1",
+  "version": "3.1.4",
   "description": "Приборы оболочки против самообмана агента: код возврата без конвейера, гашение по юниту, тёзки в PATH, кто поднимал службу, атомарная укладка с проверкой грамматики · Shell tools against an agent's self-deception: exit code without a pipeline, stopping by unit, PATH namesakes, who started a service, atomic placement with a syntax check",
   "keywords": [
     "dsh",

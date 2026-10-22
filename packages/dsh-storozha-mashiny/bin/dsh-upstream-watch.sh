@@ -62,6 +62,13 @@ if [ -z "$METKI" ]; then
   echo "СЛЕПОТА: реестр не ответил про $PAKET — это НЕ «новья нет»"
   exit 2
 fi
+# RU: B-N-2048: npm 11 отдаёт объект меток, npm 12 — массив из одного объекта; приводит помощник npm-sostav (dsh-pribory).
+# EN: B-N-2048: npm 11 returns the dist-tags object, npm 12 an array of one; the npm-sostav helper (dsh-pribory) normalises it.
+command -v npm-sostav >/dev/null || { echo "СЛЕПОТА: npm-sostav не найден — нужен dsh-pribory ≥ 3.1.2"; exit 2; }
+if ! METKI=$(printf '%s' "$METKI" | npm-sostav --view); then
+  echo "СЛЕПОТА: ответ реестра про $PAKET не разобран (npm-sostav --view, причина выше) — это НЕ «новья нет»"
+  exit 2
+fi
 VERSII=$(printf '%s' "$METKI" | jq -r 'to_entries[] | .key + "=" + .value' 2>/dev/null | sort -u)
 [ -n "$VERSII" ] || { echo "СЛЕПОТА: метки не разобраны"; exit 2; }
 

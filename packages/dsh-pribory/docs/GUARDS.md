@@ -62,6 +62,16 @@ Catches: `refresh-skill-links` on stand-in skill sources — a name duplicated a
 
 🔴 Does NOT catch: live skill directories and the engine's link directory; whether the engine sees the built links is checked only by a live session.
 
+### `stend-npm-sostav.py`
+
+Ловит: `npm-sostav` отказывает (код `2`, stdout пуст, причина с типом/длиной/ключами) на пустом входе, двух документах, `{"error":…}`, двух составах, составе без `files`, не-JSON, элементе `files`, который не объект, и элементе без строкового `path`; `--help` — stdout пуст, справка в stderr, код `2`; формы npm 11 и 12 дают одни и те же строки, равные разбору Python без jq. Порчи, проверенные при заведении: «принимать только массив» — краснеют `pack-v12`; «без ступени `-s`» — пусто и два документа; «без проверки `error`» — причина на `pack-oshibka`. Режим `--reestr`: jq-строка записи реестра (и внутри `sudo bash -c`) обязана принять и отвергнуть то же, что помощник, и дать те же строки. `--filename`: число и `null` — отказ «не дал filename» (тип судит помощник: текстовый вывод тип теряет); `../x.tgz` выдаётся как есть — путь судит вызывающий. `--view`: `[{"error":…}]` (строкой и `null`) — отказ, как и голый `{"error":…}`; те же входы для `--files` — отказ «не дал files» (3.1.3). Канарейка: проб ≠ 34 — код `2`.
+
+Catches: `npm-sostav` refuses (code `2`, empty stdout, reason with type/length/keys) on empty input, two documents, `{"error":…}`, two packages, a package without `files`, non-JSON, a non-object `files` element and an element without a string `path`; `--help` — empty stdout, help on stderr, code `2`; npm 11 and 12 shapes give the same lines, equal to a Python parse without jq. Corruptions checked when the stand was made: "accept only an array" turns `pack-v12` red; "no `-s` step" — empty and two documents; "no `error` check" — the reason on `pack-oshibka`. `--reestr` mode: the registry entry's jq string (also inside `sudo bash -c`) must accept and refuse what the helper does and give the same lines. `--filename`: a number and `null` are refused ("не дал filename"; the helper judges the type because text output loses it); `../x.tgz` is passed as is — the caller judges the path. `--view`: `[{"error":…}]` (string and `null`) is refused like a bare `{"error":…}`; the same inputs for `--files` are refused ("не дал files") (3.1.3). Canary: probes ≠ 34 — code `2`.
+
+🔴 Чего НЕ ловит: вызов npm (флаги, каталог, sudo) и хвост конвейера записи после jq (`grep`, `sort`, `sha256sum`); поведение живого npm — только записанные формы 11.17.0 и 12.2.0; запись, где jq зовётся через переменную или больше одного раза (это слепота, код `2`).
+
+🔴 Does NOT catch: the npm call (flags, directory, sudo) and the entry's pipeline tail after jq (`grep`, `sort`, `sha256sum`); live npm behaviour — only the recorded 11.17.0 and 12.2.0 shapes; an entry calling jq through a variable or more than once (blindness, code `2`).
+
 ## Как читать ответ прибора · Reading a tool's answer
 
 Код без строки не читать: у `kto-podnimal` код `0` значит и «сверено с журналом ворот», и «подъёмов в окне НЕ БЫЛО». Сторож, который зовёт прибор, должен различать их по строке «ИТОГ».

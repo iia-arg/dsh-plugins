@@ -137,9 +137,9 @@ Entries come from the service's real history: symptom → cause → fix. First l
 
 **Cause.** `agent-alert` failed or did not answer within 90 seconds. The service deliberately does not retry blindly: the message may have gone out, and a retry would duplicate it.
 
-**Лечение.** Проверьте канал тревог и учётные данные `LoadCredential`. Строка итога лежит в `latest.json` (поле `summary`) — её можно прочитать оттуда.
+**Лечение.** Проверьте канал тревог: доступ службы к спулу `agent-alert`, отправитель спула (`agent-alert-otpravitel.path`) и журнал `agent-alert` (`исход=нет-пути` / `нет-итога`). Строка итога лежит в `latest.json` (поле `summary`) — её можно прочитать оттуда.
 
-**Fix.** Check the alarm channel and the `LoadCredential` credentials. The summary line is in `latest.json` (the `summary` field) and can be read from there.
+**Fix.** Check the alarm channel: the service's access to the `agent-alert` spool, the spool sender (`agent-alert-otpravitel.path`) and the `agent-alert` journal (`исход=нет-пути` / `нет-итога`). The summary line is in `latest.json` (the `summary` field) and can be read from there.
 
 <a id="t9"></a>
 ## 9. Heartbeat: «scheduled run missing» или «not measured» · Heartbeat: "scheduled run missing" or "not measured"

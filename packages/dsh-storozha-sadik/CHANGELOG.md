@@ -1,6 +1,156 @@
 # История изменений dsh-storozha-sadik
 
-## 3.1.10 — 14.10.2026 · подготовка к публикации · release prep (Аврора, наряд Забавы 07:18Z)
+## 3.1.28 — 21.10.2026 · AP016: живость persistent notice вместо возраста start-job
+
+- Минимальная ветка `<unit> active` в парсере sutochnye sadik-watch: active+MainPID≠0 тихо; inactive/failed или запуск дольше30с — именная тревога; неизвестное/нечитаемое — СЛЕПОТА. Числовая ветка и ! побайтно прежние.
+- Семь notice-строк fragment переведены1→active; машинный полный перечень готовится отдельно от свежей основы1a5bbd73, две записи Михалыча сохранены.
+- Мандат Забавы21.10 17:09:24Z; пакет-спутник окна AP0.1.16. Сторож раньше worker, переключение перечня вместе с worker. Номер/CHANGELOG — кандидат, монтаж автором не выполнялся.
+- Новые проверки healthy70min (подставной cut), stop/return и blind, byte-identical numeric regression и файл fragment; состояние/канал только копийные. Факт будущего живого70-минутного наблюдения не присваивается.
+
+## 3.1.27 — 21.10.2026 · sadik-watch AP-PREPARE-BUDZHET r4: LIMIT из task_limits.py выпуска (pilot/, затем lib/), окно журнала 15 мин → 24 ч, текст «застрял» не выдаёт начало окна за начало застревания; Михалыч, ворота Вениамина 12:18
+
+- `sbin/sadik-watch` (261a678f → 34610414, +32/−10): правка только внутри блока AP-PREPARE-BUDZHET. Выпуск W0 — отдельное малое окно до AP 0.1.15 (рекомендация Вениамина 12:57); файл в бою с 09:58:43Z (монтаж Забавы), выпуск приводит дерево и метку к бою.
+
+## 3.1.26 — 21.10.2026 · бюджет prepare учёта Автопилота r3: вид отказа 0.1.13/0.1.14 (A-N-3131; код Михалыча r3, ГОДНО Вениамина 05:00:29 МСК; в дерево — Искра, наряд Забавы 02:00Z)
+
+- 3.1.26 · sadik-watch AP-PREPARE-BUDZHET r3: «застрял» видит отказ prepare и в форме 0.1.14 — верхнего error там НЕТ, причина в failed[].reason верхнего уровня (Гамма 01:54Z, frames 1401/4 MiB); finalization.failed — отдельным видом; тик с отказом не берётся в ФАКТ. Без этого после монтажа 0.1.14 сторож был бы слеп ровно к классу A-N-3131 (Вениамин 04:52:45). registration.failed[] в вид не входит.
+- Оговорка к 3.1.25: в ней «застрял» был слеп к отказу 0.1.14 в failed[] RUN (замечание Вениамина 04:55 МСК) — закрыто этим выпуском.
+- `sbin/sadik-watch` (678abd2b → 261a678f): правка только внутри блока AP-PREPARE-BUDZHET.
+- ЧЕГО НЕ ЛОВИТ (добавлено): пока RUN устойчиво падает в prepare или finalization, ФАКТ — «неизвестно, не 0» всё это время (ГОДНО Вениамина 05:00:29 МСК); прочее — как в 3.1.25.
+- AP-PREPARE-BUDZHET r3: "stuck" also recognises the 0.1.14 failure form (failed[].reason, finalization.failed); failed ticks are excluded from ACTUAL.
+
+## 3.1.25 — 21.10.2026 · бюджет prepare учёта Автопилота r2: ФАКТ, ЗАСТРЯЛ, m1/m2 (A-N-3131; код Михалыча r2, ГОДНО Вениамина 04:52:45 МСК; в дерево — Искра, наряд Забавы 01:53Z)
+
+- `sbin/sadik-watch` (eb754e1a → 678abd2b): блок AP-PREPARE-BUDZHET переписан внутри своих границ, вне блока файл не менялся.
+- ЗАСТРЯЛ — 6 тиков подряд (2 × K_HOLOD, K_HOLOD = 3) одной ошибкой в журнале `autopilot-usage.service` → тревога; холодный старт нового RUN тревоги не даёт.
+- ФАКТ — последний неошибочный тик журнала: верхний sourceBytes к LIMIT, ОЦЕНКА СВЕРХУ; выше 3/4 — тревога. Нет годного тика — «неизвестно», не 0.
+- LIMIT сверяется из двух мест — строки `LIMIT=` текущего выпуска и `metadataByteLimit` журнала; разошлись — тревога.
+- ТЕКУЩЕЕ (оценка снизу) — почта × число чтений (idle 1, при OPEN 2 + 2×OPEN) + receipts участников OPEN RUN; нет receipts у участника — СЛЕПОТА. ПРОГНОЗ — команда берётся из `/etc/autopilot-mail/retention.json`, дома — из реестра агентов; выше 3/4 — предупреждение раз в сутки.
+- СЛЕПОТА — нет JSON-тика 10 мин или не прочитаны журнал, index, record, LIMIT.
+- ЧЕГО НЕ ЛОВИТ: застревание короче 6 тиков; prepare отдельно от registration/consumer; прочие источники участника кроме receipts; RUN, открытый и закрытый между тактами; смену числа чтений почты после A-N-3131 — константы менять руками.
+- AP-PREPARE-BUDZHET r2: stuck detection (6 equal error ticks), actual upper-bound usage from the journal, LIMIT cross-check, lower-bound current/forecast.
+
+## 3.1.24 — 21.10.2026 · бюджет prepare учёта Автопилота: сторож в sadik-watch (A-N-3131; код Михалыча, ГОДНО Вениамина 04:40:47 МСК; в дерево — Искра, наряд Забавы 01:44Z)
+
+- `sbin/sadik-watch` (f4810b8c → eb754e1a, +70/−0): блок AP-PREPARE-BUDZHET. Prepare учёта Автопилота (`runtime_receipt_source.py`) при нехватке бюджета застревает (BUDGET_EXCEEDED) до 0.1.15; до него у риска не было зовущего.
+- Два числа, оба ОЦЕНКА СНИЗУ по размерам файлов: «текущее» = почта × K × OPEN RUN + receipts.sqlite участников OPEN RUN; «прогноз» = почта × K + receipts.sqlite всей команды Мастера. K = 4 (замер Гаммы). LIMIT берётся каждый такт из `tools/runtime_receipt_source.py` текущего выпуска; не прочёлся — СЛЕПОТА.
+- Порог — формулой, LIMIT × 3/4: «текущее» выше — тревога (напоминание раз в 6 ч); «прогноз» выше — предупреждение раз в сутки; иначе строка в журнале.
+- ЧЕГО НЕ ЛОВИТ: прочие источники участника кроме receipts.sqlite; застревание по времени и бюджет шлюза; RUN, открытый и закрытый между тактами; K после 0.1.15 надо поменять рукой — сторож этого сам не увидит.
+- Новый блок вписан в бой раньше выпуска (монтаж записи sadik-watch 21.10); этот выпуск приводит дерево и метку к бою.
+- AP-PREPARE-BUDZHET block: lower-bound estimate of the Autopilot receipt-prepare budget; alert above 3/4 of LIMIT.
+
+## 3.1.23 — 17.10.2026 · COMPACT-WATCH-1017: dsh-compact-watch читает журнал потоком и только нужные поля
+
+- `sbin/dsh-compact-watch`, `zhurnal()`: вывод `journalctl -o json` прежде копился в памяти целиком (`capture_output` → строка →
+  `splitlines` → разбор). 17.10 06:10–06:23Z в юните `coder-gateway@beta` легло ~23,8 тыс. строк sudo (29 МБ JSON); окно такта
+  с рубежа 06:20:15Z — 26,5 тыс. строк, 31,9 МБ; python3 дорастал до 247 МБ при пределе 160M (`70-predely.conf`) и убивался
+  КАЖДЫЙ такт с 06:25Z, а убитый такт рубеж не пишет — сторож из этого не выходил сам. Теперь строки разбираются по одной из
+  трубы (`Popen`), поля — только `MESSAGE` и `_SYSTEMD_UNIT` (`--output-fields`; `__CURSOR`/`__REALTIME_TIMESTAMP` journalctl
+  отдаёт всегда): 31,9 → 12,6 МБ вывода, пик python 247 → 30 МБ на том же окне. Записи на том же рубеже совпали с прежними
+  поштучно (26 464 из 26 464); отказ journalctl — тот же `RuntimeError` с текстом. Срок 120 с прежний: `threading.Timer` убивает journalctl и
+  молчащим (`RuntimeError «не уложился в 120 с»`, рубеж не сдвигается) — LOW Вениамина 07:08Z; проверка «на очередной строке»
+  молчащий journalctl не останавливала (проба: подставной молчит 200 с — прежняя редакция ждала 201 с, новая оборвала на 120 с).
+  Цикл разбора — в `try/finally`: таймер снимается и journalctl убивается сразу и при исключении разбора (мелочь Вениамина
+  07:58Z; без этого он жил до конца юнита).
+- Чего не ловит: рост самих записей (текст каждой строки держится до конца такта) — окно в сотни тысяч строк снова упрётся
+  в предел; предела по числу строк нет. Шум sudo в юнитах шлюзов — не здесь: journald относит sudo дочерних процессов к юниту.
+
+## 3.1.22 — 17.10.2026 · AP-BOOT: декларации Автопилота в стороже автозапуска
+
+- `libexec/sadik-watch-enabled.sh`: к прежней области агентов/After-Wants-шлюзов добавлены обязательные AP service/timer. Перечень — из установленного `dsh-autopilot` (`MAIL-LAYOUT.system_units` и registry `derevo.files`); notice-экземпляры — из флага `autopilot_pochta` реестра агентов. Enabled-symlink не источник ожидаемого перечня.
+- Ожидаемый Install читается из пакета: static/template-службы названы, но не требуют enabled; notice-template раскрывается по получателям, другие installable templates требуют DefaultInstance, иначе слепота. Обязательные AP-юниты без постоянного enabled краснеют и при inactive; прежнее active-only правило агентов сохранено.
+- Новый тип `ENABLED_REQUIRED` идёт в существующую группу `service-autostart`; пропуски/негодный срез не дают зелёного. Внешний caller и его канал не менялись. Один дополнительный пакетный is-enabled по `--root`; всего три systemctl, по 5 с, сбор 15+1 с, caller60 с, повторов нет.
+- `test/stend-enabled.py`: прежние24 случая и новые AP-проверки, включая настоящие enable/disable только в private --root, контроль unlink/SHA/native-state и возврат к повторному тихому зелёному. Живые службы и реальный канал тест не меняет.
+- Дополнение ворот13:37:26UTC: collect передаёт ENABLED_AP_SCOPE с фактическими числами юнитов/получателей в машинном срезе, reader выводит `AP: юнитов N, получателей M` через существующий log в журнал. Учтено внешнее подавление stderr в SREZ; проверка проходит настоящий путь с этим перенаправлением. Нет/негодная сводка логируется как не измерено; отдельной тревоги/истории на уменьшение и новых systemctl-вызовов нет.
+- Не доказывает успешный reboot или здоровье runtime/static-служб; вне деклараций не ищет. Удаление декларации/флага меняет область, правомерность изменения не проверяется. Это кандидат; монтаж после внешних ворот отдельной рукой.
+
+## 3.1.21 — 17.10.2026 · AP notice: семь экземпляров в перечне суточных
+
+- `etc/storozha-sutochnye-autopilot.fragment`: семь точных service-instance со сроком 1 ч; вход для отдельного
+  слияния в существующий `/etc/agent-registry/storozha-sutochnye.txt`, не самостоятельный runtime-config.
+  Сам перечень остаётся конфигурацией машины, пакет его не присваивает. Нужны внешний монтаж и рука.
+- `test/stend-autopilot-notice-sutochnye.py`: настоящий блок 2в и групповой канал/state из sadik-watch,
+  подставные systemctl/journal/получатель. Исправное → один failed с именем → снятие/тишина; также
+  отсутствие строк, шаблон вместо экземпляра, исключение, просрочка/нет истории и сохранность BEFORE.
+- Код sadik-watch и единицы systemd не менялись. Период читателя 10 мин, свежесть 1 ч, напоминание 6 ч;
+  краткий failed между срезами и доставку сообщений эта проверка не гарантирует.
+- Кандидат автозапуска AP правит только девять target.wants links; общего файла с этой дельтой нет.
+
+## 3.1.20 — 17.10.2026 · B-N-2108: читатель различает слепоту стенда и поломку
+
+- Только `sbin/chitatel-obhoda`: новая точная строка `⚠️ НЕОЖИДАННО … код 2 … СЛЕПОТА` попадает в отдельный исход B и письмо «СЛЕПОТА» с именем. Прежние красные строки сохраняют класс N. Сверка с итогом считает N+B; неизвестная/неверная форма не принимается.
+- История N↔B сохраняется; смена красного на слепоту не объявляется «СНЯТО». Исчезновение B учитывается при настоящем возврате; предел письма и полный поимённый файл сохранены.
+- Устанавливать читатель 3.1.20 строго НЕ ПОЗЖЕ обхода 3.1.99, который вводит новый формат. Старый формат читатель продолжает понимать. Изменения сторожа автозапуска Искры из 3.1.19 не затронуты.
+- `test/test_reader_blind.py` и сохранённый частный вывод таймера проверяют новый исход, переходы истории, смешанный список, предел письма, отказ неверной форме. Журнал/службы/настоящий курьер этими пробами не вызываются.
+
+## 3.1.19 — 17.10.2026 · B-N-2103 r2: sadik-watch видит службы, которые active, но не enabled (код Гаммы 02164cf9)
+
+- Новый `libexec/sadik-watch-enabled.sh` → `/usr/local/libexec/sadik-watch-enabled.sh` 0755: `collect` берёт службы агентов
+  из реестра (поле sluzhba каждого агента, в том числе «неполные»), добавляет их шлюзы из After/Wants (`claude-oauth-gateway@*`,
+  `coder-gateway*`) и для каждой снимает ActiveState/UnitFileState; только чтение,
+  без повторов. Читатель `sadik_enabled_check`: active, но не постоянно enabled (в том числе `enabled-runtime`) — группа
+  `service-autostart` с именами служб; возврат объявляется «снова в порядке». Пустой, неполный или негодный срез — СЛЕПОТА, не зелёное.
+- r3 сборщика (Гамма fa00379f, ворота Вениамина 08:43Z): одна загрузка реестра его же загрузчиком и два пакетных `systemctl show`
+  вместо 18 вызовов `agent-registry pole` и цикла systemctl; внутренний предел 15 с, systemctl 5 с. Живой сбор 15,4–15,9 с → 0,25–0,28 с,
+  вывод побайтно тот же (35 служб, замер Искры 17.10 ~10:0xZ). Тест — 24 случая. ⚠️ Зависит от внутренних zagruzit/namerenie/obyazatelnoe
+  agent-registry: их переименование сломает сбор (код 2 → СЛЕПОТА, не зелёное); вызов-потребитель в стенд dsh-reestr — пунктом Забавы.
+- `sbin/sadik-watch`: +8 строк — сбор в срезе (`timeout 60`), подключение читателя из `../libexec`; не загрузился — СЛЕПОТА.
+  Файл читателя ставится ПЕРЕД вызывающим.
+- `test/stend-enabled.py` (у Гаммы — `test_enabled.py`; имя `stend-*` — чтобы его мог звать обход стендов) — 24 случая на настоящем сборщике и читателе с подменёнными systemd/реестром.
+- Чего не ловит: сам перезапуск машины (enabled — признак, а не доказательство подъёма); службы вне агентов и их шлюзов;
+  службы, ставшие active между снимками. Сам ничего не включает и не запускает.
+
+## 3.1.18 — 17.10.2026 · B-N-2086 Л1: эталон agent-button знает команду Мастера
+
+- `etc/gruppy-prav.conf`: в строку `agent-button` дописаны vintik shpuntik gayka shurup tumbler sova (в группе с окна KNOPKA-MASTER,
+  usermod 16.10 13:39:16Z); примечание о двух правах группы — по коду и правам путей (токен тревог группе не читается, команды
+  Кнопки ограничены демоном по учётке); прежнее «команда — НЕ члены» снято с происхождением. До правки sadik-watch «ГРУППЫ ПРАВ»
+  краснел с 16.10 13:42:56Z (87 строк журнала к 17.10 03:53Z), а стенд `stend-gruppy-prav.sh` краснел на «исправном».
+- README/README.en: «9 учёток» → 15. Код сторожа и демона не менялся.
+- Чего не ловит: правомерность членства (эталон фиксирует решение, не оправдывает его); учётки, получающие группу юнитом
+  (SupplementaryGroups), — как прежде вне /etc/group.
+
+## 3.1.17 — 16.10.2026 · B-N-2088: постоянные точки метаданных Codex в Кнопке
+
+- Новый `systemd/agent-button.tmpfiles` → `/etc/tmpfiles.d/agent-button.conf`: pending root:agent-button3770 и пустые
+  `.git .codex .agents .aws` root:root0755. Native Codex0.162.1 больше не считает эти четыре имени своей временной
+  синтетикой: снимается гонка sticky-очереди при параллельных учётках. Демон/unit/allowed.conf не меняются, рестарт не нужен.
+- Установочный шаг/boot caller и граница будущих версий описаны в README; root disposable tmpfiles/daemon stand добавлен.
+  Новые имена следующих Codex и удаление каталогов между boot/проверками не покрыты; боевые папки стенд не трогает.
+
+## 3.1.16 — 16.10.2026 · AP0.1.3 certificate and consumer reader
+
+- Existing sadik-watch root/MESTNO=1 caller invokes a bounded read-only helper every10minutes. Certificate not_after is warned at14days (reminder24h); mail active requires copy active after30s of mail startup (reminder30min). No repairs, new timers, keys or API traffic.
+- All fetch/parse failures are named unmeasured. Existing gruppa/alert/fallback owns delivery and recovery. Native root fixture checks healthy/damaged/restored inputs with real short-lived certificates, fixed-string counts and SHA changes; both alert types and cooldown are exercised through the actual caller.
+- New helper/library/configuration require the declared stand in obhod3.1.94. Installed only with the postal runtime/client release in one window.
+
+## 3.1.15 — 15.10.2026 · команда Мастера (перенос r8: 3.1.13/3.1.14 заняты Гаммой, B-N-2063; прежде 3.1.13): новая строка a2a-pochta; в agent-button команды нет (наряд Забавы 14.10 20:35:04Z; Искра; номер 3.1.13 — 3.1.12 занят Кнопкой, решение Забавы 22:02Z)
+
+- `etc/gruppy-prav.conf`: `agent-button spisok` без изменений — команде Мастера кнопку НЕ давать (кнопка не сверяет полномочия: reboot-server, restart-memory, перезапуск любого агента; ворота Вениамина 20:59Z, HIGH-1; примечание в файле); новая строка `a2a-pochta spisok iskra coders marc spartak zarya avrora petrovich anna master` — нынешний состав `getent group a2a-pochta`; команда Мастера в a2a-pochta НЕ вписана (основная почта закрыта) — вписанный даст «ЛИШНИЙ». README: перечень групп и счёт учёток. · Master team: not in agent-button (the button does not check authority); new exact a2a-pochta line with today's members (the team is deliberately absent); README.
+- Монтаж строки a2a-pochta — в любой момент: её состав = нынешний `getent group a2a-pochta`; команда в группу не вступает. · The a2a-pochta line can be installed any time: it equals today's membership.
+
+## 3.1.14 — 15.10.2026 · B-N-2063 (2): один 3h-срез на UNIT
+
+- `sbin/sadik-watch`: один short-unix срез журнала на UNIT для OTKAZDLINA/OTKAZLIMIT вместо 2/3 чтений. Прежние фильтры и строки разбора сохранены; sentinel сохраняет завершающие переводы строк, включая пустую строку. Окно по OKNO_OTKAZA прежнее, по умолчанию 3h. Частичный вывод отказавшего journalctl трактуется как прежде; новые классы диагностики не добавлены.
+- `test/test_otkazy_single_read.py` и frozen fixture: одинаковые входы в прежний и новый реальный код, побайтная сверка выходов и один запрос чтения; пустой/недоступный журнал, Prompt/лимиты/подлог, многострочный/повторный вход и окно 17min. Пункт 1 и его helper не меняются. Сырой журнал не сохраняется на диск; память на один UNIT зависит от объёма окна.
+- One in-memory journal snapshot feeds both existing consumers; same byte outputs and one read are verified against the frozen original block.
+
+## 3.1.13 — 15.10.2026 · B-N-2063: общий код проверки реестра 2г
+
+- `libexec/sadik-watch-pravka.sh`: прежний блок 2г вынесен в функцию без изменения окон, UID0-фильтра, SHA, текстов и вызова gruppa с остыванием 21600 с. Штатный `sadik-watch` загружает и вызывает тот же код, что узкий стенд. Библиотека не найдена/не читается — тревога и отказ 2, проверка не пропускается.
+- Новый файл монтируется в `/usr/local/libexec/sadik-watch-pravka.sh` (0644 root:root) до caller/стенда; добавить в derevo.files. Вход штатного таймера и остальные проверки не менялись. Оптимизация повторного чтения 3h-журналов — отдельный следующий предмет.
+- Extract the real registry check into a shared sourced function; the normal watcher and narrow stand call the same code. Missing library fails visibly.
+
+## 3.1.12 — 14.10.2026 · Кнопка: полномочия по учётке запроса (Аврора; наряд Забавы 21:00Z, HIGH-1 Вениамина 20:59Z)
+
+- `sbin/agent-button-daemon.sh`: учётка-владелец запроса берётся `fstat` открытого дескриптора (сверка dev:ino с записью в `work/`), с того же дескриптора читается команда — не имя файла и не текст. Учётка с полным sudo (`(ALL) NOPASSWD: ALL` в `sudo -l -U`, снимается на каждый запрос; любой сбой — «не полный») — любая команда списка; без полного sudo — только `restart-<своя>` и `restart-gateway-<своя>`, прочее — код 77 в `done/` с причиной, без исполнения и без тревоги. Прежде любой участник группы `agent-button` (и любая служба с этой группой, если ей открыт `/var`) исполнял любую команду списка, включая `reboot-server`. · Authority follows the request file owner (fstat): full sudo — any listed command; otherwise only own `restart-<account>`/`restart-gateway-<account>`, else code 77.
+- `test/stend-knopki.sh`: +7 проб полномочий под root (основа `bf50b634` — 4 красных: master перезагрузил бы машину; порча «сверка вырезана» — те же 4; кандидат 13/13); не root — СЛЕПОТА, код 2. · +7 authority probes as root; blindness (exit 2) otherwise.
+
+## 3.1.11 — 14.10.2026 · chitatel-obhoda: повтор прочитанной ночи — код 0 со строкой причины (Аврора; находка Михалыча; ворота Вениамина 13:06Z)
+
+- `sbin/chitatel-obhoda`: повтор уже прочитанной ночи выходит кодом 0 со строкой «при прочтении код N (разбор разошёлся с итогом — назван в письме ночи), повтором не краснею»; прежде повтор отдавал код первого прочтения (2) каждый час, и юнит висел в `systemctl --failed`. Настоящие отказы не тронуты: разбор разошёлся при прочтении — 2, письмо не положено — 1, падение/слепота — 2. Стенд `stend-chitatelya-obhoda.py` (пакет dsh-obhod-stendov) — проба С6б. · `chitatel-obhoda`: a repeat run on an already read night exits 0 with a reason line instead of the first reading's code; real failures keep non-zero codes.
+- README: «Версия · Version: 3.1.11». · README: version line.
+ · подготовка к публикации · release prep (Аврора, наряд Забавы 07:18Z)
 
 - README: строка «Версия · Version: 3.1.10» под заголовком. · README: version line under the heading.
 - Логика не менялась; номер 3.1.9 → 3.1.10 по правилу владельца 10.10 16:33 (правка README ⇒ +1). · Logic unchanged; version bump for the README edit.

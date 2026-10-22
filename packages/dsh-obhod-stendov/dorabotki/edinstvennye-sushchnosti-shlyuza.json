@@ -177,6 +177,34 @@
       "zachem": "каталог учёток шлюза гостя (B-N-1621, 95-gost.conf: копия выбранного token-podpiska-N в RuntimeDirectory, его читает guest-launch.sh). Копия с боевым путём читала бы боевой токен подписки.",
       "chem_podmenyat": "временный каталог канарейки — в нём только подставной токен и синтетический ingress",
       "podmena": "vremennyj-katalog"
+    },
+    {
+      "klyuch": "AGENT_ALERT_TOKEN_FILE",
+      "sort": 1,
+      "zachem": "окно команды Мастера 15.10 Z7: drop-in coder-gateway-<агент>.service.d/25-trevogi-svoj-bot.conf (r4, решение Забавы 14.10 21:09Z) — тревоги agent-alert СВОИМ ботом агента; у прежних шлюзов ключа нет. Боевое значение — /etc/dsh-telegram/<агент>.token: копия слала бы тревоги БОЕВЫМ ботом агента владельцу как настоящие. Пусто тоже не пройдёт (nastrojki.py: пустое значение — отказ), но несуществующий путь даёт ясный отказ agent-alert «нет обычного файла» без отправки — так у ROOT. Не от root нечитаемый токен уводит agent-alert на клиентский путь через спул (agent-alert:61, klient.py), и root-отправитель шлёт боевым токеном; этот путь закрыт подменой AGENT_ALERT_SPUL (запись ниже).",
+      "chem_podmenyat": "несуществующий путь во временном каталоге канарейки — agent-alert откажет громко, не отправит",
+      "podmena": "put-v-nikuda"
+    },
+    {
+      "klyuch": "AGENT_ALERT_CHAT_FILE",
+      "sort": 1,
+      "zachem": "окно команды Мастера 15.10 Z7: drop-in coder-gateway-<агент>.service.d/25-trevogi-svoj-bot.conf (r4, решение Забавы 14.10 21:09Z) — тревоги agent-alert СВОИМ ботом агента; у прежних шлюзов ключа нет. Боевое значение — /etc/dsh-trevogi/chat-vladelec (чат владельца): даже с подставным токеном копия не должна знать боевой чат.",
+      "chem_podmenyat": "несуществующий путь во временном каталоге канарейки",
+      "podmena": "put-v-nikuda"
+    },
+    {
+      "klyuch": "AGENT_ALERT_HVOST",
+      "sort": 1,
+      "zachem": "окно команды Мастера 15.10 Z7: drop-in coder-gateway-<агент>.service.d/25-trevogi-svoj-bot.conf (r4, решение Забавы 14.10 21:09Z) — тревоги agent-alert СВОИМ ботом агента; у прежних шлюзов ключа нет. Боевое значение — /opt/<агент>/workspace/.trevogi/poslednie.log: копия дописывала бы в боевой хвост тревог агента.",
+      "chem_podmenyat": "путь во временном каталоге канарейки (файла нет; если agent-alert его создаст — уйдёт вместе с каталогом по EXIT)",
+      "podmena": "put-v-nikuda"
+    },
+    {
+      "klyuch": "AGENT_ALERT_SPUL",
+      "sort": 1,
+      "zachem": "ворота Вениамина 15.10 17:19Z: клиентский путь agent-alert (не root при нечитаемом TOKEN_FILE — а у копии он и есть путь в никуда) кладёт тревогу в спул (klient.py:63, по умолчанию /var/spool/dsh-trevogi — nastrojki.py:27), и root-отправитель шлёт её БОЕВЫМ токеном владельцу как настоящую. Ключа может не быть в окружении шлюза вовсе — опасно значение ПО УМОЛЧАНИЮ, поэтому «уцелели» этот случай не ловит: защищает только сама подмена (канарейка дописывает каждую запись списка в окружение копии).",
+      "chem_podmenyat": "несуществующий путь во временном каталоге канарейки — klient.py откажет «запись в …/tmp не прошла», в боевой спул не положит",
+      "podmena": "put-v-nikuda"
     }
   ],
   "_ne_lovit": "Проверка РЕЗУЛЬТАТА видит только ключи, ЗАПИСАННЫЕ в instance-*.env. Сущность с умолчанием в коде шлюза, чьего ключа в env нет, она не видит (так GATEWAY_BAZA_SESSIJ у iskra указывала бы копию на живую базу). Такую сущность спасает только строка в sushchnosti: подмены строятся для всех строк списка, есть ключ в env или нет.",
@@ -207,5 +235,15 @@
     "LANG": "Локаль процесса (codex-app-server.mjs: передаётся каналу тревоги STOP_WATCH вместе с PATH). Не файл, не сокет, не секрет — копия делит без вреда. Внесён B-N-1674 (стенд стал видеть env?.X параметра).",
     "KOMPAKT_NASTROJKI_KATALOG": "B-N-1742 (шлюз 1.4.50, codex-compaction-watch.mjs:59): каталог готовых настроек D порогов (по умолчанию /etc/dsh-pamyat/agenty) — наблюдатель сжатия Codex только ЧИТАЕТ <агент>.json (defaultRoute) для порога; копия читает боевой — общего ресурса не пишет и не держит; канарейка 1.0.5 (Искра, слово Забавы 16:42Z)",
     "GATEWAY_SESSII_SROK_DNEJ": "A-N-1948 №1 (шлюз 3.1.1): срок хранения строк карты сессий в собственной базе копии (сутки, умолчание 30) — чистит только её базу на старте; общего ресурса не открывает и у боевого ничего не отнимает"
+  },
+  "tolko_nalichie": {
+    "_zachem": "18.10 Искра (ИП 3.1.111): ключи, которые код шлюза только ПРОВЕРЯЕТ на наличие и значения не читает. Стенд считает их названными; канарейка их НЕ прощает — оказавшись в окружении агента, такой ключ уцелеет в копии и остановит пробу (в отличие от bezvrednye). Сейчас — массив overrides в usage-producer.mjs codexSpawn (шлюз 3.1.6): Object.hasOwn(env,k) ставит пометку envOverride учёта G.",
+    "CODEX_API_KEY": "usage-producer.mjs codexSpawn: Object.hasOwn — пометка envOverride учёта G; значение не читается",
+    "CODEX_ACCESS_TOKEN": "usage-producer.mjs codexSpawn: Object.hasOwn — пометка envOverride учёта G; значение не читается",
+    "OPENAI_API_KEY": "usage-producer.mjs codexSpawn: Object.hasOwn — пометка envOverride учёта G; значение не читается",
+    "OPENAI_ACCESS_TOKEN": "usage-producer.mjs codexSpawn: Object.hasOwn — пометка envOverride учёта G; значение не читается",
+    "OPENAI_FEDERATION_RULE_ID": "usage-producer.mjs codexSpawn: Object.hasOwn — пометка envOverride учёта G; значение не читается",
+    "OPENAI_IDENTITY_TOKEN_FILE": "usage-producer.mjs codexSpawn: Object.hasOwn — пометка envOverride учёта G; значение не читается",
+    "OPENAI_WORKLOAD_IDENTITY_CONTEXT": "usage-producer.mjs codexSpawn: Object.hasOwn — пометка envOverride учёта G; значение не читается"
   }
 }

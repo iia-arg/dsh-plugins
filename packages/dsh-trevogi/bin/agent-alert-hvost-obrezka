@@ -8,6 +8,7 @@ set -uo pipefail
 # RU: Один читатель для всех утилит; конфиг не исполняется оболочкой.
 # EN: One reader for all utilities; the shell never evaluates configuration.
 LIB_DIR="$(dirname -- "$(readlink -f -- "$0")")/../lib/dsh-trevogi"
+VERSIYA="$(sed -n "s/^VERSIYA = '\([0-9][0-9.]*\)'$/\1/p" "$LIB_DIR/nastrojki.py" 2>/dev/null | head -1)"; : "${VERSIYA:=неизвестна}"   # номер — константа читателя (3.1.6)
 if ! settings="$(python3 "$LIB_DIR/nastrojki.py")"; then exit 2; fi
 have_hvost=0; have_lines=0
 while IFS= read -r setting; do
@@ -33,6 +34,6 @@ N="$AGENT_ALERT_HVOST_STROK"
     cat "$buffer" > "$F" || { echo "СЛЕПОТА: хвост $F не записан"; exit 2; }
   fi
   stalo=$(wc -l < "$F") || { echo "СЛЕПОТА: результат обрезки $F не прочитан"; exit 2; }
-  echo "версия=3.1.1 хвост $F: строк было $bylo, стало $stalo (предел $N)"
+  echo "версия=$VERSIYA хвост $F: строк было $bylo, стало $stalo (предел $N)"
 ) 9>>"$F"
 exit $?

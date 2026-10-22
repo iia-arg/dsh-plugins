@@ -1,0 +1,19 @@
+diff --git a/packages/dsh-autopilot/runtime/ap_sadik.py b/packages/dsh-autopilot/runtime/ap_sadik.py
+index 6e5f2a43..d31b37bd 100644
+--- a/packages/dsh-autopilot/runtime/ap_sadik.py
++++ b/packages/dsh-autopilot/runtime/ap_sadik.py
+@@ -552,6 +552,14 @@ def run_event(ap):
+                     state['usage'] = dict(schemaVersion=1,runId=meta['run_id'],byEngine={k:unknown_usage(k) for k in ('codex','claude')})
+                     return state
+                 ap.fresh_state = pinned_fresh
++            original_check_plan = ap.check_plan
++            def nonempty_plan(state):
++                problems = original_check_plan(state)
++                tickets = ap.glob.glob(os.path.join(ap.run_dir(state), 'tickets', '*.md'))
++                if not ap.manifest_rows(state) or not tickets:
++                    problems.append('план пуст')
++                return problems
++            ap.check_plan = nonempty_plan
+             original_numbers = ap.cmd_numbers
+             def safe_numbers(state, name, rest, multi):
+                 if name != 'blind':

@@ -1,6 +1,6 @@
 {
   "name": "dsh-telegram-multiagent",
-  "version": "3.1.7",
+  "version": "3.1.15",
   "description": "Устойчивый Telegram, файловый A2A и сайт-канал для DSH с квитанциями и изоляцией сессий · Durable Telegram, file A2A and website channel for DSH with receipts and session isolation",
   "type": "module",
   "main": "src/index.js",
@@ -24,7 +24,8 @@
     "systemd",
     "MAIL-STOP.md",
     "MAIL-NEW.md",
-    "GUEST-PDF.md"
+    "GUEST-PDF.md",
+    "USAGE-RUNTIME.md"
   ],
   "keywords": [
     "telegram · телеграм",

@@ -1,3 +1,9 @@
+## 3.1.5 — 17.10.2026 · токен бота тревог службе не выдаётся (B-N-2055, хвост; наряд Забавы 20:46Z; Искра)
+
+- `systemd/dsh-pamyat-obsluzhivanie.service`: сняты `Environment=AGENT_ALERT_TOKEN_FILE=%d/alert-token` и `AGENT_ALERT_CHAT_FILE=%d/alert-chat`; комментарий о данных машины — без `LoadCredential`, с доступом к спулу тревог. Прежде через эти переменные `agent-alert` (env главнее config, `/usr/local/lib/dsh-trevogi/nastrojki.py:61`) брал токен из credential службы и слал прямым путём. Теперь берёт путь из `/etc/dsh-trevogi/dsh-trevogi.conf`, учётке `omega` он не читается → клиентский путь через спул root-отправителя (`agent-alert:151`). Вставка sadik уже без `LoadCredential` (`20-ferma.conf` cdeeb29f, 17.10 20:34Z).
+- README RU/EN (шаг 3 установки, описание юнита, «кто читает переменные»), `docs/SETTINGS.md` (`LoadCredential` — не задаётся; строка вставки — доступ к спулу; `AGENT_ALERT_*_FILE` — юнитом не задаются), `docs/TROUBLESHOOTING.md` (лечение «delivery: unknown» — спул и его отправитель вместо credential). Номер 3.1.5.
+- Код пакета не менялся: credential он не читает (grep `src/` и `/usr/local/lib/dsh-pamyat-obsluzhivanie`, 17.10).
+
 ## 3.1.4 — 14.10.2026 · документация: актуальные номера
 
 - README/доки: номера приведены к выпуску (Аврора, ветка nomera-v-dokah, fd070a17); номер пакета +1.

@@ -288,6 +288,41 @@ def sopostavit_zvezdy(seg: list, oseg: list):
     return m(0, 0)
 
 
+def zvezdy_avtomat(oseg: list):
+    """Автомат образца с «**» для ПОТОКА путей (ускорение 16.10.2026, наряд Забавы 02:08:06Z; разбор Искры
+    RAZBOR-nedelnyj-16-10 п.1, класс B-N-1443). Даёт тот же «polno», что sopostavit_zvezdy: образец целиком совпал
+    с каким-то НАЧАЛОМ пути («**» — 0…N сегментов, прочие сегменты — тот же fnmatch).
+    ЗАЧЕМ. obrazec_najden сверял каждый путь из find заново от корня: путей одного find тысячи, и общие начала
+    (каталоги) сверялись тысячи раз — 1,25 млн вызовов sopostavit_zvezdy и 8,2 млн fnmatch, 12,5 с на прогон
+    (живость registry-watchdog — 60 с, стенд покрытия зовёт сторож пять раз). Поднять healthcheck_predel — повязка:
+    лопнет при следующем росте путей. Здесь состояние автомата для общего начала с ПРЕДЫДУЩИМ путём берётся из
+    стопки, считаются только новые сегменты.
+    Возврат: (начальное состояние, шаг(состояние, сегмент) -> состояние, длина образца). Состояние — frozenset
+    позиций образца после замыкания по «**»; «polno» на этом начале ⇔ длина образца в состоянии.
+    ⚠️ Порядок вывода find на ВЕРДИКТ не влияет (общего начала нет — стопка просто считает заново), только на скорость.
+    """
+    n = len(oseg)
+
+    def zamknut(sost):
+        s, stek = set(sost), list(sost)
+        while stek:
+            j = stek.pop()
+            if j < n and oseg[j] == "**" and j + 1 not in s:
+                s.add(j + 1); stek.append(j + 1)
+        return frozenset(s)
+
+    def shag(sost, segment):
+        nov = set()
+        for j in sost:
+            if j < n:
+                if oseg[j] == "**":
+                    nov.add(j)                      # «**» поглощает сегмент и остаётся
+                elif fnmatch.fnmatch(segment, oseg[j]):
+                    nov.add(j + 1)
+        return zamknut(nov)
+    return zamknut({0}), shag, n
+
+
 def status(segmenty: list, obrazcy) -> str:
     """Итог по всем образцам. 'polno' сильнее 'chastichno' — и это решение.
 
@@ -344,21 +379,53 @@ def obrazec_najden(dom: str, obrazec: str, kesh: dict) -> bool:
         # спуск здесь стоил бы sudo на каждый каталог песочниц (их тысячи).
         i = next(k for k, s in enumerate(seg) if any(c in s for c in "*?["))
         nachalo = os.path.join(dom, *seg[:i]) if i else dom
-        if subprocess.run(["sudo", "-n", "test", "-d", nachalo]).returncode != 0:
+        # Ускорение 16.10.2026 (наряд Забавы 02:08:06Z; разбор Искры RAZBOR-nedelnyj-16-10 п.1, класс B-N-1443).
+        # Было: свой find на КАЖДЫЙ образец (у дома их пять, начало у всех одно — дерево проходилось пять раз)
+        # и sopostavit_zvezdy на каждую запись от корня (1,25 млн вызовов, 12,5 с на прогон).
+        # Стало: (1) ОДИН find на начало в пределах дома — вывод в kesh (он живёт один дом); (2) если последний
+        # значащий сегмент образца (хвостовые «**» могут быть пустыми — отброшены) — буквальное имя L, то совпавшее
+        # начало любого пути кончается сегментом L, а само это начало — запись того же вывода (каталог, в который find
+        # спустился; по ссылкам он не ходит). Значит, вердикт решают только записи с последним сегментом L — их и
+        # сверяем. Маска в последнем сегменте (*?[ или «\\») — сверяем все записи; (3) сверка — автоматом zvezdy_avtomat
+        # со стопкой по общему началу с предыдущей записью: тот же «polno», что sopostavit_zvezdy, без пересчёта начал.
+        # Ранний выход на первом совпадении прежний; find теперь проходит дерево целиком один раз на начало.
+        klyuch = ("**", nachalo)
+        if klyuch not in kesh:
+            if subprocess.run(["sudo", "-n", "test", "-d", nachalo]).returncode != 0:
+                kesh[klyuch] = None
+            else:
+                r = subprocess.run(["sudo", "-n", "find", nachalo, "-mindepth", "1", "-printf", "%P\\0"],
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                kesh[klyuch] = r.stdout.split(b"\0")
+        zapisi = kesh[klyuch]
+        if zapisi is None:
             return False
-        p = subprocess.Popen(["sudo", "-n", "find", nachalo, "-mindepth", "1", "-printf", "%P\\0"],
-                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        hvost, buf = seg[i:], b""
-        try:
-            for kus in iter(lambda: p.stdout.read(65536), b""):
-                buf += kus
-                *zapisi, buf = buf.split(b"\0")
-                for z in zapisi:
-                    if z and sopostavit_zvezdy(z.decode("utf-8", "surrogateescape").split("/"), hvost) == "polno":
-                        return True
-            return False
-        finally:
-            p.terminate(); p.wait()   # SIGTERM: sudo передаёт его find; SIGKILL оставил бы find сиротой
+        hvost = seg[i:]
+        jadro = list(hvost)
+        while jadro and jadro[-1] == "**":
+            jadro.pop()
+        imya = jadro[-1] if jadro else ""
+        bukv = imya.encode("utf-8", "surrogateescape") if imya and not any(c in imya for c in "*?[\\") else None
+        nachalo_a, shag, n = zvezdy_avtomat(hvost)
+        stek_seg, stek = [], [(nachalo_a, n in nachalo_a)]   # stek[k] — (состояние, polno на начале ≤k) после k сегментов
+        for z in zapisi:
+            if not z:
+                continue
+            if bukv is not None and z != bukv and not z.endswith(b"/" + bukv):
+                continue
+            chasti = z.decode("utf-8", "surrogateescape").split("/")
+            k = 0
+            while k < len(stek_seg) and k < len(chasti) and stek_seg[k] == chasti[k]:
+                k += 1
+            del stek_seg[k:]; del stek[k + 1:]
+            for s in chasti[k:]:
+                sost, polno = stek[-1]
+                if not polno:
+                    sost = shag(sost, s); polno = n in sost
+                stek.append((sost, polno)); stek_seg.append(s)
+            if stek[-1][1]:
+                return True
+        return False
 
     uzly = [dom]
     for i, s in enumerate(seg):

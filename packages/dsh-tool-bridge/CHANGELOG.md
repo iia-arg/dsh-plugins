@@ -1,5 +1,40 @@
 # История изменений · Changelog
 
+## 3.1.9 — 17.10.2026 · B-N-2097: формулировка резюме полосы и даты · streak summary wording and dates
+
+- `src/index.js` `tekstRezyume`: вместо «оборвалась без объявления» / «осталось без объявления» — «итог агентом не объявлен — см. ответ хода». Отсутствие объявления значит только, что агент не позвал закрытие полосы, а не что работа потеряна (разбор Зари 17.10 02:47Z: закрыто агентом 0 из 75, работа сделана в 3 из 3 сводок суток).
+- Время полосы: начало и конец в разных ЛОКАЛЬНЫХ сутках зоны `heartbeatDayZone` — обе полные даты, время и зона (`14.10.2026 09:30 (Europe/Moscow)`); в одних сутках — как прежде, «ЧЧ:ММ». Прежде полоса Анны 14.10→16.10 печаталась «с 09:30 до 09:30». Сутки судит та же `dayKeyFactory`, что и счётчики heartbeat.
+- Логика heartbeat, полосы и объявления не менялась; соглашение `heartbeat_close` в своды не вводится.
+- `test/stend-rezyume.mjs`: 32 → 38 проверок — фиксированная строка, отсутствие прежних слов, 14.10→16.10, граница полуночи по локальной зоне, разные сутки UTC при одних московских; прежние проверки текста переведены на новую строку.
+- EN: "no declaration" now reads "outcome not declared by the agent — see the turn reply"; when start and end fall on different local days of `heartbeatDayZone`, both full dates, time and zone are printed. Heartbeat logic unchanged.
+
+## 3.1.8 — 15.10.2026 · B-N-2061: покрытие копий правок составом
+
+- `test/stend-publikacii.mjs`: вместо сравнения числа файлов src/+test/ с полным составом проверяется каждая найденная копия правки: её имя или содержащий каталог не должны входить в `files`. Один признак `.bak|.orig|.tmp|.limits` применяется к составу и диску; вложенные копии также учитываются. Записи-каталоги разворачиваются в файлы для остальных проверок стенда, а не читаются как текст.
+- Непубликуемая копия — зелёное; покрытая именем/каталогом — FAIL с путём; без копий — прежнее «НЕ ПРИМЕНИМО». Десять CLI-проб на настоящих файлах включают границу соседних каталогов, четыре вида копий и отказ обхода за физическим корнем через ../ или внешнюю ссылку. Код `src/` и зависимости не менялись, подъём копий не требуется.
+- EN: Check each edit backup against declared file/directory coverage, not unrelated file totals. Both checks share the backup predicate; directory declarations and nested backups are tested. No runtime changes or restart.
+
+## 3.1.7 — 15.10.2026 · stend-heartbeat: машинная метка «не применимо» для ворот · machine-readable not-applicable mark (Заря; B-N-2062 шаг 2, наряд Забавы 04:53Z)
+
+- `test/stend-heartbeat.mjs`: к каждой строке «НЕ ПРИМЕНИМО» (простой сессии, раздел Г) — строка `STEND-NEPRIMENIMO: <проба>: <причина>` с начала строки; в имени пробы «: » → « — » (двоеточие с пробелом отделяет пробу от причины). Обход ≥ 3.1.65 несёт её в ворота, ворота ≥ 3.1.27 дают СЛЕПОТУ, если раздел Г не измерен ни на одной копии (LOW Вениамина к 3.1.5). Код стенда и счёт проверок прежние. Только тестовый файл — копии поднимать не нужно. · Each not-applicable line is followed by a `STEND-NEPRIMENIMO:` mark for the walker and release gate; exit code and probe count unchanged.
+- `stend-publikacii.mjs` метку НЕ печатает: его «не применимо» стоит на всех копиях по устройству — ворота давали бы слепоту всегда.
+
+## 3.1.6 — 15.10.2026 · B-N-1983: содержимое загруженного src вместо mtime
+
+Рабочий кандидат B-N-1983 перенесён поверх принятой Зари 6ada0b8c отдельным выпуском 3.1.6; её запись 3.1.5 сохранена. src и целевой читатель побайтно равны принятой fc2b086b.
+
+- SHA256 src/index.js фиксируется при import и печатается при apply с PID и import-time подписью. cel-mosta сверяет содержимое с квитанцией текущего процесса/подъёма; mtime кода больше не признак «другой код». Домонтаж test/ и смена только номера манифеста не требуют нового подъёма для этого стенда.
+- Чужой PID, нет/битый/противоречивый SHA, смена процесса и недоступный журнал дают СЛЕПОТУ; старым процессам без квитанции нужен первый назначенный подъём. Разные байты — FAIL, возврат — зелёный. Формат файла журнала обходчика с unit/start сохранён.
+- Новый stend-cel-soderzhimoe: настоящий модуль и читатель, контроль import→правка→apply, порча/возврат содержимого, реальный git archive после test-only commit, версия манифеста, процесс/журнал. Отпечаток не охватывает зависимости и прочие src-файлы; YAML mtime-проверка не менялась.
+
+Loaded-source SHA256 is captured at import and emitted at apply with PID and the loaded package signature. cel-mosta uses that receipt instead of code mtime; missing/ambiguous evidence stays blindness. Test-only deployments retain green; a new isolated integration stand exercises mutation/restoration and git archive.
+
+## 3.1.5 — 15.10.2026 · стенды: «не применимо» вместо вечной слепоты · stends: "not applicable" instead of permanent blindness (Заря; наряд Забавы 03:00Z, B-N-1984 + B-N-1988)
+
+- `test/stend-heartbeat.mjs` (B-N-1984, находка Искры): журнал сессии читается и разбирается ДО суда о возрасте. Целый журнал `session.v4.jsonl.zstd` старше суток — простой сессии: две пробы живого журнала «НЕ ПРИМЕНИМО» с числом часов, код не 2 (10.10: varvara 32.4 ч, marc 24.3 ч слепили ворота VYPUSK_KOPII; 15.10 varvara 33.3 ч — основа 2, кандидат 0). Нет файла, не распаковывается, не разбирается, старое имя журнала — поломка: СЛЕПОТА, как прежде. Счёт проверок прежний (53), «не применимо» в нём. · Live-journal probes: an intact current-format journal older than 24 h is session idleness — "not applicable" with hours, not blindness; missing/undecodable/unparsable/legacy-named journal stays blindness.
+- `test/stend-publikacii.mjs` (B-N-1988): проба «на диске файлов больше, чем в составе» без копий правок (.bak-pre-, .limits) в src/ и test/ — «НЕ ПРИМЕНИМО» с причиной, а не слепота (на собранной копии и в дереве она не судит по устройству). · The disk-vs-manifest probe without edit backups is "not applicable", not blindness.
+- Строка ИТОГО обоих стендов: в конце «, не применимо N»; начало строки прежнее. Код моста не менялся. · ИТОГО lines end with ", не применимо N"; bridge code unchanged.
+
 ## 3.1.4 — 14.10.2026 · подготовка к публикации · release prep (Аврора, наряд Забавы 07:18Z)
 
 - `author` — «Aleksandr Argelander» (единый автор семьи; лицензия MIT на его имя) · `author` set to "Aleksandr Argelander"

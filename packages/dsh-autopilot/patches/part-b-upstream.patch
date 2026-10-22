@@ -1,0 +1,533 @@
+# Derived from nick-vels/skills (MIT, Copyright (c) 2026 Nick Vels), modified by Aleksandr Argelander and contributors.
+# Full upstream license and derived-file list: NOTICE
+
+--- a/skills/autopilot/phases/0-instruments.md
++++ b/skills/autopilot/phases/0-instruments.md
+@@ -1,92 +1,66 @@
+-# Phase 0 — Instruments
++<!-- Derived from nick-vels/skills (MIT, Copyright (c) 2026 Nick Vels), modified by Aleksandr Argelander and contributors. -->
+ 
+-The user's live view of the run: `.autopilot/dashboard.html`, a copy of the template, showing `.autopilot/state.js`. **You never edit either by hand.** Every event of the run is one call to `.autopilot/ap.py`, which stamps the time, recounts the requirements from `manifest.md`, closes the stages the run has passed, writes a snapshot of the state into the page and keeps a static server alive for it. This file is read once, in Phase 0; the command table in §4 is what you use for the rest of the run.
++# Sadik — one command per event
+ 
+-## 1. Copy the template and the tool
+-
+-Runs on every flight — new repo, new feature, resume alike. Every line is idempotent and the copy picks up whatever the installed skill has learned since.
++This installed adaptation replaces upstream's local HTTP server. The only event command is:
+ 
+ ```bash
+-A=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)/.autopilot
+-TPL=$(find -L ~/.claude/skills ~/.agents/skills ~/.claude/plugins .claude/skills .agents/skills \
+-        -maxdepth 6 -name dashboard-template.html 2>/dev/null | head -1)
+-[ -n "$TPL" ] && TPL=$(cd "$(dirname "$TPL")" && pwd -P)/dashboard-template.html
+-command -v cygpath >/dev/null && TPL=$(cygpath -m "$TPL")   # Windows: C:/…, а не /c/…
+-echo "skillDir = ${TPL%/phases/*}"
+-mkdir -p "$A" && cp "$TPL" "$A/dashboard.html" && ln -sfn dashboard.html "$A/index.html"
+-cp "${TPL%/phases/*}/tools/ap.py" "$A/ap.py"
++python3 /opt/autopilot/current/skill/tools/ap.py --no-serve EVENT ...
+ ```
+ 
+-- **`skillDir` is what every subagent contract hangs on** — `prompts/executor.md` and `prompts/review.md` go down as paths built from it. It goes into `init` below and lives in `state.js`, never only in your context.
+-- `find -L` and no `*` in it: skills are installed through symlinks, which a plain `find` does not follow, and an unmatched glob aborts the whole line in zsh. Empty output → widen the search once by hand and carry on.
+-- **`python3` not a working interpreter** — on Windows it can be the Microsoft Store stub → use `python` or `py -3` wherever this skill says `python3`.
+-- `index.html` is a symlink so the server answers `/` with the dashboard instead of a directory listing.
+-- Never regenerate the template, never read it into context, never edit it.
++Run it from the project's physical root. No preliminary copying into an existing `.autopilot/` is allowed: the command checks the operator before it writes project state. Do not run `http.server`, create `serve.pid`, start a second publisher, or edit `state.js` by hand.
+ 
+-## 2. Start the run
++## Start
++
++The installer provisions `/srv/autopilot/public/<agent>/` for the operator UID and read-only web service. `AUTOPILOT_AGENT` selects the registered label (default Unix login); `AUTOPILOT_PUBLIC_ROOT` defaults to `/srv/autopilot/public`. Set these consistently before the first run. A shared Unix UID is not an isolation boundary between logical agents.
+ 
+ ```bash
+-python3 .autopilot/ap.py init --slug telegram-repair-bot --title "Телеграм-бот для заявок на ремонт" \
++python3 /opt/autopilot/current/skill/tools/ap.py --no-serve init \
++  --slug telegram-repair-bot --title "Telegram repair bot" \
+   --mode semi --depth normal --memory-file AGENTS.md --memory-owner autopilot \
+-  --skill-dir "<skillDir>" --check-update
++  --skill-dir /opt/autopilot/current/skill
+ ```
+ 
+-It creates the run directory `<YYYY-MM-DD>-<slug>--wip/` with `tickets/` inside, writes `state.js` with all eight stages (`preflight` active), adds the run's row to `.autopilot/README.md` (writing the file on a new repo), puts `.autopilot/serve.*` into `.gitignore`, raises the server and prints its address. A finished run's `state.js` is archived into that run's directory first; an unfinished one means this is a resume, and `init` refuses (`phases/0-resume.md`).
++The command creates `.autopilot/` only after argument/owner checks, selects the physical release, copies its template under the project lock, and records the release fingerprint and state schema in `state.js` as `_sadik`. `.autopilot/sadik.json` is a readable mirror, not the authority. Project/run IDs are independent UUIDs, not the slug/date. A second project or a new run cannot overwrite the first URL.
+ 
+-A line starting with **`↑`** means a newer Autopilot is out: put it into the opening block as it is — one line, not a question, never an update mid-run.
++The operator is the nearest live `codex`/`claude` ancestor, or the live same-UID ancestor explicitly named by `AUTOPILOT_OPERATOR_PID`. The value must identify the long-lived orchestrator, not the one-shot event Python or a disposable shell. Unknown ownership refuses. PID, process start, UID and boot are checked; file age never unlocks a project. If another operator is alive, stop without changing state. If that identity is proven gone, the next resume can take ownership. Executors send their results to the orchestrator and do not invoke this command themselves.
+ 
+-## 3. Open it once, yourself
++## Events
+ 
+-Immediately after `init`, before Phase 1 asks anything.
++Every row below uses the same prefix `python3 /opt/autopilot/current/skill/tools/ap.py --no-serve`:
+ 
+-**Path A — the pane beside the chat (preferred), over http.** In Claude Code: `preview_start({url: "http://localhost:PORT"})`, then `navigate` to `/dashboard.html`. A bare `navigate` to localhost without `preview_start` is refused, and so is `127.0.0.1`. Never hand the pane a `file://` path: it loads the page as `data:`, which cannot fetch `state.js` — the snapshot shows, the clocks never move. If `preview_start` is not in your tool list, search for it before concluding there is no pane.
++| Event | Arguments |
++|---|---|
++| enter/close a stage | `stage <id>`, `stage <id> done`, `stage <id> skip --note "reason"` |
++| set tier/base commit | `set tier=T2 baseCommit=<sha>` |
++| publish/check tickets | `tickets`, `check-plan` |
++| ticket lifecycle | `ticket <id> start`, `review`, `repair --note "reason"`, `done --tests 4/0 --commit <sha>`, `fail --note "reason"`, `retry`, `reset` |
++| coverage/blind acceptance | `coverage found=2 fixed=1 deferred=1 --item "reason"`, `blind checked=4 matched=3 --mismatch "reason"` |
++| test result | `tests 4/0` |
++| debt/report | `add concerns "reason"`, `add report "result"`, `add debt.emptyEnv VARIABLE_NAME` |
++| ask the owner | `ask briefing\|spec\|plan\|action\|stop --note "question"` |
++| answer received | `answered` |
++| resume | `resume` |
++| finish/reopen | `finish --result "result"`, `reopen` |
++| refresh | `sync` |
++| numeric usage snapshot | `usage ENGINE --snapshot <private-file>` |
+ 
+-**Say the address in the chat too** — some clients show the pane only as a card with an «Open» button.
++Do not place secret values in arguments, notes, state or the panel. Unknown flags (including `--dry-run`, `-n`, `--check`) refuse before an event is written; this command has no pretend-write mode.
+ 
+-**Path B — no pane:** `open`, `xdg-open` or `start` on `.autopilot/dashboard.html`; a real browser polls `state.js` from `file://` by itself.
++Each successful event saves accounting, refreshes the local snapshot and attempts one export. Only `dashboard.html` and `state.js` are published under `<agent>/<project-id>/<run-id>/`, with a minimal agent index. The run-directory entry is exchanged atomically; the index is a separate atomic update under the agent directory lock. This does not promise one transaction across two HTTP requests or across the index and run directory.
+ 
+-**No working python at all** means no `ap.py` and no dashboard. Say so in one line, skip the dashboard, keep the manifest's statuses by hand, and check G3 yourself against the ticket files. Everything else in the run is unchanged.
++An export failure prints `панель не обновлена`, a reason and the last confirmed successful time. The event remains recorded; the next ordinary event makes the next attempt. The export worker is stopped at 4.8 seconds, with at most 0.1 seconds for cancellation. No infinite retry. A busy agent index gets at most 0.25 seconds. The static service is independent of this command; no HTTP request to it is needed for accounting.
+ 
+-- Opened **once per flight**; on a resume **always re-pointed** — a tab does not outlive its session.
+-- `$SSH_CONNECTION` or `$CI` set → print the path, open nothing.
+-- A failure to open is not an error: print the path in one line and carry on.
+-- The server binds `127.0.0.1` only — it serves the run's own files.
+-- **«Дашборд отвалился», «подними дашборд»** — the machine slept or the server died. One bare `python3 .autopilot/ap.py`: it raises the server on the same port, and the open tab comes back by itself. Re-point the pane only if the printed address changed. One line in the chat, no investigation.
++Use the URL printed by the command through the protected common host configured by the administrator. The service must refuse hidden/staging paths and serve only the registered static routes. Finish retains the published panel. Local-server recovery and localhost links from upstream do not apply on sadik.
+ 
+-## 4. One call per event
++On resume, run `commits` before relaunching work; read each `!` diagnostic and the pinned phase0-resume procedure. One event, one message: group its accounting command with the associated work and report.
+ 
+-| Event | Call |
+-|---|---|
+-| entering a phase | `stage <id>` — the stage before it closes itself |
+-| a phase consciously not run | `stage <id> skip --note "причина"` |
+-| tier decided | `set tier=T2` |
+-| ticket files written | `tickets` — publishes every ticket; manifest rows `in-spec` → `in-ticket` |
+-| gate G3 | `check-plan` |
+-| the plan commit is made | `set baseCommit=<sha>` — chained with it (`phases/4-plan.md`) |
+-| a ticket or a whole wave launched | `ticket 02 03 start` — **before** the subagents go out |
+-| a ticket goes to point review | `ticket 02 review` |
+-| a blocking finding goes back | `ticket 02 repair --note "условие одной строкой"` |
+-| a failed ticket restarts | `ticket 02 retry` |
+-| committed | `ticket 02 done --tests 34/0 --commit <sha>` (+ `--placeholder R05` for a stubbed row) — closes the manifest rows whose tickets are all done |
+-| failed for good | `ticket 02 fail --note "что блокирует"` |
+-| a deferred finding | `add concerns "файл:строка — что не так"` |
+-| a stub, an assumption, an empty variable | `add debt.placeholders "…"` · `add debt.assumptions "…"` · `add debt.emptyEnv NAME` |
+-| an `A##` that reached the code | `add additions "что — ради R01"` |
+-| a finding for the final report | `add report "…"` |
+-| G2 result | `coverage found=2 fixed=1 deferred=1 --item "R07 — отложено: …"` |
+-| blind acceptance | one call: `blind checked=12 matched=11 --mismatch "R07 — статус не виден" --mismatch "…"` |
+-| a full check outside a ticket | `tests 34/0` |
+-| the run waits for the user — a briefing round, the manual spec or plan gate, a yes/no before an irreversible action, a stop condition | `ask briefing\|spec\|plan\|action\|stop --note "что ждём, одной строкой"` — chained with nothing: the message goes out after it |
+-| the answer came | `answered` — or nothing, when the next call is a `stage` or `ticket`: those close the wait themselves |
+-| the run lands | `finish --result "одна строка: что теперь есть"` |
+-| a resume, before anything relaunches | `commits` — every `done` ticket's commit still in `HEAD`; a `!` line is a ticket to reset (`phases/0-resume.md`) |
++### Usage snapshots
+ 
+-All are `python3 .autopilot/ap.py …`, and `add` takes several values in one call. **Chain a call with the command it belongs to**, so one event is one turn — the commit of a ticket and its `done` go together (`phases/5-subagents.md`, step 7). Never chain a commit after a check whose result you have not read: `| tail` always exits 0.
++Master records Codex after a completed wave and at final acceptance; Claude collection remains diagnostic until the accepted caller exists. The source owner runs its reader only after the selected requests/turns are terminal; the operator supplies the run ID, time window and explicit request scope. The collector does not discover a whole run from a long session. Master receives only the numeric file and calls `usage ENGINE --snapshot FILE` through the same pinned `ap.py --no-serve` prefix. Snapshot files are private run artifacts; the exporter copies only typed state and the dashboard.
+ 
+-- **Two kinds of `!` lines.** From ordinary calls — a stage skipped in the books, a ticket without a start — they are bookkeeping: fixed in the same turn, one call, not investigated. From `check-plan` they are defects of the plan, and gate G3 does not pass until they are gone.
+-- Manifest rows the tool cannot know — `in-spec`, `deferred`, `dropped`, a new `G##` or `D##` — you edit in `manifest.md` yourself; `in-ticket`, `done` and `placeholder` are the tool's. The counts on the dashboard follow on the next call.
+-- **Never a secret value** in any call: `emptyEnv` holds names, and an `ask` note says *what* is awaited, never a value.
+-- **`ask` is what puts «Ждём тебя» on the dashboard** and stops its clocks — the time the user takes to answer is not build time. A question you send without it leaves the page ticking as if work were going on.
+-- The page repaints every ten seconds, counts working time rather than calendar time, and freezes at `finish`. Mention it **once**, in the opening block, and never explain it in the chat.
++Codex: use the physical release's `tools/measure-run-codex.py --snapshot-json --run-id <_sadik.run_id>` with explicit thread/start/end and the pinned upstream measurement file. Claude: the owner of the SDK/ledger calls the same release's `tools/measure-run-claude.py --manifest FILE`; Master supplies the manifest's run binding. This grants no access to another agent's HOME. See `tools/README-usage-snapshot.md` in the physical release for the commands.
+ 
+-After each ticket the user gets one plain line in the chat — what became possible, and the count: «Бот принимает заявки — 3 из 8 готово». No file lists, no ticket numbers.
++A reader exit2 with a valid matching incomplete/not_measured snapshot may explicitly replace the selected bucket with nulls. Other errors do not become zeros or a fabricated snapshot. No reader, timer or mail receipt calls the writer automatically. Unknown engines/fields, unsafe numbers, a different run and stale/conflicting snapshots refuse. A repeat replaces rather than adds; the other engine keeps its own measurement time. Old pinned runs do not silently migrate to this writer.
++
++Claude visibility gate: this release publishes and renders Codex only. Claude snapshots are private diagnostics, even when observed. The accepted childproof reader/builder does not supply live AP→DSH provenance, an export caller, or original-thread ingestion. Do not launch export tasks from these phase instructions. A later accepted change must implement T1 exact-byte envelope verification, T2 actual runtime export-turn exclusion and T3 original Master-thread binding, then prove a live observed run and independent same-run recount before enabling the Claude card. Project/pilot policy remains in force.
+--- a/skills/autopilot/phases/0-preflight.md
++++ b/skills/autopilot/phases/0-preflight.md
+@@ -1,19 +1,15 @@
++<!-- Derived from nick-vels/skills (MIT, Copyright (c) 2026 Nick Vels), modified by Aleksandr Argelander and contributors. -->
++
+ # Phase 0 — Preflight
+ 
+ Configure the repo, pick the project memory, raise the instruments. Decide which case you are in **before** doing anything else — first match wins:
+ 
+-| On disk | Case | What happens |
++| On disk | Case | Action |
+ |---|---|---|
+-| `state.js` with `finishedAt: null`, `updatedAt` under five minutes old **and** the server in `.autopilot/serve.pid` answering | **the run is going on in another window** | nothing — say so in one line and ask which window carries on |
+-| `state.js` with `finishedAt: null` | **resume** | read `phases/0-resume.md` and follow it instead of this file |
+-| `state.js` with `finishedAt` set | **new feature in a configured repo** | everything below; `init` archives the finished run's state into its own directory |
+-| no `.autopilot/state.js` | **new run** | everything below, in order |
++| state.js exists, active or finished | Existing project | Use the guarded `resume` event first; another live operator refuses before state changes. Read phases/0-resume.md. Never use serve.pid or age as proof. |
++| no state.js | New project | Follow the global event entrypoint in phases/0-instruments.md; do not copy files before the operator guard. |
+ 
+-The first case needs both marks: two sessions writing one `state.js` overwrite each other, and the first to finish freezes the other's dashboard. One mark alone is an ordinary interruption — a resume.
+-
+-**«Доделай ещё вот это» for a flight that already landed**, continuing it rather than starting a new one: the new brief is a new dated file in the same run directory (`phases/1-manifest.md`), and `python3 .autopilot/ap.py reopen` puts the `--wip` back and reopens the stages from Требования. Phases 1–8 then run for the new brief: its requirements are appended to the manifest with the next free numbers, the spec is amended, new tickets are numbered after the last one — landed tickets stay landed. §5 below runs for it too: small fixes may have landed between the two briefs.
+-
+-**Nothing here is a question for the user.** Where files live is a process decision.
++If the previous run is finished and the owner explicitly requested a new one, use `init` with the selected physical skill directory after operator checks. Existing active runs keep their pin; do not overwrite them with the current installed skill.
+ 
+ ## 1. Look before writing
+ 
+@@ -21,8 +17,8 @@
+ - `CLAUDE.md`, `AGENTS.md` — for `phases/0-memory.md`.
+ - `package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml` — an existing stack to respect.
+ - **Existing code at all** — an existing codebase is explored before the spec (`phases/3-spec.md`).
++- `.autopilot/PROGRESS.md` — data carried from prior work, read under the operator’s authority rules.
+ - `CONTEXT.md`, `GLOSSARY.md`, `docs/adr/` — the project's vocabulary and settled decisions. The spec and tickets speak that vocabulary and flag, not silently override, anything that contradicts a recorded decision.
+-- `.autopilot/PROGRESS.md` — what the last run left open and what the user settled; §5.
+ 
+ ## 2. Git
+ 
+@@ -36,7 +32,7 @@
+ 
+ ## 4. Instruments
+ 
+-**Read `phases/0-instruments.md`**: copy the template and `ap.py`, run `init` with the memory choice from §3, open the dashboard. The command table there is the whole of the instruments for the rest of the run.
++**Read `phases/0-instruments.md`**: use the guarded global event command for `init` (no preliminary copy) with the memory choice from §3, open the dashboard. The command table there is the whole of the instruments for the rest of the run.
+ 
+ The **slug** is short, kebab-case, latin (`telegram-repair-bot`) and never changes mid-flight. `init` names the run directory `<YYYY-MM-DD>-<slug>--wip` — the date the flight started, the suffix until it lands — and records it as `dir` in `state.js`. **Every path is built from `dir`**, never rebuilt from the slug.
+ 
+@@ -67,4 +63,4 @@
+ 
+ ## 6. Announce and go
+ 
+-The opening block from `phases/0-modes.md` — mode, depth, dashboard address, memory file, and the `↑` line if `init` printed one. After a landed run, one more line from `carried.md`: «С прошлой сборки: 2 пункта не доделано, 1 баг, 3 правки без автопилота — спрошу на брифинге»; in full, «… — в эту сборку не беру, остаются в списке». It is a hint, not a question: say it, then `python3 .autopilot/ap.py stage manifest` and go straight into Phase 1.
++The opening block from `phases/0-modes.md` — mode, depth, dashboard address, memory file, and the `↑` line if `init` printed one. After a landed run, one more line from `carried.md`: «С прошлой сборки: 2 пункта не доделано, 1 баг, 3 правки без автопилота — спрошу на брифинге»; in full, «… — в эту сборку не беру, остаются в списке». It is a hint, not a question: say it, then `python3 /opt/autopilot/current/skill/tools/ap.py --no-serve stage manifest` and go straight into Phase 1.
+--- a/skills/autopilot/phases/0-resume.md
++++ b/skills/autopilot/phases/0-resume.md
+@@ -1,12 +1,20 @@
+-# Resuming an interrupted flight
++<!-- Derived from nick-vels/skills (MIT, Copyright (c) 2026 Nick Vels), modified by Aleksandr Argelander and contributors. -->
+ 
+-Read only when `.autopilot/state.js` exists with `finishedAt: null` and no other window is carrying the run (`phases/0-preflight.md`). The files are the memory — do not re-read the dialogue, do not redo finished phases, do not re-ask answered questions.
++# Sadik — resume the pinned run
+ 
+-1. **Read, in this order:** the memory file (`memoryFile` in `state.js`), `state.js` itself (`dir`, `skillDir`, `mode`, `depth`, `tier`, the stages, the tickets), `manifest.md`, `interfaces.md`, every `*-brief.md` in `dir` oldest first, `## Дополнения` included, `carried.md` if it is there — and then **the file of the phase the active stage names**.
+-2. **Raise the instruments again.** Run §1 of `phases/0-instruments.md` (the copy — a run from an older version gets the current `ap.py` and page), then `python3 .autopilot/ap.py`, which re-raises the server on its old port. **Always re-point the pane** (§3 there) and say the address: a tab does not outlive the session that opened it.
+-3. **Tell the user in one line where things stand:** «Продолжаю: 7 из 12 тасков готовы, следующий — корзина».
+-4. **Tickets the history no longer holds** — `python3 .autopilot/ap.py commits`. Each `!` line is a `done` ticket whose commit is not in `HEAD`: a reset, a rebase, another branch checked out. Say it in one line, `ticket <id> reset` and relaunch it as below — after a rebase its code may be in the zone under a new sha, and the executor finishes from it. Never rebuild history to bring a commit back.
+-5. **Tickets caught mid-flight** — `in-progress`, `review` or `repair` with no commit behind them: `ap.py ticket <id> reset`, and relaunch them as ordinary tickets. Tell the new executor that its zone may hold uncommitted edits from an interrupted attempt — to finish from them or discard them, its call. A half-applied ticket is never committed as it stands.
+-6. **A `waiting` left in `state.js`** is a question from the interrupted session. Ask it again if it is still open, or `ap.py answered` if the dialogue shows the answer.
+-7. **Run the project's check once** before the next launch. Red → name the failure in the next executor's prompt, so it does not read someone else's breakage as its own.
+-8. **Continue from the frontier** — the current phase, or the next launchable tickets.
++Do not copy current `ap.py`, modules, phase files or templates into an existing run. Do not infer activity from `serve.pid`, timestamps or whether the panel answers.
++
++1. From the physical project root run exactly:
++
++   ```bash
++   python3 /opt/autopilot/current/skill/tools/ap.py --no-serve resume
++   ```
++
++   The loader reads `_sadik` from the atomically committed `state.js`, checks the recorded physical skill tree/schema, and executes that version. Switching `current` only selects the version for a new init. Missing, changed or incompatible pinned files refuse instead of silently upgrading. A legacy run without a pin needs an explicit migration; it does not borrow today's installed version.
++2. If a different operator is still alive or its status cannot be proven, report the refusal and stop. Never remove a lock by age or by hand. If its recorded process identity is proven gone, the command claims the project before writing anything.
++3. Read the recorded memory file, `state.js`, the run's manifest/interfaces/briefs, carried.md if present, and the phase document from **the recorded physical `skillDir`**. Do not reread or repeat completed phases. State's `dir` remains the source of run paths.
++4. Check completed ticket commits with `python3 /opt/autopilot/current/skill/tools/ap.py --no-serve commits`. A `!` diagnostic means its recorded commit is not in HEAD; report it, reset only the affected ticket and resume through the configured executor adapter. Never rebuild/reset Git history to bring a recorded commit back.
++5. Tell the user the frontier in one line. For incomplete tickets use the ordinary `ticket <id> reset` event and relaunch via the configured executor adapter. Preserve the existing requirement/ticket IDs.
++6. Re-ask a pending user question or record `answered` only when its answer is actually known. Run the project's checks before continuing execution.
++
++All events use the same command prefix with `--no-serve`, including ask, answered, finish and reopen. It attempts the protected static export after accounting. A failed export is reported separately and does not justify repeating completed development work. There is no local pane/server to restart. Operator, pin and export boundaries are specified in `phases/0-instruments.md` from the pinned release.
+--- a/skills/autopilot/phases/4-plan.md
++++ b/skills/autopilot/phases/4-plan.md
+@@ -1,3 +1,5 @@
++<!-- Derived from nick-vels/skills (MIT, Copyright (c) 2026 Nick Vels), modified by Aleksandr Argelander and contributors. -->
++
+ # Phase 4 — Plan
+ 
+ `ap.py stage plan`. Cut the spec into tickets, each built by its own subagent in a fresh context.
+@@ -102,13 +104,13 @@
+ 
+ ## Gate G3, publishing, and the plan commit
+ 
+-`python3 .autopilot/ap.py tickets` publishes every ticket to the dashboard and moves their manifest rows to `in-ticket`; `python3 .autopilot/ap.py check-plan` is the gate. It checks both directions — every live requirement in some ticket, every ticket tracing to a requirement — and that every ticket has a zone and a wave, waves respect the dependencies, and no two tickets in one wave write the same zone. Each `!` line is a plan defect: fix the ticket files and run both again.
++`python3 /opt/autopilot/current/skill/tools/ap.py --no-serve tickets` publishes every ticket to the dashboard and moves their manifest rows to `in-ticket`; `python3 /opt/autopilot/current/skill/tools/ap.py --no-serve check-plan` is the gate. It checks both directions — every live requirement in some ticket, every ticket tracing to a requirement — and that every ticket has a zone and a wave, waves respect the dependencies, and no two tickets in one wave write the same zone. Each `!` line is a plan defect: fix the ticket files and run both again.
+ 
+ **Then the plan commit** — the run's first, and the base every later diff is measured from. Run the redaction gate over `.autopilot/` (`phases/1-manifest.md`), then commit exactly the files this skill wrote so far — never anything else in the tree:
+ 
+ ```bash
+ git add -A -- .autopilot .gitignore AGENTS.md CLAUDE.md .env.example && git commit -qm "Autopilot: план сборки" --trailer "Autopilot-Run: <папка>" -- .autopilot .gitignore AGENTS.md CLAUDE.md .env.example \
+-  && python3 .autopilot/ap.py set baseCommit="$(git rev-parse --short HEAD)"
++  && python3 /opt/autopilot/current/skill/tools/ap.py --no-serve set baseCommit="$(git rev-parse --short HEAD)"
+ ```
+ 
+ Leave out of both lists any file that does not exist, and the memory file if it is the user's own. `<папка>` is `dir` without `--wip`, the same in every commit of the run.
+--- a/skills/autopilot/phases/5-subagents.md
++++ b/skills/autopilot/phases/5-subagents.md
+@@ -1,3 +1,5 @@
++<!-- Derived from nick-vels/skills (MIT, Copyright (c) 2026 Nick Vels), modified by Aleksandr Argelander and contributors. -->
++
+ # Phase 5 — Build
+ 
+ `ap.py stage build`. Where the code gets written. **Identical in all four modes, and hands-free**: manual buys control over *what* gets built, not over each edit.
+@@ -74,7 +76,7 @@
+    ```bash
+    git add -A -- src/bot/ tests/bot/ .env.example && git commit -qm "T03: приём заявки" \
+      --trailer "Autopilot-Run: 2026-10-10-repair-bot" --trailer "Requirements: R01, R02" -- src/bot/ tests/bot/ .env.example \
+-     && python3 .autopilot/ap.py ticket 03 done --tests 34/0 --commit "$(git rev-parse --short HEAD)"
++     && python3 /opt/autopilot/current/skill/tools/ap.py --no-serve ticket 03 done --tests 34/0 --commit "$(git rev-parse --short HEAD)"
+    ```
+ 
+    The paths are every path of its zone that exists, plus `.env.example` if the ticket changed it — git refuses a path that matches nothing; `--tests` is what step 4 actually printed; `--placeholder R05` for each row the contract reports as a stub. One commit per ticket — the user's rollback points. **The trailers make the history searchable after the run is gone**: `Autopilot-Run` is `dir` without `--wip` (ticket numbers restart every run, so `T03` alone names several tickets), `Requirements` the ticket's rows. `git log --grep="R02"` then finds every change a requirement ever caused.
+--- a/skills/autopilot/phases/8-final.md
++++ b/skills/autopilot/phases/8-final.md
+@@ -1,3 +1,5 @@
++<!-- Derived from nick-vels/skills (MIT, Copyright (c) 2026 Nick Vels), modified by Aleksandr Argelander and contributors. -->
++
+ # Phase 8 — Acceptance
+ 
+ `ap.py stage final`. Three subagents, no contact between them, each answering a different question. The blind checker and the ADR agent go out **in one message**; the memory agent goes out when the blind checker has returned, because it needs the commands the checker proved:
+@@ -173,7 +175,7 @@
+ In this order, so the report names paths that exist:
+ 
+ 1. The memory file (or its proposal), the ADRs, the glossary and the progress file are written.
+-2. `python3 .autopilot/ap.py finish --result "<одна строка: что теперь есть>"` — closes every stage, sets `finishedAt`, renames `<dir>--wip` to `<dir>` with `git mv`, closes the run's row in `.autopilot/README.md`, and puts the server out twelve seconds later, after the page has fetched the final picture. A `!` line about the rename means the name was taken or the index dirty: leave it, the run is not undone by a cosmetic suffix.
++2. `python3 /opt/autopilot/current/skill/tools/ap.py --no-serve finish --result "<одна строка: что теперь есть>"` — closes every stage, sets `finishedAt`, renames `<dir>--wip` to `<dir>` with `git mv`, closes the run's row in `.autopilot/README.md`, and attempts the protected static export; no local server is started or stopped. A `!` line about the rename means the name was taken or the index dirty: leave it, the run is not undone by a cosmetic suffix.
+ 3. **The final commit** — exactly what this skill wrote since the plan commit, never the rest of the tree, where the user may have work of their own:
+ 
+    ```bash
+@@ -185,3 +187,9 @@
+ 4. The report.
+ 
+ The dashboard freezes on the final numbers and carries them inside the page, so it reopens by double-click long after the server is gone. Say nothing about any of this.
++
++## Engine usage at acceptance
++
++From the following operator turn, close the declared measurement window at the last terminal request/turn. Collect Codex snapshots through its source owner; Claude snapshots remain private diagnostics until the later accepted caller is enabled, as described in `phases/0-instruments.md` and the physical release's `tools/README-usage-snapshot.md`. Write each validated numeric file with `ap.py --no-serve usage codex --snapshot FILE` or the same command with `claude`. Never parse the text report or call a missing source zero. Keep the explicit scope: mail executors in other homes are not silently counted by the Codex operator thread. These are observed log counters, not provider billing. The public panel shows Codex with its own snapshot time and unknown/incomplete state; Claude remains private and hidden.
++
++Claude visibility gate: this release publishes and renders Codex only. Claude snapshots are private diagnostics, even when observed. The accepted childproof reader/builder does not supply live AP→DSH provenance, an export caller, or original-thread ingestion. Do not launch export tasks from these phase instructions. A later accepted change must implement T1 exact-byte envelope verification, T2 actual runtime export-turn exclusion and T3 original Master-thread binding, then prove a live observed run and independent same-run recount before enabling the Claude card. Project/pilot policy remains in force.
+--- a/skills/autopilot/tools/ap.py
++++ b/skills/autopilot/tools/ap.py
+@@ -1,33 +1,34 @@
+ #!/usr/bin/env python3
++# Derived from nick-vels/skills (MIT, Copyright (c) 2026 Nick Vels), modified by Aleksandr Argelander and contributors.
+ """Учёт прогона Autopilot: состояние, дашборд, сервер — одной командой на событие.
+ 
+ Агент не правит .autopilot/state.js руками. Каждое событие прогона — один вызов:
+ 
+-    python3 .autopilot/ap.py init --slug S --title "…" --mode semi --depth normal \\
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve init --slug S --title "…" --mode semi --depth normal \\
+                                   --memory-file AGENTS.md --memory-owner autopilot --skill-dir /abs
+-    python3 .autopilot/ap.py stage spec                 # открыть этап (прошлые закроются сами)
+-    python3 .autopilot/ap.py stage briefing skip --note "полный автомат — самобрифинг"
+-    python3 .autopilot/ap.py set tier=T2 baseCommit=a1b2c3d
+-    python3 .autopilot/ap.py tickets                    # опубликовать таски из <dir>/tickets/*.md
+-    python3 .autopilot/ap.py check-plan                 # гейт G3: трасса манифест ↔ таски
+-    python3 .autopilot/ap.py ticket 02 03 start         # волна ушла
+-    python3 .autopilot/ap.py ticket 02 review
+-    python3 .autopilot/ap.py ticket 02 repair --note "пустой адрес проходит — R01.1"
+-    python3 .autopilot/ap.py ticket 02 done --tests 34/0 --commit a1b2c3d
+-    python3 .autopilot/ap.py ticket 03 retry | fail --note "…" | reset
+-    python3 .autopilot/ap.py stage build done | fail --note "…"
+-    python3 .autopilot/ap.py add concerns "src/notify.ts:40 — два формата даты"
+-    python3 .autopilot/ap.py add debt.emptyEnv TELEGRAM_BOT_TOKEN
+-    python3 .autopilot/ap.py coverage found=2 fixed=1 deferred=1 --item "R07 — отложено: …"
+-    python3 .autopilot/ap.py add report "Два формата даты в уведомлениях — оставлено"
+-    python3 .autopilot/ap.py blind checked=12 matched=11 --mismatch "R07 — статус не виден"
+-    python3 .autopilot/ap.py tests 34/0                 # последний полный прогон
+-    python3 .autopilot/ap.py ask briefing --note "три вопроса в чате"   # ждём пользователя
+-    python3 .autopilot/ap.py answered                   # ответил (stage/ticket закрывают сами)
+-    python3 .autopilot/ap.py finish --result "Бот принимает заявки и пишет их в таблицу"
+-    python3 .autopilot/ap.py reopen                     # второй бриф в сданном прогоне
+-    python3 .autopilot/ap.py commits                    # коммиты сданных тасков ещё в истории?
+-    python3 .autopilot/ap.py                            # просто синхронизировать
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve stage spec                 # открыть этап (прошлые закроются сами)
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve stage briefing skip --note "полный автомат — самобрифинг"
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve set tier=T2 baseCommit=a1b2c3d
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve tickets                    # опубликовать таски из <dir>/tickets/*.md
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve check-plan                 # гейт G3: трасса манифест ↔ таски
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve ticket 02 03 start         # волна ушла
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve ticket 02 review
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve ticket 02 repair --note "пустой адрес проходит — R01.1"
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve ticket 02 done --tests 34/0 --commit a1b2c3d
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve ticket 03 retry | fail --note "…" | reset
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve stage build done | fail --note "…"
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve add concerns "src/notify.ts:40 — два формата даты"
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve add debt.emptyEnv TELEGRAM_BOT_TOKEN
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve coverage found=2 fixed=1 deferred=1 --item "R07 — отложено: …"
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve add report "Два формата даты в уведомлениях — оставлено"
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve blind checked=12 matched=11 --mismatch "R07 — статус не виден"
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve tests 34/0                 # последний полный прогон
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve ask briefing --note "три вопроса в чате"   # ждём пользователя
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve answered                   # ответил (stage/ticket закрывают сами)
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve finish --result "Бот принимает заявки и пишет их в таблицу"
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve reopen                     # второй бриф в сданном прогоне
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve commits                    # коммиты сданных тасков ещё в истории?
++    python3 /opt/autopilot/current/skill/tools/ap.py --no-serve                            # просто синхронизировать
+ 
+ После каждой команды: updatedAt = сейчас (и метка в журнале beats), строка в ленте log,
+ счётчики и список требований — из manifest.md, гейты G1–G4 — из событий, которые их решают,
+@@ -56,7 +57,10 @@
+     except (AttributeError, ValueError):
+         pass
+ 
+-A = os.path.dirname(os.path.abspath(__file__))          # .autopilot этого проекта
++sys.dont_write_bytecode = True
++A = os.environ.get("AUTOPILOT_STATE_DIR") or (os.path.dirname(os.path.abspath(__file__))
++    if os.path.basename(os.path.dirname(os.path.abspath(__file__))) == ".autopilot"
++    else os.path.join(os.getcwd(), ".autopilot"))          # .autopilot этого проекта
+ ROOT = os.path.dirname(A)
+ STATE = os.path.join(A, "state.js")
+ PAGE = os.path.join(A, "dashboard.html")
+@@ -170,7 +174,7 @@
+         "tier": None, "briefFile": a.get("brief-file"),
+         "memoryFile": a.get("memory-file") or "AGENTS.md",
+         "memoryOwner": a.get("memory-owner") or "autopilot",
+-        "skillDir": a.get("skill-dir"), "baseCommit": None,
++        "skillDir": os.path.realpath(a["skill-dir"]) if a.get("skill-dir") else None, "baseCommit": None,
+         "startedAt": t, "updatedAt": t, "finishedAt": None,
+         "stages": [{"id": "preflight", "status": "active", "startedAt": t}]
+                   + [{"id": s, "status": "pending"} for s in ORDER[1:]],
+@@ -733,22 +737,8 @@
+ # ── команды ─────────────────────────────────────────────────────────────────
+ 
+ def parse_args(argv):
+-    pos, opt, multi = [], {}, {}
+-    i = 0
+-    while i < len(argv):
+-        a = argv[i]
+-        if a.startswith("--"):
+-            key = a[2:]
+-            if i + 1 < len(argv) and not argv[i + 1].startswith("--"):
+-                opt[key] = argv[i + 1]
+-                multi.setdefault(key, []).append(argv[i + 1])
+-                i += 2
+-                continue
+-            opt[key] = True
+-        else:
+-            pos.append(a)
+-        i += 1
+-    return pos, opt, multi
++    from ap_sadik import strict_args
++    return strict_args(argv)
+ 
+ 
+ def tests_pair(v):
+@@ -767,8 +757,15 @@
+         die("идёт прогон %s — это продолжение, а не новый прогон (или --force)" % old.get("dir"))
+     if old and old.get("dir") and os.path.isdir(os.path.join(A, old["dir"])):
+         dst = os.path.join(old["dir"], "state.js")
+-        if subprocess.run(["git", "-C", A, "mv", "-f", "state.js", dst], capture_output=True).returncode:
+-            os.replace(STATE, os.path.join(A, dst))
++        # Keep the active ledger until save(state) atomically installs its successor.
++        import ap_sadik
++        archive = ap_sadik.open_dir(os.path.join(A, old["dir"]))
++        source = ap_sadik.open_dir(A)
++        try:
++            ap_sadik.write_at(archive, "state.js", ap_sadik.read_at(source, "state.js", owned=True), mode=0o600)
++        finally:
++            os.close(source)
++            os.close(archive)
+         notes.append("прошлый прогон убран в архив: %s" % dst)
+     state = fresh_state(opt)
+     log(state, "init")
+@@ -1026,6 +1023,10 @@
+             problems = check_plan(state)
+             notes += ["! " + p for p in problems] or ["G3: трасса сходится"]
+             set_gate(state, "G3", not problems, problems=len(problems))
++        elif cmd == "usage":
++            from ap_sadik import usage_event
++            usage_event(state, rest[0], opt['snapshot'])
++            log(state, 'usage', engine=rest[0], status=state['usage']['byEngine'][rest[0]]['status'])
+         elif cmd == "set":
+             cmd_set(state, rest)
+             if any(p.startswith("tier=") for p in rest):
+@@ -1045,6 +1046,8 @@
+             notes = cmd_finish(state, opt)
+         elif cmd == "reopen":
+             cmd_reopen(state)
++        elif cmd == "resume":
++            log(state, "resume")
+         elif cmd == "commits":
+             notes = cmd_commits(state)
+         elif cmd not in ("", "sync"):
+@@ -1053,10 +1056,10 @@
+     notes = close_passed(state) + notes
+     save(state)
+     snap = write_snapshot(state)
+-    if cmd == "finish" or opt.get("stop"):
++    if opt.get("no-serve"):
++        srv = "сервер не проверялся"
++    elif cmd == "finish" or opt.get("stop"):
+         srv = stop_later()
+-    elif opt.get("no-serve"):
+-        srv = "сервер не проверялся"
+     else:
+         srv = serve(state)
+     r = state.get("requirements") or {}
+@@ -1072,4 +1075,5 @@
+ 
+ 
+ if __name__ == "__main__":
+-    main()
++    from ap_sadik import run_event
++    run_event(sys.modules[__name__])
+--- a/skills/autopilot/phases/dashboard-template.html
++++ b/skills/autopilot/phases/dashboard-template.html
+@@ -1,4 +1,5 @@
+ <!doctype html>
++<!-- Derived from nick-vels/skills (MIT, Copyright (c) 2026 Nick Vels), modified by Aleksandr Argelander and contributors. -->
+ <html lang="ru">
+ <head>
+ <meta charset="utf-8">
+@@ -324,6 +325,13 @@
+     .req{grid-template-columns:minmax(0,1fr)}
+     .req .pill{justify-self:start}
+   }
++
++  .usage-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin:22px 0}
++  .usage-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:18px 0 0}
++  .usage-metrics dt{font-size:12px;color:var(--tx2)}
++  .usage-metrics dd{overflow-wrap:anywhere;margin:4px 0 0;font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
++  .usage-time{display:block;margin-top:16px;font-size:12px;color:var(--tx2)}
++  @media(max-width:700px){.usage-grid{grid-template-columns:1fr}.usage-metrics dd{font-size:18px}}
+ </style>
+ </head>
+ <body>
+@@ -858,6 +866,43 @@
+ const REQ_PILL = {done:'p-done', work:'p-mut', open:'p-mut', placeholder:'p-now', deferred:'p-mut', dropped:'p-mut'};
+ const REQ_RANK = {placeholder:0, deferred:1, dropped:2};
+ 
++function renderUsage(usage, lang){
++  const en = lang === 'en';
++  const keys = ['modelCalls','inputTokens','uncachedInputTokens','outputTokens','cacheReadTokens','cacheWriteTokens'];
++  const labels = en ? ['Model calls','Input (with cache)','Uncached input','Output','Cache read','Cache write']
++                    : ['Вызовы модели','Вход (с кешем)','Без кеша','Выход','Чтение кеша','Запись кеша'];
++  const unknown = en ? 'not measured' : 'не измерено';
++  const baskets = usage && usage.schemaVersion === 1 && usage.byEngine;
++  // No Claude card before the accepted live caller + observed proof.
++  return '<div class="usage-grid">' + ['codex'].map(engine => {
++    const b = baskets && baskets[engine];
++    const source = engine === 'codex' ? 'codex-rollout-gateway' : 'claude-sdk-jsonl';
++    const scope = engine === 'codex' ? 'declared_threads' : 'declared_requests';
++    const coverage = engine === 'codex' ? ['root_gateway_only','root_gateway_and_children'] : ['declared_parent_only','declared_parent_and_children'];
++    const measured = b && b.status === 'observed' && b.source === source && b.scope === scope && coverage.includes(b.coverage)
++      && [b.measuredAt,b.windowStart,b.windowEnd].every(t => typeof t === 'string' && Number.isFinite(Date.parse(t)))
++      && Date.parse(b.windowStart) < Date.parse(b.windowEnd) && Date.parse(b.measuredAt) >= Date.parse(b.windowEnd) && keys.every(k => Number.isSafeInteger(b[k]) && b[k] >= 0)
++      && b.inputTokens === b.uncachedInputTokens + b.cacheReadTokens + b.cacheWriteTokens;
++    const incomplete = b && b.status === 'incomplete';
++    const scopeHint = engine === 'codex'
++      ? (b && b.coverage === 'root_gateway_and_children' ? (en ? 'Operator and discovered child threads' : 'Оператор и найденные дочерние потоки') : (en ? 'Operator thread' : 'Поток оператора'))
++      : (b && b.coverage === 'declared_parent_and_children' ? (en ? 'Declared parent and child requests' : 'Указанные родительские и дочерние запросы') : (en ? 'Declared parent requests' : 'Указанные родительские запросы'));
++    const hint = measured ? scopeHint
++      : incomplete ? (en ? 'Incomplete measurement' : 'Неполный замер') : unknown;
++    const stamp = b && b.measuredAt && Number.isFinite(Date.parse(b.measuredAt))
++      ? new Date(b.measuredAt).toLocaleString(en ? 'en-GB' : 'ru-RU') : '';
++    const period = b && [b.windowStart,b.windowEnd].every(t => typeof t === 'string' && Number.isFinite(Date.parse(t)))
++      ? [b.windowStart,b.windowEnd].map(t => new Date(t).toLocaleString(en ? 'en-GB' : 'ru-RU')).join(' — ') : '';
++    return `<section class="card usage-bucket" data-engine="${engine}">
++      <h3>${en ? 'Usage' : 'Расход'} · ${engine === 'codex' ? 'Codex' : 'Claude'}</h3>
++      <p class="muted">${hint}</p>
++      <dl class="usage-metrics">${keys.map((key,i) => `<div><dt>${labels[i]}</dt><dd data-metric="${key}">${measured ? b[key] : unknown}</dd></div>`).join('')}</dl>
++      ${period ? `<span class="usage-time">${en ? 'Window' : 'Период'}: ${esc(period)}</span>` : ''}
++      ${stamp ? `<span class="usage-time">${en ? 'Snapshot' : 'Снимок'}: ${esc(stamp)}</span>` : ''}
++    </section>`;
++  }).join('') + '</div>';
++}
++
+ function render(lang){
+   const L = I18N[lang] || I18N.ru;
+   CUR = L;
+@@ -1197,6 +1242,7 @@
+       S.depth ? `<span class="tag">${esc(L.depths[S.depth] || S.depth)}</span>` : ''}<span class="when">${when}</span></div>
+   </div>
+   ${hero}
++  ${renderUsage(S.usage,L.lang)}
+   <div class="tiles">${tileReq}${tileTk}${tileTests}${tile4}</div>
+   ${fin ? '' : buildCard}
+   <div class="cols"><div class="col">${leftCol.join('')}</div><div class="col">${rightCol.join('')}</div></div>

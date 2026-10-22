@@ -1,5 +1,7 @@
 # Documentation: the `dsh-pamyat` memory pipeline and agent-to-agent mail (A2A)
 
+> Current package versions as of 2026-10-22: [package catalogue](PACKAGES.md). Dated version numbers and results below refer to the measurements stated in the text.
+
 > 🗄 **Historical edition.** This document was written against the old version numbering — the `dsh-pamyat-core` core at 0.1.0-alpha.23 (September 2026, §1.3) — and has not been re-checked against the code since: numbers, keys and behaviour may have changed. The current description of each package is in its README. Rewriting this document is a separate task.
 
 > **The original is Russian** — [`MEMORY-AND-A2A.ru.md`](MEMORY-AND-A2A.ru.md); this file is a

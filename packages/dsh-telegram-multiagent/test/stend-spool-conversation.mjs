@@ -1,6 +1,7 @@
 // B-N-2009: actual poll + ledger/runtime + native inbox. No model or Telegram network.
 import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import vm from 'node:vm';import crypto from 'node:crypto';import {borrowLiveSession} from '../src/live-session.js';import {installSitePolicy} from '../src/site-policy.js';import {sGostem} from './gost-kontekst.mjs';import {spawnSync} from 'node:child_process';
 import {TelegramClient} from '../src/client.js';import {MessageReceipts,mailEnvelope,sobytiyaSessii} from '../src/message-receipts.js';import {ConversationSessions} from '../src/conversation-sessions.js';import {ReceiptRuntime} from '../src/receipt-runtime.js';import {extractFunction} from './extract.mjs';import {podnyatPlatformu02} from './platforma-02.mjs';
+import {ClaudeTurnUsage} from '../src/claude-turn-usage.js';
 const source=fs.readFileSync(process.env.STEND_CHANNEL_SOURCE||new URL('../src/index.js',import.meta.url),'utf8');
 const parser=process.env.STEND_MAIL_PARSER?(await import(process.env.STEND_MAIL_PARSER)).mailEnvelope:mailEnvelope;
 const restartStage=process.env.STEND_RESTART_STAGE,restartRoot=process.env.STEND_RESTART_ROOT;
@@ -14,7 +15,7 @@ const root=restartStage?restartRoot:fs.mkdtempSync(path.join(os.tmpdir(),'spool-
 const rows=[];
 async function probe(name,key,want,{foreign=false,missing=false,unknown=false,stale=false,legacy=false,gatewayScenario=null,rotateAfterResolve=false,missingGuest=false,retryBeforePrepare=false}={}){
  const dir=path.join(root,'f'+(++n));fs.mkdirSync(dir,{mode:0o777,recursive:true});fs.chmodSync(dir,0o777);const spool=path.join(dir,'spool');fs.mkdirSync(spool,{mode:0o777,recursive:true});fs.chmodSync(spool,0o777);
- const p=await podnyatPlatformu02({root:path.join(dir,'sessions')});const receipts=new MessageReceipts(path.join(dir,'ledger'));const conversations=new ConversationSessions(receipts);const agents=new Map();const logs=[];
+ const p=await podnyatPlatformu02({root:path.join(dir,'sessions')});const receipts=new MessageReceipts(path.join(dir,'ledger'));const claudeTurnUsage=new ClaudeTurnUsage(receipts.root,'fixture');const conversations=new ConversationSessions(receipts);const agents=new Map();const logs=[];
  try{
   const tools=p.ctx.get('tools');for(const name of ['pismo_rukovoditelyu','bash'])tools.register({name,description:name,parameters:{},output:{schema:{type:'object',properties:{}},render:()=>[]},execute:async()=>({})});
   for(const k of ['a2a-2','-1004442041878','100']){
@@ -24,7 +25,7 @@ async function probe(name,key,want,{foreign=false,missing=false,unknown=false,st
   }
   const runtime=new ReceiptRuntime(receipts,p.sessions,x=>logs.push(x));runtime.conversationSessions=conversations;
   const resolved=[],mounted=[];const presets={resolve:async id=>{resolved.push(id);return{id};},mount:async(ctx,id)=>{mounted.push(id);}};
-  const scope=vm.createContext(sGostem({ctx:{agents:p.agents,get:name=>name==='sessionPersistence'?p.backend:name==='sessions'?p.sessions:undefined},config:{workspace:dir,openBot:true,preset:'full-fixture',guestPreset:'guest-fixture',provider:'unused',model:'unused'},waitService:async name=>name==='agentPresets'?presets:name==='sessionPersistence'?p.backend:null,withFactoryRetry:async(_,fn)=>fn(),resumeCwdAlerts:new Set(),chats:new Map(),sessionToChat:new Map(),borrowLiveSession,siteProtected:new WeakSet(),installSitePolicy,fs,os,path,process,Buffer,crypto,receipts,conversations,log:x=>logs.push(x),mailEnvelope:parser,mailStops:{ingest:()=>false},A2A_EXT:['.txt','.md'],a2aReported:new Set(),A2A_TREVOG_PREDEL:5,trevogOtkaza:0,SPOOL_IN:spool,A2A_CHAT:'a2a-2',SPOOL_STALE_HOURS:12,who_:'fixture',ownerChatId:()=>100,allowed:new Set([100]),tg:{send:async()=>{}},spoolSender:()=> 'coders',spoolAgeHours:()=>0,spoolPokazanPochtalonom:()=>false,splitSender:text=>({text}),stripMark:x=>x,lastOrigin:new Map(),copyAsk(){},receiptRuntime:()=>runtime,platform:{createUserMessage:p.llm.createUserMessage,installModelSelection(){}},}));
+  const scope=vm.createContext(sGostem({ctx:{agents:p.agents,get:name=>name==='sessionPersistence'?p.backend:name==='sessions'?p.sessions:undefined},config:{workspace:dir,openBot:true,preset:'full-fixture',guestPreset:'guest-fixture',provider:'unused',model:'unused'},waitService:async name=>name==='agentPresets'?presets:name==='sessionPersistence'?p.backend:null,withFactoryRetry:async(_,fn)=>fn(),resumeCwdAlerts:new Set(),chats:new Map(),sessionToChat:new Map(),borrowLiveSession,siteProtected:new WeakSet(),installSitePolicy,fs,os,path,process,Buffer,crypto,receipts,conversations,claudeTurnUsage,log:x=>logs.push(x),mailEnvelope:parser,mailStops:{ingest:()=>false},A2A_EXT:['.txt','.md'],a2aReported:new Set(),A2A_TREVOG_PREDEL:5,trevogOtkaza:0,SPOOL_IN:spool,A2A_CHAT:'a2a-2',SPOOL_STALE_HOURS:12,who_:'fixture',ownerChatId:()=>100,allowed:new Set([100]),tg:{send:async()=>{}},spoolSender:()=> 'coders',spoolAgeHours:()=>0,spoolPokazanPochtalonom:()=>false,splitSender:text=>({text}),stripMark:x=>x,lastOrigin:new Map(),copyAsk(){},receiptRuntime:()=>runtime,platform:{createUserMessage:p.llm.createUserMessage,installModelSelection(){}},}));
   for(const fn of ['protectSite','agentFor'])scope[fn]=vm.runInContext('('+extractFunction(source,fn)+')',scope);
   for(const fn of ['spoolConversationFor','spoolConversationRoute'])if(source.includes('function '+fn+'('))scope[fn]=vm.runInContext('('+extractFunction(source,fn)+')',scope);
   const guest=await scope.agentFor('gost-123');guest.handle.agent.wakeDriver=()=>{};agents.set('gost-123',guest);
@@ -107,7 +108,7 @@ async function probe(name,key,want,{foreign=false,missing=false,unknown=false,st
   }
   if(restartStage)fs.writeFileSync(path.join(root,restartStage+'.json'),JSON.stringify({pid:process.pid,receipts:receipts.db.prepare('SELECT count(*) n FROM receipts').get().n,sends:JSON.parse(fs.readFileSync(path.join(root,'telegram-sends.json'))).map(x=>({chat_id:String(x.chat_id),text:x.text})),result:receipts.db.prepare("SELECT count(*) n FROM outbox WHERE route='spool-tg' AND sent_at IS NOT NULL").get().n}));
   console.log('PASS',name,actual,'guestPreset='+guest.handle.agent.session.header.agentPreset);rows.push({name,code:0});
- }catch(e){bad++;console.log('FAIL',name,e.message);rows.push({name,code:1,error:e.message});}finally{receipts.close();await p.ctx.fiber.dispose();}
+ }catch(e){bad++;console.log('FAIL',name,e.message);rows.push({name,code:1,error:e.message});}finally{claudeTurnUsage.close();receipts.close();await p.ctx.fiber.dispose();}
 }
 async function restartProbe(name,key){
  n++;const dir=fs.mkdtempSync(path.join(os.tmpdir(),'spool-restart-'));const stages=[];

@@ -1,0 +1,104 @@
+# ── 2в. СТОРОЖ НАД СТОРОЖАМИ (B-N-884, 25.09.2026): свежесть последнего УСПЕШНОГО прогона суточных сторожей ─────────────
+# 🔴 ЗАЧЕМ. vse-stendy-boevye (03:40Z) и dve-kopii-watch (06:47Z) ходят раз в сутки, и их собственной жизни никто не видел:
+#   (а) таймер не сработал вовсе — тишина неотличима от «всё зелёное»; (б) юнит failed (у обёртки обходчика — немой канал
+#   тревог) — тревоги нет по построению, а ветка 2 выше смотрит только службы агентов из agent-registry sluzhby.
+# Перечень — ДАННЫМИ: /etc/agent-registry/storozha-sutochnye.txt (SADIK_SUTOCHNYE), «юнит срок_часов».
+# Признак — ЖУРНАЛ systemd, не ExecMainExitTimestamp: тот обнуляется перезагрузкой, журнал постоянный (/var/log/journal).
+#   последний «done» (JOB_TYPE=start) старше срока → «просрочен»; «done» нет вовсе → «прогона нет»; is-failed → «failed».
+#   ⚠️ «done» = прогон СОСТОЯЛСЯ, не «был зелёным»: у сторожей с SuccessExitStatus=1 2 красный итог тоже «done» (INFO Вениамина).
+# ЗОВУЩИЙ СТЕНДА ЭТОЙ ВЕТКИ: dorabotki/stendy/stend-storozha-nad-storozhami.sh — рука при правке sadik-watch (в ночной обход не
+#   входит: ~10 мин, сам sadik-watch ~74 с, при пределе обходчика 120 с на стенд).
+#   Юнит в activating (прогон идёт) — свежесть этого такта не судится, НО (B-N-1828, 08.10.2026, Аврора; ворота Вениамина 08:51Z):
+#   activating дольше срок_часов от ВХОДА в него (InactiveExitTimestamp; у oneshot ActiveEnter пуст, StateChange сдвигается на смене
+#   подсостояния — проверено на живом oneshot 08:48Z) → «застрял»; метка не прочитана → «zastryal-slepo», не тишина. Пока юнит висит,
+#   таймер следующий прогон не начнёт — за сроком прогон уже пропущен. Дыра реальная: 37 из 77 сторожей перечня без TimeoutStartSec.
+# Тревога — групповая (gruppa): смена состава сразу, напоминание раз в 6 ч; отметка — только при успехе канала.
+# ⚠️ ЧЕГО НЕ ЛОВИТ: застрявшего в activating — ДО срока от входа: худший случай от последнего «done» ≈ (вход − done) + срок, до ~2×срок —
+#   суточный 26 ч → до ~52 ч, недельный 170 ч → до ~340 ч (решение Забавы 08:51Z: ловим «застрял навсегда», без новой настройки);
+#   deactivating/reloading; петлю перезапусков (каждый старт — новая метка входа); прыжок часов (метка realtime); «успешный» прогон, ничего не проверивший; отказ ОБОИХ —
+#   канала тревог и самого sadik-watch (его жизнь видна только голосом «жив» раз в 7 суток, раздел 3). При отказе канала
+#   тревога остаётся в журнале и повторяется каждый такт до успеха — второго канала здесь нет (см. П7 B-N-884).
+SUTOCHNYE="${SADIK_SUTOCHNYE:-/etc/agent-registry/storozha-sutochnye.txt}"
+GR_SUT=""; GR_SUT_TXT=""; V_PERECHNE=" "; NE_VNESENY=" "
+if ! sut_spisok=$(grep -vE '^[[:space:]]*(#|$)' "$SUTOCHNYE" 2>/dev/null) || [ ! -r "$SUTOCHNYE" ]; then
+  GR_SUT="ПЕРЕЧЕНЬ"; GR_SUT_TXT="перечень суточных сторожей не прочитан: $SUTOCHNYE — чью жизнь проверять, неизвестно"; BEDY=$((BEDY+1))
+else
+  while read -r _u _srok _; do
+    [ -n "$_u" ] || continue
+    # B-N-1068: «!<юнит> <причина>» — осознанно НЕ внесён (для проверки полноты ниже); срока у такой строки нет.
+    case "$_u" in '!'*) NE_VNESENY="$NE_VNESENY${_u#!} "; continue ;; esac
+    V_PERECHNE="$V_PERECHNE$_u "
+    if ! [[ "$_srok" =~ ^[1-9][0-9]*s?$ ]]; then
+      GR_SUT="$GR_SUT${GR_SUT:+ }$_u:строка"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }$_u — строка перечня негодна (срок «${_srok}»)"; BEDY=$((BEDY+1)); continue
+    fi
+    case "$_srok" in *s) _srok_s=${_srok%s}; _srok_label="$_srok_s с" ;; *) _srok_s=$(( _srok * 3600 )); _srok_label="$_srok ч" ;; esac
+    if systemctl is-failed --quiet "$_u" 2>/dev/null; then
+      # 4 не зелёное. Общий helper сам проверяет запись, срок и текущую invocation юнита.
+      case "$_u" in registry-watchdog.service|vypusk-okno-watch.service|zhivaya-versiya-watch.service|dve-kopii-watch.service)
+        _mo_out=$(timeout -k 1s 10s "${MONTAZH_OKNO_BIN:-/usr/local/sbin/montazh-okno}" yunit-otlozheno --avto-montazh "$_u" 2>/dev/null); _mo_code=$?
+        if [ "$_mo_code" = 4 ] || [ "$_mo_code" = 6 ]; then log "   $_u — $_mo_out (не зелёный исход прежнего прогона)"; continue; fi ;;
+      esac
+      GR_SUT="$GR_SUT${GR_SUT:+ }$_u:failed"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }$_u — FAILED"; BEDY=$((BEDY+1)); continue
+    fi
+    if [ "$(systemctl show "$_u" -p ActiveState --value 2>/dev/null)" = activating ]; then
+      _vh=$(systemctl show "$_u" -p InactiveExitTimestamp --timestamp=unix --value 2>/dev/null); _vh="${_vh#@}"
+      if ! [[ "$_vh" =~ ^[1-9][0-9]*s?$ ]]; then
+        GR_SUT="$GR_SUT${GR_SUT:+ }$_u:zastryal-slepo"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }$_u — в activating, момент входа не прочитан (InactiveExitTimestamp «${_vh}») — застрял ли, неизвестно"; BEDY=$((BEDY+1))
+      elif [ $(( SEYCHAS - _vh )) -gt "$_srok_s" ]; then
+        GR_SUT="$GR_SUT${GR_SUT:+ }$_u:zastryal"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }$_u — прогон идёт $(( (SEYCHAS - _vh) / 3600 )) ч (с $(TZ=Europe/Moscow date -d "@$_vh" '+%d.%m %H:%M') МСК) при сроке $_srok_label — застрял в activating"; BEDY=$((BEDY+1))
+      else
+        log "   $_u — прогон идёт $(( (SEYCHAS - _vh) / 60 )) мин (срок $_srok_label), свежесть в этом такте не сужу"
+      fi
+      continue
+    fi
+    _t=$(journalctl UNIT="$_u" JOB_TYPE=start JOB_RESULT=done -o json -n 1 --no-pager -q 2>/dev/null | jq -r '.__REALTIME_TIMESTAMP // empty' 2>/dev/null | tail -1)
+    if [ -z "$_t" ]; then
+      GR_SUT="$GR_SUT${GR_SUT:+ }$_u:net-progona"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }$_u — состоявшегося прогона в журнале НЕТ"; BEDY=$((BEDY+1)); continue
+    fi
+    _vozr=$(( SEYCHAS - _t / 1000000 ))
+    if [ "$_vozr" -gt "$_srok_s" ]; then
+      GR_SUT="$GR_SUT${GR_SUT:+ }$_u:prosrochen"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }$_u — последний прогон состоялся $(( _vozr / 3600 )) ч назад при сроке $_srok_label"; BEDY=$((BEDY+1))
+    else
+      log "   суточный сторож $_u: прогон состоялся $(( _vozr / 3600 )) ч назад (срок $_srok_label)"
+    fi
+  done <<< "$sut_spisok"
+  # ── B-N-1068 (26.09.2026, Заря; слово Забавы 14:40Z): ПОЛНОТА ПЕРЕЧНЯ. Перечень — данные, руками: новый таймер без строки молчал бы
+  #   (dsh-compact-watch был failed 6 ч, читателя не было — B-N-1060/1062). Наш таймер = файл юнита в /etc/systemd/system (шаблон
+  #   @.timer — тоже); его служба обязана иметь строку перечня либо «!<служба> <причина>». Иначе — красное в той же группе.
+  #   Список таймеров пуст/не получен — СЛЕПОТА полноты, не «всё внесено».
+  # ⚠️ НЕ ЛОВИТ: таймеры вне /etc/systemd/system (дистрибутивные, /usr/lib); службы без таймера (зовут руками, cron, Wants=);
+  #   «!»-строку, чья служба давно исчезла (молча лишняя).
+  # A-N-1948 №5 (дельта Забавы 04:12Z): ЗАМАСКИРОВАННЫЙ таймер — решение, а не забытая строка. list-timers --all его ДАЁТ, но вместо
+  #   службы «-» (прежний комментарий «не даёт» был неверен), и сторож требовал «!- причина». Теперь masked (LoadState или
+  #   UnitFileState) — отдельный счёт «замаскировано N: <имена>» в строке полноты, не красное. Служба «-» БЕЗ маски (юнит битый
+  #   или не загрузился; LOW Вениамина 04:27Z) — не маска: красная строка «служба не определена: <таймер>».
+  #   ⚠️ НЕ ЛОВИТ: маску, поставленную не тем таймером (решение — человека); размаскировку без строки перечня — она снова краснеет.
+  _tmr=$(systemctl list-timers --all --no-legend --plain 2>/dev/null | awk 'NF>=2 {print $(NF-1), $NF}')
+  if [ -z "$_tmr" ]; then
+    GR_SUT="$GR_SUT${GR_SUT:+ }ПОЛНОТА:slepo"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }полнота перечня НЕ проверена: список таймеров пуст или не получен (это не «всё внесено»)"; BEDY=$((BEDY+1))
+  else
+    declare -A _akt=(); _nashih=0; _isk=0; _bez=0; _mask=0; _mask_im=""; _neopr=0
+    while read -r _tm _sv; do [ -n "$_tm" ] && _akt["$_tm"]="$_sv"; done <<< "$_tmr"
+    while read -r _id _fr _ls; do
+      case "$_fr" in /etc/systemd/system/*) ;; *) continue ;; esac
+      _sv="${_akt[$_id]:-}"; [ -n "$_sv" ] || continue
+      _nashih=$((_nashih+1))
+      if [ "$_ls" = masked ]; then _mask=$((_mask+1)); _mask_im="$_mask_im${_mask_im:+, }$_id"; continue; fi
+      if [ "$_sv" = - ]; then
+        _neopr=$((_neopr+1))
+        GR_SUT="$GR_SUT${GR_SUT:+ }$_id:sluzhba-neopr"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }служба не определена: $_id — таймер наш ($_fr), в list-timers службы нет («-»), маски нет: юнит битый или не загрузился"; BEDY=$((BEDY+1))
+        continue
+      fi
+      case "$V_PERECHNE" in *" $_sv "*) continue ;; esac
+      case "$NE_VNESENY" in *" $_sv "*) _isk=$((_isk+1)); continue ;; esac
+      _bez=$((_bez+1))
+      GR_SUT="$GR_SUT${GR_SUT:+ }$_sv:net-stroki"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }$_sv — таймер $_id наш ($_fr), строки в перечне НЕТ (и нет «!$_sv причина»)"; BEDY=$((BEDY+1))
+    done < <(systemctl show -p Id -p FragmentPath -p LoadState -p UnitFileState -- "${!_akt[@]}" 2>/dev/null \
+             | awk 'BEGIN{RS=""; FS="\n"} {id=""; fr=""; ms="-"; for (i=1; i<=NF; i++) { if ($i ~ /^Id=/) id=substr($i,4); if ($i ~ /^FragmentPath=/) fr=substr($i,14); if ($i == "LoadState=masked" || $i == "UnitFileState=masked") ms="masked" } if (id != "") print id, (fr == "" ? "-" : fr), ms}')
+    log "   полнота перечня: наших таймеров $_nashih · исключено «!» $_isk · замаскировано $_mask${_mask_im:+: $_mask_im} · служба не определена $_neopr · без строки $_bez"
+    if [ "$_nashih" -eq 0 ]; then   # таймеры есть, а наших 0 — не прочитаны пути юнитов (show отказал), это слепота
+      GR_SUT="$GR_SUT${GR_SUT:+ }ПОЛНОТА:slepo"; GR_SUT_TXT="$GR_SUT_TXT${GR_SUT_TXT:+; }полнота перечня НЕ проверена: таймеров ${#_akt[@]}, а наших (файл в /etc/systemd/system) 0 — пути юнитов не прочитаны"; BEDY=$((BEDY+1))
+    fi
+  fi
+fi
+gruppa sutochnye "$GR_SUT" "СТОРОЖ НАД СТОРОЖАМИ: $GR_SUT_TXT" 21600

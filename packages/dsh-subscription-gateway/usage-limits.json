@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 3,
+  "legacyFileMaxBytes": 134217728,
+  "segmentMaxBytes": 8388608,
+  "segmentMaxAgeSeconds": 3600,
+  "rawRetentionSeconds": 604800,
+  "maxRecordBytes": 65536
+}

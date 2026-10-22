@@ -3,6 +3,8 @@
 Файла настройки у пакета нет: каждая команда читает только свои переменные окружения. Для учётов, мест монтажа, плагинов, пресета, потребителей и учёта доработок умолчания в коде нет — команда отвечает СЛЕПОТОЙ «не задан» или пропускает блок с явной строкой, а не смотрит в пути чужой машины.
 The package has no settings file: every command reads only its own environment variables. For tracked trees, install locations, plugins, presets, consumers and the external ledger, the code has no default — the command reports BLIND "not set" or skips the block with an explicit line instead of looking at another host's paths.
 
+«Несекретность» шести `/etc/dsh-telegram/{marc,anna,master,alfa,gamma,beta}.json` держится соглашением: положат туда значение токена — `_prochest` прочтёт его молча.
+
 ## Сторож: файл настройки и старшинство · Watchdog: settings file and precedence
 
 `registry-watchdog` дополнительно подключает свой файл `REGWD_CONF` (синтаксис оболочки). Старшинство: **файл > окружение > умолчание в коде** — файл подключается после умолчаний и перебивает переменные окружения. Стенды, которые подают значения окружением, задают `REGWD_CONF=/dev/null` («настройки нет»).

@@ -4,6 +4,7 @@
 
 import { readFileSync, existsSync, statSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import os from 'node:os'
@@ -22,7 +23,7 @@ const SRC = `${KORNI}/src/index.js`
 const MANIFEST_PAKETA = JSON.parse(readFileSync(path.join(KORNI, 'package.json'), 'utf-8'))
 const IMYA_PAKETA = MANIFEST_PAKETA.name
 
-const PODPIS_MOSTA = `[${MANIFEST_PAKETA.name} ${MANIFEST_PAKETA.version}]`
+let PODPIS_MOSTA = `[${MANIFEST_PAKETA.name} ${MANIFEST_PAKETA.version}]`
 
 const AGENT_FIX = (() => {
   try {
@@ -44,7 +45,9 @@ const fail = (m) => { bad++; console.log(`  FAIL ${m}`) }
 const slepo = (m) => { slepota++; console.log(`  СЛЕПОТА ${m}`) }
 
 if (!existsSync(SRC)) { console.log(`  СЛЕПОТА нет файла моста ${SRC}`); process.exit(2) }
-const text = readFileSync(SRC, 'utf8')
+const srcBytes = readFileSync(SRC)
+const text = srcBytes.toString('utf8')
+const summaNaDiske = createHash('sha256').update(srcBytes).digest('hex')
 
 console.log('\n=== 0. Всё, на что мост ссылается, лежит на диске ===')
 {
@@ -143,21 +146,55 @@ console.log('\n=== 2. Каждое поле слоя настроек объяв
 console.log('\n=== 3. Строки подъёма из кода дословно совпадают с журналом ===')
 
 {
-  let start, mtime
+  let start, pid, zhurnal
   try {
-    start = execFileSync('systemctl', ['show', YUNIT, '-p', 'ActiveEnterTimestamp', '--value']).toString().trim()
-    mtime = statSync(SRC).mtime
+    start = execFileSync('systemctl', ['show', YUNIT, '-p', 'ActiveEnterTimestamp', '--value'], { timeout: 10_000 }).toString().trim()
+    pid = execFileSync('systemctl', ['show', YUNIT, '-p', 'MainPID', '--value'], { timeout: 10_000 }).toString().trim()
   } catch (e) { slepo(`не спросить systemd про ${YUNIT}: ${String(e?.message ?? e).slice(0, 120)}`) }
 
   const startMs = start ? Date.parse(start) : NaN
 
+  let kodSoveren = false
   let nastrojkiMtime = null
   if (!start || Number.isNaN(startMs)) slepo(`служба ${YUNIT} не даёт времени подъёма (значение «${start}»)`)
-  else if (mtime.getTime() > startMs) {
-
-    slepo(`файл моста правлен ${mtime.toISOString()}, а служба поднята ${new Date(startMs).toISOString()}:`
-      + ' в работе ДРУГОЙ код, сверка с журналом невозможна до перезапуска')
-  } else {
+  else if (!/^[1-9][0-9]*$/.test(pid ?? '')) slepo(`служба ${YUNIT} не даёт MainPID`)
+  else {
+    try {
+      // Preserve the fleet reader's unit/start header; bind the content receipt to MainPID too.
+      const file = process.env.MOST_ZHURNAL_YUNITA
+      if (file) {
+        const [header, ...lines] = readFileSync(file, 'utf8').split('\n')
+        if (header !== `#MOST_ZHURNAL_YUNITA ${YUNIT} ${start}`) throw new Error('журнал относится к другому юниту или подъёму')
+        zhurnal = lines.join('\n')
+        console.log(`       журнал ${YUNIT} — из файла ${file} (снят обходчиком, подъём ${start})`)
+      } else zhurnal = execFileSync('journalctl',
+        ['-u', YUNIT, '--since', start, '--no-pager', '-o', 'cat'],
+        { maxBuffer: 256 * 1024 * 1024, timeout: 10_000 }).toString()
+      const pidPosle = execFileSync('systemctl', ['show', YUNIT, '-p', 'MainPID', '--value'], { timeout: 10_000 }).toString().trim()
+      const startPosle = execFileSync('systemctl', ['show', YUNIT, '-p', 'ActiveEnterTimestamp', '--value'], { timeout: 10_000 }).toString().trim()
+      if (pidPosle !== pid || startPosle !== start) throw new Error('процесс сменился во время чтения журнала')
+    } catch (e) { slepo(`журнал ${YUNIT} не читается: ${String(e?.message ?? e).slice(0, 160)}`); zhurnal = undefined }
+    if (zhurnal !== undefined) {
+      // Select receipts before validating them: a valid old line must not hide a broken one.
+      const receipts = zhurnal.split('\n').filter(line => line.startsWith(`[${IMYA_PAKETA} `) && line.includes('] src/index.js '))
+        .filter(line => {
+          const owner = line.match(/ pid=([1-9][0-9]*)$/)
+          return !owner || owner[1] === pid
+        })
+      const marks = receipts.map(line => line.match(/^(\[([^\]\r\n]+)\]) src\/index\.js sha256=([0-9a-f]{64}) pid=([1-9][0-9]*)$/))
+      if (marks.some(m => !m)) slepo(`${YUNIT} PID ${pid}: битая startup-квитанция src/index.js или неразборчивый PID`)
+      else if (!marks.length) slepo(`${YUNIT} PID ${pid}: нет startup SHA256 src/index.js; нужен первый подъём с новым мостом, mtime не доказательство`)
+      else if (new Set(marks.map(m => m[3])).size !== 1) slepo(`${YUNIT} PID ${pid}: разные startup SHA256 src/index.js`)
+      else if (marks[0][3] !== summaNaDiske) fail(`${SRC}: содержимое отличается от кода ${YUNIT} PID ${pid}; диск sha256=${summaNaDiske}, процесс sha256=${marks[0][3]}`)
+      else {
+        // A manifest/test-only release can change disk version without changing loaded source.
+        PODPIS_MOSTA = marks.at(-1)[1]
+        good(`src/index.js: содержимое совпало с startup SHA256 ${summaNaDiske} PID ${pid}`)
+        kodSoveren = true
+      }
+    }
+  }
+  if (kodSoveren) {
     const lines = text.split('\n')
 
     const i = lines.findIndex((l) => l.includes('log(`предел самопробуждения: не чаще'))
@@ -377,22 +414,6 @@ console.log('\n=== 3. Строки подъёма из кода дословно
         } catch (e) { fail(`блок строк подъёма не исполнился: ${String(e?.message ?? e).slice(0, 160)}`) }
       }
 
-      let zhurnal
-      // RU: B-N-1919: учётке без чтения журнала (гостевой агент не в systemd-journal — решение 04.10) журнал службы снимает обходчик в файл
-      //   MOST_ZHURNAL_YUNITA с шапкой «#MOST_ZHURNAL_YUNITA <юнит> <ActiveEnterTimestamp>»; шапка ≠ юниту и подъёму стенда — СЛЕПОТА
-      //   (файл о другом подъёме сверял бы чужие строки). НЕ ловит подмену файла после снятия в том же прогоне.
-      const ZHURNAL_FAJL = process.env.MOST_ZHURNAL_YUNITA
-      try {
-        if (ZHURNAL_FAJL) {
-          const [shapka, ...stroki] = readFileSync(ZHURNAL_FAJL, 'utf-8').split('\n')
-          if (shapka !== `#MOST_ZHURNAL_YUNITA ${YUNIT} ${start}`) throw new Error(`файл ${ZHURNAL_FAJL}: шапка «${shapka.slice(0, 120)}» ≠ «#MOST_ZHURNAL_YUNITA ${YUNIT} ${start}»`)
-          zhurnal = stroki.join('\n')
-          console.log(`       журнал ${YUNIT} — из файла ${ZHURNAL_FAJL} (снят обходчиком, подъём ${start})`)
-        } else zhurnal = execFileSync('journalctl',
-          ['-u', YUNIT, '--since', start, '--no-pager', '-o', 'cat'],
-          { maxBuffer: 256 * 1024 * 1024 }).toString()
-      } catch (e) { slepo(`журнал ${YUNIT} не читается: ${String(e?.message ?? e).slice(0, 160)}`) }
-
       strokPodyoma = out.length
       if (zhurnal !== undefined && limits && !out.length) {
 
@@ -433,7 +454,7 @@ console.log('\n=== 5. Сторож появления создателя фон�
 
 console.log(`\nИТОГО: сошлось ${ok}, расхождений ${bad}, слепота ${slepota}`)
 
-const BAZA = 6
+const BAZA = 7
 if (polejSloja === null) {
   console.log('\nСЛЕПОТА: раздел 2 не отработал, число полей слоя неизвестно — считать ожидание не из чего.')
   process.exit(bad ? 1 : 2)

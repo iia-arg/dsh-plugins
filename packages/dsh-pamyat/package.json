@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat",
-  "version": "3.1.4",
+  "version": "3.1.10",
   "description": "Память агента: имя для набора из девяти пакетов памяти, собранных и проверенных вместе · Agent memory: one name for a set of nine memory packages built and verified together",
   "keywords": [
     "dsh",
@@ -24,15 +24,23 @@
     "test": "node test/stend-sostava.mjs"
   },
   "dependencies": {
-    "dsh-pamyat-core": "3.1.2",
-    "dsh-pamyat-omega": "3.1.2",
-    "dsh-pamyat-secretary": "3.1.2",
-    "dsh-pamyat-byudzhet": "3.1.2",
-    "dsh-pamyat-nudzh": "3.1.2",
-    "dsh-pamyat-restore": "3.1.2",
-    "dsh-pamyat-storozha": "3.1.3",
-    "dsh-pamyat-kompakt-dsh": "3.1.2",
+    "dsh-pamyat-core": "3.1.3",
+    "dsh-pamyat-omega": "3.1.3",
+    "dsh-pamyat-secretary": "3.1.3",
+    "dsh-pamyat-byudzhet": "3.1.3",
+    "dsh-pamyat-nudzh": "3.1.3",
+    "dsh-pamyat-restore": "3.1.3",
+    "dsh-pamyat-storozha": "3.1.8",
+    "dsh-pamyat-kompakt-dsh": "3.1.4",
     "dsh-pamyat-kompakt": "3.1.2"
+  },
+  "peerDependencies": {
+    "dsh-pribory": "^3.1.2"
+  },
+  "peerDependenciesMeta": {
+    "dsh-pribory": {
+      "optional": true
+    }
   },
   "repository": {
     "type": "git",

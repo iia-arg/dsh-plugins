@@ -1,0 +1,70 @@
+{
+  "schema_version": 2,
+  "bots": {
+    "master": {
+      "bot_user_id": "900000101",
+      "token_file": "/etc/autopilot-mail/telegram/master.token"
+    },
+    "vintik": {
+      "bot_user_id": "900000102",
+      "token_file": "/etc/autopilot-mail/telegram/vintik.token"
+    },
+    "shpuntik": {
+      "bot_user_id": "900000103",
+      "token_file": "/etc/autopilot-mail/telegram/shpuntik.token"
+    },
+    "gayka": {
+      "bot_user_id": "900000104",
+      "token_file": "/etc/autopilot-mail/telegram/gayka.token"
+    },
+    "sova": {
+      "bot_user_id": "900000105",
+      "token_file": "/etc/autopilot-mail/telegram/sova.token"
+    },
+    "shurup": {
+      "bot_user_id": "900000106",
+      "token_file": "/etc/autopilot-mail/telegram/shurup.token"
+    },
+    "tumbler": {
+      "bot_user_id": "900000107",
+      "token_file": "/etc/autopilot-mail/telegram/tumbler.token"
+    }
+  },
+  "targets": [
+    {
+      "id": "traffic",
+      "chat_id": "-5388098055",
+      "agents": {
+        "master": {
+          "on_send": true,
+          "on_receive": true
+        },
+        "vintik": {
+          "on_send": false,
+          "on_receive": true
+        },
+        "shpuntik": {
+          "on_send": true,
+          "on_receive": true
+        },
+        "gayka": {
+          "on_send": true,
+          "on_receive": true
+        },
+        "sova": {
+          "on_send": true,
+          "on_receive": true
+        },
+        "shurup": {
+          "on_send": false,
+          "on_receive": false
+        },
+        "tumbler": {
+          "on_send": true,
+          "on_receive": true
+        }
+      },
+      "text_chars": 100
+    }
+  ]
+}

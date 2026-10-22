@@ -25,6 +25,7 @@ Each tool is a standalone file; the history of its appearance and its full limit
 | `dsh-dump-kopiya <DSH_HOME> <каталог платформы>` | bash, Node | код платформы; `2` — слепота · the platform's code; `2` — blindness | — |
 | `agent-wake-cost [--home D] [--session S] [--details]` | Python 3 | `0` посчитано; `2` слепота · `0` counted; `2` blindness | `WAKE_HOME` |
 | `refresh-skill-links` | bash, Python 3, agent-registry из a2a-bus · from a2a-bus | `0` собрано; `1` дубль/дефект набора/недоступный источник; `2` отказ или нет реестра · `0` built; `1` duplicate/set defect/unavailable source; `2` refusal/missing registry | `SKILL_LINKS_SOURCES` |
+| `npm pack … --json \| npm-sostav --files \| --filename`; `npm view X dist-tags --json \| npm-sostav --view` | bash, jq | `0` разобрано; `2` ОТКАЗ (пусто, не один документ, `{"error":…}`, не один состав, нет `files`/`filename`, элемент `files` без строкового `path`, не JSON) или неверный вызов и `--help`, stdout пуст · `0` parsed; `2` REFUSAL (empty, not one document, `{"error":…}`, not one package, no `files`/`filename`, a `files` element without a string `path`, not JSON) or a bad call and `--help`, stdout empty | — |
 
 ## Главная граница каждого · Each tool's main limit
 
@@ -46,6 +47,7 @@ Each tool is a standalone file; the history of its appearance and its full limit
 - **`istoriya-profilya`** — отвечает «что и когда», а не «кто»; не откатывает; запуск только от самого агента. · answers "what and when", not "who"; no rollback; runs only as the agent itself.
 - **`dsh-dump-kopiya`** — не защищает от записи через ссылку в иные файлы дома. · does not guard against writes through a link into other home files.
 - **`agent-wake-cost`** — числа берёт только из журнала сессии платформы (`$DSH_HOME/sessions/**/session*.jsonl*`), новейшее поколение журнала в каждом каталоге. · takes numbers only from the platform session log, the newest log generation in each directory.
+- **`npm-sostav`** — только разбор stdin: npm не зовёт; принимает форму, а не верность состава; пустой массив `files` — 0 строк при коде `0` (принято воротами 14.10); `--help` — в stderr с кодом `2`. · parses stdin only, never calls npm; accepts the shape, not the correctness of the content; an empty `files` array gives 0 lines with code `0` (accepted by the gate); `--help` goes to stderr with code `2`.
 - **`refresh-skill-links`** — набор агента по реестру (`agent-registry pole <агент> navyki`); это набор, а не граница безопасности. · the agent's set comes from the registry; it is a set, not a security boundary.
 
 ## Новые и уточнённые договоры 3.1.1 · Revised 3.1.1 contracts

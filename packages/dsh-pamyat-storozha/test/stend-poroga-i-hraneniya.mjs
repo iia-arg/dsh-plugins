@@ -55,7 +55,10 @@ if (process.argv[2] === 'rabochij') {
   const { apply, Config } = await import(src)
   const stroki = [], sl = []
   const ctx = { logger: { info: (s) => stroki.push(s) }, on: (n, f) => { if (n === 'session/event') sl.push(f); return () => {} } }
+  const originalLog = console.log
+  try { console.log = (...args) => stroki.push(args.join(' '));
   apply(ctx, new Config({ stupeni: [0.85, 0.9], agent: 'proba', komandaStoka: `cat >> ${process.env.STOK}; echo >> ${process.env.STOK}` }))
+  } finally { console.log = originalLog }
   const ses = (id) => ({ id, requestContext: () => ({ provider: 'p', model: 'm', contextWindow: 1000000 }) })
   let t = 0
   for (const sh of JSON.parse(shagiJson)) {

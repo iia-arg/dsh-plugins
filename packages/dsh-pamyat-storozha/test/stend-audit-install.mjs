@@ -10,6 +10,8 @@ const require = createRequire(import.meta.url)
 const temp = mkdtempSync(join(tmpdir(), 'storozha-install-audit-'))
 let failures = 0
 try {
+  // B-N-2048: npm pack --json is an array in npm 11 and an object in npm 12; the npm-sostav helper (dsh-pribory >= 3.1.2) parses both, its absence or refusal is blindness.
+  if (spawnSync('sh', ['-c', 'command -v npm-sostav'], { stdio: 'ignore' }).status !== 0) throw Error('npm-sostav не найден — нужен dsh-pribory ≥ 3.1.2')
   function directory(name) {
     let d = dirname(require.resolve(name))
     while (!existsSync(join(d, 'package.json'))) {
@@ -24,7 +26,9 @@ try {
   for (const source of [...sources, pkg]) {
     const q = spawnSync('npm', ['pack', '--offline', '--ignore-scripts', '--json', '--pack-destination', temp], { cwd: source, encoding: 'utf8', timeout: 30000 })
     if (q.status !== 0) throw Error('cannot pack '+source+': '+q.stderr)
-    archives.push(join(temp, JSON.parse(q.stdout)[0].filename))
+    const f = spawnSync('npm-sostav', ['--filename'], { input: q.stdout, encoding: 'utf8' })
+    if (f.status !== 0) throw Error('npm-sostav refused for '+source+': '+(f.error?.message ?? f.stderr).trim())
+    archives.push(join(temp, f.stdout.trim()))
   }
   for (const withSibling of [false, true]) {
     const project = join(temp, withSibling ? 'complete' : 'without-sibling'); mkdirSync(project)

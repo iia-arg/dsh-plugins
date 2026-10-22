@@ -9,3 +9,4 @@
 # B-N-1808 (08.10, Михалыч; наряд Забавы 06:37Z): stend-needrestart — пишет в живой /etc/needrestart/conf.d; замок dpkg/apt УДЕРЖИВАЕТСЯ на прогон (r2).
 #   Пока needrestart не установлен — код 2 «пропущено: 6», ожидаемо по /etc/agent-registry/stend-exceptions.yaml.
 /opt/iskra/workspace/dorabotki/stend-needrestart.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-vsplesk.py

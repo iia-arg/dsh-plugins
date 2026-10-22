@@ -24,6 +24,22 @@ try{
   assert.deepEqual(fs.readdirSync(path.join(target,'test')),['extract.mjs']);
   assert.equal(fs.readFileSync(path.join(target,'gateway.mjs'),'utf8'),'export const fixture=1;');
  });
+ test('declared public runtime JSON is copied, arbitrary JSON stays private',()=>{
+  const manifest=path.join(source,'package.json'),raw=fs.readFileSync(manifest),publicFiles=['usage-limits.json','child-source-versions.json','schedule.json'];
+  for(const name of publicFiles)fs.writeFileSync(path.join(source,name),JSON.stringify({fixture:name}));
+  fs.writeFileSync(path.join(source,'auth.json'),'synthetic-private-marker');fs.writeFileSync(path.join(source,'other.json'),'synthetic-private-marker');
+  fs.writeFileSync(manifest,JSON.stringify({...JSON.parse(raw),files:[...JSON.parse(raw).files,...publicFiles,'auth.json','other.json']}));
+  try{const target=path.join(root,'json-copy');copyGatewayFixture(target);assert.deepEqual(fs.readdirSync(target).sort(),['gateway.mjs','package.json','test',...publicFiles].sort());
+   for(const name of publicFiles)assert.equal(fs.readFileSync(path.join(target,name),'utf8'),fs.readFileSync(path.join(source,name),'utf8'));
+   assert(!fs.existsSync(path.join(target,'auth.json')));assert(!fs.existsSync(path.join(target,'other.json')));
+  }finally{fs.writeFileSync(manifest,raw)}
+  const undeclared=path.join(root,'undeclared-json-copy');copyGatewayFixture(undeclared);for(const name of publicFiles)assert(!fs.existsSync(path.join(undeclared,name)));
+ });
+ test('a selected runtime JSON symlink cannot read a private file',()=>{
+  const manifest=path.join(source,'package.json'),raw=fs.readFileSync(manifest),file=path.join(source,'usage-limits.json');fs.unlinkSync(file);fs.symlinkSync(path.join(source,'.claude.json'),file);
+  fs.writeFileSync(manifest,JSON.stringify({...JSON.parse(raw),files:[...JSON.parse(raw).files,'usage-limits.json']}));
+  try{assert.throws(()=>copyGatewayFixture(path.join(root,'json-link-copy')),e=>e.code==='ELOOP');assert(!fs.existsSync(path.join(root,'json-link-copy')))}finally{fs.writeFileSync(manifest,raw);fs.unlinkSync(file)}
+ });
  test('missing source is blindness before any copy',()=>{process.env.STEND_GATEWAY_SOURCE=path.join(root,'absent');try{assert.throws(()=>copyGatewayFixture(path.join(root,'absent-copy')),e=>e.code==='STEND_BLIND');assert(!fs.existsSync(path.join(root,'absent-copy')))}finally{process.env.STEND_GATEWAY_SOURCE=source}});
  test('a selected module symlink cannot read a private file',()=>{
   const code=path.join(source,'gateway.mjs');fs.unlinkSync(code);fs.symlinkSync(path.join(source,'.claude.json'),code);

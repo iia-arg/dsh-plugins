@@ -25,6 +25,7 @@ ExecStart=/opt/iskra/workspace/dorabotki/vse-stendy-po-tajmeru.sh
 # 1 — находка (тревога уже ушла), 2 — слепота обхода: это ответы сторожа, а не его поломка.
 # Всё прочее (3 — тревога не доставлена / убит по времени) — failed, для сторожа упавших служб.
 SuccessExitStatus=1 2
-TimeoutStartSec=50min
+# B-N-2063: временно; пересчитать после полного прогона, до 16.10.2026 12:00Z.
+TimeoutStartSec=5100
 StandardOutput=journal
 StandardError=journal

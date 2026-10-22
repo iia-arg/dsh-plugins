@@ -1,0 +1,64 @@
+# dsh-autopilot-razdacha — раздача панелей Автопилота только чтением (dsh-autopilot, часть Д; 14.10.2026).
+# Слушает ТОЛЬКО 192.168.99.6:8787 (mesh, awg9); снаружи — nginx vps-ru ap1.insmat.ru (TLS, basic auth) → сюда.
+# Учётка — DynamicUser (временная непривилегированная, не root) + группа autopilot-view (SupplementaryGroups):
+# корень /srv/autopilot/public и разделы — 2750 (setgid, группа наследуется), файлы — 0640 группы autopilot-view;
+# «прочие» на sadik панелей не читают. Группу заводит установщик (часть А).
+# Вход — ТОЛЬКО vps-ru 192.168.99.3 (единственный пир awg9 — хаб с allowed-ips /24: через него до порта дошёл бы
+# любой узел mesh мимо TLS и пароля) и собственный адрес 192.168.99.6 — для healthcheck на этой машине; содержимое
+# сервер отдаёт только --vpusk (vps-ru), своему адресу — лишь /__zhivoj. Правило стены на sadik ставит ещё и часть Г.
+# Ключ: содержимое — только с заголовком X-AP-Klyuch = секрет из /etc/dsh-autopilot/razdacha-klyuch (600 root:root,
+# генерирует установщик, если нет; в репозиторий не кладётся). Служба читает его через LoadCredential
+# ($CREDENTIALS_DIRECTORY/ap-klyuch), а не с диска напрямую; ключ в командную строку не попадает. Довод: на vps-ru любой контейнер выходит адресом хаба .3.
+# Чего юнит НЕ даёт: TLS и пароль (они на nginx vps-ru).
+# EN: serves Autopilot dashboards read-only on 192.168.99.6:8787 only; DynamicUser + group autopilot-view,
+#     ProtectSystem=strict; clients: vps-ru 192.168.99.3 (content) and own address (health only).
+[Unit]
+Description=dsh-autopilot: раздача панелей /srv/autopilot/public только чтением (mesh 192.168.99.6:8787)
+After=network-online.target
+Wants=network-online.target
+# Предел перезапусков: 10 за 10 минут, дальше — failed (видно в systemctl --failed), а не вечный круг.
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I -B /usr/local/libexec/dsh-autopilot/razdacha.py --koren /srv/autopilot/public --adres 192.168.99.6 --port 8787 --vpusk 192.168.99.3 --klyuch-imya ap-klyuch
+Restart=on-failure
+RestartSec=5
+DynamicUser=yes
+LoadCredential=ap-klyuch:/etc/dsh-autopilot/razdacha-klyuch
+SupplementaryGroups=autopilot-view
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+# «-»: каталога ещё может не быть (его заводит установщик/выгрузка) — без «-» служба не стартует вовсе.
+ReadOnlyPaths=-/srv/autopilot/public
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+IPAddressDeny=any
+IPAddressAllow=192.168.99.3/32 192.168.99.6/32
+MemoryMax=128M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

@@ -81,8 +81,31 @@ def directories(path,deadline):
             if entry.is_dir(follow_symlinks=False):result.append(Path(entry.path))
     return sorted(result)
 
+def not_started(unit,deadline):
+    """Only current manager timestamps plus retained all-boot journal; unknown data is not a skip."""
+    if not isinstance(unit,str) or not re.fullmatch(r'[A-Za-z0-9_@:.\-]+\.service',unit):raise ValueError('не задана корректная namerenie.sluzhba')
+    def query(args):
+        left=deadline-time.monotonic()
+        if left<=0:raise ValueError('предел обхода60с при проверке '+unit)
+        try:q=subprocess.run(args,capture_output=True,text=True,timeout=min(5,left),env={**os.environ,'LC_ALL':'C'})
+        except (OSError,subprocess.SubprocessError) as e:raise ValueError('история службы '+unit+' не проверена: '+type(e).__name__) from e
+        if q.returncode or q.stderr.strip():raise ValueError('история службы '+unit+' не проверена: код '+str(q.returncode)+' '+q.stderr.strip()[:256])
+        return q.stdout
+    if os.geteuid()!=0:raise ValueError('история службы требует root; отсутствие недоступного журнала не доказательство')
+    keys=('LoadState','ActiveState','ActiveEnterTimestamp','ExecMainStartTimestamp','InvocationID')
+    raw=query(['/usr/bin/systemctl','show','--property='+','.join(keys),'--',unit]);props={}
+    for line in raw.splitlines():
+        key,sep,value=line.partition('=')
+        if not sep or key in props:raise ValueError('неоднозначный systemctl show '+unit)
+        props[key]=value
+    if set(props)!=set(keys) or props['LoadState']!='loaded':raise ValueError('служба не загружена или неполные свойства '+unit)
+    if props['ActiveState']!='inactive' or any(props[k] for k in keys[2:]):return False
+    # Restrict output fields: no MESSAGE/session/model contents are read into the watcher.
+    history=query(['/usr/bin/journalctl','--unit='+unit,'--quiet','--no-pager','--lines=1','--output=json','--output-fields=_SYSTEMD_UNIT'])
+    return not history.strip()
+
 def scan(registry):
-    out={'agents_total':0,'agents_scanned':0,'sessions_total':0,'headers_read':0,'subagents':0,'sessions':[],'agents':[],'bad':[],'errors':[]}
+    out={'agents_total':0,'agents_scanned':0,'agents_not_started':0,'not_started':[],'sessions_total':0,'headers_read':0,'subagents':0,'sessions':[],'agents':[],'bad':[],'errors':[]}
     deadline=time.monotonic()+60
     try:
         data=yaml.safe_load(small(registry,4*1024*1024));agents=data.get('agenty') if isinstance(data,dict) else None
@@ -95,7 +118,15 @@ def scan(registry):
                 if not isinstance(name,str) or not name or name in seen_names:raise ValueError('пустое/повторное имя')
                 if not isinstance(home,str) or not Path(home).is_absolute() or home=='/' or '..' in Path(home).parts or home in seen_homes:raise ValueError('пустой/негодный/повторный dom')
                 seen_names.add(name);seen_homes.add(home);count=0
-                for project in directories(Path(home)/'.dsh/sessions',deadline):
+                root=Path(home)/'.dsh/sessions'
+                try:root.lstat()
+                except FileNotFoundError:
+                    unit=agent.get('namerenie',{}).get('sluzhba')
+                    if not_started(unit,deadline):
+                        out['agents_not_started']+=1;out['not_started'].append({'agent':name,'unit':unit,'path':str(root)})
+                        out['agents'].append({'agent':name,'sessions':0,'state':'not_started'});continue
+                    raise FileNotFoundError(str(root)+': каталог отсутствует при запускавшейся/запускаемой службе '+unit)
+                for project in directories(root,deadline):
                     for folder in directories(project,deadline):
                         candidates=[]
                         with os.scandir(folder) as entries:
@@ -122,13 +153,13 @@ def scan(registry):
                 out['agents_scanned']+=1;out['agents'].append({'agent':name,'sessions':count})
                 if not count:out['errors'].append(f'{name}: {home}/.dsh/sessions: 0 сессий — полнота не подтверждена')
             except (OSError,ValueError,TypeError,AttributeError) as e:out['errors'].append(f'{name}: {type(e).__name__}: {e}')
-        if out['sessions_total']==0:out['errors'].append('не найдено ни одной сессии')
+        if out['sessions_total']==0 and out['agents_not_started']!=out['agents_total']:out['errors'].append('не найдено ни одной сессии')
     except (OSError,ValueError,yaml.YAMLError) as e:out['errors'].append(f'реестр {registry}: {type(e).__name__}: {e}')
     out['code']=1 if out['bad'] else 2 if out['errors'] else 0
     return out
 
 def summary(result):
-    return (f"Сессии без agentPreset: заголовки {result['headers_read']}/{result['sessions_total']}, агенты {result['agents_scanned']}/{result['agents_total']}, субагентских {result['subagents']} (не судятся)\n"+
+    return (f"Сессии без agentPreset: заголовки {result['headers_read']}/{result['sessions_total']}, агенты {result['agents_scanned']}/{result['agents_total']}, ещё не запускались {result['agents_not_started']} (не проверены), субагентских {result['subagents']} (не судятся)\n"+
             '\n'.join(result['bad']+result['errors']))
 
 def watch(registry,state,alert):
@@ -147,6 +178,7 @@ def watch(registry,state,alert):
             previous={};result['errors'].append(f'состояние {statefile}: {type(e).__name__}; прежнюю отметку не использую')
             result['code']=1 if result['bad'] else 2
         text=summary(result)
+        if result['not_started']:print('ОЖИДАЮТ ПЕРВОГО ПОДЪЁМА: '+', '.join(r['agent']+' ('+r['unit']+')' for r in result['not_started']))
         signature=hashlib.sha256(json.dumps(sorted(result['bad']+result['errors']),ensure_ascii=False).encode()).hexdigest()
         if result['code']:
             print(text)
@@ -154,7 +186,7 @@ def watch(registry,state,alert):
                 env={**os.environ,'AGENT_ALERT_POPYTOK':'3','AGENT_ALERT_TAJMAUT':'20','AGENT_ALERT_PAUZY':'5 15'}
                 sent=subprocess.run([alert,'--plain'],input=text,text=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=100,env=env)
                 if sent.returncode:print('Тревога не доставлена; отметка не обновлена');return 3
-        record={'signature':signature,'checked_at':time.time(),'code':result['code'],'coverage':{k:result[k] for k in ['agents_total','agents_scanned','sessions_total','headers_read','subagents']}}
+        record={'signature':signature,'checked_at':time.time(),'code':result['code'],'not_started':result['not_started'],'coverage':{k:result[k] for k in ['agents_total','agents_scanned','agents_not_started','sessions_total','headers_read','subagents']}}
         temporary=Path(state)/('.last-'+uuid.uuid4().hex)
         try:
             f=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)

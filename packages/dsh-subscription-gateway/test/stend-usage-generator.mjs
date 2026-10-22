@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
+import {GatewayUsage} from '../usage-producer.mjs';import {progonAppServer} from '../codex-app-server.mjs';
+const root=fs.mkdtempSync(path.join(os.tmpdir(),'usage-generator-'));let g;
+try{
+ const file=path.join(root,'proof.jsonl');g=new GatewayUsage({file,engine:'codex',descriptor:{request_id:'real-r-request',binding:{generation:'R',session_id:'dsh',session_created:42,turn:7,recipient:'master'}},heartbeatMs:0});
+ let notify,ready=false,dead;const calls=[];const client={slushat:f=>notify=f,uvedomit(){},umer:new Promise(r=>dead=r),async zakryt(){dead({code:0})},async zapros(m){calls.push(m);if(m==='thread/start')return{thread:{id:'parent'}};if(m==='turn/start'){ready=true;return{turn:{id:'parent-turn'}}}if(m==='account/read'||m==='config/read')return new Promise(()=>{});return{}}};
+ const run=(async()=>{for await(const e of progonAppServer({env:{},bin:'fixture',log(){},zapros:'prompt',klientImpl:()=>client,usageObserver:g})){} })();
+ const deadline=Date.now()+3000;while(!ready&&Date.now()<deadline)await new Promise(r=>setTimeout(r,5));assert.ok(ready,'bounded account/read timeout prevented normal turn start');
+ notify('thread/started',{thread:{id:'child',parentThreadId:'parent',path:'/only-private-source'}});notify('turn/started',{threadId:'child',turn:{id:'child-turn',startedAt:42}});notify('turn/completed',{threadId:'child',turn:{id:'child-turn',status:'completed',startedAt:42,completedAt:43}});notify('turn/completed',{threadId:'parent',turn:{id:'parent-turn',status:'completed'}});
+ await run;await g.close();assert.ok(fs.existsSync(file),'actual progonAppServer did not call observer');const rows=fs.readFileSync(file,'utf8').trim().split('\n').map(JSON.parse);assert.ok(rows.some(r=>r.kind==='thread'&&r.threadId==='child'));assert.ok(rows.some(r=>r.kind==='turn_terminal'&&r.threadId==='child'));assert.ok(rows.some(r=>r.kind==='turn_terminal'&&r.threadId==='parent'));assert.equal(rows.find(r=>r.kind==='auth').detail,'ACCOUNT_READ_TIMEOUT');console.log('PASS actual generator retains child facts before root filter, missing auth cannot prevent normal completion');
+}finally{await g?.close();fs.rmSync(root,{recursive:true,force:true})}

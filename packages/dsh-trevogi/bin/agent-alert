@@ -8,6 +8,18 @@
 # RU: Ручной запуск таймерного юнита неотличим от расписания; признак источника не заменяет метку пробы.
 # EN: Manual starts of timer-backed units cannot be distinguished from schedules; source tags do not mark probes.
 set -uo pipefail
+# RU: B-N-2064 (15.10.2026): выход с отказом БЕЗ строки журнала делал недоставку неразбираемой (недельный обход 14.10:
+#     «ТРЕВОГА НЕ ДОСТАВЛЕНА», agent-alert ни строки; зовущий гасил вывод в /dev/null). otkaz КОД ИСХОД ПРИЧИНА — строка
+#     «исход=<ИСХОД> учётка=… ЮНИТ=… звал=…(PPID) <причина>» в журнал agent-alert; прежнее сообщение — в ПРЕЖНИЙ поток
+#     (4-й довод: out — stdout, err — stderr, «-» — не печатать: печатал сам читатель настроек), прежний код.
+#     Текст тревоги в строку не попадает (только причина). Не трогает --proverit-nastrojku (ручная проверка, свой вывод).
+# EN: Every refusal exit now leaves a journal line with its reason, the old message and the old exit code.
+otkaz() {
+  local _yu; _yu="$(sed -n 's#.*/\([^/]*\.\(service\|scope\)\)$#\1#p' /proc/$$/cgroup 2>/dev/null | head -1)"
+  logger -t agent-alert -- "исход=$2 учётка=$(id -un 2>/dev/null) ЮНИТ=${_yu:-вне-юнита} звал=$(ps -o comm= -p "$PPID" 2>/dev/null)($PPID) ${3:0:200}" 2>/dev/null
+  case "${4:-err}" in out) printf 'agent-alert: %s\n' "$3" ;; err) printf 'agent-alert: %s\n' "$3" >&2 ;; esac
+  exit "$1"
+}
 
 # RU: --proverit-nastrojku — проверка настройки без отправки: настройка разрешается тем же читателем, файлы токена
 #     и чата должны существовать, читаться текущей учёткой и иметь непустую первую строку. Сеть, журнал и хвост не
@@ -38,6 +50,19 @@ if [ "${1:-}" = --proverit-nastrojku ]; then
       echo "ОТКАЗ НАСТРОЙКИ: токен — права позволяют чтение прочим или не прочитаны: $put"; prichin=$((prichin + 1))
     fi
   fi
+  # B-N-2055 способ 2: прямой путь не годен у учётки не-root (или задан ключ пробы) — проверяется клиентский путь
+  # (спул): настоящая запись в tmp/, перенос пробы в vhod/, path-юнит отправителя active.
+  case "${AGENT_ALERT_CHEREZ_SPUL:-}" in
+    ''|1) ;;
+    *) echo "ОТКАЗ НАСТРОЙКИ: AGENT_ALERT_CHEREZ_SPUL допускает только 1, получено «${AGENT_ALERT_CHEREZ_SPUL:0:20}»"; exit 2 ;;
+  esac
+  # Условие то же, что у отправки: ключ пробы, или учётка не-root и файл токена ей не читается (-r).
+  put_tokena="$(printf '%s\n' "$settings" | sed -n 's/^AGENT_ALERT_TOKEN_FILE=//p')"
+  if [ "${AGENT_ALERT_CHEREZ_SPUL:-}" = 1 ] || { [ "$(id -u)" != 0 ] && [ ! -r "$put_tokena" ]; }; then
+    [ "$prichin" -eq 0 ] || echo "  (прямой путь не годен для $kto — проверяю клиентский путь через спул)"
+    while IFS= read -r setting; do export "${setting%%=*}=${setting#*=}"; done <<< "$settings"
+    python3 -I -B "$LIB_DIR/klient.py" proverit; exit $?
+  fi
   [ "$prichin" -eq 0 ] || exit 2
   echo "НАСТРОЙКА ГОДНА: токен и чат читаются учёткой $kto и не пусты; Telegram не спрашивался"
   exit 0
@@ -54,7 +79,7 @@ case "${1:-}" in
 esac
 msg="${*:-}"
 [ -z "$msg" ] && msg="$(cat)"
-[ -z "$msg" ] && { echo "agent-alert: пустое сообщение — не отправляю"; exit 1; }
+[ -z "$msg" ] && otkaz 1 пустое-сообщение "пустое сообщение — не отправляю" out
 
 # RU: Проба сама выставляет метку. До неё разобран ввод; токен, хвост и сеть не трогаются.
 #     В журнал — первые 120 знаков текста (перевод строки → ⏎): видно, ЧТО проба не отправила.
@@ -62,18 +87,23 @@ msg="${*:-}"
 # EN: The probe sets its own mark. Input is parsed first; token, tail and network stay untouched.
 #     The journal gets the first 120 characters (newline → ⏎): it shows WHAT the probe did not send.
 #     Silence only with the explicit mark 1; without it — sending as before.
+# RU: Один читатель для всех утилит; конфиг не исполняется оболочкой. Номер — константа VERSIYA читателя (3.1.6).
+# EN: One reader for all utilities; the shell never evaluates configuration. Version — the reader's VERSIYA constant.
+LIB_DIR="$(dirname -- "$(readlink -f -- "$0")")/../lib/dsh-trevogi"
+VERSIYA="$(sed -n "s/^VERSIYA = '\([0-9][0-9.]*\)'$/\1/p" "$LIB_DIR/nastrojki.py" 2>/dev/null | head -1)"; : "${VERSIYA:=неизвестна}"
 case "${DSH_PROBA:-0}" in
   1) echo 'agent-alert: проба, не отправлено'
      nachalo="$(LC_ALL=C.utf8; t="${msg:0:120}"; printf '%s' "${t//$'\n'/⏎}")"
-     logger -t agent-alert -- "версия=3.1.1 исход=проба, не отправлено текст[0:120]=$nachalo" || exit 1
+     logger -t agent-alert -- "версия=$VERSIYA исход=проба, не отправлено текст[0:120]=$nachalo" || exit 1
      exit 0 ;;
   0) ;;
-  *) echo 'agent-alert: DSH_PROBA допускает только 0 или 1 / requires 0 or 1' >&2; exit 2 ;;
+  *) otkaz 2 отказ-DSH_PROBA "DSH_PROBA допускает только 0 или 1 / requires 0 or 1 (получено «${DSH_PROBA:0:20}»)" err ;;
 esac
-# RU: Один читатель для всех утилит; конфиг не исполняется оболочкой.
-# EN: One reader for all utilities; the shell never evaluates configuration.
-LIB_DIR="$(dirname -- "$(readlink -f -- "$0")")/../lib/dsh-trevogi"
-if ! settings="$(python3 "$LIB_DIR/nastrojki.py")"; then exit 2; fi
+# RU: 3.1.8: хвост, заданный ОКРУЖЕНИЕМ процесса (drop-in службы), — до слияния с конфигом. Клиентский путь пишет
+#     только его: хвост из конфига — общий, его пишет root-отправитель (иначе строка в нём задвоится).
+# EN: 3.1.8: the tail set by the process environment, captured before merging with the config file.
+HVOST_IZ_OKRUZHENIYA="${AGENT_ALERT_HVOST:-}"
+if ! settings="$(python3 "$LIB_DIR/nastrojki.py")"; then otkaz 2 отказ-настроек "читатель настроек $LIB_DIR/nastrojki.py отказал (причина — в его выводе)" -; fi
 while IFS= read -r setting; do
   key="${setting%%=*}"; value="${setting#*=}"
   export "$key=$value"
@@ -88,11 +118,56 @@ ZHURNAL_ZNAKOV=120
 HVOST_FAJL="$AGENT_ALERT_HVOST"
 HVOST_PREDEL_BAJT="$AGENT_ALERT_HVOST_PREDEL"
 
+zapisat_hvost() {
+  local stroka razmer
+  if [ ! -f "$HVOST_FAJL" ] || [ ! -w "$HVOST_FAJL" ]; then
+    logger -t agent-alert "хвост НЕ записан: $HVOST_FAJL отсутствует или закрыт для $(id -un)"
+    return 0
+  fi
+  razmer="$(stat -c %s "$HVOST_FAJL" 2>/dev/null || echo 0)"
+  if [ "$razmer" -gt "$HVOST_PREDEL_BAJT" ]; then
+    logger -t agent-alert "хвост НЕ записан: $HVOST_FAJL $razmer Б больше предела $HVOST_PREDEL_BAJT — обрезка (agent-alert-hvost-obrezka.timer) не работает?"
+    return 0
+  fi
+  stroka="$(date -u +%FT%TZ) исход=$1 format=$FORMAT ЮНИТ=$2 звал=$3 знаков=${#msg_polnyj} текст=${msg_polnyj//$'\n'/⏎}"
+  (
+    flock -w 5 9 || { logger -t agent-alert "хвост НЕ записан: $HVOST_FAJL занят дольше 5 с"; exit 0; }
+    printf '%s\n' "$stroka" >&9 || logger -t agent-alert "хвост НЕ записан: запись в $HVOST_FAJL отказала"
+  ) 9>>"$HVOST_FAJL"
+}
+
+# RU: B-N-2055 способ 2. Клиентский путь (спул → root-отправитель) — у учётки не-root, которой токен не читается,
+#     и по ключу пробы AGENT_ALERT_CHEREZ_SPUL=1 (нужен до переключения: пока токен читает группа, иначе путь через
+#     спул проверить некем). Иное значение ключа — отказ 2. Root без ключа — всегда прямой путь, как прежде.
+# EN: Method 2 client path (spool → root sender): non-root accounts that cannot read the token, or the probe key
+#     AGENT_ALERT_CHEREZ_SPUL=1. Any other key value is refused (2). Root without the key keeps the direct path.
+KLIENT=0
+case "${AGENT_ALERT_CHEREZ_SPUL:-}" in
+  '') ;;
+  1) KLIENT=1 ;;
+  *) echo "agent-alert: AGENT_ALERT_CHEREZ_SPUL допускает только 1 (получено «${AGENT_ALERT_CHEREZ_SPUL:0:20}») — НЕ отправляю" >&2
+     logger -t agent-alert "исход=отказ-ключ AGENT_ALERT_CHEREZ_SPUL=${AGENT_ALERT_CHEREZ_SPUL:0:20}" 2>/dev/null; exit 2 ;;
+esac
+[ "$KLIENT" = 1 ] || [ "$(id -u)" = 0 ] || [ -r "$TOKEN_FILE" ] || KLIENT=1
+
+if [ "$KLIENT" = 0 ]; then
 token="$(cat "$TOKEN_FILE" 2>/dev/null | head -1 | tr -d '[:space:]')"
 chat="$(cat "$CHAT_FILE" 2>/dev/null | head -1 | tr -d '[:space:]')"
-if [ -z "$token" ] || [ -z "$chat" ]; then
-  echo "agent-alert: нет токена ($TOKEN_FILE) или чата ($CHAT_FILE) — тревога НЕ отправлена"
-  exit 1
+OWNERS=()
+[ -z "$chat" ] || OWNERS+=("$chat")
+[ -z "$AGENT_ALERT_OWNER_CHAT_ID" ] || OWNERS+=("$AGENT_ALERT_OWNER_CHAT_ID")
+OWNER_CONFIG_BAD=0
+if [ -z "$chat" ]; then
+  OWNER_CONFIG_BAD=1
+  if [ "${#OWNERS[@]}" -gt 0 ]; then
+    reason="основной хозяин: файл $CHAT_FILE не читается или пуст; второму хозяину отправка продолжается"
+    logger -t agent-alert -- "версия=$VERSIYA $reason"
+    printf 'agent-alert: %s\n' "$reason" >&2
+  fi
+fi
+if [ -z "$token" ] || [ "${#OWNERS[@]}" -eq 0 ]; then
+  otkaz 1 нет-токена-или-чата "нет токена ($TOKEN_FILE) или чата ($CHAT_FILE) — тревога НЕ отправлена" out
+fi
 fi
 
 # B-N-1830 (08.10.2026, Михалыч; вопрос владельца 12:10 МСК «что значит ПОЗВАНО РУКОЙ»): метка — по ПОЛОЖИТЕЛЬНОМУ признаку.
@@ -120,6 +195,19 @@ istochnik_trevogi() {
   printf 'источник не установлен (%s)' "${cg:-cgroup не прочитан}"
 }
 ISTOCHNIK="$(istochnik_trevogi)"
+if [ "$KLIENT" = 1 ]; then
+  FORMAT="$FORMAT" ISTOCHNIK="$ISTOCHNIK" MSG="$msg" python3 -I -B "$LIB_DIR/klient.py" otpravit; kod_klienta=$?
+  # RU: 3.1.8 (наряд Забавы 15.10 23:06:39Z): хвост учётки и на клиентском пути — после итога отправителя, только
+  #     заданный окружением. До 3.1.8 ветка выходила до записи хвоста: «прочти свой хвост» у агентов спула было мертво.
+  # EN: 3.1.8: the client path also appends to the account tail (environment-set only), after the sender result.
+  if [ -n "$HVOST_IZ_OKRUZHENIYA" ]; then
+    msg_polnyj="$msg"; HVOST_FAJL="$HVOST_IZ_OKRUZHENIYA"
+    yunit_k="$(grep -oE '[a-zA-Z0-9@._-]+\.(service|scope)' /proc/self/cgroup 2>/dev/null | tail -1)"
+    if [ "$kod_klienta" = 0 ]; then ishod_k="доставлено(спул)"; else ishod_k="не-доставлено(спул,код-$kod_klienta)"; fi
+    zapisat_hvost "$ishod_k" "${yunit_k:-вне-юнита}" "$(ps -o comm= -p "$PPID" 2>/dev/null || echo '?')"
+  fi
+  exit "$kod_klienta"
+fi
 host="$(hostname -s 2>/dev/null || echo '?')"
 PREFIX="[${host}]${ISTOCHNIK:+ ⚠️ $ISTOCHNIK ·} "
 msg_polnyj="$msg"
@@ -156,8 +244,7 @@ PY_PLAIN
 }
 if [ "$FORMAT" = plain ]; then
   if ! msg="$(podgotovit_plain)"; then
-    echo 'agent-alert: plain не подготовлен — НЕ отправлено' >&2
-    exit 1
+    otkaz 1 формат-не-подготовлен 'plain не подготовлен — НЕ отправлено' err
   fi
 else
 if ! msg_html="$(PREDEL="$PREDEL_ZNAKOV" PREFIX="$PREFIX" HVOST="$HVOST_FAJL" MSG="$msg" python3 - <<'PY_HTML'
@@ -217,8 +304,7 @@ PY_HTML
   PREFIX="${PREFIX}⚠️ html не подготовлен, отправлено текстом · "
   FORMAT=plain-zapas
   if ! msg="$(podgotovit_plain)"; then
-    echo 'agent-alert: ни html, ни plain не подготовлены — НЕ отправлено' >&2
-    exit 1
+    otkaz 1 формат-не-подготовлен 'ни html, ни plain не подготовлены — НЕ отправлено' err
   fi
 else
   msg="$msg_html"
@@ -232,28 +318,12 @@ otpravit() {
   | curl -sS -m "$TAJMAUT" -X POST --config - \
   --write-out '\n%{http_code}' \
   --data-urlencode "chat_id=${chat}" \
+  --data-urlencode "disable_web_page_preview=true" \
   --data-urlencode "text=${PREFIX}${msg}" \
   "${format_args[@]}" 2>&1
 }
 
-zapisat_hvost() {
-  local stroka razmer
-  if [ ! -f "$HVOST_FAJL" ] || [ ! -w "$HVOST_FAJL" ]; then
-    logger -t agent-alert "хвост НЕ записан: $HVOST_FAJL отсутствует или закрыт для $(id -un)"
-    return 0
-  fi
-  razmer="$(stat -c %s "$HVOST_FAJL" 2>/dev/null || echo 0)"
-  if [ "$razmer" -gt "$HVOST_PREDEL_BAJT" ]; then
-    logger -t agent-alert "хвост НЕ записан: $HVOST_FAJL $razmer Б больше предела $HVOST_PREDEL_BAJT — обрезка (agent-alert-hvost-obrezka.timer) не работает?"
-    return 0
-  fi
-  stroka="$(date -u +%FT%TZ) исход=$1 format=$FORMAT ЮНИТ=$2 звал=$3 знаков=${#msg_polnyj} текст=${msg_polnyj//$'\n'/⏎}"
-  (
-    flock -w 5 9 || { logger -t agent-alert "хвост НЕ записан: $HVOST_FAJL занят дольше 5 с"; exit 0; }
-    printf '%s\n' "$stroka" >&9 || logger -t agent-alert "хвост НЕ записан: запись в $HVOST_FAJL отказала"
-  ) 9>>"$HVOST_FAJL"
-}
-
+otpravit_adresatu() {
 popytka=0
 while : ; do
   popytka=$((popytka + 1))
@@ -266,8 +336,8 @@ zhurnal() {
   local yunit
   yunit="$(grep -oE '[a-zA-Z0-9@._-]+\.(service|scope)' /proc/self/cgroup 2>/dev/null | tail -1)"
   : "${yunit:=вне-юнита}"
-  logger -t agent-alert "версия=3.1.1 исход=$ishod format=$FORMAT ЮНИТ=$yunit звал=$zvavshij($PPID) текст[0:$ZHURNAL_ZNAKOV]=${msg:0:$ZHURNAL_ZNAKOV}${hvost:+ | $hvost}"
-  zapisat_hvost "$ishod" "$yunit" "$zvavshij"
+  logger -t agent-alert "версия=$VERSIYA исход=$ishod format=$FORMAT роль=$ROLE вид=$KIND адресат=$chat ЮНИТ=$yunit звал=$zvavshij($PPID) текст[0:$ZHURNAL_ZNAKOV]=${msg:0:$ZHURNAL_ZNAKOV}${hvost:+ | $hvost}"
+  zapisat_hvost "$ishod роль=$ROLE адресат=$chat" "$yunit" "$zvavshij"
 }
 
   resp="$(otpravit)"; kod_curl=$?
@@ -292,22 +362,64 @@ else: print("refusal -")
 ')"
   read -r category retry_after <<< "$result"
   if [ "$kod_curl" -eq 0 ]; then
-    if [ "$category" = ok ]; then zhurnal доставлено; exit 0; fi
+    if [ "$category" = ok ]; then zhurnal доставлено; return 0; fi
     if [ "$category" = refusal ] || [ "$retry_after" = over-limit ]; then
       echo "agent-alert: телеграм ответил отказом (попытка $popytka; retry_after предел 300 с): ${resp:0:200}"
-      zhurnal отказ-телеграма "$resp"; exit 1
+      zhurnal отказ-телеграма "$resp"; return 1
     fi
   fi
   prichina="сеть не пустила"
   [ "$kod_curl" -ne 0 ] || prichina="временный отказ Telegram"
   if [ "$popytka" -ge "$POPYTOK" ]; then
     echo "agent-alert: $prichina, попыток $popytka из $POPYTOK, curl код $kod_curl: ${resp:0:200}"
-    zhurnal сеть-не-пустила "curl код $kod_curl; попыток $popytka"; exit 1
+    zhurnal сеть-не-пустила "curl код $kod_curl; попыток $popytka"; return 1
   fi
   pauza="$(echo "$PAUZY" | cut -d' ' -f"$popytka")"
   [ -n "$pauza" ] || pauza=15
   if [ "$kod_curl" -eq 0 ] && [ "$retry_after" != - ]; then pauza="$retry_after"; fi
   echo "agent-alert: $prichina (попытка $popytka, curl код $kod_curl: ${resp:0:$ZHURNAL_ZNAKOV}) — жду ${pauza} с" >&2
-  sleep "$pauza" || { zhurnal сеть-не-пустила 'пауза прервана'; exit 1; }
+  sleep "$pauza" || { zhurnal сеть-не-пустила 'пауза прервана'; return 1; }
 
 done
+
+}
+# Owners are attempted before the guest file is opened at all.
+itog="$OWNER_CONFIG_BAD"
+ROLE=хозяин
+KIND=основная
+owner_ok=0
+for chat in "${OWNERS[@]}"; do
+  if otpravit_adresatu; then owner_ok=$((owner_ok + 1)); else itog=1; fi
+done
+logger -t agent-alert -- "версия=$VERSIYA хозяев ${#OWNERS[@]} из настройки, доставлено $owner_ok"
+if ! guest_data="$(python3 -I -B "$LIB_DIR/nastrojki.py" --gosti "$AGENT_ALERT_SPISOK_FILE")"; then
+  guest_data=$'REJECT\nчитатель списка завершился с отказом'
+fi
+mapfile -t guest_plan <<< "$guest_data"
+if [ "${guest_plan[0]:-}" = OK ]; then
+  ROLE=гость
+  for chat in "${guest_plan[@]:1}"; do
+    [ -n "$chat" ] || continue
+    # An owner appearing again in the guest list needs no second delivery.
+    own=0
+    for owner in "${OWNERS[@]}"; do [ "$chat" != "$owner" ] || own=1; done
+    [ "$own" = 0 ] || continue
+    otpravit_adresatu || :
+  done
+else
+  reason="${guest_plan[1]:-неверный ответ читателя списка}"
+  logger -t agent-alert -- "версия=$VERSIYA список привратника отвергнут: $reason"
+  printf 'agent-alert: список привратника отвергнут: %s\n' "$reason" >&2
+  FORMAT=plain
+  ROLE=хозяин
+  KIND=отказ-списка
+  msg="список привратника отвергнут: $reason"
+  msg_polnyj="$msg"
+  if ! msg="$(podgotovit_plain)"; then
+    otkaz 1 формат-не-подготовлен 'plain отказа списка не подготовлен' err
+  fi
+  for chat in "${OWNERS[@]}"; do otpravit_adresatu || itog=1; done
+fi
+if [ "$itog" = 0 ]; then result=доставлено; else result=не-доставлено; fi
+logger -t agent-alert -- "версия=$VERSIYA итог=$result основная-известным-хозяевам=$owner_ok/${#OWNERS[@]}"
+exit "$itog"

@@ -1,3 +1,4 @@
+import {cycleReporter} from './cycle-log.mjs';
 import {hash,canonical} from './store.mjs';
 import {MetaApi,MetaError} from './meta-api.mjs';
 import {readVkToken} from './vk-api.mjs';
@@ -134,7 +135,8 @@ export class MetaReader{
  }
  async tick({maxPages=100,budgetMs=300000}={}){
   if(!Number.isSafeInteger(maxPages)||maxPages<1||maxPages>100||!Number.isFinite(budgetMs)||budgetMs<=0||budgetMs>300000)throw new MetaError('configuration');
-  if(this.busy||!this.alive)return;this.busy=true;const deadline=performance.now()+budgetMs;let pages=0;
+  if(this.busy||!this.alive)return;this.busy=true;const begin=performance.now(),started=this.now(),deadline=begin+budgetMs;let pages=0;
+  this.reportCycle??=cycleReporter(this.provider,'read',row=>this.log?.(row));
   try{
    this.store.tx(()=>{const s=this.state.get();if(s.epoch!==this.epoch)throw new MetaError('stale_epoch');s.last_loop=this.now();this.state.write(s)});
    if(!this.api)throw new MetaError('credential_unavailable');
@@ -195,7 +197,7 @@ export class MetaReader{
    const jobs=this.jobs(),s=this.state.get();if(!jobs.some(j=>j.state==='pending')){s.nextCycleAt=this.now()+900000;if(jobs.length===0){s.last_completed_scan=this.now();s.baselineComplete=true;s.ready=this.status().held_count===0;s.visibility=this.db.prepare('SELECT count(*) n FROM meta_objects WHERE source=?').get(this.source).n?'api_objects_seen':'unverified_empty';s.reason=s.ready?null:'objects_held'}this.state.write(s)}
    else if(pages>=maxPages||performance.now()>=deadline)this.state.patch({reason:'series_budget',ready:false});
   }catch(e){if(this.state.get().epoch===this.epoch)this.state.patch({ready:false,reason:e instanceof MetaError?e.reason:'storage_rejected',...(e.reason==='permissions'&&!this.verified?{profileHold:{accessEpoch:this.config.accessEpoch,fingerprint:this.pendingCredentialFingerprint??this.state.get().credentialFingerprint??null}}:{})});this.log?.({event:'meta_poll_blocked',source:this.source,reason:e instanceof MetaError?e.reason:'storage_rejected'})}
-  finally{this.busy=false}
+  finally{this.busy=false;try{const state=this.state.get();this.reportCycle({started,finished:this.now(),elapsed:performance.now()-begin,calls:pages,result:state.reason==='daily_budget'?'parked':state.ready?'ok':state.reason?'blocked':'partial'})}catch{this.log?.({event:'social_cycle_unavailable',platform:this.provider,lane:'read'})}}
  }
 
 }

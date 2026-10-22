@@ -28,6 +28,7 @@ export async function probeMetaWatch(config,{now=Date.now(),readUnit=readMetaUni
    const s=await readState(provider);if(!s||typeof s!=='object')throw Error('state');covered_subjects.push(provider);
    const heartbeat=Number.isSafeInteger(s.last_loop)&&now-s.last_loop<=2100000&&s.last_loop<=now+300000;
    const parked=heartbeat&&(s.reason==='daily_budget'&&s.day===new Date(now).toISOString().slice(0,10)&&s.calls>=(c.dailyCallLimit??2000)||['rate_limit','usage_limit'].includes(s.reason)&&Number.isSafeInteger(s.backoffUntil)&&s.backoffUntil>now&&s.backoffUntil<=now+86400000||s.reason==='backpressure'&&s.pending_events>=30000);
+   if(s.reason==='daily_budget')issues.push({subject:provider,reason:'current_coverage_daily_budget'});
    for(const held of [...(s.held_jobs??[]),...(s.held_objects??[])])issues.push({subject:provider,reason:'held_'+(/^[a-z_:]{1,96}$/.test(held.reason)?held.reason:'invalid_state'),object_id:held.object_id,generation:s.refresh?.id??c.accessEpoch??0});
    if(!heartbeat||!parked&&(!Number.isSafeInteger(s.last_attempt)||now-s.last_attempt>2100000))issues.push({subject:provider,reason:'receiver_not_called'});
    if(s.reason&&!parked&&s.reason!=='series_budget')issues.push({subject:provider,reason:'receiver_'+(/^[a-z_]{1,40}$/.test(s.reason)?s.reason:'invalid_state')});

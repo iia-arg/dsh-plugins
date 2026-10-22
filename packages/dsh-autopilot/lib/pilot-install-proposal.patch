@@ -1,0 +1,19 @@
+--- a/packages/dsh-autopilot/lib/install.py
++++ b/packages/dsh-autopilot/lib/install.py
+@@ -15,6 +15,7 @@
+ import tempfile
+ import time
+ import public_tree
++import pilot_layout
+ 
+ PACKAGE = Path(__file__).resolve().parents[1]
+ 
+@@ -93,6 +94,8 @@
+             if str(rel) == 'skills/autopilot/tools/ap.py':
+                 release_entry = (entry[0], entry[1], guard + b'\n' + entry[2])
+             add(release / 'skill' / PurePosixPath(*rel.parts[2:]), release_entry)
++    for rel, entry in pilot_layout.entries(lock).items():
++        add(release / rel, entry)
+     add(release / 'release.json', ('file', 0o644,
+         (json.dumps(lock, indent=2, sort_keys=True) + '\n').encode()))
+     add(root / 'opt/autopilot/current', ('link', 0o777, 'releases/' + release.name))

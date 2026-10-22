@@ -57,9 +57,16 @@ function estImya(tekst, names) {
 
 export // RU: obrashchenie: Определяет прямое обращение по entities/name/reply и сообщает основание.
 // EN: obrashchenie: Determines direct addressing from entities,name,replies,and reports why.
-function obrashchenie(msg, { me, names, replyCounts, tekst }) {
+function obrashchenie(msg, { me, names, replyCounts, tekst, strictAddress=false }) {
   const uname = me?.username ? String(me.username).toLowerCase() : null;
   if (me?.id != null && msg?.from?.id === me.id) return { addressed: false, why: 'сообщение самого бота' };
+  if(strictAddress){
+    const source=String(tekst??'');
+    if(uname&&new RegExp('^/[A-Za-z0-9_-]+@'+ekran(uname)+'(?=\\s|$)','i').test(source))return {addressed:true,why:'команда своему @нику'};
+    if(uname&&new RegExp('(?<![\\p{L}\\p{N}_])@'+ekran(uname)+'(?![\\p{L}\\p{N}_])','iu').test(source))return {addressed:true,why:'свой @ник'};
+    const matched=estImya(source,names);
+    return matched?{addressed:true,why:'своё имя'}:{addressed:false,why:'строгое обращение отсутствует'};
+  }
   const t = typeof msg?.text === 'string' ? msg.text.trim() : '';
   const k = KANALNAYA.exec(t);
   if (k && !k[2] && t === k[0]) return { addressed: true, golaya: k[1], why: `канальная команда /${k[1]} без ника` };

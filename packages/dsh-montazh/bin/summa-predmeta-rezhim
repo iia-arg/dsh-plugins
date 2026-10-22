@@ -37,18 +37,23 @@ export LC_ALL=C
 schitat() {
   local kat=$1
   [ -d "$kat" ] || { echo "нет каталога: $kat" >&2; return 2; }
+  command -v npm-sostav >/dev/null 2>&1 || {
+    echo "npm-sostav не найден — нужен dsh-pribory ≥ 3.1.2" >&2; return 2;
+  }
   local spisok
   # №10 аудита A-N-1948 (находка Авроры 01:30Z, CRITICAL по месту вызова): podyom-uzla зовёт прибор под root по каталогам
   # агента, а `npm pack` исполняет prepack/prepare/postpack из их package.json. --ignore-scripts: состав — без чужих сценариев.
-  spisok=$(cd "$kat" && npm pack --dry-run --json --ignore-scripts 2>/dev/null \
-    | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s)[0].files.map(f=>f.path).join("\n"))}catch(e){process.exit(3)}})' \
-    | LC_ALL=C sort)
-  [ -n "$spisok" ] || { echo "npm не отдал состав для $kat" >&2; return 3; }
+  if ! spisok=$(cd "$kat" && npm pack --dry-run --json --ignore-scripts 2>/dev/null \
+    | npm-sostav --files | LC_ALL=C sort); then
+    echo "npm не отдал состав для $kat" >&2; return 2
+  fi
+  [ -n "$spisok" ] || { echo "npm не отдал состав для $kat" >&2; return 2; }
   local n; n=$(echo "$spisok" | wc -l)
   local itog
   itog=$( cd "$kat" && echo "$spisok" | while read -r f; do
-            printf '%s %s\n' "$f" "$(sha256sum "$f" | cut -d' ' -f1)"
-          done | sha256sum | cut -c1-16 )
+            summa=$(sha256sum "$f" | cut -d' ' -f1) || exit 2
+            printf '%s %s\n' "$f" "$summa"
+          done | sha256sum | cut -c1-16 ) || return 2
   printf '%s  файлов %s\n' "$itog" "$n"
 }
 
@@ -79,12 +84,12 @@ if [ "${1:-}" = "--kontrol" ]; then
   mkdir -p "$vremenno/src"
   printf '{"name":"proba","version":"0.0.0","files":["src"]}\n' > "$vremenno/package.json"
   printf 'soderzhimoe\n' > "$vremenno/src/a.js"
-  do1=$(schitat "$vremenno" | cut -d' ' -f1)
+  do1=$(schitat "$vremenno" | cut -d' ' -f1) || { rm -rf "$vremenno"; exit 2; }
   printf 'soderzhimoe2\n' > "$vremenno/src/a.js"
-  do2=$(schitat "$vremenno" | cut -d' ' -f1)
+  do2=$(schitat "$vremenno" | cut -d' ' -f1) || { rm -rf "$vremenno"; exit 2; }
   printf 'soderzhimoe\n' > "$vremenno/src/a.js"
   mv "$vremenno/src/a.js" "$vremenno/src/b.js"
-  do3=$(schitat "$vremenno" | cut -d' ' -f1)
+  do3=$(schitat "$vremenno" | cut -d' ' -f1) || { rm -rf "$vremenno"; exit 2; }
   rm -rf "$vremenno"
   if [ "$do1" = "$do2" ]; then echo "контроль: ПРОВАЛЕН — правка содержимого не изменила сумму"; exit 1; fi
   if [ "$do1" = "$do3" ]; then echo "контроль: ПРОВАЛЕН — переименование файла не изменило сумму"; exit 1; fi
@@ -103,6 +108,6 @@ esac
 
 [ $# -ge 1 ] || { sed -n '2,30p' "$0"; exit 64; }
 for k in "$@"; do
-  if [ "$REZHIM" = po-disku ]; then itog=$(schitat_po_disku "$k"); else itog=$(schitat "$k"); fi
+  if [ "$REZHIM" = po-disku ]; then itog=$(schitat_po_disku "$k"); else itog=$(schitat "$k") || exit 2; fi
   printf '%-24s %s  [режим %s]\n' "$(basename "$k")" "$itog" "$REZHIM"
 done

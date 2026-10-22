@@ -1,6 +1,7 @@
 import './approval-fixture.mjs';
 import test from 'node:test';import assert from 'node:assert/strict';import {setImmediate} from 'node:timers/promises';import {spawnSync} from 'node:child_process';
 import {fixture} from './poll-fixture.mjs';
+import {CONFLICT_LIMIT} from '../src/telegram-worker.mjs';
 import fs from 'node:fs';import path from 'node:path';import {fileURLToPath} from 'node:url';
 const requestedWatch=process.env.SOCSETI_WATCH_SOURCE;
 const watchSource=requestedWatch??fileURLToPath(new URL('../../dsh-storozha-sadik/sbin/socseti-watch',import.meta.url));
@@ -12,7 +13,7 @@ const watcher=status=>{assert(hasWatcher,'external watcher unavailable');const c
 
 test('healthy -> unavailable 7 polls -> restored: degraded without halt; actual watcher sees both states',async t=>{
  let offline=false;const f=await fixture(t,{poll:async()=>{if(offline)throw Error('synthetic unavailable');return[]}});
- await f.worker.tick();assert.equal(f.store.status().publishing,true);assert.equal(f.store.status().telegram.reason,null);assert.deepEqual(f.logs,[]);await checkWatcher(t,f.store.status(),['ready',null]);
+ await f.worker.tick();assert.equal(f.store.status().publishing,true);assert.equal(f.store.status().telegram.reason,null);assert.deepEqual(f.logs.filter(r=>r.event!=='social_cycle'),[]);assert.equal(f.logs.find(r=>r.event==='social_cycle')?.result,'ok');await checkWatcher(t,f.store.status(),['ready',null]);
  offline=true;console.log('FAULT network unavailable=true; planned failing polls=7');
  for(let i=0;i<7;i++){await f.worker.tick();assert.equal(f.store.status().telegram.halted,false);assert.equal(f.store.status().publishing,false);assert.equal(f.store.status().external_io,false);assert.equal(f.store.status().telegram.reason,'poll_failed')}
  assert.equal(f.polls(),8);await checkWatcher(t,f.store.status(),['blind','telegram_not_ready']);
@@ -29,8 +30,14 @@ test('real start loop retries at capped intervals and resets after recovery',{ti
  console.log('REAL_BACKOFF_MS',JSON.stringify(delays));assert.equal(f.polls(),8);assert.equal(f.store.status().publishing,false,'stop clears ready');
 });
 
-for(const code of [401,403,409])test('fatal poll '+code+' still halts and never retries',async t=>{
+for(const code of [401,403])test('fatal poll '+code+' still halts and never retries',async t=>{
  const f=await fixture(t,{poll:async()=>{throw Object.assign(Error('synthetic rejection'),{kind:'rejected',code})}});await f.worker.tick();assert.equal(f.store.status().telegram.halted,true);assert.equal(f.store.status().telegram.reason,'poll_failed');await checkWatcher(t,f.store.status(),['halted','poll_failed']);await f.worker.tick();assert.equal(f.polls(),1);
+});
+// 16.10.2026: 409 — ограниченный повтор (CONFLICT_LIMIT подряд), затем halt и больше ни одного опроса.
+test('poll 409 retries up to CONFLICT_LIMIT, then halts and never retries',async t=>{
+ const f=await fixture(t,{poll:async()=>{throw Object.assign(Error('synthetic rejection'),{kind:'rejected',code:409})}});
+ for(let i=1;i<CONFLICT_LIMIT;i++){await f.worker.tick();assert.equal(f.store.status().telegram.halted,false)}
+ await f.worker.tick();assert.equal(f.store.status().telegram.halted,true);assert.equal(f.store.status().telegram.reason,'poll_failed');await checkWatcher(t,f.store.status(),['halted','poll_failed']);await f.worker.tick();assert.equal(f.polls(),CONFLICT_LIMIT);
 });
 
 test('invalid successful batch still halts rather than declaring recovery',async t=>{

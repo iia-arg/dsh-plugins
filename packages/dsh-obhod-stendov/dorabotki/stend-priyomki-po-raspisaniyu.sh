@@ -48,7 +48,7 @@ SERVICE=/etc/systemd/system/backup-verify.service
 PRIYOMKA_UNIT="${PRIYOMKA_UNIT:-backup-verify.service}"
 TIMER=/etc/systemd/system/backup-verify.timer
 WDCONF=/etc/agent-watchdog/watchdog.conf
-ZHDYOM_PROVEROK=33   # B-N-1465: +3 (подставные сборки подняты; «не дала копии» 1; «сборка идёт» 2). B-N-1435 (3): +2 (потоковая × S → качает; прежняя × S → отказ по месту). B-H-1427: +2 (нехватка места → код 2; скачивание не звали). B-N-906: +2 (боевая отметка не тронута; след в подменённой). Канарейка точным числом: порог «не меньше» слеп к убыли, что
+ZHDYOM_PROVEROK=37   # B-N-2101 r2: +2 (отказ по составу → «неполна», тревога без НЕГОДНА); B-N-2101: +2 (неполна по составу → код 9; тревога без «НЕГОДНА»). B-N-1465: +3 (подставные сборки подняты; «не дала копии» 1; «сборка идёт» 2). B-N-1435 (3): +2 (потоковая × S → качает; прежняя × S → отказ по месту). B-H-1427: +2 (нехватка места → код 2; скачивание не звали). B-N-906: +2 (боевая отметка не тронута; след в подменённой). Канарейка точным числом: порог «не меньше» слеп к убыли, что
                      # умещается в запас — проверено порчей 23.08 (33 против 42 прошло)
 
 ok=0; fail=0; slep=0
@@ -135,6 +135,12 @@ printf '#!/bin/bash\n: > "%s/skach-zvali"; head -c 4096 /dev/zero > "$3"\n' "$RA
 printf '#!/bin/bash\nexit 0\n' > "$RAB/priyomka-ok.sh"
 printf '#!/bin/bash\nexit 1\n' > "$RAB/priyomka-net.sh"
 printf '#!/bin/bash\nexit 2\n' > "$RAB/priyomka-slep.sh"
+# B-N-2101: приёмка «неполна по составу» (код 3) — вывод в форме proverka-kopii.sh: заголовок 🟠 и перечень с отступом 4+.
+printf '#!/bin/bash\necho "🟠 НЕПОЛНА ПО СОСТАВУ: в разметке реестра есть, на машине нет — 1 из 9 (копия их взять не могла):" >&2\necho "     /net-takogo-puti-stend-b2101" >&2\necho "   Либо путь в реестре лишний." >&2\nexit 3\n' > "$RAB/priyomka-nepoln.sh"
+# B-N-2101 r2: отказ по СОСТАВУ (код 1) — слово «НЕПОЛНА», не «НЕГОДНА / не восстановима».
+printf '#!/bin/bash\necho "🔴 КОПИЯ НЕПОЛНА: данных, которые есть на машине, в копии нет — 1 путей:" >&2\necho "     /net-takogo-puti-stend-b2101" >&2\nexit 1\n' > "$RAB/priyomka-nepoln1.sh"
+mkdir -p "$RAB/a1"; printf '#!/bin/bash\necho "$*" >> "$(dirname "$0")/alert.log"\n' > "$RAB/a1/alert.sh"; chmod 755 "$RAB/a1/alert.sh"
+mkdir -p "$RAB/a9"; printf '#!/bin/bash\necho "$*" >> "$(dirname "$0")/alert.log"\n' > "$RAB/a9/alert.sh"; chmod 755 "$RAB/a9/alert.sh"
 chmod 755 "$RAB"/*.sh; : > "$RAB/alert.log"
 # B-N-1465: сборки поднимаются ДО подставных отметок — запуск не позже completed_at свежей отметки.
 sudo -n systemd-run -q --collect --unit="$SB_GOTOVA" /bin/sleep 900 >/dev/null 2>&1
@@ -178,10 +184,20 @@ proba 2 "архив не скачивается -> слепота с трево�
       "$A" "BACKUP_STATE=$RAB/svezhaya.json" "BACKUP_BIN=$RAB/skach-net.sh"
 proba 0 "скачалось и открылось -> зелено" \
       "$A" "BACKUP_STATE=$RAB/svezhaya.json" "BACKUP_BIN=$RAB/skach-ok.sh" "PRIYOMKA_BIN=$RAB/priyomka-ok.sh"
-proba 1 "приёмка отказала -> отказ" \
+proba_tekst 1 "копия не восстановима" "приёмка отказала (не по составу) -> отказ «не восстановима»" \
       "$A" "BACKUP_STATE=$RAB/svezhaya.json" "BACKUP_BIN=$RAB/skach-ok.sh" "PRIYOMKA_BIN=$RAB/priyomka-net.sh"
 proba 2 "приёмка не состоялась -> слепота" \
       "$A" "BACKUP_STATE=$RAB/svezhaya.json" "BACKUP_BIN=$RAB/skach-ok.sh" "PRIYOMKA_BIN=$RAB/priyomka-slep.sh"
+proba_tekst 1 "ОТКАЗ: копия неполна" "приёмка: отказ по составу -> код 1 «неполна», не «не восстановима»" \
+      "AGENT_ALERT_BIN=$RAB/a1/alert.sh" "BACKUP_STATE=$RAB/svezhaya.json" "BACKUP_BIN=$RAB/skach-ok.sh" "PRIYOMKA_BIN=$RAB/priyomka-nepoln1.sh"
+if grep -qF 'копия sadik НЕПОЛНА' "$RAB/a1/alert.log" 2>/dev/null && ! grep -qiF 'негодна' "$RAB/a1/alert.log"; then p "тревога отказа по составу — «НЕПОЛНА», не «НЕГОДНА»"
+else f "тревога отказа по составу: «$(head -c 300 "$RAB/a1/alert.log" 2>/dev/null)»"; fi
+# B-N-2101: путь из реестра, которого нет на машине, — код 9 «неполна по составу», тревога «ВОССТАНОВИМА», не «НЕГОДНА / не восстановима».
+proba_tekst 9 "НЕПОЛНА ПО СОСТАВУ: копия восстановима" "приёмка: неполна по составу -> код 9, не «не восстановима»" \
+      "AGENT_ALERT_BIN=$RAB/a9/alert.sh" "BACKUP_STATE=$RAB/svezhaya.json" "BACKUP_BIN=$RAB/skach-ok.sh" "PRIYOMKA_BIN=$RAB/priyomka-nepoln.sh"
+if grep -qF 'ВОССТАНОВИМА, но НЕПОЛНА ПО СОСТАВУ' "$RAB/a9/alert.log" 2>/dev/null && grep -qF 'net-takogo-puti-stend-b2101' "$RAB/a9/alert.log" \
+   && ! grep -qiF 'негодна' "$RAB/a9/alert.log"; then p "тревога «неполна по составу» называет путь и не говорит «НЕГОДНА»"
+else f "тревога «неполна по составу»: «$(head -c 300 "$RAB/a9/alert.log" 2>/dev/null)»"; fi
 # B-H-1427: место проверяется ДО скачивания; не хватает — код 2 с тревогой, ни байта не качаем.
 proba_tekst 2 "ОТКАЗ ПО МЕСТУ" "места не хватает (отметка 100 ТБ) -> отказ кодом 2 до скачивания" \
       "$A" "BACKUP_STATE=$RAB/ogromnaya.json" "BACKUP_BIN=$RAB/skach-metka.sh" "PRIYOMKA_BIN=$RAB/priyomka-ok.sh"

@@ -27,7 +27,7 @@ cd "$ADAPTER_SOURCE"
 npm pack --ignore-scripts --pack-destination "$ADAPTER_ARTIFACTS"
 # DSH_APP — каталог приложения, а не домашний профиль / application directory
 cd "$DSH_APP"
-npm install --ignore-scripts "/absolute/path/dsh-subscription-adapter-3.1.2.tgz"
+npm install --ignore-scripts "/absolute/path/dsh-subscription-adapter-3.1.3.tgz"
 ```
 
 Сверить SHA архива, package.json.version и наличие src/index.js. Установка npm не монтирует plugin в нужную Cordis scope: профиль и provider/model включаются назначенной рукой. Секрет ingress key не хранится в профиле или argv — только приватный путь.
@@ -62,6 +62,16 @@ The [service/provider/API/version table](docs/SERVICES.md) lists agents, restore
 
 Новая telegram-v2 сессия передаёт id/createdAt/cwd и требует restore.version=1, health conversationIdentity=2. Неизвестный caller — explicit stateless; legacy остаётся /v1. Входной ключ читается перед каждым запросом через fd с O_NOFOLLOW: regular file, UID root/процесса, без group/other access, <=256 байт и 64 lowercase hex. Bridge и lease не являются текстовыми правами из messages; lease закрывается в finally.
 New telegram-v2 sessions carry id/createdAt/cwd and require restore.version=1 plus health conversationIdentity=2. Unknown callers are explicitly stateless; legacy remains /v1. Each request reads the key through an O_NOFOLLOW fd: regular file, root/process UID, no group/other access, <=256 bytes and 64 lowercase hex. Messages cannot grant bridge/lease ownership; finally closes the lease.
+
+### Платформенная отмена · Platform cancellation
+
+DSH `Agent.cancel`/`interrupt_agent` при terminal-capable lease больше не рвёт fetch немедленно. Адаптер удерживает текущую привязку, вызывает существующий `taskControlCodex.capture` → `stopExact` именно для её агента/request_id и читает проверенный SDK terminal до закрытия lease. ACK не считается terminal. При выходе потребителя из iterator (`return`) тот же parser дочитывает контрольные события, включая остаток уже прочитанной NDJSON-пачки. Шлюз и платформа этой правкой не меняются.
+
+With a terminal-capable lease, DSH cancellation keeps the transport alive, sends an exact stop for the captured agent/request, and consumes verified SDK terminal telemetry before releasing the lease. An ACK alone is insufficient. Consumer `return()` drains the same buffered control reader; it does not discard the remaining NDJSON lines. No gateway/platform patch is included.
+
+Граница: нужны health `mailStopTerminal:1`, сервис `taskControlCodex.mailStopVersion:1` с `capture/stopExact/waitTerminal`, и terminal descriptor этого запроса. Без них остаётся прежний transport-abort, удалённая остановка не доказана. Предел всего ожидания отмены — **8000 мс от AbortSignal**, включая ожидание ready/ACK/terminal. EOF без terminal, отказ stop, потеря привязки или истечение предела дают `REMOTE_STOP_UNCONFIRMED` с session ID; lease закрывается как unknown, не как подтверждённое завершение. Повтора SDK-запроса нет. Отмена, случившаяся до отправки, не создаёт запрос. Сетевой обрыв сам по себе не выдаётся за платформенную отмену или SDK stop.
+
+Requires gateway `mailStopTerminal:1` and a terminal-enabled `taskControlCodex` lease with `capture/stopExact/waitTerminal`. Older contracts retain transport-only abort and cannot prove remote completion. Cancellation has one **8000 ms** budget from AbortSignal, including ready, ACK and terminal. Missing/invalid proof fails with `REMOTE_STOP_UNCONFIRMED`; releasing an unproved lease records unknown, never a fabricated terminal. There is no SDK retry or process-wide kill. Tests: `test/stend-platform-abort.mjs`; the full DSH→adapter→gateway→SDK copy requires the separate Gamma fixture and no live credentials.
 
 Адрес x-dsh-spool-conversation отправляется только при service.version=1 и health.spoolConversation=1. Он не включает live input для legacy. Граница и provenance — [LIVE-INPUT](LIVE-INPUT.md).
 The x-dsh-spool-conversation address is sent only with service.version=1 and health.spoolConversation=1. It does not enable legacy live input. See [LIVE-INPUT](LIVE-INPUT.md) for provenance and delivery boundaries.

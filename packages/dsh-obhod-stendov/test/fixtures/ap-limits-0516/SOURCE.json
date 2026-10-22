@@ -1,0 +1,22 @@
+{
+  "commit": "0516b410a1d9c7531f209a0f8259fbe086e46d99",
+  "repo": "/opt/coders/beta/workspace/AP010-G-SEGMENT-READER-20261018/repo",
+  "subdir": "packages/dsh-autopilot",
+  "files": [
+    {
+      "path": "usage_registration.py",
+      "remote": "runtime/usage_registration.py",
+      "sha256": "bcb73a06d1240f619fe14c5e8fa5bd7fd019cd302e53e071b9bd4626e147b91f"
+    },
+    {
+      "path": "mail_registration.py",
+      "remote": "lib/mail_registration.py",
+      "sha256": "850cb5155ee8c8b966e19c20a7665a4a70e6062121bfd91329c9c17fead48c59"
+    },
+    {
+      "path": "usage-reader-limits.json",
+      "remote": "runtime/usage-reader-limits.json",
+      "sha256": "fb4af56ff09a49f04528dca88a2fe83d50b3c4a00cb0b11a86cc0194c6dc401d"
+    }
+  ]
+}

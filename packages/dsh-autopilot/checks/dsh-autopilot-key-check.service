@@ -1,0 +1,15 @@
+[Unit]
+Description=Autopilot: root-only key form and permissions check
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I -B /usr/local/libexec/dsh-autopilot/key-check.py
+TimeoutStartSec=10
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX

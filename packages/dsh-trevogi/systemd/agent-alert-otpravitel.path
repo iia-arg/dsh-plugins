@@ -1,0 +1,11 @@
+# B-N-2055 способ 2: файл во vhod/ спула — разобрать очередь. vhod/ отправитель опустошает целиком (каждое имя
+# переносит в work/), иначе DirectoryNotEmpty перезапускал бы службу по кругу.
+[Unit]
+Description=Спул тревог: есть что отправить · Alert spool: queue not empty
+
+[Path]
+DirectoryNotEmpty=/var/spool/dsh-trevogi/vhod
+Unit=agent-alert-otpravitel.service
+
+[Install]
+WantedBy=paths.target

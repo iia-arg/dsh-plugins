@@ -1,5 +1,75 @@
 # Изменения · Changelog
 
+## 3.1.10 — 21.10.2026 · Codex originator (witness)
+
+- Codex app-server: ожидаемое имя в initialize userAgent берётся из фактической среды дочернего процесса. Default originator codex_sdk_ts и внешний override сохраняются; проверка версии и mismatch остаются строгими.
+- Регрессия на сохранённом реальном initialize: witness → несовпадение → witness, отдельная среда spawn и fallback clientInfo.name.
+
+## 3.1.9 — 20.10.2026 · child capture
+
+- Общий source_version/sv1 из загруженного SDK/CLI, ID-only lifecycle Claude и first-level Codex child_edge с ключом версии; локальные child_capture_end/gap.
+- Уточнена граница SDK witness: версия package.json и SHA256 входного файла SDK до/после import; отпечаток всего дерева модулей и транзитивных зависимостей не заявлен.
+- субагенты глубже первого уровня и завершившиеся после закрытия наблюдения — не считаются: строка участника помечается неполной
+- Порядок окна: сперва AP-читатель новых kinds/manifest, потом шлюз; без живых подписочных канареек в этом кандидате.
+
+
+- Claude query включает includePartialMessages только при usageObserver; без observer сохраняется прежний поток SDK без partial-кадров. G получает финальный message_delta на message_stop вместо промежуточных assistant usage.
+- Обрыв pending stream помечает только свой request. Уже поставленный prefix сохраняется с непрерывным seq; переполнение общей очереди по-прежнему замораживает весь процесс.
+- Исторические Claude G до этого исправления не содержат финальных output и остаются GATEWAY_USAGE_MISMATCH.
+- Отдельный пакет от reader/exporter dsh-autopilot 0.1.12; совместный монтаж этим кандидатом не разрешается.
+
+## 3.1.8 — 18.10.2026 · AP 0.1.10: учёт G, аккаунт Codex и сегменты журнала
+
+- Проверка аккаунта Codex: состояние читается у того же app-server перед началом хода и перед terminal-записью G. В журнал сохраняются хеш идентификатора и разрешённые поля authMode/planType; email и токены не сохраняются. Смена аккаунта, отказ чтения или неподтверждённая подмена источника дают именованную непривязку. Привязку аккаунта к подписке выполняет читатель Автопилота.
+- Лимиты задаёт писатель: usage-limits.json со schemaVersion=3 содержит только пять исполняемых ограничений. Пороги ночного контроля вынесены из policy писателя; usage-limits.mjs выдаёт те же лимиты читателю через CLI.
+- Активная замена G: подмена файла во время работы оставляет стойкую отметку разрыва для процесса, закрывает сегмент с печатью и открывает следующий. Восстановление истории G из резервной копии запрещено, в том числе при остановленном шлюзе.
+- Рождение источника: sourceCreatedAt записывается при создании и сохраняется при обычных перезапусках. Ручное внесение UUID источника в профиль заменено проверкой окна читателем: запрос истории до рождения источника получает RETENTION_GAP.
+- Сегменты G: писатель закрывает непустой сегмент по пределу 8 МиБ или возрасту 1 час, сохраняет SHA256 и печать, выставляет закрытым файлам режим 0400 и удерживает историю 7 суток. Перезапуск восстанавливает незавершённую ротацию. Чтение не использует кэш разобранных данных; отсутствие или порча сегмента дают именованный отказ. При включённом G старт создаёт пустой active-файл, не изменяя существующий.
+- Новые файлы: usage-limits.mjs, usage-limits.json, usage-segments.mjs; документы docs/G-ROTATION-DESIGN.md и docs/G-READER-WIRE.md; стенды test/stend-usage-engine-account.mjs, test/stend-usage-segments.mjs, test/stend-usage-segments-http.mjs и test/stend-usage-startup.mjs. Стенды проверяют аккаунт, ротацию, HTTP-путь, порчу и возврат на временных копиях.
+- При монтаже для читателя создаётся root-копия тройки usage-limits.mjs, usage-limits.json, usage-segments.mjs в /opt/autopilot-gateway-policy/3.1.8-<голова>/ и запись реестра autopilot-gateway-policy. Суффикс — первые 8 знаков итоговой головы шлюза; вся цепочка каталогов root:root 0755, файлы root:root 0644. Копия обновляется вместе со шлюзом, суммы трёх файлов сверяются с той же поставкой.
+
+## 3.1.7 — 17.10.2026 · только AP 0.1.10: пустой G и предел пакета
+
+При старте включённого G создаётся пустой private usage-файл без observer/seq;
+существующий файл проверяется и не изменяется. Небезопасный путь даёт именованный
+отказ учёта, не отменяя запуск/ход шлюза. Единый file-limit задан usage-limits.json,
+writer использует экспорт GATEWAY_USAGE_FILE_MAX_BYTES; CLI выдаёт те же данные.
+Это отдельный кандидат поверх принятого ced3d243, в0.1.9 не входит.
+
+
+## 3.1.6 — 17.10.2026 · AP019 raw G, маршрут auth и привязка процесса
+
+Дополнение17.10 17:32:57Z: kernel binding содержит sourceProcess{pid,boot,start};
+consumer-compatible process request предоставляет отдельная G-проекция AP
+без готового run/auth. PID — app-server/SDK child, не его инструменты.
+Проверка регистратора Беты и монтаж остаются отдельно.
+
+
+Неблокирующий raw usage source: SDK/RPC identity, native child facts до root filter,
+bounded process queue и gap; Claude FD3 handle/override guard. Фактический spawn
+Codex app-server и Claude SDK пишет engine_process_binding с kernel-тройкой
+(pid,starttime,boot_id) и native tuple; отказ Z/X/x, повторный снимок/direct parent.
+Регистрация run — отдельный потребитель.
+
+Уточнение Забавы17.10 17:15:51Z: authLinkTargetAtStart всегда сообщает маршрут
+readlink, не применённый источник. Сохранены три снимка ссылки и добавлен actual
+argv hook перед app-server spawn. Env/link/argv/недоказанный effective config дают
+AUTH_SOURCE_UNPROVEN:<condition>, subscription/authEpoch=null. Прежний positive
+proof switcher-symlink-three-points снят: cloud-aware AuthManager не аттестован.
+Положительный slot3 остаётся OPEN. Авторизация/конфиги/службы не меняются,
+модель отказ учёта не блокирует. Область и пробы — USAGE-PRODUCER.md и
+OPEN-CODEX-AUTH.md. AP-нормализация и монтаж не входят в эту дельту.
+
+## 3.1.5 — 14.10.2026 · строка usage хода Codex для сверки полноты (Заря; наряд Забавы 20:48Z, слово владельца 23:16 МСК)
+
+- `codex-app-server.mjs`: `schetUsageHoda()` — итог хода из уведомлений `thread/tokenUsage/updated` (канал протокола app-server,
+  не файл rollout): total последнего − (total − last) первого; вызовы — число разных total. В конце каждого хода (и проваленного) —
+  строка журнала «usage хода: turn=… thread=… вызовов=… input/cached/cache_write/output/reasoning=… полнота=…» и строка JSONL в
+  `$CODEX_HOME/dsh-usage-hodov.jsonl` (0600, учётка шлюза = владелец CODEX_HOME). Без текста хода и секретов. Не бросает:
+  уведомление без turnId / с негодными числами считается отдельно, недоступный дом — строка «не записано».
+- Читатель — `dsh-autopilot` `tools/measure-run-codex.py --sverka-shlyuz`. Ветка Codex-SDK (`runStreamed`) не тронута — у нас путь app-server.
+- `codex-app-server.mjs`: per-turn usage from `thread/tokenUsage/updated` → one log line and one JSONL line in `$CODEX_HOME`; never throws.
+
 ## 3.1.4 — 14.10.2026 · подготовка к публикации · release prep (Аврора, наряд Забавы 07:18Z)
 
 - `author` — «Aleksandr Argelander» (единый автор семьи; лицензия MIT на его имя) · `author` set to "Aleksandr Argelander"

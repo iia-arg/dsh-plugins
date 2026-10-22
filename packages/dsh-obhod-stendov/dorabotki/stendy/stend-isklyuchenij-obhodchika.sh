@@ -49,7 +49,7 @@ proba "1 всё зелёное, exceptions: [] → 0" 0 "код 0" "НЕОЖИД
 paket zel slep; isk "$(zap pkg/stend-slep.sh 1.0.0 2 признак-слепоты $BUD)"
 proba "2 слепой С действующим исключением → 3, ОЖИДАЕМО с причиной и сроком" 3 "ОЖИДАЕМО: pkg/stend-slep.sh (выпуск 1.0.0) · код 2 · замер 2026-09-26 чем: проба · ответственный Искра · пересмотр $BUD" "НЕОЖИДАННО"
 paket zel slep; isk
-proba "3 ДЕФЕКТ БЕТЫ: слепой без исключения → 1, не 0" 1 "НЕОЖИДАННО: pkg/stend-slep.sh (выпуск 1.0.0, код 2) — исключения нет" -
+proba "3 ДЕФЕКТ БЕТЫ: слепой без исключения → 1, не 0" 1 "⚠️ НЕОЖИДАННО: pkg/stend-slep.sh (выпуск 1.0.0, код 2) — СЛЕПОТА: исключения нет" -
 paket zel kras; isk "$(zap pkg/stend-kras.sh 1.0.0 1 признак-красноты $BUD)"
 proba "4 красный С исключением → 3" 3 "ОЖИДАЕМО: pkg/stend-kras.sh" "НЕОЖИДАННО"
 paket kras kras2; mv "$T/pkg/test/stend-kras.sh" "$T/k"; printf '#!/bin/bash\nexit 0\n' > "$T/pkg/test/stend-kras.sh"; rm -f "$T/k"
@@ -165,7 +165,7 @@ printf '#!/bin/sh\necho "$1" >> "%s/trevogi"\n' "$T" > "$T/alert"; chmod +x "$T/
 printf '#!/bin/bash\n# VSE_STENDY_PREDEL_API=1\nOBLAST_STENDOV="%s/pkg/" PERECHEN_STENDOV="%s/perechen" ISKLYUCHENIYA_STENDOV="%s/isk.yaml" exec bash "%s" "$@"\n' "$T" "$T" "$T" "$OBH" > "$T/obh-nastoyashchij"
 printf '#!/bin/bash\n# VSE_STENDY_PREDEL_API=1\nif [ "$#" -gt 0 ]; then [ "$#" -eq 2 ] && [ "$1" = --predel-stenda ] || exit 2; echo 1800; exit 0; fi\necho "pkg  зелёных 0   расхождений 1   слепот 0"\necho "ИТОГ: стендов 1 · код 1"\nexit 1\n' > "$T/obh-bez-imyon"
 printf '#!/bin/bash\n# VSE_STENDY_PREDEL_API=1\nif [ "$#" -gt 0 ]; then [ "$#" -eq 2 ] && [ "$1" = --predel-stenda ] || exit 2; echo 1800; exit 0; fi\necho "pkg  зелёных 0   расхождений 0   слепот 1"\necho "ИТОГ: стендов 1 · код 3"\nexit 3\n' > "$T/obh-3-bez-imyon"
-obertka() { rm -f "$T/trevogi"; OBHODCHIK="$1" VSE_STENDY_ALERT="${2:-$T/alert}" bash "$OBERTKA" > "$T/vyvod" 2>&1; echo $?; }
+obertka() { rm -f "$T/trevogi"; OBHODCHIK="$1" PERECHEN_STENDOV="$T/perechen" VSE_STENDY_ALERT="${2:-$T/alert}" bash "$OBERTKA" > "$T/vyvod" 2>&1; echo $?; }
 oproba() {  # имя · обходчик · ждём код · строка вывода · строка тревоги (или «-» — тревоги быть не должно, «*» — не проверять)
   local imya="$1" obh="$2" zhd="$3" est="$4" tr="$5" K; K=$(obertka "$obh" "${6:-}")
   local beda=""
@@ -186,16 +186,47 @@ paket zel slep; isk
 oproba "О3 обходчик 1 (слепой без исключения) → тревога с ИМЕНЕМ, код 1" "$T/obh-nastoyashchij" 1 "тревога отправлена" "НЕОЖИДАННО: pkg/stend-slep.sh"
 oproba "О4 тревога не доставлена → код 3 (сторож нем)" "$T/obh-nastoyashchij" 3 "ТРЕВОГА НЕ ДОСТАВЛЕНА" "*" /bin/false
 oproba "О5 код 1 без имён и охвата → разбор ослеп, код 3, тревога общим текстом" "$T/obh-bez-imyon" 3 "РАЗБОР ИМЁН РАЗОШЁЛСЯ" "имена не разобраны"
-oproba "О6 код 3 без «ОЖИДАЕМО» → разбор ослеп, код 3" "$T/obh-3-bez-imyon" 3 "РАЗБОР ИМЁН РАЗОШЁЛСЯ" -
+oproba "О6 код 3 без «ОЖИДАЕМО» → отказ с поимённым запасным перечнем (B-N-2063)" "$T/obh-3-bez-imyon" 3 "РАЗБОР ИМЁН РАЗОШЁЛСЯ" "НЕ ПРОГНАН: $T/pkg/test/stend-zel.sh"
 paket zel; rm -f "$T/isk.yaml"
 oproba "О7 обходчик 2 (файла исключений нет) → обёртка 2, без тревоги" "$T/obh-nastoyashchij" 2 "ИТОГ ТАЙМЕРА: обходчик код 2" - 
 # B-N-1458: старый обходчик не должен быть вызван вместо запроса API предела.
 printf '#!/bin/bash\ntouch "%s/old-called"\necho "не должен запускаться"\nexit 0\n' "$T" > "$T/obh-bez-api"
-oproba "О8 обходчик без API → отказ ДО запуска, код 3" "$T/obh-bez-api" 3 "СЛЕПОТА: обходчик без API предела" -
+oproba "О8 обходчик без API → отказ ДО запуска, код 3, поимённая тревога (B-N-2063)" "$T/obh-bez-api" 3 "СЛЕПОТА: обходчик без API предела" "НЕ ПРОГНАН: $T/pkg/test/stend-zel.sh"
 [ ! -e "$T/old-called" ] && { ok=$((ok+1)); echo "  ok    О8б обходчик без API действительно не вызван"; } \
   || { bad=$((bad+1)); echo "  FAIL  О8б обходчик без API был вызван до отказа"; }
+# B-N-2064 (2): вывод канала — в журнал, не в /dev/null (немой отказ 14.10 02:12Z был неустановим). Канал отказывает с причиной в stderr.
+printf '#!/bin/sh\necho "причина-отказа-канала-О9" >&2\nexit 1\n' > "$T/alert-otkaz"; chmod +x "$T/alert-otkaz"
+paket zel slep; isk
+oproba "О9 канал отказал → его строка в журнале обёртки" "$T/obh-nastoyashchij" 3 "  канал: причина-отказа-канала-О9" "*" "$T/alert-otkaz"
+oproba "О9б канал отказал → код канала назван" "$T/obh-nastoyashchij" 3 "канал тревог $T/alert-otkaz: код 1" "*" "$T/alert-otkaz"
+# WEEKLY-ALERT 3.1.86: канал не вызван — причина принадлежит caller, у sender своего следа быть не может.
+# Подставной приёмник тот же: oproba очищает trevogi и отдельно читает его после каждого вызова.
+alert_mode=$(stat -c %a "$T/alert")
+alert_sum=$(sha256sum "$T/alert" | cut -d ' ' -f1)
+alert_before=$( { printf '%s\n' "$alert_sum"; stat -c '%a %u:%g' "$T/alert"; } | sha256sum | cut -d ' ' -f1)
+chmod 644 "$T/alert" || exit 2
+[ "$(stat -c %a "$T/alert")" = 644 ] || { echo 'СЛЕПОТА: порча права исполнения не внесена'; exit 2; }
+[ "$(sha256sum "$T/alert" | cut -d ' ' -f1)" = "$alert_sum" ] || { echo 'СЛЕПОТА: chmod изменил байты канала'; exit 2; }
+alert_after=$( { sha256sum "$T/alert" | cut -d ' ' -f1; stat -c '%a %u:%g' "$T/alert"; } | sha256sum | cut -d ' ' -f1)
+[ "$alert_before" != "$alert_after" ] || { echo 'СЛЕПОТА: состояние канала не изменилось'; exit 2; }
+printf 'ПОРЧА канала: mode=644, SHA состояния %s → %s (байты прежние)\n' "$alert_before" "$alert_after"
+oproba "О10 канал без права исполнения → caller называет причину, код 3, приёмник пуст" "$T/obh-nastoyashchij" 3 "КАНАЛ НЕ ВЫЗВАН: нет права исполнения: $T/alert" -
+chmod "$alert_mode" "$T/alert" || exit 2
+alert_return=$( { sha256sum "$T/alert" | cut -d ' ' -f1; stat -c '%a %u:%g' "$T/alert"; } | sha256sum | cut -d ' ' -f1)
+[ "$alert_return" = "$alert_before" ] || { echo 'СЛЕПОТА: режим канала не возвращён'; exit 2; }
+oproba "О10б исполнение возвращено → приёмник получил тревогу" "$T/obh-nastoyashchij" 1 "тревога отправлена" "НЕОЖИДАННО: pkg/stend-slep.sh"
+mv "$T/alert" "$T/alert-saved" || exit 2
+[ ! -e "$T/alert" ] && [ -f "$T/alert-saved" ] || { echo 'СЛЕПОТА: порча отсутствием канала не внесена'; exit 2; }
+[ "$(sha256sum "$T/alert-saved" | cut -d ' ' -f1)" = "$alert_sum" ] || { echo 'СЛЕПОТА: сохранён не тот канал'; exit 2; }
+alert_absent=$(printf 'absent\n' | sha256sum | cut -d ' ' -f1)
+printf 'ПОРЧА канала: путь отсутствует, SHA состояния %s → %s; сохранённые байты %s\n' "$alert_before" "$alert_absent" "$alert_sum"
+oproba "О11 канал отсутствует → caller называет причину, код 3, приёмник пуст" "$T/obh-nastoyashchij" 3 "КАНАЛ НЕ ВЫЗВАН: нет файла или путь недоступен: $T/alert" -
+mv "$T/alert-saved" "$T/alert" || exit 2
+alert_return=$( { sha256sum "$T/alert" | cut -d ' ' -f1; stat -c '%a %u:%g' "$T/alert"; } | sha256sum | cut -d ' ' -f1)
+[ "$alert_return" = "$alert_before" ] || { echo 'СЛЕПОТА: канал не возвращён'; exit 2; }
+oproba "О11б файл возвращён → приёмник получил тревогу" "$T/obh-nastoyashchij" 1 "тревога отправлена" "НЕОЖИДАННО: pkg/stend-slep.sh"
 echo "  ok=$ok  FAIL=$bad"
-ZHDYOM=53   # 34 + B-N-1987: 15–15г, 16–16в, 17–17д, 18–18б, 19–19в (17 проверок) + B-N-1981 (3.1.8): 20, 20б
+ZHDYOM=59   # 55 + WEEKLY-ALERT (4): О10/О10б/О11/О11б;  34 + B-N-1987: 15–15г, 16–16в, 17–17д, 18–18б, 19–19в (17 проверок) + B-N-1981 (3.1.8): 20, 20б + B-N-2064 (2): О9, О9б
 [ $((ok+bad)) -eq $ZHDYOM ] || { echo "СЛЕПОТА: проверок $((ok+bad)) из $ZHDYOM"; exit 2; }
 [ "$bad" -eq 0 ] || exit 1
 exit 0

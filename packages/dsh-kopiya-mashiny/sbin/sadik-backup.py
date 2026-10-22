@@ -681,8 +681,11 @@ def raskryt_ne_klast(put: str) -> list:
 # Побочный след: открытие базы в режиме WAL без -wal/-shm СОЗДАЁТ их рядом (пустые, владелец — владелец базы,
 # SQLite делает fchown сам; проверено 03.10 от root на базе nobody). Удалять их нельзя: в этот миг базу мог
 # открыть хозяин, и снятый из-под него -shm рвёт его соединение.
-# ЧЕГО НЕ ЛОВИТ: базы, отданные ссылкой (ссылка кладётся ссылкой, как прежде); rollback-журнал «-journal»
-# кладётся как есть (снимок под общей блокировкой его не требует, но состав здесь не меняли).
+# ЧЕГО НЕ ЛОВИТ: базы, отданные ссылкой (ссылка кладётся ссылкой, как прежде).
+# 3.1.4 (16.10.2026, наряд Забавы 04:01:48Z): rollback-журнал «-journal» снятой снимком базы тоже НЕ кладётся —
+# снимок под общей блокировкой его не требует. Прежде клался как есть, и 16.10 03:32:58Z копия не снялась: журнал
+# /opt/master/workspace/.message-receipts/receipts.sqlite-journal попал в обход и исчез до tar.add (код 4).
+# База, у которой снимок не удался, кладётся байтами ВМЕСТЕ с «-journal» (он ей нужен для отката), как прежде.
 SQLITE_MAGIC = b"SQLite format 3\x00"
 
 
@@ -798,6 +801,25 @@ def sobrat(puti: list, dest: Path, d_pokrytie: dict | None = None) -> Path:
             sqlite_snyato = [0, 0, 0.0]   # число снимков, самый большой (байт), суммарное время (с)
             sqlite_syroe = set()          # базы, у которых снимок не удался (лежат байтами с -wal/-shm)
 
+            # 3.1.4 (16.10.2026): файл, бывший при обходе (listdir родителя), может исчезнуть до tar.add — живое дерево.
+            # Прежде FileNotFoundError уходил в общий except и ронял ВСЮ сборку (код 4). Теперь — строка «исчез во время
+            # сборки» и дальше, как с getfacl (:419). ТОЛЬКО если в архив ещё ничего не записано (t.offset прежний):
+            # tarfile открывает файл до записи заголовка; исчезновение ПОСЛЕ начала записи — битый член, остаётся отказом.
+            ischezlo = []
+
+            def polozhit(put_):
+                off_ = t.offset
+                try:
+                    t.add(put_, arcname=put_.lstrip("/"), recursive=False)
+                except FileNotFoundError:
+                    if t.offset != off_:
+                        raise
+                    ischezlo.append(put_)
+                    log(f"⚠️ исчез во время сборки: {put_}")
+                    return False
+                polozheno.add(put_)
+                return True
+
             def add_path(source):
                 source = os.path.abspath(source)
                 if source in polozheno:
@@ -827,9 +849,9 @@ def sobrat(puti: list, dest: Path, d_pokrytie: dict | None = None) -> Path:
                         skipped_ne.add(source)
                         log(f"ИСКЛЮЧЕНО РАЗМЕТКОЙ: {source} — объявлено ne_klast_prichina")
                     return
-                # B-N-1490: -wal/-shm SQLite-базы не кладём — её содержимое придёт снимком.
+                # B-N-1490: -wal/-shm SQLite-базы не кладём — её содержимое придёт снимком. 3.1.4: и «-journal».
                 # Решение по БАЗЕ, а не по порядку обхода: «x.db» может лечь и после «x.db-wal».
-                for hvost_ in ("-wal", "-shm"):
+                for hvost_ in ("-wal", "-shm", "-journal"):
                     baza_ = source[:-len(hvost_)]
                     if (source.endswith(hvost_) and not is_link and baza_ not in sqlite_syroe
                             and os.path.isfile(baza_) and not os.path.islink(baza_) and eto_sqlite(baza_)):
@@ -856,15 +878,20 @@ def sobrat(puti: list, dest: Path, d_pokrytie: dict | None = None) -> Path:
                         sqlite_syroe.add(source)
                 # Исключение ДО gettarinfo: tarfile запоминает inode ещё до filter.
                 # Иначе последующая разрешённая hardlink может сослаться на невключённый файл.
-                t.add(source, arcname=source.lstrip("/"), recursive=False)
-                polozheno.add(source)
+                if not polozhit(source):
+                    return
                 if source in sqlite_syroe:
-                    for hvost_ in ("-wal", "-shm"):
+                    for hvost_ in ("-wal", "-shm", "-journal"):   # 3.1.5 (LOW Вениамина): «-journal» сырой базе нужен для отката
                         if os.path.isfile(source + hvost_) and not os.path.islink(source + hvost_):
-                            t.add(source + hvost_, arcname=(source + hvost_).lstrip("/"), recursive=False)
-                            polozheno.add(source + hvost_)
+                            polozhit(source + hvost_)
                 if not is_link and os.path.isdir(source):
-                    for child in sorted(os.listdir(source)):
+                    try:
+                        deti_ = sorted(os.listdir(source))
+                    except FileNotFoundError:   # каталог лёг и исчез до чтения — дети не прочитаны
+                        ischezlo.append(source + "/")
+                        log(f"⚠️ исчез во время сборки (каталог, содержимое не прочитано): {source}")
+                        return
+                    for child in deti_:
                         add_path(os.path.join(source, child))
             try:
                 for p in est:
@@ -873,6 +900,7 @@ def sobrat(puti: list, dest: Path, d_pokrytie: dict | None = None) -> Path:
                 shutil.rmtree(tmpdir_, ignore_errors=True)
             log(f"SQLite: снято снимком {sqlite_snyato[0]}, самый большой {sqlite_snyato[1] / 1e6:.1f} МБ, "
                 f"время снимков {sqlite_snyato[2]:.1f} с; байтами (снимок не удался) {len(sqlite_syroe)}")
+            log(f"исчезло во время сборки: {len(ischezlo)}")
             if not t.getnames():
                 fail(4, "после исключения непокрытых домов в архиве нет источников")
             if "backup-coverage.json" in t.getnames():
@@ -1313,6 +1341,38 @@ def sostav_cli() -> int:
     return 4 if PROPUSHCHENO or NEPOKRYTYE or not est else 0
 
 
+# 3.1.5 (16.10.2026, наряд Забавы 07:37:58Z; находка Вениамина 09:28 МСК): НЕДОПИСАННЫЙ АРХИВ НЕ ЛЕЖИТ ПОД ИМЕНЕМ КОПИИ.
+# Было: tarfile писал сразу в «<приставка><штамп>.tar.gz»; отказ сборки 16.10 03:32Z (код 4) оставил на полке 11,6 ГБ обрывка
+# под тем же именем, что у годной копии, — ротация (по имени) считала его своим, «восстанови из предпоследней» взяла бы его молча.
+# Стало: сборка пишет в «….tar.gz.chast»; переименование в «.tar.gz» (os.replace, та же ФС) — ТОЛЬКО после прав 0600 и
+# proverit_arhiv: имя копии и есть отметка успеха. Отказ на любом шаге до переименования (fail → SystemExit, исключение) —
+# «.chast» удаляется с строкой в журнале. Убит сигналом (TimeoutStartSec → SIGTERM, finally не исполняется) — «.chast» остаётся;
+# следующий прогон убирает чужие «.chast» СТАРШЕ CHAST_SROK (моложе — возможно, параллельная сборка: замка у копии нет — говорю, не трогаю).
+# Ротация («….tar.gz») и приёмка (скачивает с Drive, куда «.chast» не уезжает) «.chast» копией не считают по построению.
+CHAST = ".chast"
+CHAST_SROK = 3600
+
+
+def ubrat_chast(p: Path) -> None:
+    try:
+        if p.is_file() and not p.is_symlink():
+            razmer = p.stat().st_size
+            p.unlink()
+            log(f"⚠️ недописанный архив убран: {p.name} ({razmer / 1048576:.1f} МБ) — это не копия")
+    except OSError as e:
+        log(f"🔴 недописанный архив НЕ убран: {p.name}: {e} — это не копия, убрать руками")
+
+
+def ubrat_starye_chasti(tekushchij: Path) -> None:
+    for f in LOCAL_DIR.iterdir():
+        if (f.name.startswith(PRISTAVKA) and f.name.endswith(".tar.gz" + CHAST) and f != tekushchij
+                and f.is_file() and not f.is_symlink()):
+            if time.time() - f.stat().st_mtime >= CHAST_SROK:
+                ubrat_chast(f)
+            else:
+                log(f"⚠️ недописанный архив {f.name} моложе {CHAST_SROK} с — возможно, идёт другая сборка; не трогаю")
+
+
 def main() -> int:
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H%M")
     d = sostav()
@@ -1330,16 +1390,24 @@ def main() -> int:
     os.chmod(LOCAL_DIR, 0o700)
     os.umask(0o077)
     arh = LOCAL_DIR / f"{PRISTAVKA}{stamp}.tar.gz"
-    sobrat(puti, arh, d)
-    os.chmod(arh, 0o600)
-    # Проверяем ФАКТ, а не намерение: chmod мог не отработать (чужой владелец, ФС
-    # без прав). Копия, доступная посторонним, хуже отсутствия копии — она молча
-    # раздаёт ключ от всего хранилища.
-    rezhim = arh.stat().st_mode & 0o777
-    if rezhim & 0o077:
-        fail(4, f"архив {arh} остался с правами {rezhim:04o} — в нём закрытый ключ, "
-                f"а читать его может посторонний. Собран, но НЕ отправлен.")
-    proverit_arhiv(arh, puti)
+    chast = arh.with_name(arh.name + CHAST)   # 3.1.5: до успеха — не имя копии (см. выше main)
+    ubrat_starye_chasti(chast)
+    try:
+        sobrat(puti, chast, d)
+        os.chmod(chast, 0o600)
+        # Проверяем ФАКТ, а не намерение: chmod мог не отработать (чужой владелец, ФС
+        # без прав). Копия, доступная посторонним, хуже отсутствия копии — она молча
+        # раздаёт ключ от всего хранилища.
+        rezhim = chast.stat().st_mode & 0o777
+        if rezhim & 0o077:
+            fail(4, f"архив {chast} остался с правами {rezhim:04o} — в нём закрытый ключ, "
+                    f"а читать его может посторонний. Собран, но НЕ отправлен.")
+        proverit_arhiv(chast, puti)
+    except BaseException:
+        ubrat_chast(chast)
+        raise
+    os.replace(chast, arh)
+    log(f"архив собран и проверен: {arh.name}")
     # Снимок состава архива: последующая ротация не меняет уже упакованные байты.
     pokrytie = polnota_kopii()
 

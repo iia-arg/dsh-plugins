@@ -99,6 +99,16 @@ progon; proverka "1.0.2: канал отказал — rc не записан, �
 rm -f "$T/in/alert.otkaz"
 progon; proverka "1.0.2: канал вернулся — тревога о rc ПОВТОРЕНА, записан" '[ "$KOD" -eq 1 ] && [ "$TREVOG" -eq 1 ] && grep -qxF 1.4.0-rc.1 "$T/vidennye.txt"'
 
+# RU: 10–11. B-N-2048: npm 12 отдаёт метки массивом из одного объекта — то же, что объект под npm 11;
+# RU: {"error":…} вместо меток — слепота, не «нового нет».
+# EN: 10–11. B-N-2048: npm 12 returns dist-tags as an array of one object — same as the npm 11 object;
+# EN: {"error":…} instead of tags is blindness, not "nothing new".
+echo '[{"latest":"0.9.0","next":"1.0.0"}]' > "$T/in/npm.out"
+progon; proverka "B-N-2048: метки npm 12 (массив из одного) — как npm 11, молчит" '[ "$KOD" -eq 0 ] && [ "$TREVOG" -eq 0 ]'
+echo '{"error":{"code":"E404","summary":"Not Found"}}' > "$T/in/npm.out"
+progon; proverka "B-N-2048: {\"error\"} вместо меток — слепота" '[ "$KOD" -eq 2 ] && [ "$TREVOG" -eq 0 ] && printf "%s" "$VYVOD" | grep -qF "СЛЕПОТА"'
+rm -f "$T/in/npm.out"
+
 echo "ИТОГ: ok=$ok FAIL=$bad"
-[ $((ok+bad)) -eq 9 ] || { echo "СЛЕПОТА: проверок $((ok+bad)) из 9"; exit 2; }
+[ $((ok+bad)) -eq 11 ] || { echo "СЛЕПОТА: проверок $((ok+bad)) из 11"; exit 2; }
 [ "$bad" -eq 0 ]

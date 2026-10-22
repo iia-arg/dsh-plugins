@@ -23,3 +23,5 @@ Start every procedure by identifying the correct process, package copy and profi
 
 После исправления повторите именно отказавший сценарий и восстановите нормальный вход. Перезапуск не должен удалять сохранённую платформенную историю или pending reminders без отдельного решения оператора. Код 2 стенда означает, что доказательства всё ещё нет.
 After repair, rerun the failing scenario and restore a normal input. Restart must not delete durable platform history or pending reminders without a separate operator decision. Test exit 2 means evidence is still unavailable.
+
+B-N-1983: `нет startup SHA256 src/index.js` означает отсутствие пригодного отпечатка текущего процесса. Для старого процесса после первого монтажа 3.1.5 нужен назначенный подъём, затем повторный стенд; одно значение mtime не доказывает загрузку. При `содержимое отличается` сверяйте обе полные суммы, правильную копию и MainPID; не выключайте читателя ради зелёного. / A missing startup SHA requires the first assigned restart of an old process. For a mismatch, verify both hashes, copy and MainPID; never disable the reader to force green.

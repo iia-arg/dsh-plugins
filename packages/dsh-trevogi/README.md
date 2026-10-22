@@ -1,6 +1,6 @@
 # dsh-trevogi — общий канал тревог в Telegram, обрезка его хвоста и суточный читатель отказов «ключа»
 
-Версия · Version: 3.1.2
+Версия · Version: 3.1.8
 
 *English version — [below](#english).*
 
@@ -25,6 +25,13 @@
 | `systemd/agent-alert-hvost-obrezka.service` | `/etc/systemd/system/agent-alert-hvost-obrezka.service` | 644 root:root | systemd |
 | `systemd/agent-alert-hvost-obrezka.timer` | `/etc/systemd/system/agent-alert-hvost-obrezka.timer` | 644 root:root | systemd, `OnCalendar=hourly` |
 | `systemd/otkaz-klyuch-watch.service` | `/etc/systemd/system/otkaz-klyuch-watch.service` | 644 root:root | systemd |
+| `bin/agent-alert-otpravitel` | `/usr/local/sbin/agent-alert-otpravitel` | 755 root:root | `agent-alert-otpravitel.service` (root, разбор спула) и `agent-alert-storozh-ocheredi.service` (`--storozh`) |
+| `lib/dsh-trevogi/klient.py` | `/usr/local/lib/dsh-trevogi/klient.py` | 644 root:root | `agent-alert`: клиентский путь (спул) и его `--proverit-nastrojku` |
+| `systemd/agent-alert-otpravitel.path` | `/etc/systemd/system/agent-alert-otpravitel.path` | 644 root:root | systemd, `DirectoryNotEmpty=` спула; включается |
+| `systemd/agent-alert-otpravitel.service` | `/etc/systemd/system/agent-alert-otpravitel.service` | 644 root:root | path-юнит выше; предел запусков 100 за 10 с (`[Unit]`) — умолчание 5 за 10 с всплеск писем пробивал и гасил path-юнит до `reset-failed` (окно 15.10); живой стенд `test/stend-vsplesk.py` (root, вручную, вне `vse-stendy.sh`; маркер `ZHIVAYA-MASHINA`, запуск только с первым доводом `--zhivaya-mashina`, иначе «ОТКАЗ-ZHIVAYA-MASHINA», код 2) |
+| `systemd/agent-alert-storozh-ocheredi.service` | `/etc/systemd/system/agent-alert-storozh-ocheredi.service` | 644 root:root | таймер ниже |
+| `systemd/agent-alert-storozh-ocheredi.timer` | `/etc/systemd/system/agent-alert-storozh-ocheredi.timer` | 644 root:root | systemd, каждые 5 мин |
+| `systemd/dsh-trevogi-spul.tmpfiles` | `/etc/tmpfiles.d/dsh-trevogi-spul.conf` | 644 root:root | `systemd-tmpfiles --create` при монтаже и загрузке |
 | `systemd/otkaz-klyuch-watch.timer` | `/etc/systemd/system/otkaz-klyuch-watch.timer` | 644 root:root | systemd, ежедневно в 06:53 плюс до 300 с случайной задержки |
 | `dsh-trevogi.conf.example` | `/etc/dsh-trevogi/dsh-trevogi.conf` (образец; на sadik своя редакция с путями прежней установки) | 644 root:root | `nastrojki.py` |
 
@@ -36,9 +43,19 @@
 | файл chat-id | `/etc/agent-alert/chat-id` | 640 root:agent-button + ACL | то же |
 | каталог хвоста | `/var/log/agent-alert` | 2730 root:agent-button | создаёт root при монтаже |
 | хвост тревог | `/var/log/agent-alert/poslednie.log` | 620 root:agent-button | `agent-alert` дописывает, обрезка переписывает, читает root |
+| спул: `tmp/`, `vhod/` | `/var/spool/dsh-trevogi/{tmp,vhod}` | 1730 root:agent-button + ACL `u:varvara:wx` (машинный `/etc/tmpfiles.d/dsh-trevogi-spul-acl.conf`) | пишут отправители без токена; разбирает root |
+| спул: `itog/`, `work/` | `/var/spool/dsh-trevogi/{itog,work}` | 0711 / 0700 root:root | итог — файл учётки 0600; `work/` — разбор, квоты, курсор сторожа |
 | курсор сторожа | `/var/lib/otkaz-klyuch-watch/kursor` | 644 root:root | создаёт и двигает `otkaz-klyuch-watch` |
 
 В бой не ставятся `test/`, `docs/`, `README.md`, `CHANGELOG.md`, `LICENSE`, `package.json`.
+
+## Способ 2: тревога без доступа к токену (B-N-2055)
+
+`agent-alert` выбирает путь сам. Root без ключа — прямой путь, как прежде. Учётка не-root, которой файл токена не читается, — **клиентский путь**: текст кладётся в спул (`tmp/` с `O_EXCL`, готовым — `rename` в `vhod/`), root-отправитель `agent-alert-otpravitel` (его зовёт `agent-alert-otpravitel.path`) берёт учётку по `fstat` открытого файла, проверяет квоту (`AGENT_ALERT_KVOTA_10MIN`/`_SUTKI`, root без квоты), у учётки не-root оставляет в HTML только `b strong i em u ins s strike del code pre blockquote` без атрибутов, ставит первую строку «✉ <учётка> (со слов: <источник>)» и шлёт прямым путём; итог — `itog/<имя>`. Клиент ждёт итог до `AGENT_ALERT_ITOG_ZHDAT` с и выходит его кодом: 0 доставлено · 1 отказ Telegram/сети · 65 негодный файл · 66 больше 64 КиБ · 69 квота · 75 итога нет (🔴 `исход=нет-итога` в журнале) · 1 и 🔴 `исход=нет-пути` — спул не пишется.
+Ключ пробы `AGENT_ALERT_CHEREZ_SPUL=1` — клиентский путь даже при читаемом токене (проверка пути до переключения прав); иное значение — отказ 2. `--proverit-nastrojku` у учётки без токена (или с ключом) проверяет спул НАСТОЯЩЕЙ записью и path-юнит: «КЛИЕНТСКИЙ ПУТЬ ГОДЕН» — 0, иначе 2; свою пробу `.chk` клиент убирает из `vhod/` сам. «Не взведён» (2) — только если `systemctl is-active` назвал состояние и оно не `active`; пустой ответ (из песочницы `DynamicUser` — «Transport endpoint is not connected») — «ОТСЮДА НЕ ВИДНО», код 0, с причиной и подсказкой проверить от root. Превью ссылок выключено всегда (`disable_web_page_preview=true`), на обоих путях.
+Сторож `agent-alert-storozh-ocheredi.timer` (5 мин): файл во `vhod/` старше 3 мин, path-юнит не active или строки `нет-пути`/`нет-итога` в журнале → тревога прямым путём, код 1. Новый набор бед — сразу; тот же — не чаще раза в 6 ч; беды ушли — одно «✅ восстановлено». Отметка — `work/storozh.otmetka.json`, ставится только при доставке (недоставленная тревога повторится следующим прогоном). Из журнала берутся только строки самого клиента (`🔴 исход=нет-пути|нет-итога учётка=…` с начала сообщения), ключ беды — по учётке (`zhurnal:<учётка>`): второй отказавший отправитель не скрыт повтором первого, а доставка самой тревоги сторожа (её начало `agent-alert` пишет в тот же журнал) не читается как отказ. Строке верится, только если `_UID` записи журнала (его ставит journald, `-o json`) равен uid названной учётки; имя не разрешается (`DynamicUser=` вне работы службы) — только если `_UID` из диапазона динамических учёток systemd 61184–65519. Иначе строка не считается, а сторож пишет «чужой uid».
+Разбор, оборванный по `TimeoutStartSec`, оставляет `work/*.msg`: в начале следующего разбора такие файлы старше 1 ч получают итог 75 «прерван» и удаляются.
+Юнитам с `ProtectSystem=strict` нужен `ReadWritePaths=/var/spool/dsh-trevogi`.
 
 ## Установка
 
@@ -138,7 +155,7 @@ sudo systemctl enable --now agent-alert-hvost-obrezka.timer otkaz-klyuch-watch.t
 | Стенд | Как запускать | Чего ждать |
 |---|---|---|
 | `test/vse-stendy.sh` | `bash test/vse-stendy.sh` или `npm test` из корня пакета | по строке `STEND <имя> <код>` на каждый стенд; итоговый код — наибольший из кодов стендов: 0 всё зелёное, 1 есть красное, 2 слепота |
-| `test/stend-agent-alert.sh` | через `vse-stendy.sh`; отдельно: `AGENT_ALERT_BIN=<пакет>/bin/agent-alert bash test/stend-agent-alert.sh` | 31 проверка (под root 30: проверку нечитаемости пропускает и говорит об этом); 0 — все ok, 1 — есть FAIL, 2 — проведено не столько проверок, сколько ждали, или стенд не собрался |
+| `test/stend-agent-alert.sh` | через `vse-stendy.sh`; отдельно: `AGENT_ALERT_BIN=<пакет>/bin/agent-alert bash test/stend-agent-alert.sh` | 45 проверок (под root 44: проверку нечитаемости пропускает и говорит об этом), из них 9 — строка журнала у шести немых прежде выходов, 3 — номер в строках журнала, 2 — нет pyc при ручном запуске; 0 — все ok, 1 — есть FAIL, 2 — проведено не столько проверок, сколько ждали, или стенд не собрался |
 | `test/stend-nastroek-proby.py` | `python3 test/stend-nastroek-proby.py` (корень — `TREVOGI_TEST_ROOT` или родитель `test/`) | 15 тестов unittest: проба, приоритет env/config, отказ неизвестного ввода, токен не в argv и не в `/proc/self/cmdline`, вычистка токена из ответа, обрезка сохраняет inode и права, настройка сторожа; 0 / 1 |
 | `test/stend-watch-hvost.py` | `python3 test/stend-watch-hvost.py` | 8 тестов курсора и обрезки: пустое окно, первый вызов, отказ канала и возврат, слепота журнала, `--tolko-pechat`, отказ неизвестных ключей; 0 / 1 |
 | `test/stend-porchi.py` | `python3 test/stend-porchi.py` | 4 порчи на временной копии (`DSH_PROBA`, `PROBA_TEXT`, `TOKEN_ARGV`, `TOKEN_LOG`): у каждой исход 0 → 1 → 0, внесение подтверждено `grep -cF` и сменой sha256; 0 — все прошли, 1 — нет |
@@ -174,10 +191,12 @@ journalctl -t otkaz-klyuch-watch -t otkaz-klyuch-watch-vyvod --since -3d --no-pa
 journalctl -u agent-alert-hvost-obrezka.service --since -3h --no-pager
 ```
 
-Коды утилит. `agent-alert`: 0 — Telegram ответил `"ok":true`, проба или годная настройка; 1 — пустой текст, нет токена или чата, отказ Telegram, сеть не пустила после всех попыток, текст не подготовлен; 2 — отказ ключа, негодная `DSH_PROBA`, негодная настройка. `otkaz-klyuch-watch`: 0 — окно прочитано, тревога ушла или была не нужна (сюда же первый вызов и `--tolko-pechat`); 2 — слепота журнала или канал не принял тревогу, курсор прежний; 2 — также негодный довод/настройка/курсор; справка даёт 0. `agent-alert-hvost-obrezka`: 0 — обрезано или нечего обрезать; 2 — довод, настройка, нет хвоста, `flock` занят дольше 30 с.
+Коды утилит. `agent-alert`: 0 — Telegram ответил `"ok":true`, проба или годная настройка; 1 — пустой текст, нет токена или чата, отказ Telegram, сеть не пустила после всех попыток, текст не подготовлен; 2 — отказ ключа, негодная `DSH_PROBA`, негодная настройка. Каждый отказ, после которого тревога не ушла, оставляет строку журнала `agent-alert` «`исход=<причина> учётка=… ЮНИТ=… звал=…(PPID) <причина словами>`»: `пустое-сообщение`, `отказ-DSH_PROBA`, `отказ-настроек`, `нет-токена-или-чата`, `формат-не-подготовлен` (с 3.1.5, B-N-2064; прежде эти шесть выходов были немыми) — рядом с прежними `отказ-ключ`, `нет-пути`, `нет-итога`. С 3.1.6 так же пишет клиентский путь: `итог-не-читается` и `отказ-отправителя` (код отправителя спула 65/66/69/1, прежде видный лишь под тегом `agent-alert-otpravitel`) — с `путь=спул файл=<имя>.msg`, без 🔴, поэтому сторож очереди их не берёт. Номер в строках журнала (`версия=`) — константа `VERSIYA` в `lib/dsh-trevogi/nastrojki.py`, равная `package.json` (с 3.1.6; был литерал 3.1.1). Python-утилиты (`agent-alert-otpravitel`, `otkaz-klyuch-watch`) не пишут байт-код (`sys.dont_write_bytecode`, с 3.1.7): ручной запуск от root по шебангу оставлял `__pycache__` в `/usr/local/lib/dsh-trevogi/`. Текст тревоги в такую строку не кладётся. Код и поток сообщения прежние. `otkaz-klyuch-watch`: 0 — окно прочитано, тревога ушла или была не нужна (сюда же первый вызов и `--tolko-pechat`); 2 — слепота журнала или канал не принял тревогу, курсор прежний; 2 — также негодный довод/настройка/курсор; справка даёт 0. `agent-alert-hvost-obrezka`: 0 — обрезано или нечего обрезать; 2 — довод, настройка, нет хвоста, `flock` занят дольше 30 с.
 
 ## Ограничения
 
+- Код 0 у `--proverit-nastrojku` ≠ «path-юнит проверен»: при «ОТСЮДА НЕ ВИДНО» (пустой ответ `systemctl`, песочница `DynamicUser`) код тоже 0. Кто читает только код, path-юнит не проверил — смотреть строку вывода или звать от root (LOW Вениамина к 3.1.4, 15.10).
+- Строку `исход=<причина>` пишет `logger`; если его нет или он отказал, отказ остаётся только в коде и выводе. Вызов, которого не было вовсе, строки не оставляет, а зовущий, гасящий вывод в `/dev/null`, теряет и сообщение — видна лишь строка журнала.
 - Метка `DSH_PROBA=1` защищает от отправки только `agent-alert`. Обрезку хвоста и запись курсора сторожа она не останавливает, их пробуют только на временных файлах. Пробу, которая забыла метку, ничто не ловит.
 - `--proverit-nastrojku` не знает, примет ли Telegram токен и существует ли чат: это знает только отправка. `sadik-watch` зовёт проверку от root, а root читает любой файл, поэтому «токен не читается учёткой агента» оттуда не видно.
 - Повторяются сеть, не-JSON и 5xx/429; постоянный отказ вроде 400 завершает вызов с первой попытки. retry_after — целое 0..300 с, больше или неверный формат — отказ без раннего повтора. Общего предела времени на вызов нет: по умолчанию до 80 с сетевого ожидания (с retry_after до 660 с) (3×20 + 5 + 15), при предельных настройках до 5700 с.
@@ -185,6 +204,7 @@ journalctl -u agent-alert-hvost-obrezka.service --since -3h --no-pager
 - Метка источника судит по юниту, а не по запуску. Ручной `systemctl start` службы, у которой есть таймер, неотличим от срабатывания по расписанию (метки нет). Руку, запустившую команду через `systemd-run`, метка не ловит: это уже служба или чужой scope. Служба пользовательского менеджера systemd назовётся «служба». Метка не доказывает, что вызов был пробой.
 - Если упал сам Python, не прошёл предел или кодировка, ломаются обе ветки, HTML и запасной plain: код 1, ничего не отправлено.
 - Хвост отправщик не создаёт. Если файла нет, он закрыт, `flock` занят дольше 5 с или превышен предел размера, строка пишется только в журнал: тревога может уйти, а хвост остаться без неё. Рост хвоста виден только строкой журнала `хвост НЕ записан … обрезка … не работает?`, тревоги на это нет.
+- Клиентский путь (спул) с 3.1.8 пишет хвост учётки, только если он задан окружением процесса (drop-in службы), и после итога отправителя: `исход=доставлено(спул)` или `не-доставлено(спул,код-N)`. Хвост из config там не пишется — его пишет root-отправитель. Если зовущий оборвал клиента раньше итога (сток сторожа памяти ждёт 5 с), строки в хвосте нет, а тревога из спула всё равно уходит.
 - Обрезка не замечает, что её не вызвали, и не видит подмены файла мимо замка. Жизнь таймеров на sadik проверяет `sadik-watch`, в самом пакете такого сторожа нет.
 - Сторож отказов «ключа» начинает первое окно с текущего конца журнала: отказы до первого вызова он не посчитает. Строки, ушедшие при ротации journald, выпадают из окна. Другие виды отказов и отправщик, которого не позвали вовсе, он не видит. Слепота журнала при рабочем вызове (без --tolko-pechat) даёт2 и одну попытку сигнала о слепоте; курсор прежний.
 - Сторож считает любую строку журнала `agent-alert`, в которой есть `исход=отказ-ключ`, в том числе пробную или доставленную тревогу, если эти слова попали в её первые 120 знаков.
@@ -217,6 +237,13 @@ Two watchers maintain the channel itself. An hourly timer calls `agent-alert-hvo
 | `systemd/agent-alert-hvost-obrezka.service` | `/etc/systemd/system/agent-alert-hvost-obrezka.service` | 644 root:root | systemd |
 | `systemd/agent-alert-hvost-obrezka.timer` | `/etc/systemd/system/agent-alert-hvost-obrezka.timer` | 644 root:root | systemd, `OnCalendar=hourly` |
 | `systemd/otkaz-klyuch-watch.service` | `/etc/systemd/system/otkaz-klyuch-watch.service` | 644 root:root | systemd |
+| `bin/agent-alert-otpravitel` | `/usr/local/sbin/agent-alert-otpravitel` | 755 root:root | `agent-alert-otpravitel.service` (root, spool drain) and `agent-alert-storozh-ocheredi.service` (`--storozh`) |
+| `lib/dsh-trevogi/klient.py` | `/usr/local/lib/dsh-trevogi/klient.py` | 644 root:root | `agent-alert`: client path (spool) and its `--proverit-nastrojku` |
+| `systemd/agent-alert-otpravitel.path` | `/etc/systemd/system/agent-alert-otpravitel.path` | 644 root:root | systemd, `DirectoryNotEmpty=` of the spool; enabled |
+| `systemd/agent-alert-otpravitel.service` | `/etc/systemd/system/agent-alert-otpravitel.service` | 644 root:root | the path unit above; start limit 100 per 10 s in `[Unit]` (the default 5 per 10 s let a burst kill the path unit); live stand `test/stend-vsplesk.py` (root, manual; `ZHIVAYA-MASHINA` marker, runs only with `--zhivaya-mashina` as the first argument, otherwise code 2) |
+| `systemd/agent-alert-storozh-ocheredi.service` | `/etc/systemd/system/agent-alert-storozh-ocheredi.service` | 644 root:root | the timer below |
+| `systemd/agent-alert-storozh-ocheredi.timer` | `/etc/systemd/system/agent-alert-storozh-ocheredi.timer` | 644 root:root | systemd, every 5 min |
+| `systemd/dsh-trevogi-spul.tmpfiles` | `/etc/tmpfiles.d/dsh-trevogi-spul.conf` | 644 root:root | `systemd-tmpfiles --create` at deployment and boot |
 | `systemd/otkaz-klyuch-watch.timer` | `/etc/systemd/system/otkaz-klyuch-watch.timer` | 644 root:root | systemd, daily at 06:53 plus up to 300 s random delay |
 | `dsh-trevogi.conf.example` | `/etc/dsh-trevogi/dsh-trevogi.conf` (a sample; sadik has its own edition with the previous installation's paths) | 644 root:root | `nastrojki.py` |
 
@@ -228,9 +255,16 @@ The package does not install these, but the channel cannot work without them:
 | chat-id file | `/etc/agent-alert/chat-id` | 640 root:agent-button + ACL | same |
 | tail directory | `/var/log/agent-alert` | 2730 root:agent-button | created by root at deployment |
 | alert tail | `/var/log/agent-alert/poslednie.log` | 620 root:agent-button | `agent-alert` appends, trimming rewrites, root reads |
+| spool: `tmp/`, `vhod/` | `/var/spool/dsh-trevogi/{tmp,vhod}` | 1730 root:agent-button + ACL `u:varvara:wx` (machine file `/etc/tmpfiles.d/dsh-trevogi-spul-acl.conf`) | written by senders without the token; drained by root |
+| spool: `itog/`, `work/` | `/var/spool/dsh-trevogi/{itog,work}` | 0711 / 0700 root:root | result — the account's 0600 file; `work/` — drain, quotas, watcher cursor |
 | watcher cursor | `/var/lib/otkaz-klyuch-watch/kursor` | 644 root:root | created and advanced by `otkaz-klyuch-watch` |
 
 Not deployed: `test/`, `docs/`, `README.md`, `CHANGELOG.md`, `LICENSE`, `package.json`.
+
+## Method 2: alerts without token access (B-N-2055)
+
+`agent-alert` picks the path itself. Root without the key keeps the direct path. A non-root account that cannot read the token file takes the **client path**: the text goes into the spool (`tmp/` with `O_EXCL`, then `rename` into `vhod/`); the root sender `agent-alert-otpravitel` (triggered by `agent-alert-otpravitel.path`) takes the account from `fstat`, applies the per-account quota, keeps only allowlisted HTML tags without attributes for non-root, prefixes «✉ <account>» and delivers via the direct path; the result goes to `itog/<name>`. The client waits up to `AGENT_ALERT_ITOG_ZHDAT` s and exits with that code (0, 1, 65, 66, 69; 75 and a 🔴 journal line without a result; 1 and 🔴 when the spool is not writable).
+Probe key `AGENT_ALERT_CHEREZ_SPUL=1` forces the client path; any other value is refused (2). `--proverit-nastrojku` checks the spool with a real write plus the path unit; an empty `systemctl` answer (DynamicUser sandbox) is reported as «not visible from here», code 0, not as «not armed». Link previews are always disabled. The watcher timer alerts directly when the queue is stuck: a new set of problems at once, the same set at most every 6 h, one «recovered» when they clear; the mark (`work/storozh.otmetka.json`) is set only after delivery. Only the client's own failure lines (from the start of the message) are read, keyed per account (`zhurnal:<account>`), so a second failing sender is not hidden and the watcher's own delivery log line is not mistaken for a failure; a line counts only if the journal record's `_UID` equals the named account's uid (or, for a name that does not resolve, lies in the systemd DynamicUser range 61184–65519); otherwise the watcher logs «чужой uid». Leftover `work/*.msg` older than 1 h (drain killed by `TimeoutStartSec`) get result 75 «interrupted» and are removed at the next drain. `ProtectSystem=strict` units need `ReadWritePaths=/var/spool/dsh-trevogi`.
 
 ## Installation
 
@@ -330,7 +364,7 @@ The stands live in `test/` and run against a copy of the package. Network, journ
 | Stand | How to run | What to expect |
 |---|---|---|
 | `test/vse-stendy.sh` | `bash test/vse-stendy.sh` or `npm test` from the package root | one `STEND <name> <code>` line per stand; final exit code is the highest stand code: 0 all green, 1 some red, 2 blindness |
-| `test/stend-agent-alert.sh` | through `vse-stendy.sh`; standalone: `AGENT_ALERT_BIN=<package>/bin/agent-alert bash test/stend-agent-alert.sh` | 31 checks (30 as root: the unreadability check is skipped and reported); 0 — all ok, 1 — some FAIL, 2 — the number of checks run differs from the expected one, or the stand failed to set up |
+| `test/stend-agent-alert.sh` | through `vse-stendy.sh`; standalone: `AGENT_ALERT_BIN=<package>/bin/agent-alert bash test/stend-agent-alert.sh` | 45 checks (44 as root: the unreadability check is skipped and reported), 9 of them for the journal line of six formerly silent exits, 3 for the version in journal lines, 2 for no pyc on a manual run; 0 — all ok, 1 — some FAIL, 2 — the number of checks run differs from the expected one, or the stand failed to set up |
 | `test/stend-nastroek-proby.py` | `python3 test/stend-nastroek-proby.py` (root is `TREVOGI_TEST_ROOT` or the parent of `test/`) | 15 unittest tests: probe, env/config precedence, refusal of unknown input, token not in argv or `/proc/self/cmdline`, token redaction from the response, trimming keeps inode and permissions, watcher settings; 0 / 1 |
 | `test/stend-watch-hvost.py` | `python3 test/stend-watch-hvost.py` | 8 cursor and trimming tests: empty window, first call, channel failure and recovery, journal blindness, `--tolko-pechat`, refusal of unknown options; 0 / 1 |
 | `test/stend-porchi.py` | `python3 test/stend-porchi.py` | 4 mutations on a temporary copy (`DSH_PROBA`, `PROBA_TEXT`, `TOKEN_ARGV`, `TOKEN_LOG`): each yields 0 → 1 → 0, insertion confirmed with `grep -cF` and a sha256 change; 0 — all passed, 1 — not |
@@ -366,10 +400,12 @@ journalctl -t otkaz-klyuch-watch -t otkaz-klyuch-watch-vyvod --since -3d --no-pa
 journalctl -u agent-alert-hvost-obrezka.service --since -3h --no-pager
 ```
 
-Exit codes. `agent-alert`: 0 — Telegram answered `"ok":true`, a probe, or a usable configuration; 1 — empty text, no token or chat, Telegram refusal, network blocked after all attempts, text could not be prepared; 2 — option refusal, invalid `DSH_PROBA`, invalid configuration. `otkaz-klyuch-watch`: 0 — window read, alert sent or not needed (this includes the first call and `--tolko-pechat`); 2 — journal blindness or the channel did not accept the alert, cursor unchanged; 2 — invalid argument/configuration/cursor; help exits0. `agent-alert-hvost-obrezka`: 0 — trimmed or nothing to trim; 2 — argument, configuration, missing tail, `flock` busy longer than 30 s.
+Exit codes. `agent-alert`: 0 — Telegram answered `"ok":true`, a probe, or a usable configuration; 1 — empty text, no token or chat, Telegram refusal, network blocked after all attempts, text could not be prepared; 2 — option refusal, invalid `DSH_PROBA`, invalid configuration. Every refusal after which the alert was not sent leaves an `agent-alert` journal line «`исход=<reason> учётка=… ЮНИТ=… звал=…(PPID) <reason text>`»: `пустое-сообщение`, `отказ-DSH_PROBA`, `отказ-настроек`, `нет-токена-или-чата`, `формат-не-подготовлен` (since 3.1.5, B-N-2064; these six exits used to be silent), alongside the existing `отказ-ключ`, `нет-пути`, `нет-итога`. Since 3.1.6 the client path does the same: `итог-не-читается` and `отказ-отправителя` (spool sender code 65/66/69/1, formerly visible only under the `agent-alert-otpravitel` tag), with `путь=спул файл=<name>.msg` and no 🔴, so the queue watcher ignores them. The version in journal lines (`версия=`) is the `VERSIYA` constant in `lib/dsh-trevogi/nastrojki.py`, equal to `package.json` (since 3.1.6; formerly a 3.1.1 literal). The Python utilities (`agent-alert-otpravitel`, `otkaz-klyuch-watch`) never write bytecode (`sys.dont_write_bytecode`, since 3.1.7): a manual root run via the shebang used to leave `__pycache__` in `/usr/local/lib/dsh-trevogi/`. The alert text is not written to that line. Exit codes and output streams are unchanged. `otkaz-klyuch-watch`: 0 — window read, alert sent or not needed (this includes the first call and `--tolko-pechat`); 2 — journal blindness or the channel did not accept the alert, cursor unchanged; 2 — invalid argument/configuration/cursor; help exits0. `agent-alert-hvost-obrezka`: 0 — trimmed or nothing to trim; 2 — argument, configuration, missing tail, `flock` busy longer than 30 s.
 
 ## Limitations
 
+- Exit 0 from `--proverit-nastrojku` ≠ «path unit verified»: «not visible from here» (empty `systemctl` answer, `DynamicUser` sandbox) also exits 0. A reader of the code alone has not checked the path unit — read the output line or call it as root (Veniamin LOW to 3.1.4, 15.10).
+- The `исход=<reason>` line is written by `logger`; if it is missing or fails, the refusal is only in the exit code and output. A call that never happened leaves no line, and a caller that sends output to `/dev/null` loses the message — only the journal line remains.
 - The `DSH_PROBA=1` mark protects only `agent-alert` from sending. It does not stop tail trimming or watcher cursor writes; test those only on temporary files. Nothing catches a probe that forgot the mark.
 - `--proverit-nastrojku` cannot tell whether Telegram accepts the token or whether the chat exists: only a send can. `sadik-watch` calls the check as root, and root reads any file, so "the token is unreadable for the agent's account" is invisible from there.
 - Network failures, non-JSON and temporary5xx/429 responses retry within the attempt limit. A permanent Telegram refusal ends the call on the first attempt. There is no overall time limit per call: by default up to 80 s of network waiting (3×20 + 5 + 15), with maximum settings up to 5700 s.
@@ -377,6 +413,7 @@ Exit codes. `agent-alert`: 0 — Telegram answered `"ok":true`, a probe, or a us
 - The source tag judges the unit, not the run. A manual `systemctl start` of a service that has a timer cannot be distinguished from a scheduled run (no tag). A human who started a command through `systemd-run` is not caught: that is already a service or another scope. A service of the systemd user manager is named "служба". The tag does not prove that a call was a probe.
 - If Python itself fails, or the limit or the encoding is invalid, both branches break, HTML and the plain fallback: exit 1, nothing sent.
 - The sender does not create the tail. If the file is missing or not writable, `flock` is busy longer than 5 s, or the size limit is exceeded, the line goes to the journal only: the alert may be sent while the tail misses it. Tail growth shows up only as the journal line `хвост НЕ записан … обрезка … не работает?`; there is no alert for it.
+- Since 3.1.8 the client (spool) path appends to the account tail only when it is set by the process environment (unit drop-in), after the sender result: `исход=доставлено(спул)` or `не-доставлено(спул,код-N)`. A config-set tail is written by the root sender instead. If the caller kills the client before the result (the memory guard sink waits 5 s), the tail misses the line while the spooled alert is still sent.
 - Trimming does not notice that it was not called and does not see the file being replaced outside the lock. On sadik `sadik-watch` checks timer liveness; the package itself has no such watcher.
 - The option-refusal watcher starts its first window at the current journal end, so refusals before the first call are not counted. Lines lost to journald rotation drop out of the window. It does not see other kinds of refusal or a sender that was never called. Journal blindness in a working call (without --tolko-pechat), including the first call, exits2 and attempts one blindness notice without changing the cursor.
 - The watcher counts every `agent-alert` journal line that contains `исход=отказ-ключ`, including a probe or a delivered alert if those words fall within its first 120 characters.
@@ -412,3 +449,11 @@ On a clean Linux host without smontirovat-fajly, the assigned operator installs 
 Предупреждение о слепоте журнала — отдельный сигнал: один вызов канала за такт, может повторяться следующие сутки при продолжающейся слепоте. Pending защищает только прочитанное окно отказов. Дедлайн120с/30с/5с после timeout убивает группу и закрывает pipe, без бесконечного drain; ожидание прямого потомка после kill не более5с. Отделившийся собственным setsid потомок может продолжить работу: исход доставки остаётся неизвестным, это не доказательство отсутствия отправки.
 
 Journal-blindness notices are a separate signal: one channel call per tick, repeated on later days while blindness continues. Pending protects only a read refusal window. Channel120s/journal30s/logger5s deadlines kill the process group and close pipes without an unbounded drain; direct-child wait after kill is bounded by5s. A descendant that creates another session may continue: delivery remains unknown, not proven absent.
+
+## Хозяева и гости (3.1.10)
+
+`agent-alert` всегда отправляет настроенным хозяевам: `AGENT_ALERT_CHAT_FILE` и второму `AGENT_ALERT_OWNER_CHAT_ID`. `/var/lib/alert-privratnik/spisok` добавляет только гостей. Весь файл проверяется строго; его отказ не отменяет основную тревогу хозяевам и вызывает отдельное уведомление им. Отказ гостя не меняет итог доставки хозяевам. Квота спула считает исходные тревоги. Формат, владельцы и настройка — [SETTINGS](docs/SETTINGS.md). Службу/список обслуживает Михалыч; выпуск sender ставится раньше службы.
+
+Плохой список чинить сразу — каждая тревога приходит хозяевам дважды (основная + отказ списка).
+
+Больше 50 валидных гостевых строк отвергают весь список; лимит считается до дедупа. Повтор номера гостя даёт одну отправку, порядок первого появления сохраняется.

@@ -201,8 +201,14 @@ E|/etc/systemd/system/istoriya-profilya.service|служба снимка. 🔴 
 E|/etc/systemd/system/istoriya-profilya.path|сторож правок профиля: PathChanged на cordis.patch.yml, package.json и каталог web
 E|/etc/systemd/system/istoriya-profilya@.path|шаблон сторожа правок профиля агента %i (B-N-905, Аврора, 25.09): PathChanged на cordis.patch.yml и package.json /opt/%i. Включены копии @zarya, @avrora, @spartak (ссылки paths.target.wants не учитываются — это включение, не содержимое). Внесён в учёт 25.09 по слову Забавы.
 E|/etc/systemd/system/istoriya-profilya@.service|шаблон снимка профиля агента %i в историю правок, User=%i (B-N-905): зовёт /usr/local/bin/istoriya-profilya %i. Внесён в учёт 25.09 по слову Забавы.
-E|/etc/systemd/system/skill-links.path|сторож появления/пропажи скиллов: PathChanged на /opt/agent-skills и /opt/agent-skills-local → skill-links.service. Взят под учёт 30.09 (B-N-1224): был вне учёта, в SERVICES watchdog — с B-N-1224
-E|/etc/systemd/system/skill-links.service|служба пересборки каталога скиллов движка (User=iskra, refresh-skill-links). StartLimitIntervalSec=0 в [Unit] — B-N-1224: серия событий не убивает .path
+E|/etc/systemd/system/skill-links@.path|шаблон зовущего набора навыков агента %i (SKILL-LINKS-ZOV, Аврора, 16.10): PathChanged на /etc/agent-registry/agents.yaml и источники /opt/agent-skills, /opt/agent-skills-local → skill-links@%i.service. Сменил пару skill-links.path/.service (звала только Искру и не видела правку реестра). Включены @alfa @avrora @beta @gamma @iskra @zarya (ссылки paths.target.wants — включение, не содержимое); Спартака нет — по слову
+E|/etc/systemd/system/skill-links@.service|шаблон пересборки набора навыков агента %i по реестру (refresh-skill-links, SKILL_LINKS_AGENT=%i). Без drop-in ОТКАЗЫВАЕТ (User=nobody, цель — несуществующий каталог). StartLimitIntervalSec=0 в [Unit] — B-N-1224. Читатель исхода — agent-watchdog по .path; провал самой службы при живом пути он НЕ видит
+E|/etc/systemd/system/skill-links@alfa.service.d/10-uchetka.conf|drop-in экземпляра alfa (SKILL-LINKS-ZOV): User/Group=coders; цель — codex-home/skills шлюза alfa
+E|/etc/systemd/system/skill-links@avrora.service.d/10-uchetka.conf|drop-in экземпляра avrora (SKILL-LINKS-ZOV): User/Group=avrora, HOME и цель SKILL_LINKS_TARGET — каталог навыков движка агента
+E|/etc/systemd/system/skill-links@beta.service.d/10-uchetka.conf|drop-in экземпляра beta (SKILL-LINKS-ZOV): User/Group=coders; цель — codex-home/skills шлюза beta
+E|/etc/systemd/system/skill-links@gamma.service.d/10-uchetka.conf|drop-in экземпляра gamma (SKILL-LINKS-ZOV): User/Group=coders; цель — codex-home/skills шлюза gamma
+E|/etc/systemd/system/skill-links@iskra.service.d/10-uchetka.conf|drop-in экземпляра iskra (SKILL-LINKS-ZOV): User/Group=iskra, HOME и цель SKILL_LINKS_TARGET — каталог навыков движка агента
+E|/etc/systemd/system/skill-links@zarya.service.d/10-uchetka.conf|drop-in экземпляра zarya (SKILL-LINKS-ZOV): User/Group=zarya, HOME и цель SKILL_LINKS_TARGET — каталог навыков движка агента
 E|/usr/local/bin/dsh-dump-kopiya|«dsh --dump-config» на КОПИИ дома агента (B-N-1225): зовут healthcheck записей dsh-profile-patch-*, dsh-home-patch-iskra, dsh-schedule-guard в реестре — боевой cordis.yml не переписывается, istoriya-profilya не будится
 E|/usr/local/sbin/strahovanie-modulej-watch|сторож страхования модулей (B-N-903, Михалыч, 25.09): раз в сутки по журналу sudo ловит монтаж в каталог пакета без страховки в /var/backups/montazh (в обход smontirovat-fajly). Вне учёта был с монтажа 19:57Z; внесён 25.09 по слову Забавы.
 E|/etc/systemd/system/strahovanie-modulej-watch.service|служба сторожа страхования модулей (B-N-903); SyslogIdentifier по B-N-961. Внесён в учёт 25.09 по слову Забавы.
@@ -217,6 +223,8 @@ E|/usr/local/bin/proba-chastnyh-imen|прибор, которым мы пров�
 E|/usr/local/share/chastnye-osnovy.txt|СЛОВАРЬ частных основ, на котором стоит проба выпуска. 🔴 Внесён 07.09.2026: прибор был под учётом с 06.09, а СЛОВАРЬ, которым он судит, — нет. Подмена или урезание словаря ослепляет ворота МОЛЧА: проба отработает, скажет «чисто» и будет права про свой список. Доказано порчей в тот же заход: убрала одну основу — стенд ворот покраснел ровно на ней (П3), остальные шесть держались. ФОРМА: это РЕГУЛЯРНЫЕ выражения, точку экранировать; читать через grep -F нельзя — экранированная основа слепнет молча (находка Михалыча 06.09). ⚠️ Красное здесь — повод открыть файл, а не узаконить: словарь меняется редко и всегда по замеру.
 D|/opt/iskra/workspace/dorabotki/stendy/stend-vorot-vypuska.sh|СТЕНД ВОРОТ ВЫПУСКА, 7 проб. 🔴 Заведён 07.09.2026: у ворот, ловящих частные имена ДО коммита, не было НИ ОДНОЙ пробы — сплошной поиск дал только сам файл, учёт и журнал долгов (контроль зрячести: у соседнего предмета тот же поиск находит пять мест). Пары: чистый молчит / порча кричит; зрячесть прогоняется ПЕРВОЙ и повторяется ПОСЛЕ порч (ворота не залипли в отказе). Отдельная проба стережёт, чтобы совет ворот не звал в push при запрете владельца. ГДЕ СЛЕП: ветку «пробы нет на машине» не проверяет — путь в воротах зашит абсолютным, а копия ворот проверяла бы копию, не предмет.
 D|/opt/iskra/workspace/dorabotki/stendy/stend-isklyuchenij-obhodchika.sh|СТЕНД ИСКЛЮЧЕНИЙ И КОДОВ ОБХОДЧИКА (B-H-203, 25.09.2026), 34 пробы (B-N-1458: API предела в заглушках, отсутствие API запрещает даже вызов): коды 0/3/1/2 и приоритет, дефект Беты (слепой без исключения → 1), same-count-different-names Гаммы, просроченное и негодное исключение → 1, иной признак/выпуск/код → 1, нет файла → 2; обёртка: 3 → 0 с именами, 1 → тревога с именами, немой канал и ослепший разбор → 3. Всё подставное во временном каталоге. ГДЕ СЛЕП: строки области «@учётка».
+D|/opt/iskra/workspace/dorabotki/stendy/stend-skillov.sh|СТЕНД ПОЛКИ СКИЛЛОВ (B-N-2093 r3, 17.10.2026, obhod 3.1.97): копии всех скиллов /opt/agent-skills-local во временной полке, ОДИН боевой proverka-skilla.py + описи SHA256SUMS; зовущий — ночной обход 03:40Z, ожидаемо слепые — одной записью stend-exceptions.yaml; красное — наряд хозяйке набора (Искра). ГРАНИЦЫ — в шапке стенда
+D|/opt/iskra/workspace/dorabotki/stendy/stend-propuska-paketa.sh|СТЕНД ПРОПУСКА НЕДЕЛЬНЫХ/РУЧНЫХ В ПАКЕТНЫХ ВОРОТАХ обходчика (B-N-2071 (б), Искра 16.10): 8 проб на подставном пакете, под iskra; ставится выпуском dsh-obhod-stendov 3.1.93
 D|/opt/iskra/workspace/dorabotki/stendy/stend-pokrytiya-kopij-mosta.sh|СТЕНД ПОКРЫТИЯ КОПИЙ МОСТА (B-N-1982, обход 3.1.8, Искра 10.10.2026): каждая копия dsh-tool-bridge из реестра плагинов — в перечне и (чужая) в области обхода; под iskra, без sudo
 A|/opt/iskra/workspace/dorabotki/stendy/stend-osnovy-versii.py|B-N-1862: СТЕНД основы версии исключений, 27 проб; вызывается ночным обходчиком без доводов, свой bare/suffix допускается, чужая основа и перенумерация0.3.28↔1.3.28 отказаны. Временные пакеты/перечни/YAML, боевые службы не запускает.
 A|/opt/iskra/workspace/dorabotki/stendy/stend-mashinnoj-redakcii.py|B-N-1877: СТЕНД машинной редакции юнитов dsh-storozha-mashiny/oom-watch/omega-memory — дерево (master) ↔ /etc/systemd/system по рабочим строкам за вычетом /etc/agent-registry/ozhidaemye-razlichiya.yaml; зовёт ночной обход; только чтение. Живые drop-in вне дерева не видит.
@@ -234,10 +242,11 @@ D|/opt/iskra/workspace/dorabotki/stendy/stend-smontirovat-vypusk-args.sh|СТЕ�
 D|/opt/iskra/workspace/dorabotki/stendy/stend-smontirovat-vypusk-strahovka.sh|СТЕНД СТРАХОВКИ smontirovat-vypusk ПО СОСТАВУ (B-N-1464, 03.10.2026, Искра), 12 проб на паре выпусков дерева telegram 1.5.58→1.5.59, от iskra, всё во временных каталогах: страховка новой формы (.po-sostavu.tgz) содержит ровно заменяемые 100 и новые 2 пути, чужого файла нет, строка отката в выводе и в STRAHOVKA.txt, откат побайтно (сумма дерева); новый каталог (NOVYE-KATALOGI) снят откатом; порча страховки (пустой NOVYE.txt) → новый файл остался → красное, возврат; порча инструмента (список не пишется) → «страховка не сошлась», код 1, бой не тронут. ГДЕ СЛЕП: размер на пакете без node_modules не различает (замер на шлюзе — в П7); владелец файлов; монтаж мимо инструмента.
 D|/opt/iskra/workspace/dorabotki/stendy/stend-smontirovat-vypusk-rezhimy.sh|СТЕНД ПРАВ smontirovat-vypusk (B-N-1612, 05.10.2026, Искра; находка Вениамина; ред. B-N-1746/B-N-1756 Беты/Альфы, sha256 73f3f671): монтаж telegram-multiagent-v2.5.81 во временный бой — права = тарболу (207×644 + 8×755), сверка прав 0 из 215; порча — chmod 666 по составу ПОСЛЕ публикации в копию, до итоговой сверки (факт замены печатается) → «МОНТАЖ НЕПОЛОН», 215 из 215, код 1; возврат — зелёное; контроль: снятие «-c tar.umask=022» исправляется режимом реального тарбола; проба 4 — 664→644 с прежним UID/GID и НОВЫМ inode. От ROOT (синтетический UID/GID; без root — СЛЕПОТА код 2); umask 002 у прогона намеренно. Предмет — довод/SMV_TOOL. ГДЕ СЛЕП: права каталогов, ACL/capabilities, монтаж мимо инструмента
 D|/opt/iskra/workspace/dorabotki/stendy/smv-atomic-probe.py|помощник стенда stend-smontirovat-vypusk-rezhimy (B-N-1756, Бета): атомарная проба монтажника, сам в обход не входит; монтаж Забавы 07.10 по воротам Вениамина
+D|/opt/iskra/workspace/dorabotki/stendy/smv_fixture.py|общий фикстур-хелпер четырёх SMV-стендов и smv-atomic-probe (B-N-2065, Бета, обход 3.1.70); монтаж Забавы 15.10 по воротам Вениамина 05:30Z
+D|/opt/iskra/workspace/dorabotki/obhod-run-state.py|состояние прогона ночного обхода: план, scope, уборка, поимённый хвост (B-N-2063, Гамма, обход 3.1.72); монтаж Забавы 15.10 по воротам Вениамина 05:32Z
 D|/opt/iskra/workspace/dorabotki/stendy/stend-model-podmena.sh|СТЕНД СТОРОЖА ПОДМЕНЫ МОДЕЛИ model-podmena-watch (B-N-1260/B-N-1266, 30.09.2026, Заря), 13 проб от iskra на подставных journalctl/systemctl/канале/домах, реестр боевой — чтение: исправное молчит; Claude «модель X ≠ запрошена Y», Codex «МОДЕЛЬ ПОДМЕНЕНА СЕРВЕРОМ», непустой remote-settings — тревога с именем; канал отказал — рубеж стоит; journalctl отказал — СЛЕПОТА с остыванием; необновлённый шлюз — СЛЕПОТА по юниту. Предмет без MPW_* → СЛЕПОТА, код 2, не запуск (иначе настоящие тревоги владельцу). ГДЕ СЛЕП: предмет, у которого имена переменных есть, а чтения нет.
 D|/opt/iskra/workspace/dorabotki/stendy/stend-aclaude-snaruzhi.sh|СТЕНД ВНЕШНЕГО ПРИБОРА aclaude aclaude-snaruzhi-watch (C-H-088, 01.10.2026, Искра), 31 проба от iskra на подставе (каналы-файлы, заглушка ssh с выводом по договору v1, локальный слушатель вместо sshd): исправное молчит; один мёртвый путь — строка журнала; оба — тревога на 3-м промахе; неверный порт в карте, свежесть сторожей 0, цикл перезапусков, диск — красный поимённо на 2-м прогоне; нет forced command / нет KONEC — «проба не исполнилась»; отбой вторым зелёным; @idomik отказал — запасной с названной подменой, оба — код 3 и досылка. Предмет без SSH_KOMANDA/SNARUZHI_KONF → СЛЕПОТА, код 2. ГДЕ СЛЕП: настоящий ssh и proba-snaruzhi, боты, такт systemd.
 D|/opt/iskra/workspace/dorabotki/stendy/stend-sadik-watch-bez-sredy.sh|СТЕНД B-N-916 (25.09.2026), 3 пробы: sadik-watch без среды юнита (нет SADIK_WATCH_MESTNO/SADIK_ALERT_BIN) — ОТКАЗ код 2, 0 писем в запасной канал, состояние не создано; одна переменная из двух — отказ; среда юнита — обычный такт. Запасной канал, основной и состояние — подставные. ⚠️ ~1,5 мин (весь sadik-watch ×1) — в ночной обход не входит.
-D|/opt/iskra/workspace/dorabotki/stendy/stend-pravki-postavki-omega.sh|СТЕНД ПРИЗНАКА 6 omega-kopiya-watch — «локальная правка поставки OMEGA» (B-N-982; Аврора, 26.09.2026; ворота Вениамина 01:5xZ). Зовущий — ворота правки omega-kopiya-watch (автор + Вениамин); в суточный обход НЕ входит (слово Забавы 26.09) — гоняет sudo и копию боевой OMEGA
 D|/opt/iskra/workspace/dorabotki/stendy/stend-modeli-omega.sh|стенд признака 7 omega-kopiya-watch «модель эмбеддинга службы OMEGA на месте» (B-N-1008 б, Аврора). Зовущий — ворота правки omega-kopiya-watch; в суточный обход не ставить. Взят под учёт 26.09 (монтаж 05:43Z лёг без строки учёта).
 D|/opt/iskra/workspace/dorabotki/stendy/stend-snyatiya.sh|стенд режима снятия smontirovat-fajly --snyat (B-N-1026, Аврора): 10 проб на подставе /var/tmp/b1026.XXXXXX (mktemp -d, своя на прогон), от root; пишет в НАСТОЯЩИЙ журнал инструмента пункты PROBA-B1026-* и убирает свои страховки. Положен монтажом 26.09 ~09:1xZ БЕЗ строки учёта — строка заведена отдельным кандидатом.
 D|/opt/iskra/workspace/dorabotki/stendy/stend-snyatiya-profilya.sh|стенд снятия ПРОФИЛЯ smontirovat-fajly --snyat (B-N-1564, Михалыч): живому профилю отказ с причиной (юнит, файл юнита, процесс, cordis.yml рядом, домашний, слепота systemctl), мёртвому — снятие со страховкой; 11 проб (r2: лаунчер …/bin.js, …/dsh, dsh — в т.ч. node_modules/.bin/dsh) на подставе /var/tmp/b1564.XXXXXX (mktemp -d), от root; заглушка systemctl, подставной /proc и каталог юнитов (SMF_SYSTEMCTL/SMF_PROC/SMF_UNIT_DIRS); пункты PROBA-B1564-<pid>-*, свои страховки убирает
@@ -348,6 +357,7 @@ A|/opt/iskra/workspace/dorabotki/kanarejka-restarta.sh|канарейка пер
 A|/opt/iskra/workspace/dorabotki/vse-stendy-boevye.sh|сплошной прогон стендов В БОЕВОЙ РАСКЛАДКЕ (соседи и платформа на месте) — предмет иной, чем у приёмки, которая гоняет копию дерева тега без соседей
 A|/opt/iskra/workspace/dorabotki/skaner-zhivoj-mashiny.py|сканер С1 живой машины (B-N-1929 такт 3, Заря; обход 1.0.52): правила меняющих глаголов; обходчик берёт его рядом с собой ($(dirname "$0")) — без него С1 слепнет
 A|/opt/iskra/workspace/dorabotki/vse-stendy-po-tajmeru.sh|ОБЁРТКА ОБХОДЧИКА ПО ТАЙМЕРУ (ExecStart vse-stendy-boevye.service): переводит коды обходчика 0/3/1/2, шлёт тревогу с ИМЕНАМИ неожиданного; свой код 3 — поломка сторожа (юнит в failed). До 25.09 была вне учёта при том, что её зовёт таймер (B-H-203).
+A|/opt/iskra/workspace/dorabotki/sud-ryada-stendov.py|СУД РЯДА ДЛИТЕЛЬНОСТЕЙ СТЕНДОВ ночного обхода (B-N-2105, 17.10.2026, obhod 3.1.100, Заря; замысел 1a31c04f): зовёт обёртка после прохода; ряд /var/lib/vse-stendy-boevye/ryad.tsv пишет progress обходчика; СТУПЕНЬКА / ДО ПРЕДЕЛА / ОБХОД, пометка нагрузки, повтор при смене состава или раз в 3 ночи
 A|/opt/iskra/workspace/dorabotki/perechen-boevyh-stendov.txt|ОБЪЯВЛЕННЫЙ перечень боевых стендов — знаменатель строки покрытия (требование Забавы 09.09.2026: Y берётся из объявленного списка, а не из числа отработавших, иначе знаменатель считает сам себя и сходится всегда). Правится РУКОЙ при добавлении стенда; расхождение с диском обходчик называет в обе стороны.
 A|/opt/iskra/workspace/dorabotki/vse-stendy-nedelnye.sh|НЕДЕЛЬНЫЙ прогон долгих стендов (B-N-1074, 26.09, Аврора; решение Забавы): stend-vzaimnogo-nabludeniya и stend-storozha-reestrov вне ночного обхода (дали бы ему +31 мин). Нового кода нет — тот же vse-stendy-boevye.sh через vse-stendy-po-tajmeru.sh. Зовущий — vse-stendy-nedelnye.timer (среда 01:30Z). Строка учёта заведена после монтажа (Искра, B-N-1028: новый файл лёг без строки).
 A|/opt/iskra/workspace/dorabotki/perechen-nedelnyh-stendov.txt|ОБЪЯВЛЕННЫЙ перечень недельных стендов (B-N-1074) — знаменатель недельного обхода, как perechen-boevyh-stendov.txt для ночного.
@@ -394,6 +404,8 @@ E|/opt/agent-skills-local/update-dsh-platform/SKILL.md|скилл обновле
 E|/opt/agent-skills-local/update-omega/SKILL.md|скилл обновления памяти OMEGA (ядро + Pro, наши правки поставки, откат) — один из ДВУХ всегда актуальных скиллов обновления (правило владельца 30.09 15:21 МСК), правится тем же тактом, что обновление. 🔴 ГРАНИЦА: под учётом только SKILL.md; приборы рядом (proba-pro.py, sverka-record.py, handlers-pro.txt, proverka-skilla.py) — нет
 E|/opt/agent-skills-local/update-omega/handlers-pro.txt|эталон набора Pro-обработчиков навыка update-omega (Pro 1.5.13, 139 имён; раздел 7 навыка) — решение Забавы 02.10: стоит в бою, значит виден учёту
 E|/opt/agent-skills-newserver/install-dsh-harness/SKILL.md|скилл заведения агента DSH (пустая машина и клон; с 30.09 — enable службы и шлюза, признак is-enabled). Строка заведена по вердикту Вениамина 30.09 18:0x («да, как у соседей»). 🔴 ГРАНИЦА: под учётом только SKILL.md, каталог reference/ — нет
+E|/opt/agent-skills-newserver/create-managed-telegram-bot/SKILL.md|скилл бота агента на sadik (Managed Bots: бот-менеджер, ссылка t.me/newbot, токен сразу в /etc/dsh-telegram/<имя>.token); смонтирован 14.10.2026 20:0xZ Забавой (наряд 19:54Z, ворота Вениамина 20:02Z), внесён в учёт по её слову 20:03Z. 🔴 ГРАНИЦА: под учётом только SKILL.md; коллекция agent-skills-newserver агентам не подключена — учёт сторожит файл, а не то, что его кто-то читает
+E|/opt/agent-skills-newserver/install-agent-team-no-sudo/SKILL.md|скилл заведения КОМАНДЫ агентов без sudo под оператором (пример — команда Мастера 14–15.10; B-N-2057, смонтирован Забавой 14.10 22:4xZ, учёт по её слову 22:50Z). 🔴 ГРАНИЦА: под учётом только SKILL.md, reference/ (пример замысла, генераторы) — нет; коллекция agent-skills-newserver агентам не подключена — учёт сторожит файл, а не то, что его читают
 E|/opt/agent-skills-local/codex-podpiski/SKILL.md|скилл подписок OpenAI Codex на sadik (Заря, смонтирован 30.09 15:03Z): токены, вход в новую подписку, обновители, переключатель, заслон лимита; раздел 1 — действующий запрет владельца по Codex (на него ссылаются другие скиллы). 🔴 ГРАНИЦА: ссылка proverka-skilla.py — не файл, под учётом прибор по своей строке
 E|/opt/agent-skills-local/codex-podpiski/sverka-akkauntov.py|прибор скилла codex-podpiski: сверка аккаунтов подписок 3 и 4 (Заря, 30.09 15:03Z)
 E|/opt/agent-skills-local/codex-compaction/SKILL.md|скилл сжатия контекста Codex-агентов через шлюз (Аврора, смонтирован 30.09 14:56Z): стоп на пороге платформы, путь app-server, чтение журнала. 🔴 ГРАНИЦА: только SKILL.md
@@ -651,10 +663,10 @@ E|/opt/iskra/workspace/dorabotki/oblast-obrezki.txt|ДАННЫЕ: каталог
 E|/opt/iskra/workspace/dorabotki/obrezka-isklyucheniya.txt|ДАННЫЕ: разобранные места обрезки, оставленные намеренно, с причиной у каждого. Печатаются поимённо и не красят исход. 🔴 Список обязан УБЫВАТЬ: исключение законно, только пока верна его причина
 E|/opt/iskra/workspace/dorabotki/stend-apt-notify.sh|приёмка уведомителя обновлений: 21 случай, apt подставной
 E|/usr/local/sbin/proverka-kopii.sh|приёмка копии ДЕЙСТВИЕМ: все записи хранилища ИЗ копии открываются ключом ИЗ копии, плюс контроль зрячести в пустом хранилище ключей. Пути берёт из `agent-registry mashina`. 🔴 Проверка сверкой составов делалась трижды и трижды не увидела пустого хранилища — мерила не тот вопрос
-E|/opt/iskra/workspace/dorabotki/stend-priyomki-kopii.sh|приёмка инструмента приёмки: 34 случая (C-H-490: +33 «пустая разметка → код 2»; B-N-1435 (3): +34 «ответ реестра > 128 КиБ → состав проверен», C9 Зари) на СВОЁМ одноразовом ключе, боевые 263 записи не распаковываются. Ловит возврат к проверке одной записи и к head -1 в замере длины
+E|/opt/iskra/workspace/dorabotki/stend-priyomki-kopii.sh|приёмка инструмента приёмки: 44 случая (B-N-2101 r2: +39–44 «нет ни в копии, ни на машине, сборщик назвал отсутствующим при сборке → неполна по составу, код 3; не назвал / записи нет → код 1»; C-H-490: +33 «пустая разметка → код 2»; B-N-1435 (3): +34 «ответ реестра > 128 КиБ → состав проверен», C9 Зари) на СВОЁМ одноразовом ключе, боевые 263 записи не распаковываются. Ловит возврат к проверке одной записи и к head -1 в замере длины
 E|/opt/iskra/workspace/dorabotki/stend-needrestart.sh|приёмка исключений needrestart: наши три службы исключены, пять чужих не задеты
 E|/opt/iskra/workspace/dorabotki/stend-razmer-kopii-watch.sh|приёмка сторожа размера копии (B-N-1470, 03.10, Аврора): 18 проверок на подставной полке — сцепка С1–С8 чисел запаса с приёмкой proverka-svezhesti-kopii.sh (приёмка сменила формулу ⇒ красное здесь), место М1–М5 (граница ±1 ГБ от нужного, счёт стенда по df), ступенька Ш1–Ш4 (журналы .claude/projects и рабочие зоны тревоги не дают). Тревога — заглушка; под iskra в ночном обходе.
-E|/opt/iskra/workspace/dorabotki/stend-priyomki-po-raspisaniyu.sh|приёмка сторожа приёмки: 30 проверок (ZHDYOM_PROVEROK, стенд сверяет число сам) на подставных данных, транспорт и отправщик подменяются. Ловит снятие уборки в trap, снятие разделителя, падение кода при недоставленной тревоге, живую политику успеха юнита (B-N-1429), выбор формулы места по устройству приёмки — потоковая S/20 против прежней 1,5·S при S от живого df (B-N-1435 (3), C2); в ночном обходе с 02.10
+E|/opt/iskra/workspace/dorabotki/stend-priyomki-po-raspisaniyu.sh|приёмка сторожа приёмки: 37 проверок (B-N-2101: +4 «неполна по составу → код 9; отказ по составу → «неполна»; тревоги без НЕГОДНА»; ZHDYOM_PROVEROK, стенд сверяет число сам) на подставных данных, транспорт и отправщик подменяются. Ловит снятие уборки в trap, снятие разделителя, падение кода при недоставленной тревоге, живую политику успеха юнита (B-N-1429), выбор формулы места по устройству приёмки — потоковая S/20 против прежней 1,5·S при S от живого df (B-N-1435 (3), C2); в ночном обходе с 02.10
 E|/opt/iskra/workspace/dorabotki/stend-otmetki-priyomki.sh|приёмка сторожа отметки: 13 случаев, systemctl подставной. Ловит несоблюдение порога, слепоту разбора времени, выданную за отказ, и снятие ветки «приёмка идёт»
 E|/opt/iskra/workspace/dorabotki/proverka-needrestart.pl|воспроизводит ЧТЕНИЕ needrestart и меряет ДЕЙСТВУЮЩУЮ защиту, а не наш файл: присваивание blacklist_rc перезатирает, файл с бо́льшим номером молча отменяет защиту при целой сумме. Предмет приёмки stend-needrestart.sh — до 28.08 стенд был во втором учёте, а его предмет нет
 E|/opt/iskra/workspace/dorabotki/sverka-poroga-blocked.sh|сверка дублированной константы порога action=blocked: наше число против числа платформы. Дубль через границу, которую мы не контролируем
@@ -880,7 +892,7 @@ A|/opt/iskra/workspace/dorabotki/stendy/stend-svesti-dostup-podpisok.sh|стен
 A|/opt/iskra/workspace/dorabotki/stendy/stend-svesti-dostup-watch.sh|стенд svesti-dostup-watch (B-N-1621 k2, Искра): 15 проб на подставных помощнике и канале тревог — зелёное молчит, красное одна тревога, повтор подавлен, через 25 ч снова, новое красное, сброс зелёным, слепота, код 1 без 🔴, тревога не ушла (3) и состояние не записано, W12 следующий прогон с исправным каналом — тревога ушла, W13/W14 слепота подавляется и через 25 ч снова, W15 (k3) — подавляется и при другом хвосте, подмены без ключа и чужой ключ — отказ. Учётка любая; предмет по умолчанию — БОЙ (SDW_BIN)
 A|/opt/iskra/workspace/dorabotki/stendy/stend-obnovitel-prava.sh|обёртка стенда прав производного codex-obnovitel (B-N-1621, Искра), зовёт stend-obnovitel-prava.py; @root
 A|/opt/iskra/workspace/dorabotki/stendy/stend-obnovitel-prava.py|тело стенда прав производного: 7 проб — до/после перехода (наследование группы/ACL, ядро), прежнего нет → root 0600, порча setfacl → замена отменена
-A|/opt/iskra/workspace/dorabotki/stendy/stend-sborshchika-kopii.sh|стенд ночного обхода сборщика копии /usr/local/sbin/sadik-backup.py (B-N-1448, Заря): настоящая sobrat() на подставном доме — восстановимый __pycache__ пропущен, устаревший и нарочный .pyc в копии, нарочный назван «КЭШ НЕ РАЗОБРАН», сборка доходит до конца; 6 проверок
+A|/opt/iskra/workspace/dorabotki/stendy/stend-sborshchika-kopii.sh|стенд ночного обхода сборщика копии /usr/local/sbin/sadik-backup.py (B-N-1448, Заря): настоящая sobrat() на подставном доме — восстановимый __pycache__ пропущен, устаревший и нарочный .pyc в копии, нарочный назван «КЭШ НЕ РАЗОБРАН», сборка доходит до конца; B-N-2101: файл, исчезнувший между обходом и tar.add, назван и не роняет сборку, «-journal» снятой базы не кладётся; 10 проверок
 A|/opt/iskra/workspace/dorabotki/stendy/stend-prav-domov.sh|стенд ночного обхода прав домов iskra/zarya/avrora (B-N-1477, Заря): обёртка proba-prav-domov.sh --boj, 0/1 → 0/1, прочее → 2
 A|/opt/iskra/workspace/dorabotki/stendy/proba-prav-domov.sh|проба прав домов iskra/zarya/avrora: посторонний отказ, законные читают, other=--- (B-N-1477, Заря; = принятой т1 b8d79619)
 A|/opt/iskra/workspace/dorabotki/stendy/stend-mest-kopij.sh|стенд ночного обхода мест копий (B-N-1477 т3, Заря): обёртка proba-kopij.sh --boj
@@ -1033,8 +1045,8 @@ done <<< "$LINKS"
 #   — сумма считается КАНОНОМ (summa-predmeta) по составу тарбола, значит файл, не попавший
 #     в тарбол, суммой не покрыт: не «под присмотром всё», а «под присмотром то, что поедет»;
 #   — канон недоступен → строка «КАНОН-НЕ-ОТВЕТИЛ», это СЛЕПОТА и она видна, а не пропуск;
-#   — разряд ничего не запрещает: расхождение узаконивается через --save, как и всё прочее.
-#     Он делает правки ВИДИМЫМИ, а не запретными.
+#   — расхождение исправных сумм узаконивается через --save, как и всё прочее.
+#     Отказ канона — СЛЕПОТА и код 2 до сверки/записи эталона; пустую сумму узаконить нельзя.
 # 🔴 ПУТЬ СМЕНЁН 05.09.2026, И ВОТ ПОЧЕМУ. Канон брался ИЗ НАБОРА, лежавшего в общем
 # каталоге. Набор я в тот же день убрала (долг 111: внутри него ядро alpha.11 БЕЗ фильтра
 # входа — заряжено на первую же ссылку), и вместе с ним исчезла опора СОБСТВЕННОГО учёта:
@@ -1046,21 +1058,26 @@ done <<< "$LINKS"
 # дают одинаковый ответ (7d585ad81f5bc4d3, файлов 23) — то есть мера не подменена молча.
 # 🔴 ОТ ЭТОГО ФАЙЛА ЗАВИСИТ ВЕСЬ РАЗРЯД ОХВАТА. Соберётесь убрать поставку — сначала
 # перенесите канон, иначе учёт ослепнет по составу всех пакетов сразу.
-KANON_SOSTAVA=/opt/iskra/workspace/ot-mihalycha/postavka-03-09/summa-predmeta
+# B-N-2048 (14.10): прежний канон читает только npm11; формат второго поля нового канона совместим.
+KANON_SOSTAVA=/usr/local/bin/summa-predmeta-2
 if [ ! -x "$KANON_SOSTAVA" ]; then
     echo "🔴 СЛЕПОТА РАЗРЯДА ОХВАТА: канона нет по пути $KANON_SOSTAVA"
-    echo "   Ниже у ВСЕХ пакетов будет «КАНОН-НЕ-ОТВЕТИЛ» — это про инструмент, не про пакеты."
+    exit 2
 fi
+kanon_bed=0
 # B-N-1353 (01.10): /opt/dsh-package-manager/<версия>/package — pnpm, который зовёт /usr/local/bin/pnpm. Смена версии = новый каталог:
 # старая строка P пропадёт, новая появится — учёт покраснеет, и это нужное поведение (тихой подмены нет).
 for d in /opt/iskra/plugins/*/ /opt/dsh-package-manager/*/package/; do
     [ -r "$d/package.json" ] || continue
     seen=$((seen+1))
-    ss=$(env HOME="$NASHI_HOME" "$KANON_SOSTAVA" "${d%/}" 2>/dev/null | awk '{print $2}')
-    [ -z "$ss" ] && { ss="КАНОН-НЕ-ОТВЕТИЛ"; missing=$((missing+1)); }
+    if ! ss=$(set -o pipefail; env HOME="$NASHI_HOME" "$KANON_SOSTAVA" "${d%/}" 2>/dev/null | awk '{print $2}') || [[ ! "$ss" =~ ^[0-9a-f]{16}$ ]]; then
+        echo "СЛЕПОТА канона: ${d%/} — $KANON_SOSTAVA не дал одну 16-значную сумму" >&2
+        ss="КАНОН-НЕ-ОТВЕТИЛ"; missing=$((missing+1)); kanon_bed=1
+    fi
     printf 'P|%s|%s\n' "${d%/}" "$ss" >> "$tmp"
     [ "$MODE" = "list" ] && printf 'P  %-62s %s\n     состав пакета одной суммой (канон)\n' "${d%/}" "$ss"
 done
+[ "$kanon_bed" -eq 0 ] || exit 2
 
 # РАЗРЯД Q: ДОКУМЕНТЫ ПРОЦЕДУР. Заведён 06.09.2026, долг 117.
 # 🔴 ЗАЧЕМ. До этого каталог procedury/ не сверялся НИЧЕМ (grep 'procedury' по этому
@@ -1437,7 +1454,7 @@ if [ "$MODE" = "list" ] || [ "$MODE" = "--save" ]; then
         #    заново); файл, пропавший ПОСЛЕ --save (это ловит --check: сумма разошлась); и пустой файл — у него
         #    есть сумма, это не «нет файла».
         # B-N-1744 (07.10, Вениамин, low): строка LINKS без ссылки («-> НЕТ-ССЫЛКИ») — то же отсутствие, тот же отказ.
-        #    Не ловит прочие слепоты («КАНОН-НЕ-ОТВЕТИЛ», «ПРАВИТ-АГЕНТ:СЛЕПОТА») — они узакониваются как прежде.
+        #    Не ловит «ПРАВИТ-АГЕНТ:СЛЕПОТА». Отказ канона P отсекается раньше (B-N-2048, 14.10).
         net_fajla=$(grep -E '^\+[A-Z]\|[^|]*\|(НЕТ-ФАЙЛА|-> НЕТ-ССЫЛКИ)$' "$tmp.sdiff" | cut -d'|' -f2 || true)
         if [ -n "$net_fajla" ]; then
             nf_chislo=$(printf '%s\n' "$net_fajla" | grep -c . || true)
@@ -1715,49 +1732,56 @@ if [ "$MODE" = "--check" ]; then
 # нужны оба. Неполнота поимённого учёта обязана быть ВИДНА ТАМ, ГДЕ СМОТРЯТ, — в итоге.
 #
 # ГДЕ НЕ ПРИМЕНЯЕТСЯ: считает только каталоги плагинов, где есть package.json. Ничего не
-# запрещает и код возврата не меняет — это ЧИСЛО, суждение за человеком.
+# запрещает при измеренном охвате — это ЧИСЛО, суждение за человеком. Ошибка разбора — слепота и код 2.
 ohvat_paketov() {
-    local vsego=0 pod=0 spisok="" paketov=0 pod_v_spiske=0 vsego_v_spiske=0
+    local vsego=0 pod=0 spisok="" paketov=0 pod_v_spiske=0 vsego_v_spiske=0 slep=0 imena=""
+    if ! command -v npm-sostav >/dev/null 2>&1; then
+        echo "СЛЕПОТА охвата: /opt/iskra/plugins — npm-sostav не найден — нужен dsh-pribory ≥ 3.1.2"
+        echo "охват состава пакетов: не измерен"
+        return 2
+    fi
     for d in /opt/iskra/plugins/*/; do
-        [ -r "$d/package.json" ] || continue
-        local v
-        v=$( cd "$d" 2>/dev/null && env HOME="$NASHI_HOME" npm pack --dry-run --json 2>/dev/null \
-             | python3 -c "import json,sys
-try: print(len(json.load(sys.stdin)[0]['files']))
-except Exception: print(0)" 2>/dev/null )
-        [ "${v:-0}" -gt 0 ] || continue
-        # 🔴 СЧИТАЕМ ПЕРЕСЕЧЕНИЕ, А НЕ ВСЕ СТРОКИ С ЭТИМ ПУТЁМ (05.09.2026, находка приёмки).
-        # Прежде `grep -c "|путь/"` считал ЛЮБУЮ учтённую строку под каталогом — включая те,
-        # что в состав тарбола не входят. У mcp-bridge вышло «под учётом 17 из 16»: лишней
-        # оказалась строка про node_modules. Числитель, способный превысить знаменатель,
-        # молча завышал общий охват — а «под учётом больше, чем всего» бессмысленно и должно
-        # было бы кричать само.
-        local u
-        u=$( cd "$d" 2>/dev/null && env HOME="$NASHI_HOME" npm pack --dry-run --json 2>/dev/null \
-             | python3 -c "import json,sys
-try: sostav=set(f['path'] for f in json.load(sys.stdin)[0]['files'])
-except Exception: sostav=set()
-print('\n'.join(sorted(sostav)))" 2>/dev/null \
-             | while read -r f; do grep -qF "|${d%/}/$f|" "$MANIFEST" && echo x; done | wc -l )
-        u=${u:-0}
-        vsego=$((vsego + v)); pod=$((pod + u)); paketov=$((paketov + 1))
-        # ⚠️ ЭТА ВЕТКА НЕДОСТИЖИМА ПРИ НЫНЕШНЕМ СЧЁТЕ, и это сказано, а не скрыто.
-        # Считая ПЕРЕСЕЧЕНИЕ, числитель превысить знаменатель не может: лишняя строка
-        # учёта просто не попадёт в него. Проверено порчей — подложила в учёт файл,
-        # которого нет в составе: ветка не сработала, и это верно.
-        # Оставлена намеренно как сторож НА СМЕНУ СПОСОБА СЧЁТА: вернись кто-нибудь к
-        # `grep -c` по каталогу — «17 из 16» снова станет возможным, и тогда она закричит.
-        # Мёртвый сторож, о котором не сказано, что он мёртв, хуже отсутствующего:
-        # он создаёт чувство защиты. Здесь сказано.
-        if [ "$u" -gt "$v" ]; then
-            echo "   🔴 $(basename "${d%/}"): под учётом $u из $v — числитель БОЛЬШЕ знаменателя,"
-            echo "      значит счёт идёт по разным множествам. Число охвата ниже НЕВЕРНО."
-        fi
-        if [ "$u" -lt "$v" ]; then
-            spisok="$spisok $(basename "${d%/}"):$u/$v"
-            pod_v_spiske=$((pod_v_spiske + u)); vsego_v_spiske=$((vsego_v_spiske + v))
+        [ -e "$d/package.json" ] || continue
+        local v u sostav
+        if sostav=$( cd "$d" && set -o pipefail && env HOME="$NASHI_HOME" npm pack --ignore-scripts --dry-run --json 2>/dev/null \
+                      | npm-sostav --files 2>&1 ) && [ -n "$sostav" ]; then
+            v=$(printf '%s\n' "$sostav" | wc -l)
+            # 🔴 СЧИТАЕМ ПЕРЕСЕЧЕНИЕ, А НЕ ВСЕ СТРОКИ С ЭТИМ ПУТЁМ (05.09.2026, находка приёмки).
+            # Прежде `grep -c "|путь/"` считал ЛЮБУЮ учтённую строку под каталогом — включая те,
+            # что в состав тарбола не входят. У mcp-bridge вышло «под учётом 17 из 16»: лишней
+            # оказалась строка про node_modules. Числитель, способный превысить знаменатель,
+            # молча завышал общий охват — а «под учётом больше, чем всего» бессмысленно и должно
+            # было бы кричать само.
+            # Оба числа — по одному составу, без второго npm pack.
+            u=$(printf '%s\n' "$sostav" | sort -u \
+                 | while IFS= read -r f; do grep -qF "|${d%/}/$f|" "$MANIFEST" && echo x; done | wc -l )
+            u=${u:-0}
+            vsego=$((vsego + v)); pod=$((pod + u)); paketov=$((paketov + 1)); imena="$imena $(basename "${d%/}")"
+            # ⚠️ ЭТА ВЕТКА НЕДОСТИЖИМА ПРИ НЫНЕШНЕМ СЧЁТЕ, и это сказано, а не скрыто.
+            # Считая ПЕРЕСЕЧЕНИЕ, числитель превысить знаменатель не может: лишняя строка
+            # учёта просто не попадёт в него. Проверено порчей — подложила в учёт файл,
+            # которого нет в составе: ветка не сработала, и это верно.
+            # Оставлена намеренно как сторож НА СМЕНУ СПОСОБА СЧЁТА: вернись кто-нибудь к
+            # `grep -c` по каталогу — «17 из 16» снова станет возможным, и тогда она закричит.
+            # Мёртвый сторож, о котором не сказано, что он мёртв, хуже отсутствующего:
+            # он создаёт чувство защиты. Здесь сказано.
+            if [ "$u" -gt "$v" ]; then
+                echo "   🔴 $(basename "${d%/}"): под учётом $u из $v — числитель БОЛЬШЕ знаменателя,"
+                echo "      значит счёт идёт по разным множествам. Число охвата ниже НЕВЕРНО."
+            fi
+            if [ "$u" -lt "$v" ]; then
+                spisok="$spisok $(basename "${d%/}"):$u/$v"
+                pod_v_spiske=$((pod_v_spiske + u)); vsego_v_spiske=$((vsego_v_spiske + v))
+            fi
+        else
+            echo "СЛЕПОТА охвата: ${d%/} — npm pack/npm-sostav не дал состав: ${sostav//$'\n'/ }"
+            slep=1
         fi
     done
+    if [ "$slep" -ne 0 ]; then
+        echo "охват состава пакетов: не измерен"
+        return 2
+    fi
     if [ "$vsego" -eq 0 ]; then
         # 🔴 МОЛЧАНИЕ РАЗРЯДА НЕОТЛИЧИМО ОТ «РАЗРЯДА НЕТ» (найдено 06.09.2026 ПРОГОНОМ).
         # Состав пакета берётся у `npm pack --dry-run`. Подставила заглушку npm, всегда
@@ -1768,9 +1792,12 @@ print('\n'.join(sorted(sostav)))" 2>/dev/null \
         # Поэтому здесь СЛЕПОТА с причиной, а не молчание и не ноль.
         echo "🔴 СЛЕПОТА РАЗРЯДА ОХВАТА: состав пакетов не получен ни у одного (знаменатель 0)."
         echo "   Это про ИНСТРУМЕНТ, не про пакеты: состав берётся у npm pack --dry-run."
-        echo "   Проверьте: cd <пакет> && npm pack --dry-run --json | head -3"
+        echo "   Проверьте: cd <пакет> && npm pack --ignore-scripts --dry-run --json | npm-sostav --files"
+        echo "охват состава пакетов: не измерен"
+        return 2
     else
         echo "охват состава пакетов: под учётом $pod файлов из $vsego (пакетов $paketov)"
+        echo "   пакеты охвата:$imena"
         # 🔴 СУММА СТРОК ПЕЧАТАЕТСЯ РЯДОМ С ИТОГОМ (просьба приёмки 05.09.2026).
         # Итог считает ВСЕ пакеты, а перечень ниже — только те, где охват НЕПОЛНЫЙ. Приёмка
         # сложила строки, не сошлась с итогом и потратила на это заход. Разницу должен ловить
@@ -1784,6 +1811,7 @@ print('\n'.join(sorted(sostav)))" 2>/dev/null \
         [ -n "$spisok" ] && echo "   ПОИМЁННО их нет, но с 05.09.2026 состав каждого пакета покрыт ОДНОЙ суммой"
         [ -n "$spisok" ] && echo "   (строки P| выше): правка внутри пакета видна как смена суммы, БЕЗ имени файла."
     fi
+    return 0
 }
 
     obeshchannyj_kontrol || kontrol_bed=1
@@ -1795,7 +1823,7 @@ print('\n'.join(sorted(sostav)))" 2>/dev/null \
     # Выход: число есть, суждения нет. Правил инструмент — видишь другую сумму и знаешь
     # почему. Не правил, а сумма сменилась — вопрос твой, и задать его больше некому.
     echo "мой отпечаток: $(md5sum "$0" | cut -c1-16) (без вердикта: сравнивать не с чем, судить человеку)"
-    ohvat_paketov
+    ohvat_paketov || exit 2
     # ═══ ТЁЗКИ: ПАРА «ИСХОДНИК ↔ КОПИЯ В PATH» ══════════════════════════════════════════
     # 🔴 ЗАЧЕМ ЗДЕСЬ, А НЕ ОТДЕЛЬНОЙ КОМАНДОЙ. Учёт сверяет КАЖДЫЙ файл со СВОЕЙ строкой
     # эталона. Значит при расхождении ПАРЫ обе строки остаются зелёными: исходник совпал со

@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "sweep_interval_seconds": 60,
+  "batch_refs": 100,
+  "budget_ms": 2000,
+  "limits": {
+    "max_live_body_bytes": 16777216,
+    "max_pending_per_sender": 200,
+    "warn_percent": 80,
+    "recover_percent": 70,
+    "max_live_db_bytes": 134217728
+  },
+  "agents": {
+    "master": {
+      "outgoing": {
+        "keep_count": 100,
+        "older_than_hours": 96
+      },
+      "incoming": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      }
+    },
+    "vintik": {
+      "outgoing": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      },
+      "incoming": {
+        "keep_count": 100,
+        "older_than_hours": 96
+      }
+    },
+    "shpuntik": {
+      "outgoing": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      },
+      "incoming": {
+        "keep_count": 100,
+        "older_than_hours": 96
+      }
+    },
+    "gayka": {
+      "outgoing": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      },
+      "incoming": {
+        "keep_count": 100,
+        "older_than_hours": 96
+      }
+    },
+    "sova": {
+      "outgoing": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      },
+      "incoming": {
+        "keep_count": 100,
+        "older_than_hours": 96
+      }
+    },
+    "shurup": {
+      "outgoing": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      },
+      "incoming": {
+        "keep_count": 100,
+        "older_than_hours": 96
+      }
+    },
+    "tumbler": {
+      "outgoing": {
+        "keep_count": 100,
+        "older_than_hours": 48
+      },
+      "incoming": {
+        "keep_count": 100,
+        "older_than_hours": 96
+      }
+    }
+  }
+}

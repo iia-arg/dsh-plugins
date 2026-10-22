@@ -1,0 +1,126 @@
+{
+  "schema": 1,
+  "upstream_sha": "9fc898cbe941d5b8a369f1dd657e9119676eb44f",
+  "local_suffix": "-b42",
+  "files": [
+    {
+      "path": "phases/0-instruments.md",
+      "source": "overlay/phases/0-instruments.md",
+      "before_sha256": "ad0430bea2679f8871d0e27969d4b59f3b2a83f15a35a6668c070409be3dfb01",
+      "sha256": "facdf8d11e1ff851fbe91467fd7c2bb90b1086abdb1f9ee2831e33cf467a3413",
+      "mode": 420
+    },
+    {
+      "path": "phases/0-preflight.md",
+      "source": "overlay/phases/0-preflight.md",
+      "before_sha256": "a1fe78e2ba45fb99ff9d7d7dc5f023a848ce19181af778ac2a7c30d09201f956",
+      "sha256": "e61de4bbe52606a98ccf9de2fea7cc639977d94f9846314a1f409356dbe7cb94",
+      "mode": 420
+    },
+    {
+      "path": "phases/0-resume.md",
+      "source": "overlay/phases/0-resume.md",
+      "before_sha256": "4a1efe74d32e28df348bda14035f0b195c2a8f8dccb954b35bf68d178c0ee3f8",
+      "sha256": "7cf2d2c2f05f5529b997379847cd5bd8e7a33f04b730c9e63c33215fbccee31b",
+      "mode": 420
+    },
+    {
+      "path": "phases/4-plan.md",
+      "source": "overlay/phases/4-plan.md",
+      "before_sha256": "b86a8740c3e8bc122728be045060e9cb3437c0f54f297bf62f6384d626066fc1",
+      "sha256": "f4040d250a66d6bc5a4de38bb9bd504f417c0dac450b356d80693d64251dcdc1",
+      "mode": 420
+    },
+    {
+      "path": "phases/5-subagents.md",
+      "source": "overlay/phases/5-subagents.md",
+      "before_sha256": "1ddcc81b1b12e67910c71ed3b7f97b21624b8946dfea761b5f5e83eeff033ed4",
+      "sha256": "b2d8461d6b778f5a0f825bf9d753e9050b4a22ee493b3840ad9d031386e3c190",
+      "mode": 420
+    },
+    {
+      "path": "phases/8-final.md",
+      "source": "overlay/phases/8-final.md",
+      "before_sha256": "9a6b6fd09b9dbb30c6f53e184e52aec5b09562eb0b139638961a75bb4d38b7c6",
+      "sha256": "4ccfb19be10cc62476a347914d037f9f09694959ce683d5f21847606285497ac",
+      "mode": 420
+    },
+    {
+      "path": "tools/ap.py",
+      "source": "overlay/tools/ap.py",
+      "before_sha256": "74999d94a0d0de29f7242d1433244d7973029d60e90f2f21d41dea250b13e07e",
+      "sha256": "6f25a05923a19bff68729f17f3aaae56ce84811684652baa7e1f656c4d7c5a32",
+      "mode": 420
+    },
+    {
+      "path": "tools/ap_sadik.py",
+      "source": "runtime/ap_sadik.py",
+      "before_sha256": null,
+      "sha256": "6f13263b5621138271be4c894a224ffbca60b021c3ac136d22e2be4a7876dc0d",
+      "mode": 420
+    },
+    {
+      "path": "phases/dashboard-template.html",
+      "source": "overlay/phases/dashboard-template.html",
+      "before_sha256": "c9e1f01f50e505143fa79689fb1f30257c43736b4217678fbbb1752b9841e215",
+      "sha256": "cf9d7c701f6bb0bb9354adb6d3b2951ebbd863ca92b1366c0790a7d53388051f",
+      "mode": 420
+    },
+    {
+      "path": "tools/run_catalog.py",
+      "source": "runtime/run_catalog.py",
+      "before_sha256": null,
+      "sha256": "26ef35d2cdb9ae93c19c047bd07d513f75714cc4c9172fd811d34343a5a4a72e",
+      "mode": 420
+    },
+    {
+      "path": "tools/team_usage.py",
+      "source": "runtime/team_usage.py",
+      "before_sha256": null,
+      "sha256": "2ae70d3c5da3af252ebdf9b9446da182ccbb8efa316460c11de790849c188b1e",
+      "mode": 420
+    },
+    {
+      "path": "tools/usage_registration.py",
+      "source": "runtime/usage_registration.py",
+      "before_sha256": null,
+      "sha256": "0e9e5515a66f37ff40ed9d112bf9e0174adda0d5e66d150b7fd5a5b32a0f69e2",
+      "mode": 420
+    },
+    {
+      "path": "tools/mail_registration.py",
+      "source": "lib/mail_registration.py",
+      "before_sha256": null,
+      "sha256": "1017dedc0e8ca3967668a4ee1729064362f37ff69a593ec2887a5ab94869129d",
+      "mode": 420
+    },
+    {
+      "path": "tools/usage-reader-limits.json",
+      "source": "runtime/usage-reader-limits.json",
+      "before_sha256": null,
+      "sha256": "7b814bf0eaad5a4cb7d38282dcce82fabd116765412ad614f97447e88c0d4dcc",
+      "mode": 420
+    },
+    {
+      "path": "tools/codex_account_map.py",
+      "source": "runtime/codex_account_map.py",
+      "before_sha256": null,
+      "sha256": "ba1b0c8291d1cbabab764add2391a8aebf1d8437f8edf43bb2ad1c9aa9fade79",
+      "mode": 420
+    },
+    {
+      "path": "tools/child_usage.py",
+      "source": "runtime/child_usage.py",
+      "before_sha256": null,
+      "sha256": "ed078afb13c986346d2a4dee060607d2d13d53d589d85e8c9e90436f37a663ee",
+      "mode": 420
+    },
+    {
+      "path": "tools/child-source-versions.json",
+      "source": "runtime/child-source-versions.json",
+      "before_sha256": null,
+      "sha256": "777297887dfd27eefa690a3ed47c4ee8c432499a5f50a0ebf9de3c40467a77ca",
+      "mode": 420
+    }
+  ]
+}

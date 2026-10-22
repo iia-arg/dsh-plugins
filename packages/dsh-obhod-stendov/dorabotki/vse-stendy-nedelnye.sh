@@ -14,22 +14,27 @@ export OBLAST_STENDOV="${OBLAST_STENDOV-$K/stend-vzaimnogo-nabludeniya.sh
 $K/stend-storozha-reestrov.sh
 $K/stendy/stend-sadik-watch-bez-sredy.sh
 $K/stendy/stend-storozha-nad-storozhami.sh
-$K/stend-needrestart.sh}"
+$K/stend-needrestart.sh
+/opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-vsplesk.py @root /opt/iskra/app}"
 export PERECHEN_STENDOV="${PERECHEN_STENDOV:-$K/perechen-nedelnyh-stendov.txt}"
 # предел стенда = замер × ~2,4 (как B-N-991): 922/938 с (+70 с пробы B-N-1073) → 2400 с; весь прогон — сумма с запасом
 export PREDEL_STENDOV="${PREDEL_STENDOV-$K/stend-vzaimnogo-nabludeniya.sh 2400
 $K/stend-storozha-reestrov.sh 2400
 $K/stendy/stend-sadik-watch-bez-sredy.sh 220
 $K/stendy/stend-storozha-nad-storozhami.sh 3200
-$K/stend-needrestart.sh 300}"
+$K/stend-needrestart.sh 300
+/opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-vsplesk.py 300}"
 # B-N-1768 (07.10): +stend-sadik-watch-bez-sredy (90 с → 220) и stend-storozha-nad-storozhami (1330 с → 3200), замер Авроры 07.10 × ~2,4.
 #   Весь прогон: худший замер 1209+1008+1330+90 ≈ 3640 с < 5400 < TimeoutStartSec юнита 95 мин (5700 с) — общий предел не меняю.
 export VSE_STENDY_PREDEL="${VSE_STENDY_PREDEL:-5400}"
+# 3.1.63 (15.10, Искра; находка С1 → маркер Авроры в dsh-trevogi 3.1.4): stend-vsplesk.py — живой (подставные юниты на
+#   настоящем systemd), из ночного обхода перенесён сюда; ключ --zhivaya-mashina поимённо, предел 300 с (замер ~5 с), @root.
 # B-N-1929 (Заря; условие Вениамина 10:36Z п.1): недельный — ЗАКОННЫЙ зовущий живых стендов. Ключ --zhivaya-mashina подаётся ЯВНО и
-#   ПОИМЁННО только двум строкам (через «--» в SREDA_STENDOV: обходчик отдаёт стенду всё после «--»), не всем подряд. Ночной обход и
+#   ПОИМЁННО только строкам SREDA ниже (было две; 3.1.63 — третья) (через «--» в SREDA_STENDOV: обходчик отдаёт стенду всё после «--»), не всем подряд. Ночной обход и
 #   ворота выпуска ключ НЕ подают — у них SREDA обходчика, где этого слова нет. Свой SREDA здесь замещает умолчание обходчика целиком:
 #   из пяти стендов недельного ни одному строк умолчания не нужно (замер 09.10: в SREDA обходчика их имён нет).
 export SREDA_STENDOV="${SREDA_STENDOV-$K/stend-vzaimnogo-nabludeniya.sh -- --zhivaya-mashina
-$K/stend-needrestart.sh -- --zhivaya-mashina}"
-printf 'недельный обход подаёт --zhivaya-mashina (живая машина, ручной ключ недельного): %s\n' "$K/stend-vzaimnogo-nabludeniya.sh" "$K/stend-needrestart.sh"
+$K/stend-needrestart.sh -- --zhivaya-mashina
+/opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-vsplesk.py -- --zhivaya-mashina}"
+printf 'недельный обход подаёт --zhivaya-mashina (живая машина, ручной ключ недельного): %s\n' "$K/stend-vzaimnogo-nabludeniya.sh" "$K/stend-needrestart.sh" "/opt/iskra/workspace/dsh-plugins/packages/dsh-trevogi/test/stend-vsplesk.py"
 exec bash "${OBERTKA:-$K/vse-stendy-po-tajmeru.sh}"

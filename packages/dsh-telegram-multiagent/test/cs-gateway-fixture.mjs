@@ -19,8 +19,9 @@ export function copyGatewayFixture(target){
   for(const dir of [source,path.join(source,'test')])if(!fs.lstatSync(dir).isDirectory())throw Error('источник должен быть обычным каталогом: '+dir);
   const manifest=read(path.join(source,'package.json')),pkg=JSON.parse(manifest);
   if(!Array.isArray(pkg.files)||!pkg.files.includes('gateway.mjs')||!pkg.files.includes('test/extract.mjs'))throw Error('package.json files не объявляет gateway.mjs и test/extract.mjs');
-  const names=[...new Set(pkg.files.filter(name=>typeof name==='string'&&/^[a-zA-Z0-9_-]+\.mjs$/.test(name)))];
-  // Deliberately ignore directory entries and all other files, even when in files.
+  const publicJson=['usage-limits.json','child-source-versions.json','schedule.json'].filter(name=>pkg.files.includes(name));
+  const names=[...new Set([...pkg.files.filter(name=>typeof name==='string'&&/^[a-zA-Z0-9_-]+\.mjs$/.test(name)),...publicJson])];
+  // Ignore directories and all other JSON, even when declared by a source home's manifest.
   const rows=[['package.json',manifest],...names.map(name=>[name,read(path.join(source,name))]),['test/extract.mjs',read(path.join(source,'test/extract.mjs'))]];
   fs.mkdirSync(path.join(target,'test'),{recursive:true});
   for(const [name,bytes] of rows)fs.writeFileSync(path.join(target,name),bytes);

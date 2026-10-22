@@ -171,7 +171,7 @@ async observe(session,turn=null,recovering=false) {
     }
     if(await this.sessions.flush(session)!==true) throw Error('Receipt barrier: persistence did not confirm flush');
     if(this.conversationSessions?.holdsSession(session.id))throw Error('Сессия удержана отменой /new');
-    const claimed = this.ledger.reconcile(session,turn,recovering);
+    const claimed = this.ledger.reconcile(session,turn,recovering,this.returnPaths);
 
     for (const fact of claimed) {
       this.log(`[receipt] entered_turn ${JSON.stringify({ ...fact, observed_at: this.ledger.now() })}`);

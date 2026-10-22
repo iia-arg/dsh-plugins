@@ -1,5 +1,9 @@
 # История изменений dsh-podyom
 
+## 3.1.4 — 14.10.2026 · команда Мастера: +vintik/shpuntik/gayka/shurup/tumbler в UNITS (наряд Забавы 14.10 20:35:04Z; Искра)
+
+- `proverit-podyom-kodera`: `vintik.service`, `shpuntik.service`, `gayka.service`, `shurup.service`, `tumbler.service` в UNITS и в строке документации. README: перечни юнитов (и master, пропущенный в 3.1.2). Логика не менялась. · Master team: four units added to UNITS and the docstring; README unit lists (also master, missed in 3.1.2); logic unchanged.
+
 ## 3.1.3 — 14.10.2026 · подготовка к публикации · release prep (Аврора, наряд Забавы 07:18Z)
 
 - README: строка «Версия · Version: 3.1.3» под заголовком. · README: version line under the heading.

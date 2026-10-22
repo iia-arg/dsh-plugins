@@ -1,5 +1,26 @@
 # Изменения · Changelog
 
+## 3.1.6 — 21.10.2026 · podyom-mimo-vorot-watch: пустой ответ journalctl по службам — не слепота · empty per-unit journalctl answer is not blindness
+
+- `bin/podyom-mimo-vorot-watch`: пустой ответ journalctl по службам — не слепота (проба тем же MESSAGE_ID без фильтра юнитов); причина ошибки печатается. Перенос побайтно, SHA256 `ffa0191539abb5e2ec57d360361662a8b407b186e4f996a169ea1bc3ae93a6f0`.
+- Повод: ротация journald (1 ГБ ≈ 1,5 сут при ~7000 стартов PID1/час) выбила старты 15 служб — сторож слеп каждые 15 мин с 21.10 12:15Z.
+- Граница: опечатку в именах служб не ловит.
+- Михалыч; ворота Вениамина 21.10 15:24 МСК.
+
+## 3.1.5 — 17.10.2026 · B-N-2100 r2: место и плановые писатели · disk space and scheduled writers
+
+- `bin/agent-watchdog.sh`: принят r2 с комментарием границ, SHA256 `a40d8c5cda626dabb4db0ac0d5879c2e7122fbda6006df9dbaef90fa1c0311e1`; перенос побайтно, без новых изменений поведения. Independent 20%/10%/rate quiet windows, ≥2 GiB drop per interval, ETA and bounded directory diagnostics; exact accepted r2 bytes including the limitations header.
+- Обязательные данные `DISK_KNOWN_WRITERS`: active/activating ожидаемый писатель освобождает только 20%/скорость при полной сравнимой диагностике без чужого роста; ниже 10% исключения нет. Пустой список/неизвестный юнит — именованная слепота, не тишина. Required writer data; expected writes may exempt warning/rate only, foreign growth and the critical tier still alert; missing/invalid inputs are explicit blindness.
+- README RU/EN: номер и данные обновления, пределы du 8 с/256 MiB, разрыв скорости 900 с, допущение X=2 GiB/интервал и границы атрибуции. При монтаже дополнять существующий машинный конфиг; смена BACKUP_LOCAL_DIR/TMPDIR/PrivateTmp без правки списка не ловится. Document the required config update and limits; allowed-directory attribution does not identify the writing process.
+- `test/stend-agent-watchdog.sh`: фикстура знает обязательного подставного писателя и ответ show; ожидание «без настройки» соответствует общему тексту неполноты r2. Прежние шесть фаз сохранены. Update fixture writer/show data and the missing-config message expectation; keep the six existing phases.
+
+## 3.1.4 — 14.10.2026 · B-N-2048: npm 12
+
+- `bin/dsh-upstream-watch.sh`: ответ `npm view … dist-tags --json` приводится помощником `npm-sostav --view` (пакет `dsh-pribory` 3.1.2): npm 11 отдаёт объект, npm 12 — массив из одного; прежний разбор под npm 12 давал «СЛЕПОТА: метки не разобраны». Не разобран — «СЛЕПОТА», код 2 · the dist-tags answer is normalised by `npm-sostav --view`; npm 12 used to blind the watcher.
+- `test/stend-dsh-upstream-watch.sh`: +2 проверки (метки npm 12 массивом — как npm 11; `{"error":…}` — слепота), всего 11 · +2 checks, 11 total.
+- необязательный peer `dsh-pribory` `^3.1.2` (`peerDependenciesMeta.optional`; единая форма B-N-2048, решение Забавы 15:07Z; помощник `npm-sostav` — команда на PATH хозяина); нет его в `PATH` — «СЛЕПОТА: npm-sostav не найден — нужен dsh-pribory ≥ 3.1.2», код 2 · optional peer `dsh-pribory` ^3.1.2; without `npm-sostav` on `PATH` the watcher refuses with code 2.
+- ⚠️ Публикация: `dsh-pribory` 3.1.2 в npm ещё нет — публиковать его ПЕРВЫМ, иначе установка этого пакета из реестра даст ETARGET (ворота Вениамина 14:44Z) · publish `dsh-pribory` 3.1.2 first, otherwise ETARGET.
+
 ## 3.1.3 — 14.10.2026 · подготовка к публикации · release prep (Аврора, наряд Забавы 07:18Z)
 
 - `engines.node` ">=18" — кода на Node в пакете нет (bash/python), это граница установки через npm, а не проверенная среда кода · `engines.node` ">=18" — no Node code in the package (bash/python); the bound is for npm installation, not a tested code runtime

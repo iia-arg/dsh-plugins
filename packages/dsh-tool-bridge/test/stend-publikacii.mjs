@@ -2,19 +2,40 @@
 // EN: stend-publikacii verification: exercises package code on controlled inputs; some cases require an installed platform. Exit 2 means missing test prerequisites, not success.
 
 
-import { readFileSync, existsSync, readdirSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync, lstatSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 
 const KORNI = process.env.MOST_KORNI
   || path.dirname(path.dirname(new URL(import.meta.url).pathname))
 
+// RU: Каталог в files покрывает его файлы; не пытаемся читать сам каталог как текст.
+// EN: A files directory covers its descendants, not a text file named after the directory.
+const fajly = (f) => {
+  const rel = path.normalize(f)
+  if (path.isAbsolute(rel) || rel === '..' || rel.startsWith('..' + path.sep)) {
+    throw new Error(`путь состава вне корня: ${f}`)
+  }
+  const put = path.join(KORNI, f)
+  if (existsSync(put)) {
+    const physical = path.relative(realpathSync(KORNI), realpathSync(put))
+    if (path.isAbsolute(physical) || physical === '..' || physical.startsWith('..' + path.sep)) {
+      throw new Error(`ссылка состава вне корня: ${f}`)
+    }
+  }
+  if (existsSync(put) && lstatSync(put).isDirectory()) {
+    return readdirSync(put).flatMap((name) => fajly(path.join(f, name)))
+  }
+  return [rel]
+}
+const kopiyaPravki = (f) => /\.bak|\.orig|\.tmp|\.limits$/.test(f)
+
 const SOSTAV = (() => {
   try {
     const m = JSON.parse(readFileSync(path.join(KORNI, 'package.json'), 'utf-8'))
     const f = Array.isArray(m.files) ? m.files.filter((x) => typeof x === 'string') : []
 
-    return f.includes('package.json') ? f : ['package.json', ...f]
+    return [...new Set((f.includes('package.json') ? f : ['package.json', ...f]).flatMap(fajly))]
   } catch (e) {
     console.log(`СЛЕПОТА: состав не прочитан из манифеста (${e?.message ?? e}) — проверять нечего`)
     process.exit(2)
@@ -69,7 +90,7 @@ const SOBIRAEMYE = existsSync(FAJL_SOB)
   : []
 const sobiraetsya = (f) => SOBIRAEMYE.some((x) => x.fajl === f)
 
-let ok = 0, bad = 0, slep = 0
+let ok = 0, bad = 0, slep = 0, neprim = 0
 const sud = (uslovie, imya, fakt) => {
   if (uslovie) { ok += 1; return }
   bad += 1
@@ -124,24 +145,26 @@ for (const i of ISKLYUCHENIYA) {
   }
 }
 
-const kopij = SOSTAV.filter((f) => /\.bak|\.orig|\.tmp|\.limits$/.test(f)).length
+const kopij = SOSTAV.filter(kopiyaPravki).length
 sud(kopij === 0, 'в составе нет копий и черновиков', `${kopij} штук`)
-const vsegoNaDiske = ['src', 'test'].reduce((n, d) => {
-  try { return n + readdirSync(path.join(KORNI, d)).length } catch { return n }
-}, 0)
-
-const estKopij = ['src', 'test'].some((d) => {
-  try { return readdirSync(path.join(KORNI, d)).some((f) => /\.bak-pre-|\.limits$/.test(f)) }
-  catch { return false }
-})
-if (estKopij) {
-  sud(vsegoNaDiske > SOSTAV.length,
-    'на диске файлов БОЛЬШЕ, чем в составе — публикуется перечень, а не каталог',
-    `на диске ${vsegoNaDiske}, в составе ${SOSTAV.length}`)
+let kopii
+try {
+  kopii = ['src', 'test'].flatMap(fajly).filter(kopiyaPravki)
+} catch (e) {
+  console.log(`СЛЕПОТА: копии правок не прочитаны (${e?.message ?? e})`)
+  process.exit(2)
+}
+if (kopii.length) {
+  const pokrytye = kopii.filter((f) => SOSTAV.some((p) => f === p || f.startsWith(p.replace(/\/+$/, '') + '/')))
+  sud(pokrytye.length === 0,
+    'копии правок на диске не покрыты составом по имени или каталогу',
+    `покрыты: ${pokrytye.join(', ')}`)
 } else {
-  slep += 1
-  console.log('СЛЕПОТА состав против диска: копий правок рядом нет — это собранный '
-    + 'пакет, а не рабочий каталог, и лишним файлам тут взяться неоткуда')
+  // RU: B-N-1988/2061: без копий проба не судит; это не успех и не слепота.
+  // EN: No edit copies means not applicable, not a successful coverage test.
+  neprim += 1
+  console.log('НЕ ПРИМЕНИМО состав против диска: копий правок (.bak, .orig, .tmp, .limits) в src/ и test/ нет — '
+    + 'судит только рабочий каталог с копиями правок')
 }
 
 const kodFajl = (f) => /\.(m?js|cjs|py|sh)$/.test(f)
@@ -201,8 +224,8 @@ if (existsSync(doc)) {
 const ZHDYOM = SOSTAV.reduce((n, f) => n + (existsSync(path.join(KORNI, f)) ? (kodFajl(f) ? 3 : 2) : (sobiraetsya(f) ? 0 : 2)), 0)
   + ISKLYUCHENIYA.length * 2 + 4
   + 3
-const vsego = ok + bad + slep
-console.log(`ИТОГО: сошлось ${ok}, расхождений ${bad}, слепот ${slep}`)
+const vsego = ok + bad + slep + neprim
+console.log(`ИТОГО: сошлось ${ok}, расхождений ${bad}, слепот ${slep}, не применимо ${neprim}`)
 if (vsego !== ZHDYOM) {
   console.log(`СЛЕПОТА: проверок ${vsego}, ждали ${ZHDYOM} — часть не состоялась`)
   process.exit(2)

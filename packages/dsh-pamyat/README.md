@@ -1,8 +1,8 @@
 # dsh-pamyat · набор памяти агента · agent memory set
 
-**Версия:** 3.1.4
+**Версия:** 3.1.10
 
-> Набор `dsh-pamyat` 3.1.4 — девять пакетов памяти агента в точных версиях, проверенных вместе: список с номерами — ниже, суммы предметов — в `sostav.json`. · The `dsh-pamyat` set 3.1.3 is nine agent memory packages at exact versions checked together: the list with versions is below, subject checksums are in `sostav.json`.
+> Набор `dsh-pamyat` 3.1.10 — девять пакетов памяти агента в точных версиях, проверенных вместе: список с номерами — ниже, суммы предметов — в `sostav.json`. · The `dsh-pamyat` set 3.1.3 is nine agent memory packages at exact versions checked together: the list with versions is below, subject checksums are in `sostav.json`.
 
 **Одно имя для девяти пакетов памяти агента, собранных и проверенных вместе — в точных версиях и с суммой каждого.**
 
@@ -24,14 +24,14 @@ This metapackage contains no runtime code. It pins **which** nine packages, **at
 
 The table below is not a retelling but a copy of `sostav.json`; the stand checks that both descriptions (`README.md` and `README.en.md`) name exactly these members at exactly these versions.
 
-    dsh-pamyat-core        3.1.2             хранилище, журнал решений, политика записи · store, decision journal, write policy
-    dsh-pamyat-omega       3.1.2             долговременная память через MCP с подтверждением · long-term memory over MCP with delivery confirmation
-    dsh-pamyat-secretary   3.1.2             сводки сжатия → записи памяти · compaction summaries → memory records
-    dsh-pamyat-byudzhet    3.1.2             входящий бюджет: что поднимать в контекст · incoming budget: what to lift into context
-    dsh-pamyat-nudzh       3.1.2             расходный учёт: не пора ли сжимать · spend accounting: is it time to compact
-    dsh-pamyat-restore     3.1.2             возврат знания после сжатия и брифинг · knowledge restore after compaction and briefing
-    dsh-pamyat-storozha    3.1.3             сторож памяти: ступени заполнения, оповещение о сжатии · memory watchdog: fill stages, compaction notice
-    dsh-pamyat-kompakt-dsh 3.1.2             своя сводка внутри сжатия платформы · own summary inside the platform compaction
+    dsh-pamyat-core        3.1.3             хранилище, журнал решений, политика записи · store, decision journal, write policy
+    dsh-pamyat-omega       3.1.3             долговременная память через MCP с подтверждением · long-term memory over MCP with delivery confirmation
+    dsh-pamyat-secretary   3.1.3             сводки сжатия → записи памяти · compaction summaries → memory records
+    dsh-pamyat-byudzhet    3.1.3             входящий бюджет: что поднимать в контекст · incoming budget: what to lift into context
+    dsh-pamyat-nudzh       3.1.3             расходный учёт: не пора ли сжимать · spend accounting: is it time to compact
+    dsh-pamyat-restore     3.1.3             возврат знания после сжатия и брифинг · knowledge restore after compaction and briefing
+    dsh-pamyat-storozha    3.1.8             сторож памяти: ступени заполнения, оповещение о сжатии · memory watchdog: fill stages, compaction notice
+    dsh-pamyat-kompakt-dsh 3.1.4             своя сводка внутри сжатия платформы · own summary inside the platform compaction
     dsh-pamyat-kompakt     3.1.2             счёт окна и сводка своей моделью (ставится каталогом) · window count and summary by own model (installed as a directory)
 
 Пакеты, которые вызываются вручную или по таймеру и не грузятся в каждую сессию агента (вывоз и ввоз памяти, ночное обслуживание), в набор не входят: у них свой цикл выпуска.
@@ -74,12 +74,12 @@ The metapackage plugs into nothing by itself: the platform loads the members as 
 
 Requirements: Node.js ≥ 22 (`engines.node >=22` is declared by the core, omega and secretary members; the others have no `engines` field; the stand was run on Node.js 24 and npm 11), DSH platform 0.2 (members declare `@deepseek-ai/cordis ^4.0.1` and `@deepseek-ai/dsh-llm ^0.1.1-rc.2 || ^0.2.0-rc.2`), Linux with `bash`, `tar`, `sha256sum`.
 
-Зависимости набора — точные номера членов, которые выйдут (они равны версиям членов в дереве семейства). Набор и члены публикуются в npm выпуском 3.1.4 (порядок и окно — по решению владельца). До выпуска `npm install <дерево>/packages/dsh-pamyat` бесполезен: npm ставит локальный каталог ссылкой и завершается кодом 0, не поставив ни одного члена (0 из 9). Члены ставятся по отдельности из дерева с `--install-links` (команда ниже) или из архивов `npm pack` каждого члена. Без `--install-links` npm кладёт члены ссылками, и импорт 8 из 9 падает с `ERR_MODULE_NOT_FOUND`: ссылка ищет зависимости у себя в дереве. `dsh-pamyat-kompakt-dsh` при любом способе установки отказывает при импорте своим названным отказом. Замер Зари 10.10.2026: npm 11, чистый каталог, `--ignore-scripts`. Набор ни одному агенту не подключён; полка архивов служит только сверке сумм.
+Зависимости набора — точные пины членов выбранного состава (`package.json` и `sostav.json`); они не обязаны совпадать с последними редакциями соседних пакетов. В npm доступна редакция `3.1.4` (замер 15.10.2026, `npm view dsh-pamyat version`). По решению владельца от 14.10.2026 изменения после публикации ведутся локально и в npm не выкладываются. Для локального состава `npm install <дерево>/packages/dsh-pamyat` бесполезен: npm ставит локальный каталог ссылкой и завершается кодом 0, не поставив ни одного члена (0 из 9). Члены ставятся по отдельности из дерева с `--install-links` (команда ниже) или из архивов `npm pack` каждого члена. Без `--install-links` npm кладёт члены ссылками, и импорт 8 из 9 падает с `ERR_MODULE_NOT_FOUND`: ссылка ищет зависимости у себя в дереве. `dsh-pamyat-kompakt-dsh` при любом способе установки отказывает при импорте своим названным отказом. Замер Зари 10.10.2026: npm 11, чистый каталог, `--ignore-scripts`. Набор ни одному агенту не подключён; полка архивов служит только сверке сумм.
 
-The set's dependencies are the exact member versions that will ship (equal to the member versions in the family tree). The set and its members are published to npm with release 3.1.4 (order and window — by the owner's decision). Until then `npm install <дерево>/packages/dsh-pamyat` is useless: npm links the local directory and exits with code 0 without installing a single member (0 of 9). Install members one by one from the tree with `--install-links` (command below) or from each member's `npm pack` archive. Without `--install-links` npm places the members as links, and importing 8 of 9 fails with `ERR_MODULE_NOT_FOUND`: a link looks for dependencies in its own tree. `dsh-pamyat-kompakt-dsh` refuses at import with its own named refusal whatever the install method. Measured by Zarya on 10.10.2026: npm 11, clean directory, `--ignore-scripts`. The set is attached to no agent; the archive shelf serves only checksum verification.
+The set's dependencies pin the members of the selected composition (`package.json` and `sostav.json`); they need not be the latest editions of the sibling packages. npm provides `3.1.4` (checked on 2026-10-15 with `npm view dsh-pamyat version`). By the owner's decision of 2026-10-14, changes after publication are maintained locally and are not republished to npm. For the local composition `npm install <дерево>/packages/dsh-pamyat` is useless: npm links the local directory and exits with code 0 without installing a single member (0 of 9). Install members one by one from the tree with `--install-links` (command below) or from each member's `npm pack` archive. Without `--install-links` npm places the members as links, and importing 8 of 9 fails with `ERR_MODULE_NOT_FOUND`: a link looks for dependencies in its own tree. `dsh-pamyat-kompakt-dsh` refuses at import with its own named refusal whatever the install method. Measured by Zarya on 10.10.2026: npm 11, clean directory, `--ignore-scripts`. The set is attached to no agent; the archive shelf serves only checksum verification.
 
 ```bash
-# до выпуска 3.1.4 — члены из дерева, не ссылками · until release 3.1.4 — members from the tree, not as links
+# локальный состав — члены из дерева, не ссылками · local composition — members from the tree, not as links
 D=<путь-к-дереву · path-to-tree>/packages
 npm install --install-links $D/dsh-pamyat-core $D/dsh-pamyat-omega $D/dsh-pamyat-secretary $D/dsh-pamyat-byudzhet $D/dsh-pamyat-nudzh $D/dsh-pamyat-restore $D/dsh-pamyat-storozha $D/dsh-pamyat-kompakt-dsh $D/dsh-pamyat-kompakt
 ```

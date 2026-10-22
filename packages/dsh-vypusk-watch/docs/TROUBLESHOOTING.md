@@ -115,3 +115,7 @@ The first git stderr line (up to 240 bytes) is retained for tag-list/archive fai
 `--avto-montazh` включает адресную отсрочку: код 4 — «отложено», не «сошлось». Без ключа — строгий ручной прогон. Нужен `montazh-okno` из `dsh-montazh`; предел пересъёма — один. Подробные границы — в ARCHITECTURE.md, «Автоматическая отсрочка».
 
 `--avto-montazh` enables addressed deferral: exit 4 means deferred, not matched. Without the flag the manual run stays strict. Requires `montazh-okno` from `dsh-montazh`; at most one resample. See ARCHITECTURE.md, “Automatic deferral”, for its boundaries.
+
+`ОТКАЗ: задайте непустой VYPUSK_REPO` (код3) — явно задайте дерево или загрузите предусмотренный EnvironmentFile. Тревога и отметка состояния при таком вызове не создаются; это не результат сверки. Непустой, но недоступный/неверный путь остаётся слепотой2.
+
+`REFUSAL: set nonempty VYPUSK_REPO` (exit3) means supply the tree or load the intended EnvironmentFile. No alert or state mark is created and no comparison took place. An explicit unavailable/invalid path remains blindness2.
