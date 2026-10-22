@@ -1,8 +1,8 @@
 # dsh-pamyat · набор памяти агента · agent memory set
 
-**Версия:** 3.1.10
+**Версия:** 3.1.11
 
-> Набор `dsh-pamyat` 3.1.10 — девять пакетов памяти агента в точных версиях, проверенных вместе: список с номерами — ниже, суммы предметов — в `sostav.json`. · The `dsh-pamyat` set 3.1.3 is nine agent memory packages at exact versions checked together: the list with versions is below, subject checksums are in `sostav.json`.
+> Набор `dsh-pamyat` 3.1.11 — девять пакетов памяти агента в точных версиях, проверенных вместе: список с номерами — ниже, суммы предметов — в `sostav.json`. · The `dsh-pamyat` set 3.1.3 is nine agent memory packages at exact versions checked together: the list with versions is below, subject checksums are in `sostav.json`.
 
 **Одно имя для девяти пакетов памяти агента, собранных и проверенных вместе — в точных версиях и с суммой каждого.**
 
@@ -24,12 +24,12 @@ This metapackage contains no runtime code. It pins **which** nine packages, **at
 
 The table below is not a retelling but a copy of `sostav.json`; the stand checks that both descriptions (`README.md` and `README.en.md`) name exactly these members at exactly these versions.
 
-    dsh-pamyat-core        3.1.3             хранилище, журнал решений, политика записи · store, decision journal, write policy
-    dsh-pamyat-omega       3.1.3             долговременная память через MCP с подтверждением · long-term memory over MCP with delivery confirmation
-    dsh-pamyat-secretary   3.1.3             сводки сжатия → записи памяти · compaction summaries → memory records
-    dsh-pamyat-byudzhet    3.1.3             входящий бюджет: что поднимать в контекст · incoming budget: what to lift into context
-    dsh-pamyat-nudzh       3.1.3             расходный учёт: не пора ли сжимать · spend accounting: is it time to compact
-    dsh-pamyat-restore     3.1.3             возврат знания после сжатия и брифинг · knowledge restore after compaction and briefing
+    dsh-pamyat-core        3.1.4             хранилище, журнал решений, политика записи · store, decision journal, write policy
+    dsh-pamyat-omega       3.1.4             долговременная память через MCP с подтверждением · long-term memory over MCP with delivery confirmation
+    dsh-pamyat-secretary   3.1.4             сводки сжатия → записи памяти · compaction summaries → memory records
+    dsh-pamyat-byudzhet    3.1.4             входящий бюджет: что поднимать в контекст · incoming budget: what to lift into context
+    dsh-pamyat-nudzh       3.1.4             расходный учёт: не пора ли сжимать · spend accounting: is it time to compact
+    dsh-pamyat-restore     3.1.4             возврат знания после сжатия и брифинг · knowledge restore after compaction and briefing
     dsh-pamyat-storozha    3.1.8             сторож памяти: ступени заполнения, оповещение о сжатии · memory watchdog: fill stages, compaction notice
     dsh-pamyat-kompakt-dsh 3.1.4             своя сводка внутри сжатия платформы · own summary inside the platform compaction
     dsh-pamyat-kompakt     3.1.2             счёт окна и сводка своей моделью (ставится каталогом) · window count and summary by own model (installed as a directory)

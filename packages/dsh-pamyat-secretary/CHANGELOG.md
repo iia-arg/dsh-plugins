@@ -15,6 +15,12 @@ Mask complete judgment requests; refuse invalid watermark reads and failed saves
 
 # История изменений · Change history
 
+## 3.1.4 — 22.10.2026 · документация: npm-снимок и локальное ведение
+
+- README/README.en: npm хранит снимок 3.1.2; после публикации пакет ведётся локально (решение владельца 14.10) — Бета 4758c00f, 15.10.
+- CHANGELOG: снят устаревший верхний заголовок «# 0.1.0-alpha.* · …» — Гамма 755cfe6f, 22.10.
+- Код пакета не менялся. Повод: метка v3.1.3 не давала байты master по документации (B-N-PUBL-METKI, находка Беты).
+
 ## 3.1.3 — 14.10.2026 · npm 12: состав публикации через `npm-sostav` (B-N-2048)
 
 - `test/stend-readme.mjs`: вывод `npm pack --dry-run --json` разбирает помощник `npm-sostav --files` (`dsh-pribory` 3.1.2) —

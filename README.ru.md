@@ -37,17 +37,17 @@
 
 | Пакет | Версия в дереве | npm | Что делает |
 |---|---|---|
-| [`dsh-pamyat`](packages/dsh-pamyat) | 3.1.10 | `dsh-pamyat` | Метапакет семейства памяти: одно имя для набора пакетов памяти в точных версиях с суммами, без своего кода. |
-| [`dsh-pamyat-core`](packages/dsh-pamyat-core) | 3.1.3 | `dsh-pamyat-core` | Ядро памяти агента: хранилище SQLite, журнал решений о записи, политика подтверждения, очередь доставки в долговременный слой. |
-| [`dsh-pamyat-omega`](packages/dsh-pamyat-omega) | 3.1.3 | `dsh-pamyat-omega` | Необязательный долговременный слой памяти поверх OMEGA по MCP: запись, подтверждение доставки, поиск по смыслу, выдача гостю. |
-| [`dsh-pamyat-secretary`](packages/dsh-pamyat-secretary) | 3.1.3 | `dsh-pamyat-secretary` | Секретарь компакции: сводка в память до того, как компакция затрёт историю; при включении — знания внешней моделью. |
-| [`dsh-pamyat-restore`](packages/dsh-pamyat-restore) | 3.1.3 | `dsh-pamyat-restore` | Читающая сторона памяти: сводка компакта после сжатия и брифинг на первом шаге сессии. |
-| [`dsh-pamyat-byudzhet`](packages/dsh-pamyat-byudzhet) | 3.1.3 | `dsh-pamyat-byudzhet` | Входящий бюджет памяти: отбор записей под предел перед подачей в контекст. |
-| [`dsh-pamyat-nudzh`](packages/dsh-pamyat-nudzh) | 3.1.3 | `dsh-pamyat-nudzh` | Счёт занятости окна по журналу сессии и одно напоминание модели записать важное до компакта. |
+| [`dsh-pamyat`](packages/dsh-pamyat) | 3.1.11 | `dsh-pamyat` | Метапакет семейства памяти: одно имя для набора пакетов памяти в точных версиях с суммами, без своего кода. |
+| [`dsh-pamyat-core`](packages/dsh-pamyat-core) | 3.1.4 | `dsh-pamyat-core` | Ядро памяти агента: хранилище SQLite, журнал решений о записи, политика подтверждения, очередь доставки в долговременный слой. |
+| [`dsh-pamyat-omega`](packages/dsh-pamyat-omega) | 3.1.4 | `dsh-pamyat-omega` | Необязательный долговременный слой памяти поверх OMEGA по MCP: запись, подтверждение доставки, поиск по смыслу, выдача гостю. |
+| [`dsh-pamyat-secretary`](packages/dsh-pamyat-secretary) | 3.1.4 | `dsh-pamyat-secretary` | Секретарь компакции: сводка в память до того, как компакция затрёт историю; при включении — знания внешней моделью. |
+| [`dsh-pamyat-restore`](packages/dsh-pamyat-restore) | 3.1.4 | `dsh-pamyat-restore` | Читающая сторона памяти: сводка компакта после сжатия и брифинг на первом шаге сессии. |
+| [`dsh-pamyat-byudzhet`](packages/dsh-pamyat-byudzhet) | 3.1.4 | `dsh-pamyat-byudzhet` | Входящий бюджет памяти: отбор записей под предел перед подачей в контекст. |
+| [`dsh-pamyat-nudzh`](packages/dsh-pamyat-nudzh) | 3.1.4 | `dsh-pamyat-nudzh` | Счёт занятости окна по журналу сессии и одно напоминание модели записать важное до компакта. |
 | [`dsh-pamyat-storozha`](packages/dsh-pamyat-storozha) | 3.1.8 | `dsh-pamyat-storozha` | Сторожа памяти изнутри агента: оповещение о сжатии, ступени заполнения, охват сессий; программы обслуживания памяти. |
 | [`dsh-pamyat-kompakt`](packages/dsh-pamyat-kompakt) | 3.1.2 | `dsh-pamyat-kompakt` | Общая библиотека компакта: занятость окна, порог агента, сводка своей моделью, атомарная перезапись журнала сессии. |
 | [`dsh-pamyat-kompakt-dsh`](packages/dsh-pamyat-kompakt-dsh) | 3.1.4 | `dsh-pamyat-kompakt-dsh` | Движок сводки внутри родной компакции платформы: сводку пишет модель `dsh-pamyat-kompakt`, при отказе — родная. |
-| [`dsh-pamyat-vyvoz`](packages/dsh-pamyat-vyvoz) | 3.1.3 | `dsh-pamyat-vyvoz` | Вывоз и ввоз памяти: перенос смысла между базами. |
+| [`dsh-pamyat-vyvoz`](packages/dsh-pamyat-vyvoz) | 3.1.4 | `dsh-pamyat-vyvoz` | Вывоз и ввоз памяти: перенос смысла между базами. |
 | [`dsh-pamyat-obsluzhivanie`](packages/dsh-pamyat-obsluzhivanie) | 3.1.5 | `dsh-pamyat-obsluzhivanie` | Ночное обслуживание памяти агентов: перенос уроков, чистка, судья пар OMEGA, сверка; итог одной строкой тревоги. |
 
 ## Плагины и программы (28)

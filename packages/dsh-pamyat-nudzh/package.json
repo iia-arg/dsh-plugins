@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat-nudzh",
-  "version": "3.1.3",
+  "version": "3.1.4",
   "description": "Расходный учёт контекста агента DSH: занятость окна, честная нижняя оценка расхода и одно напоминание модели перед компактом · Context spend accounting for a DSH agent: window occupancy, an honest lower bound of spend and one reminder to the model before compaction",
   "keywords": [
     "dsh",

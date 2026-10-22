@@ -1,6 +1,6 @@
 # dsh-pamyat-vyvoz — agent memory export and import: moving meaning between databases, not copying a file
 
-Версия · Version: 3.1.3
+Версия · Version: 3.1.4
 
 ## Purpose
 
@@ -47,8 +47,8 @@ Use the verified source tree with `dsh-pamyat-vyvoz` beside `dsh-pamyat-core`, o
 (cd "$VYVOZ_SOURCE" && npm pack --ignore-scripts --pack-destination "$ARTIFACTS")
 # In a separate standalone CLI directory, without registry access:
 npm install --offline --ignore-scripts --legacy-peer-deps \
-  /absolute/path/dsh-pamyat-core-3.1.3.tgz \
-  /absolute/path/dsh-pamyat-vyvoz-3.1.3.tgz
+  /absolute/path/dsh-pamyat-core-3.1.4.tgz \
+  /absolute/path/dsh-pamyat-vyvoz-3.1.4.tgz
 ./node_modules/.bin/vyvoz-pamyati --help
 ```
 

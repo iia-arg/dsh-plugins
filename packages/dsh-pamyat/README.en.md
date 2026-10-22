@@ -1,6 +1,6 @@
 # dsh-pamyat · agent memory set (English page)
 
-**Version:** 3.1.10
+**Version:** 3.1.11
 
 npm provides `3.1.4` (checked on 2026-10-15 with `npm view dsh-pamyat version`). By the owner's decision of 2026-10-14, changes after publication are maintained locally and are not republished to npm. Use the local source tree for the current composition; its pinned member versions are listed below.
 
@@ -8,12 +8,12 @@ The main documentation of this package is **bilingual** and lives in [README.md]
 
 **One name for nine agent-memory packages that were built and verified together — at exact versions, with a checksum for each.**
 
-    dsh-pamyat-core        3.1.3             store, decision journal, write policy
-    dsh-pamyat-omega       3.1.3             long-term memory over MCP with delivery confirmation
-    dsh-pamyat-secretary   3.1.3             compaction summaries → memory records
-    dsh-pamyat-byudzhet    3.1.3             incoming budget: what to lift into context
-    dsh-pamyat-nudzh       3.1.3             spend accounting: is it time to compact
-    dsh-pamyat-restore     3.1.3             knowledge restore after compaction and briefing
+    dsh-pamyat-core        3.1.4             store, decision journal, write policy
+    dsh-pamyat-omega       3.1.4             long-term memory over MCP with delivery confirmation
+    dsh-pamyat-secretary   3.1.4             compaction summaries → memory records
+    dsh-pamyat-byudzhet    3.1.4             incoming budget: what to lift into context
+    dsh-pamyat-nudzh       3.1.4             spend accounting: is it time to compact
+    dsh-pamyat-restore     3.1.4             knowledge restore after compaction and briefing
     dsh-pamyat-storozha    3.1.8             memory watchdog: fill stages, compaction notice
     dsh-pamyat-kompakt-dsh 3.1.4             own summary inside the platform compaction
     dsh-pamyat-kompakt     3.1.2             window count and summary by own model (installed as a directory)

@@ -1,6 +1,6 @@
 {
   "name": "dsh-pamyat-byudzhet",
-  "version": "3.1.3",
+  "version": "3.1.4",
   "description": "Входящий бюджет памяти агента DSH: сколько знания поднять в разговор, с громким отказом и названными причинами · Incoming memory budget for a DSH agent: how much knowledge to raise into the conversation, with a loud refusal and named reasons",
   "keywords": [
     "dsh",

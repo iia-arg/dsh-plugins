@@ -16,43 +16,43 @@
   "sostav": [
     {
       "paket": "dsh-pamyat-core",
-      "versiya": "3.1.3",
-      "predmet": "b828b8d50c3d4cb9",
+      "versiya": "3.1.4",
+      "predmet": "22fdf49cbb494456",
       "faylov": 67,
       "prob": null
     },
     {
       "paket": "dsh-pamyat-omega",
-      "versiya": "3.1.3",
-      "predmet": "ddcafe68b26ba62d",
+      "versiya": "3.1.4",
+      "predmet": "dbcb6dbea3e53a30",
       "faylov": 30,
       "prob": null
     },
     {
       "paket": "dsh-pamyat-secretary",
-      "versiya": "3.1.3",
-      "predmet": "84b37edd18d6e741",
+      "versiya": "3.1.4",
+      "predmet": "a8cc9c38dd6a34af",
       "faylov": 67,
       "prob": null
     },
     {
       "paket": "dsh-pamyat-byudzhet",
-      "versiya": "3.1.3",
-      "predmet": "994192acc09b927d",
+      "versiya": "3.1.4",
+      "predmet": "b9e8ce5c8fa39bcd",
       "faylov": 18,
       "prob": null
     },
     {
       "paket": "dsh-pamyat-nudzh",
-      "versiya": "3.1.3",
-      "predmet": "78fc76ea644c712e",
+      "versiya": "3.1.4",
+      "predmet": "40b4d955fda053f9",
       "faylov": 19,
       "prob": null
     },
     {
       "paket": "dsh-pamyat-restore",
-      "versiya": "3.1.3",
-      "predmet": "320577134d98464b",
+      "versiya": "3.1.4",
+      "predmet": "ea4a3e06d391aa7d",
       "faylov": 25,
       "prob": null
     },
@@ -80,7 +80,7 @@
       "pochemu_katalog": "RU: в установке kompakt стоит КАТАЛОГОМ, не пакетом: package.json каталога установленных плагинов объявляет «file:./dsh-pamyat-kompakt», в lock — link:true; архива a28 на полке нет. Набор с A-N-1873 называет kompakt точным номером, как остальных членов (в dependencies — 1.1.40, не file:): установка ставит каталог ссылкой, а набор сверяет его номер и сумму предмета. Цена честно: каталог не заморожен, как архив, — его правка без пересборки набора краснеет пробой сумм. Нужен kompakt-dsh (зовёт его по ИМЕНИ, в своём манифесте зависимости не объявляет) и шлюзу подписки (тот — по абсолютному пути, набором не покрывается). · EN: in the installation kompakt sits AS A DIRECTORY, not a package: the installed-plugins package.json declares \"file:./dsh-pamyat-kompakt\", the lock has link:true; there is no a28 archive on the shelf. Since A-N-1873 the set names kompakt by an exact version like the other members (1.1.40 in dependencies, not file:): the installation links the directory, and the set checks its version and subject checksum. Honest price: a directory is not frozen like an archive — editing it without rebuilding the set turns the checksum probe red. Needed by kompakt-dsh (which calls it by NAME and does not declare the dependency in its manifest) and by the subscription gateway (by absolute path, not covered by the set)."
     }
   ],
-  "podtverzhdeno": "RU: версии, суммы и число файлов сняты 10.10.2026 (A-N-1948 модуль №3, Искра): summa-predmeta-2 (e6812fdcceb909f5, контроль ПРОЙДЕН). Пять членов модуля №3 (core, omega, restore, byudzhet, nudzh 3.1.1) и dsh-pamyat-storozha 1.1.51 — по каталогам дерева (= будущим архивам этого окна). secretary 1.1.108, kompakt-dsh 1.1.33, kompakt 1.1.40 — по полке и бою (решение координатора 10.10 08:38Z (а)): их документы в master без номера ждут их выпуска (модуль №7). Перезакрепление 14.10.2026 (набор 3.1.2, Аврора): dsh-pamyat-storozha 3.1.1 (A-N-1948 №17) — a8b6bc5d8c74351a / 49 файлов по архиву полки, равно бою и дереву. · EN: versions, checksums and file counts taken 10.10.2026 (A-N-1948 module 3): summa-predmeta-2, control PASSED. The five module-3 members (3.1.1) and dsh-pamyat-storozha 1.1.51 — from the tree directories (= this window's archives); secretary 1.1.108, kompakt-dsh 1.1.33, kompakt 1.1.40 — from the shelf and the live install (their docs in master await their release, module 7). Re-pinned 14.10.2026 (set 3.1.2, Avrora): dsh-pamyat-storozha 3.1.1 (A-N-1948 #17) — a8b6bc5d8c74351a / 49 files from the shelf archive, equal to the live install and the tree. · RU: 14.10.2026 (подготовка к публикации, оформление, Искра): secretary, byudzhet, nudzh, restore, storozha, kompakt-dsh, kompakt 3.1.2 пересняты по кандидату (npm pack из дерева → summa-predmeta-2 e6812fdc, тот же вызов, что стенд); core и omega 3.1.1 пересчитаны тем же способом — совпали с прежними · EN: 2026-10-14 (publication prep, docs): seven members at 3.1.2 re-measured from the candidate (npm pack from the tree → summa-predmeta-2 e6812fdc, the same call as the stand); core and omega 3.1.1 recomputed the same way — equal to the previous values. · RU: 14.10.2026 (B-N-2048, набор 3.1.5, Искра): core, omega, secretary, byudzhet, nudzh, restore 3.1.3 (Заря, b2048-readme-zarya 0c9740a9; restore — bcd11725) пересняты по дереву summa-predmeta-2 кандидата (npm-sostav f8c6c9f3); остальные три — без изменений · EN: 2026-10-14 (B-N-2048, set 3.1.5): six members at 3.1.3 re-measured from the tree with the candidate summa-predmeta-2; the other three unchanged. · RU: 14.10.2026 (B-N-2048, набор 3.1.6, Искра): dsh-pamyat-storozha 3.1.4 (Заря b3ff25fb) — a136a937d86ad674 / 50 файлов, summa-predmeta-2 cc4a5ed7 + npm-sostav f8c6c9f3 по дереву · EN: set 3.1.6: dsh-pamyat-storozha 3.1.4 re-measured from the tree.",
+  "podtverzhdeno": "RU: перезакрепление 22.10.2026 (набор 3.1.11, Искра, B-N-PUBL-METKI): core, omega, secretary, byudzhet, nudzh, restore 3.1.3 → 3.1.4 — только документация; суммы и число файлов сняты summa-predmeta-2 (cc4a5ed7bbd0078b) по архивам полки-кандидата 3.1.4 (npm pack дерева 2b936032; контроль метода: архив core 3.1.3 полки → b828b8d50c3d4cb9 = прежней записи). · RU: версии, суммы и число файлов сняты 10.10.2026 (A-N-1948 модуль №3, Искра): summa-predmeta-2 (e6812fdcceb909f5, контроль ПРОЙДЕН). Пять членов модуля №3 (core, omega, restore, byudzhet, nudzh 3.1.1) и dsh-pamyat-storozha 1.1.51 — по каталогам дерева (= будущим архивам этого окна). secretary 1.1.108, kompakt-dsh 1.1.33, kompakt 1.1.40 — по полке и бою (решение координатора 10.10 08:38Z (а)): их документы в master без номера ждут их выпуска (модуль №7). Перезакрепление 14.10.2026 (набор 3.1.2, Аврора): dsh-pamyat-storozha 3.1.1 (A-N-1948 №17) — a8b6bc5d8c74351a / 49 файлов по архиву полки, равно бою и дереву. · EN: versions, checksums and file counts taken 10.10.2026 (A-N-1948 module 3): summa-predmeta-2, control PASSED. The five module-3 members (3.1.1) and dsh-pamyat-storozha 1.1.51 — from the tree directories (= this window's archives); secretary 1.1.108, kompakt-dsh 1.1.33, kompakt 1.1.40 — from the shelf and the live install (their docs in master await their release, module 7). Re-pinned 14.10.2026 (set 3.1.2, Avrora): dsh-pamyat-storozha 3.1.1 (A-N-1948 #17) — a8b6bc5d8c74351a / 49 files from the shelf archive, equal to the live install and the tree. · RU: 14.10.2026 (подготовка к публикации, оформление, Искра): secretary, byudzhet, nudzh, restore, storozha, kompakt-dsh, kompakt 3.1.2 пересняты по кандидату (npm pack из дерева → summa-predmeta-2 e6812fdc, тот же вызов, что стенд); core и omega 3.1.1 пересчитаны тем же способом — совпали с прежними · EN: 2026-10-14 (publication prep, docs): seven members at 3.1.2 re-measured from the candidate (npm pack from the tree → summa-predmeta-2 e6812fdc, the same call as the stand); core and omega 3.1.1 recomputed the same way — equal to the previous values. · RU: 14.10.2026 (B-N-2048, набор 3.1.5, Искра): core, omega, secretary, byudzhet, nudzh, restore 3.1.3 (Заря, b2048-readme-zarya 0c9740a9; restore — bcd11725) пересняты по дереву summa-predmeta-2 кандидата (npm-sostav f8c6c9f3); остальные три — без изменений · EN: 2026-10-14 (B-N-2048, set 3.1.5): six members at 3.1.3 re-measured from the tree with the candidate summa-predmeta-2; the other three unchanged. · RU: 14.10.2026 (B-N-2048, набор 3.1.6, Искра): dsh-pamyat-storozha 3.1.4 (Заря b3ff25fb) — a136a937d86ad674 / 50 файлов, summa-predmeta-2 cc4a5ed7 + npm-sostav f8c6c9f3 по дереву · EN: set 3.1.6: dsh-pamyat-storozha 3.1.4 re-measured from the tree.",
   "pro_nomera": "RU: номер версии может быть поднят без изменения кода — правились манифесты или справка; одинаковая сумма ИСХОДНИКА при разных номерах не означает потерянную правку; сумма ПРЕДМЕТА при этом меняется всегда, потому что манифест входит в предмет · EN: a version number can be bumped without code changes — manifests or docs were edited; an identical SOURCE checksum under different numbers does not mean a lost edit; the SUBJECT checksum always changes, because the manifest is part of the subject",
   "otsechka_snyatiya": "RU: 2026-10-10 08:4x UTC, дерево master a9c1164f (+ полка и бой для трёх нетронутых). · EN: 2026-10-10 08:4x UTC, tree master a9c1164f (+ shelf and live install for the three untouched members)."
 }

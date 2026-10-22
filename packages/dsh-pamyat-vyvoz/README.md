@@ -1,6 +1,6 @@
 # dsh-pamyat-vyvoz — вывоз и ввоз памяти агента: перенос смысла между базами, а не копия файла
 
-Версия · Version: 3.1.3
+Версия · Version: 3.1.4
 
 ## Назначение
 
@@ -48,8 +48,8 @@
 (cd "$VYVOZ_SOURCE" && npm pack --ignore-scripts --pack-destination "$ARTIFACTS")
 # В отдельном каталоге автономного CLI, без обращения к реестру:
 npm install --offline --ignore-scripts --legacy-peer-deps \
-  /absolute/path/dsh-pamyat-core-3.1.3.tgz \
-  /absolute/path/dsh-pamyat-vyvoz-3.1.3.tgz
+  /absolute/path/dsh-pamyat-core-3.1.4.tgz \
+  /absolute/path/dsh-pamyat-vyvoz-3.1.4.tgz
 ./node_modules/.bin/vyvoz-pamyati --help
 ```
 

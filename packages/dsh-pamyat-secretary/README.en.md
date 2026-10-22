@@ -1,6 +1,6 @@
 # dsh-pamyat-secretary · summaries and knowledge distillation (English page)
 
-**Version:** 3.1.3
+**Version:** 3.1.4
 
 npm provides `3.1.2` (checked on 2026-10-15 with `npm view dsh-pamyat-secretary version`). By the owner's decision of 2026-10-14, changes after publication are maintained locally and are not republished to npm.
 
